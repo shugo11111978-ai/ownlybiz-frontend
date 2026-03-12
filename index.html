@@ -10906,566 +10906,292 @@ async function savePaymentConfig() {
 
 
 <script>
+// ===== ADMIN SETTINGS JS =====
+function adminToggleKey(id){var el=document.getElementById(id);if(el)el.type=el.type==="password"?"text":"password";}
+function adminApiCall(method,path,body){
+  var token=sessionStorage.getItem("ob_t");
+  var base=window.OWNLYBIZ_API_URL||"https://ownlybiz-backend-production.up.railway.app";
+  return fetch(base+path,{method:method,headers:{"Content-Type":"application/json","Authorization":"Bearer "+token},body:body?JSON.stringify(body):undefined}).then(function(r){return r.json();});
+}
+function adminStatus(id,ok,msg){var el=document.getElementById(id);if(el){el.textContent=ok?"Saved":"Error: "+msg;el.style.color=ok?"#16a34a":"#dc2626";setTimeout(function(){if(el)el.textContent="";},3000);}}
+function adminSaveStripe(){
+  var pk=document.getElementById("stripe-pk");
+  var sk=document.getElementById("stripe-sk");
+  var wh=document.getElementById("stripe-wh");
+  var mode=document.querySelector("input[name=stripe-mode]:checked");
+  var data={stripe_publishable_key:pk?pk.value:"",stripe_secret_key:sk?sk.value:"",stripe_webhook_secret:wh?wh.value:"",stripe_mode:mode?mode.value:"test"};
+  adminApiCall("POST","/api/admin/settings",data).then(function(d){adminStatus("stripe-status",d.success,d.error);}).catch(function(e){adminStatus("stripe-status",false,e.message);});
+}
+function adminTestStripe(){
+  var el=document.getElementById("stripe-test-result");
+  if(el)el.textContent="Testing...";
+  adminApiCall("GET","/api/admin/settings/test-stripe").then(function(d){if(el)el.textContent=d.valid?"Connected: "+d.account_name:"Failed: "+d.error;}).catch(function(e){if(el)el.textContent="Error: "+e.message;});
+}
+function adminSaveFees(){
+  var fv=function(id){var el=document.getElementById(id);return el?parseFloat(el.value)||0:0;};
+  var iv=function(id){var el=document.getElementById(id);return el?parseInt(el.value)||0:0;};
+  var sv=function(id){var el=document.getElementById(id);return el?el.value:"";};
+  var data={fee_starter_pct:fv("fee-starter"),fee_pro_pct:fv("fee-pro"),fee_scale_pct:fv("fee-scale"),trial_starter_days:iv("trial-starter"),trial_pro_days:iv("trial-pro"),trial_scale_days:iv("trial-scale"),min_session_payout:fv("min-session-payout"),fee_stripe_absorbed:sv("fee-stripe-absorbed")};
+  adminApiCall("POST","/api/admin/settings",data).then(function(d){adminStatus("fees-status",d.success,d.error);}).catch(function(e){adminStatus("fees-status",false,e.message);});
+}
+function adminSaveSmtp(){
+  var gv=function(id){var el=document.getElementById(id);return el?el.value:"";};
+  var data={smtp_host:gv("smtp-host"),smtp_port:parseInt(gv("smtp-port"))||587,smtp_user:gv("smtp-user"),smtp_pass:gv("smtp-pass"),email_from_name:gv("smtp-from-name"),email_from:gv("smtp-from-email")};
+  adminApiCall("POST","/api/admin/settings",data).then(function(d){adminStatus("smtp-status",d.success,d.error);}).catch(function(e){adminStatus("smtp-status",false,e.message);});
+}
+function adminTestEmail(){
+  var el=document.getElementById("smtp-test-result");
+  if(el)el.textContent="Sending...";
+  adminApiCall("POST","/api/admin/settings/test-email",{}).then(function(d){if(el)el.textContent=d.success?"Sent!":"Failed: "+d.error;}).catch(function(e){if(el)el.textContent="Error: "+e.message;});
+}
+function adminSavePlatformControls(){
+  var cb=function(id){var el=document.getElementById(id);return el?el.checked:false;};
+  var data={maintenance_mode:cb("ctrl-maintenance"),expert_signups:cb("ctrl-expert-signups"),client_signups:cb("ctrl-client-signups"),payment_processing:cb("ctrl-payments"),expert_auto_approve:cb("ctrl-auto-approve"),email_notifications:cb("ctrl-email-notify")};
+  adminApiCall("POST","/api/admin/settings",data).then(function(d){adminStatus("controls-status",d.success,d.error);}).catch(function(e){adminStatus("controls-status",false,e.message);});
+}
+function adminSavePayoutSettings(){
+  var gv=function(id){var el=document.getElementById(id);return el?el.value:"";};
+  var data={payout_min:parseFloat(gv("payout-min"))||10,payout_frequency:gv("payout-frequency"),payout_hold_days:parseInt(gv("payout-hold"))||2};
+  adminApiCall("POST","/api/admin/settings",data).then(function(d){adminStatus("payout-settings-status",d.success,d.error);}).catch(function(e){adminStatus("payout-settings-status",false,e.message);});
+}
+function adminLoadSettings(){
+  adminApiCall("GET","/api/admin/settings").then(function(d){
+    if(!d.settings)return;
+    var s=d.settings;
+    var sv=function(id,v){var el=document.getElementById(id);if(el&&v!==undefined&&v!==null)el.value=v;};
+    var sb=function(id,v){var el=document.getElementById(id);if(el)el.checked=!!v;};
+    sv("stripe-pk",s.stripe_publishable_key);
+    sv("stripe-sk",s.stripe_secret_key);
+    sv("stripe-wh",s.stripe_webhook_secret);
+    if(s.stripe_mode){var rm=document.querySelector("input[name=stripe-mode][value="+s.stripe_mode+"]");if(rm)rm.checked=true;}
+    sv("fee-starter",s.fee_starter_pct);sv("fee-pro",s.fee_pro_pct);sv("fee-scale",s.fee_scale_pct);
+    sv("trial-starter",s.trial_starter_days);sv("trial-pro",s.trial_pro_days);sv("trial-scale",s.trial_scale_days);
+    sv("min-session-payout",s.min_session_payout);
+    sv("smtp-host",s.smtp_host);sv("smtp-port",s.smtp_port);
+    sv("smtp-user",s.smtp_user);sv("smtp-from-name",s.email_from_name);sv("smtp-from-email",s.email_from);
+    sb("ctrl-maintenance",s.maintenance_mode);sb("ctrl-expert-signups",s.expert_signups);
+    sb("ctrl-client-signups",s.client_signups);sb("ctrl-payments",s.payment_processing);
+    sb("ctrl-auto-approve",s.expert_auto_approve);sb("ctrl-email-notify",s.email_notifications);
+    sv("payout-min",s.payout_min);sv("payout-frequency",s.payout_frequency);sv("payout-hold",s.payout_hold_days);
+  }).catch(function(e){console.log("Admin settings load:",e);});
+}
 
-
-
-// ═══════════════════════════════════════════════════════════
-//  OWNLYBIZ — COMPLETE CLIENT BOOKING FUNNEL
-//  Handles: instant session + scheduled booking
-//  Full Stripe integration, auth, WebSocket session
-// ═══════════════════════════════════════════════════════════
-
-(function() {
-  'use strict';
-
-  var BASE = window.OWNLYBIZ_API_URL || 'https://ownlybiz-backend-production.up.railway.app';
-  var tok  = function() { return sessionStorage.getItem('ob_t'); };
-  var user = function() { try { return JSON.parse(sessionStorage.getItem('ob_u')||'null'); } catch(e){ return null; } };
-
-  // ── Funnel state ──────────────────────────────────────────
-  var F = {
-    mode:        'instant',   // 'instant' | 'book'
-    channel:     '',          // 'chat'|'voice'|'video'
-    expertId:    '',
-    expertSlug:  '',
-    expertName:  '',
-    expertRates: {},          // { chat, voice, video }
-    rate:        0,
-    sessionId:   '',
-    piSecret:    '',          // Stripe client_secret
-    stripe:      null,
-    elements:    null,
-    bookDate:    '',
-    bookTime:    '',
-    currentStep: 1,
-  };
-
-  // ── Helpers ───────────────────────────────────────────────
-  function el(id) { return document.getElementById(id); }
-  function showErr(id, msg) {
-    var e = el(id); if (!e) return;
-    e.textContent = msg; e.style.display = msg ? 'block' : 'none';
+// ===== EXPERT STRIPE JS =====
+window._expertDefaultPkgs=[
+  {id:"pkg1",name:"Quick Chat",duration:15,price:25,channel:"chat",active:true},
+  {id:"pkg2",name:"Strategy Session",duration:30,price:75,channel:"video",active:true},
+  {id:"pkg3",name:"Deep Dive",duration:60,price:120,channel:"video",active:false}
+];
+function expertRenderPackages(pkgs){
+  var list=document.getElementById("expert-packages-list");
+  if(!list)return;
+  if(!pkgs||!pkgs.length){
+    list.innerHTML="<div style=\"text-align:center;padding:20px;color:var(--gray-400);font-size:13px;\">No packages yet. Click Add Package.</div>";
+    return;
   }
-  function fmtMoney(n) { return '$' + (parseFloat(n)||0).toFixed(2); }
-  function apiCall(method, path, body) {
-    return fetch(BASE + '/api' + path, {
-      method: method,
-      headers: Object.assign({'Content-Type':'application/json'}, tok() ? {'Authorization':'Bearer '+tok()} : {}),
-      body: body ? JSON.stringify(body) : undefined
-    }).then(function(r){ return r.json(); });
+  var html="";
+  for(var i=0;i<pkgs.length;i++){
+    var p=pkgs[i];
+    var border=p.active?"var(--terra)":"var(--gray-200)";
+    var chk=p.active?" checked":"";
+    html+="<div style=\"padding:12px 14px;background:var(--cream);border-radius:10px;border:1.5px solid "+border+";display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;\">";
+    html+="<div><div style=\"font-size:13px;font-weight:700;\">"+p.name+"</div>";
+    html+="<div style=\"font-size:11px;color:var(--gray-400);\">"+p.duration+" min &middot; "+p.channel+" &middot; $"+p.price+"</div></div>";
+    html+="<div style=\"display:flex;align-items:center;gap:10px;\">";
+    html+="<label class=\"toggle-switch\" style=\"transform:scale(.8);\"><input type=\"checkbox\""+chk+" data-pkg-toggle=\""+p.id+"\"><div class=\"toggle-track\"></div><div class=\"toggle-thumb\"></div></label>";
+    html+="<button data-pkg-edit=\""+p.id+"\" style=\"padding:4px 10px;border-radius:6px;border:1px solid var(--gray-200);background:white;font-size:11px;cursor:pointer;\">Edit</button>";
+    html+="<button data-pkg-del=\""+p.id+"\" style=\"padding:4px 10px;border-radius:6px;border:1px solid rgba(239,68,68,.3);background:rgba(239,68,68,.05);color:#dc2626;font-size:11px;cursor:pointer;\">&times;</button>";
+    html+="</div></div>";
   }
-  function setProgress(step) {
-    var pct = [0,20,45,65,100][step] || 20;
-    var bar = el('obf-progress');
-    if (bar) bar.style.width = pct + '%';
-  }
-  var _stepIds = ['obf-step-type','obf-step-auth','obf-step-pay','obf-step-confirm'];
-  function showStep(n) {
-    F.currentStep = n;
-    _stepIds.forEach(function(id, idx) {
-      var s = el(id);
-      if (s) s.style.display = (idx===n-1) ? 'block' : 'none';
-    });
-    setProgress(n);
-  }
-
-  // ── Open funnel ───────────────────────────────────────────
-  window.obFunnelOpen = function(mode) {
-    F.mode        = mode || 'instant';
-    F.expertId    = window._currentExpertId   || '';
-    F.expertSlug  = window._currentExpertSlug || (window.location.pathname.replace(/^\//,'').replace(/\/$/,'')) || '';
-    F.expertName  = window._currentExpertName || 'Expert';
-    F.expertRates = window._currentExpertRates || { chat:0, voice:0, video:0 };
-    F.sessionId   = '';
-    F.piSecret    = '';
-    F.channel     = '';
-    F.currentStep = 1;
-
-    // Header
-    var av = el('obf-avatar');
-    if (av) {
-      var ini = F.expertName.split(' ').map(function(w){return w.charAt(0);}).join('').toUpperCase().slice(0,2);
-      av.textContent = ini;
-    }
-    var nm = el('obf-expert-name');
-    if (nm) nm.textContent = F.expertName;
-    var ml = el('obf-mode-label');
-    if (ml) ml.textContent = mode==='instant' ? '⚡ Start Session Now' : '📅 Book a Session';
-
-    // Build type options
-    buildTypeOptions();
-
-    // Schedule section visibility
-    var sched = el('obf-schedule-box');
-    if (sched) sched.style.display = (mode==='book') ? 'block' : 'none';
-
-    // Set default date/time for booking
-    if (mode === 'book') {
-      var now = new Date();
-      now.setDate(now.getDate()+1);
-      var dateStr = now.toISOString().split('T')[0];
-      if (el('obf-date')) el('obf-date').value = dateStr;
-      if (el('obf-time')) el('obf-time').value = '10:00';
-    }
-
-    showStep(1);
-    el('ob-funnel-overlay').style.display = 'block';
-    document.body.style.overflow = 'hidden';
-  };
-
-  window.obFunnelClose = window.obfClose = function() {
-    el('ob-funnel-overlay').style.display = 'none';
-    document.body.style.overflow = '';
-    // Clean up Stripe
-    if (F.elements) { try { F.elements.unmount(); } catch(e){} F.elements = null; }
-  };
-
-  // Close on overlay click
-  el('ob-funnel-overlay').addEventListener('click', function(e) {
-    if (e.target === this) window.obFunnelClose();
+  list.innerHTML=html;
+  list.querySelectorAll("[data-pkg-toggle]").forEach(function(el){
+    el.addEventListener("change",function(){expertTogglePackage(this.getAttribute("data-pkg-toggle"),this.checked);});
   });
-
-  // ── Step 1: Build channel options ─────────────────────────
-  function buildTypeOptions() {
-    var container = el('obf-type-options');
-    if (!container) return;
-    var rates = F.expertRates;
-    var channels = [
-      { key:'chat',  icon:'💬', label:'Text Chat',  sub:'Type messages in real time' },
-      { key:'voice', icon:'🎤', label:'Voice Call', sub:'Audio-only session' },
-      { key:'video', icon:'📹', label:'Video Call', sub:'Face-to-face video session' },
-    ];
-    container.innerHTML = channels.map(function(ch) {
-      var rate = rates[ch.key];
-      var rateLabel = (rate && rate > 0) ? fmtMoney(rate)+'/min' : (F.mode==='book' ? 'Contact for price' : 'Free trial');
-      return '<button onclick="window.obSelectChannel(\''+ch.key+'\')" data-ch="'+ch.key+'" style="'
-        + 'display:flex;align-items:center;gap:14px;width:100%;padding:14px 16px;background:#f8f5f0;'
-        + 'border:2px solid #e5e0d8;border-radius:12px;cursor:pointer;text-align:left;font-family:inherit;transition:all .15s;"'
-        + ' onmouseover="this.style.borderColor=\'#C4622D\'" onmouseout="this.style.borderColor=(this.dataset.sel?\'#C4622D\':\'#e5e0d8\')">'
-        + '<div style="font-size:26px;flex-shrink:0;">'+ch.icon+'</div>'
-        + '<div style="flex:1;">'
-        + '<div style="font-weight:700;color:#251810;font-size:14px;">'+ch.label+'</div>'
-        + '<div style="font-size:12px;color:#888;margin-top:1px;">'+ch.sub+'</div>'
-        + '</div>'
-        + '<div style="font-weight:700;color:#C4622D;font-size:13px;white-space:nowrap;">'+rateLabel+'</div>'
-        + '</button>';
-    }).join('');
-    // Auto-select chat
-    setTimeout(function(){ window.obSelectChannel('chat'); }, 50);
+  list.querySelectorAll("[data-pkg-edit]").forEach(function(el){
+    el.addEventListener("click",function(){expertEditPackage(this.getAttribute("data-pkg-edit"));});
+  });
+  list.querySelectorAll("[data-pkg-del]").forEach(function(el){
+    el.addEventListener("click",function(){expertDeletePackage(this.getAttribute("data-pkg-del"));});
+  });
+}
+function expertAddPackage(){
+  var name=prompt("Package name:");if(!name)return;
+  var dur=parseInt(prompt("Duration (minutes):","30")||"30");
+  var price=parseFloat(prompt("Price ($):","75")||"75");
+  var ch=prompt("Channel (chat/voice/video):","video")||"video";
+  if(["chat","voice","video"].indexOf(ch)<0)ch="video";
+  var p={id:"pkg_"+Date.now(),name:name,duration:dur,price:price,channel:ch,active:true};
+  var pkgs=window._expertPackages||(window._expertDefaultPkgs||[]).slice();
+  pkgs.push(p);window._expertPackages=pkgs;
+  expertRenderPackages(pkgs);expertSavePackages(pkgs);
+}
+function expertEditPackage(id){
+  var pkgs=window._expertPackages||(window._expertDefaultPkgs||[]).slice();
+  var p=null;for(var i=0;i<pkgs.length;i++){if(pkgs[i].id===id){p=pkgs[i];break;}}
+  if(!p)return;
+  var name=prompt("Package name:",p.name);if(!name)return;
+  p.name=name;
+  p.duration=parseInt(prompt("Duration (min):",p.duration)||String(p.duration));
+  p.price=parseFloat(prompt("Price ($):",p.price)||String(p.price));
+  window._expertPackages=pkgs;expertRenderPackages(pkgs);expertSavePackages(pkgs);
+}
+function expertDeletePackage(id){
+  if(!confirm("Remove this package?"))return;
+  var pkgs=(window._expertPackages||(window._expertDefaultPkgs||[]).slice()).filter(function(p){return p.id!==id;});
+  window._expertPackages=pkgs;expertRenderPackages(pkgs);expertSavePackages(pkgs);
+}
+function expertTogglePackage(id,active){
+  var pkgs=window._expertPackages||(window._expertDefaultPkgs||[]).slice();
+  for(var i=0;i<pkgs.length;i++){if(pkgs[i].id===id){pkgs[i].active=active;break;}}
+  window._expertPackages=pkgs;expertSavePackages(pkgs);
+}
+function expertApiCall(method,path,body){
+  var token=sessionStorage.getItem("ob_t");
+  var base=window.OWNLYBIZ_API_URL||"https://ownlybiz-backend-production.up.railway.app";
+  return fetch(base+path,{method:method,headers:{"Content-Type":"application/json","Authorization":"Bearer "+token},body:body?JSON.stringify(body):undefined}).then(function(r){return r.json();});
+}
+function expertSavePackages(pkgs){
+  expertApiCall("POST","/api/experts/packages",{packages:pkgs}).catch(function(e){console.log("Pkgs save:",e);});
+}
+function expertSaveRates(){
+  var gv=function(id,def){var el=document.getElementById(id);return el?parseFloat(el.value)||def:def;};
+  var gi=function(id,def){var el=document.getElementById(id);return el?parseInt(el.value)||def:def;};
+  var gc=function(id,def){var el=document.getElementById(id);return el?el.checked:def;};
+  var data={chat_pm:gv("rate-chat-pm",1.5),chat_free_min:gi("rate-chat-free",2),chat_enabled:gc("rate-chat-enabled",true),voice_pm:gv("rate-voice-pm",2.5),voice_free_min:gi("rate-voice-free",1),voice_enabled:gc("rate-voice-enabled",true),video_pm:gv("rate-video-pm",3.5),video_free_min:gi("rate-video-free",1),video_enabled:gc("rate-video-enabled",true)};
+  expertApiCall("POST","/api/experts/rates",data).then(function(d){
+    var el=document.getElementById("rates-save-status");
+    if(el){el.textContent=d.success?"Saved":"Error";setTimeout(function(){if(el)el.textContent="";},2000);}
+  }).catch(function(e){console.log("Rates:",e);});
+}
+function expertSavePaymentMethods(){
+  var gc=function(id){var el=document.getElementById(id);return el?el.checked:true;};
+  expertApiCall("POST","/api/experts/payment-methods",{pm_card:gc("pm-card"),pm_apple:gc("pm-apple"),pm_google:gc("pm-google"),pm_wallet:gc("pm-wallet")}).catch(function(e){console.log("PM:",e);});
+}
+function expertConnectStripe(){
+  var btn=document.getElementById("stripe-connect-btn");
+  if(btn){btn.textContent="Loading...";btn.disabled=true;}
+  expertApiCall("POST","/api/experts/stripe/connect").then(function(d){
+    if(d.url){
+      window.open(d.url,"_blank");
+      if(btn){btn.textContent="Check Status";btn.disabled=false;btn.onclick=expertCheckStripeStatus;}
+    } else {
+      if(btn){btn.textContent="Connect Stripe";btn.disabled=false;}
+      alert("Error: "+(d.error||"Could not start Stripe Connect"));
+    }
+  }).catch(function(e){
+    if(btn){btn.textContent="Connect Stripe";btn.disabled=false;}
+    alert("Network error: "+e.message);
+  });
+}
+function expertCheckStripeStatus(){
+  expertApiCall("GET","/api/experts/stripe/status").then(function(d){expertUpdateStripeBanner(d);}).catch(function(e){console.log("Stripe status:",e);});
+}
+function expertUpdateStripeBanner(data){
+  var banner=document.getElementById("stripe-connect-banner");
+  var title=document.getElementById("stripe-connect-title");
+  var sub=document.getElementById("stripe-connect-sub");
+  var badge=document.getElementById("stripe-connect-status-badge");
+  var btn=document.getElementById("stripe-connect-btn");
+  if(!banner)return;
+  if(data.connected&&data.charges_enabled){
+    banner.style.background="linear-gradient(135deg,#059669,#047857)";
+    if(title)title.textContent="Stripe Account Connected";
+    if(sub)sub.textContent=(data.email||"Account")+" - Payouts "+(data.payouts_enabled?"enabled":"pending verification");
+    if(badge){badge.style.display="block";badge.textContent=data.payouts_enabled?"Active":"Pending";}
+    if(btn){btn.textContent="Manage Account";btn.onclick=function(){window.open(data.dashboard_url||"https://dashboard.stripe.com","_blank");};}
+  } else if(data.connected){
+    banner.style.background="linear-gradient(135deg,#d97706,#b45309)";
+    if(title)title.textContent="Action Required";
+    if(sub)sub.textContent="Complete Stripe onboarding to enable payouts";
+    if(badge){badge.style.display="block";badge.textContent="Incomplete";}
+    if(btn){btn.textContent="Complete Setup";btn.onclick=expertConnectStripe;}
   }
-
-  window.obSelectChannel = function(ch) {
-    F.channel = ch;
-    F.rate = (F.expertRates[ch] || 0);
-    // Fix: container is #obf-type-options not #ob-type-options
-    document.querySelectorAll('#obf-type-options button').forEach(function(btn) {
-      var sel = btn.dataset.ch === ch;
-      btn.style.borderColor = sel ? '#C4622D' : '#e5e0d8';
-      btn.style.background  = sel ? 'rgba(196,98,45,.06)' : '#f8f5f0';
-      btn.style.boxShadow   = sel ? '0 0 0 4px rgba(196,98,45,.12)' : '';
-      btn.dataset.sel = sel ? '1' : '';
+}
+function expertLoadPayments(){
+  expertApiCall("GET","/api/experts/stripe/status").then(function(d){expertUpdateStripeBanner(d);}).catch(function(e){console.log("Stripe:",e);});
+  expertApiCall("GET","/api/experts/earnings").then(function(e){
+    if(e.balance===undefined)return;
+    var fmt=function(v){return "$"+(v||0).toFixed(2);};
+    var el=function(id){return document.getElementById(id);};
+    if(el("ep-balance-available"))el("ep-balance-available").textContent=fmt(e.balance_available);
+    if(el("ep-balance-pending"))el("ep-balance-pending").textContent=fmt(e.balance_pending);
+    if(el("ep-month-earnings"))el("ep-month-earnings").textContent=fmt(e.month_total);
+    if(el("ep-total-earnings"))el("ep-total-earnings").textContent=fmt(e.all_time_total);
+    if(el("ep-month-change")){
+      var pct=e.month_change_pct||0;
+      el("ep-month-change").textContent=(pct>=0?"up +":"down ")+Math.abs(pct)+"% vs last month";
+    }
+  }).catch(function(e){console.log("Earnings:",e);});
+  expertApiCall("GET","/api/experts/rates").then(function(r){
+    if(!r.rates)return;
+    var s=r.rates;
+    var sv=function(id,v){var el=document.getElementById(id);if(el&&v!==undefined)el.value=v;};
+    var sc=function(id,v){var el=document.getElementById(id);if(el&&v!==undefined)el.checked=!!v;};
+    sv("rate-chat-pm",s.chat_pm);sv("rate-chat-free",s.chat_free_min);sc("rate-chat-enabled",s.chat_enabled!==0);
+    sv("rate-voice-pm",s.voice_pm);sv("rate-voice-free",s.voice_free_min);sc("rate-voice-enabled",s.voice_enabled!==0);
+    sv("rate-video-pm",s.video_pm);sv("rate-video-free",s.video_free_min);sc("rate-video-enabled",s.video_enabled!==0);
+  }).catch(function(e){console.log("Rates load:",e);});
+  expertApiCall("GET","/api/experts/packages").then(function(r){
+    var pkgs=r.packages||(window._expertDefaultPkgs||[]).slice();
+    window._expertPackages=pkgs;expertRenderPackages(pkgs);
+  }).catch(function(e){expertRenderPackages((window._expertDefaultPkgs||[]).slice());});
+  expertLoadPayouts(30);
+  expertApiCall("GET","/api/experts/payment-methods").then(function(r){
+    if(!r.methods)return;
+    var m=r.methods;
+    ["card","apple","google","wallet"].forEach(function(k){
+      var el=document.getElementById("pm-"+k);
+      if(el&&m["pm_"+k]!==undefined)el.checked=!!m["pm_"+k];
     });
-  };
-
-  // ── Step 1 → Next ─────────────────────────────────────────
-  window.obFunnelNext = function() {
-    if (!F.channel) { alert('Please choose a session type.'); return; }
-    if (F.mode === 'book') {
-      var d = el('obf-date'), t = el('obf-time');
-      if (!d || !d.value || !t || !t.value) { alert('Please choose a date and time.'); return; }
-      F.bookDate = d.value;
-      F.bookTime = t.value;
-    }
-    // Check if already logged in
-    if (tok() && user()) {
-      // Skip auth step
-      goToPayment();
-    } else {
-      showStep(2);
-    }
-  };
-
-  // ── Step 2: Auth tab toggle ───────────────────────────────
-  window.obAuthTab = function(tab) {
-    el('obf-auth-login').style.display  = tab==='login' ? 'block' : 'none';
-     el('obf-auth-signup').style.display = tab==='signup' ? 'block' : 'none';
-    el('obf-tab-login').style.background  = tab==='login'  ? 'white' : 'transparent';
-    el('obf-tab-signup').style.background = tab==='signup' ? 'white' : 'transparent';
-    el('obf-tab-login').style.color  = tab==='login'  ? 'var(--brown,#251810)' : '#888';
-    el('obf-tab-signup').style.color = tab==='signup' ? 'var(--brown,#251810)' : '#888';
-    el('obf-tab-login').style.boxShadow  = tab==='login'  ? '0 1px 3px rgba(0,0,0,.1)' : 'none';
-    el('obf-tab-signup').style.boxShadow = tab==='signup' ? '0 1px 3px rgba(0,0,0,.1)' : 'none';
-    showErr('ob-login-err',''); showErr('ob-signup-err','');
-  };
-
-  window.obDoLogin = function() {
-    var email = (el('obf-login-email')||{}).value || '';
-    var pass  = (el('obf-login-pass')||{}).value || '';
-    showErr('ob-login-err','');
-    if (!email || !pass) { showErr('ob-login-err','Email and password required.'); return; }
-    var btn = document.querySelector('#obf-auth-login button');
-    if (btn) { btn.textContent = 'Signing in…'; btn.disabled = true; }
-    apiCall('POST','/auth/login',{email:email,password:pass}).then(function(d){
-      if (btn) { btn.textContent='Sign In & Continue →'; btn.disabled=false; }
-      if (d.error) { showErr('ob-login-err', d.error); return; }
-      sessionStorage.setItem('ob_t', d.token);
-      sessionStorage.setItem('ob_u', JSON.stringify(d.user));
-      goToPayment();
-    }).catch(function(){ if(btn){btn.textContent='Sign In & Continue →';btn.disabled=false;} showErr('ob-login-err','Network error. Try again.'); });
-  };
-
-  window.obDoSignup = function() {
-    var name  = (el('obf-signup-name')||{}).value || '';
-    var email = (el('obf-signup-email')||{}).value || '';
-    var pass  = (el('obf-signup-pass')||{}).value || '';
-    showErr('ob-signup-err','');
-    if (!name||!email||!pass) { showErr('ob-signup-err','All fields required.'); return; }
-    if (pass.length < 8)      { showErr('ob-signup-err','Password must be at least 8 characters.'); return; }
-    var btn = document.querySelector('#obf-auth-signup button');
-    if (btn) { btn.textContent='Creating account…'; btn.disabled=true; }
-    apiCall('POST','/auth/signup',{name:name,email:email,password:pass,role:'client'}).then(function(d){
-      if (btn) { btn.textContent='Create Account & Continue →'; btn.disabled=false; }
-      if (d.error) { showErr('ob-signup-err', d.error); return; }
-      sessionStorage.setItem('ob_t', d.token);
-      sessionStorage.setItem('ob_u', JSON.stringify(d.user));
-      goToPayment();
-    }).catch(function(){ if(btn){btn.textContent='Create Account & Continue →';btn.disabled=false;} showErr('ob-signup-err','Network error. Try again.'); });
-  };
-
-  // ── Step 3: Payment ───────────────────────────────────────
-  function goToPayment() {
-    // Update order summary
-    var chLabels = {chat:'💬 Text Chat', voice:'🎤 Voice Call', video:'📹 Video Call'};
-    var ch = chLabels[F.channel] || F.channel;
-    if (el('obf-sum-type'))  el('obf-sum-type').textContent  = ch;
-    if (el('obf-pay-desc')) el('obf-pay-desc').textContent = 'Secure payment via Stripe';
-
-    if (F.mode === 'instant') {
-      if (el('obf-sum-rate'))      el('obf-sum-rate').textContent      = fmtMoney(F.rate)+'/min';
-      if (el('obf-sum-total'))     el('obf-sum-total').textContent     = '$30.00';
-      if (el('obf-sum-total-label')) el('obf-sum-total-label').textContent = 'Pre-authorization';
-      if (el('obf-sum-note'))      el('obf-sum-note').textContent      = 'A $30 hold is placed. You\'re only charged for time used.';
-      if (el('obf-pay-btn-txt'))  el('obf-pay-btn-txt').textContent  = 'Authorize $30.00 →';
-    } else {
-      var pkg = F.expertRates.packages && F.expertRates.packages[0];
-      var price = pkg ? pkg.price : (F.rate * 60);
-      if (el('obf-sum-rate'))      el('obf-sum-rate').textContent      = fmtMoney(F.rate)+'/min';
-      if (el('obf-sum-total'))     el('obf-sum-total').textContent     = fmtMoney(price||0);
-      if (el('obf-sum-total-label')) el('obf-sum-total-label').textContent = 'Session total';
-      if (el('obf-sum-note'))      el('obf-sum-note').textContent      = 'Scheduled for '+F.bookDate+' at '+F.bookTime;
-      if (el('obf-pay-btn-txt'))  el('obf-pay-btn-txt').textContent  = 'Pay ' + fmtMoney(price||0) + ' →';
-    }
-
-    showStep(3);
-
-    // Load Stripe
-    loadStripe();
-
-    // Create session on backend (so we have session_id for Stripe)
-    createSessionBackend();
-  }
-
-  function createSessionBackend() {
-    if (!F.expertId) {
-      // Try to find expert by slug
-      apiCall('GET','/experts/'+F.expertSlug).then(function(d){
-        if (d.expert) {
-          F.expertId = d.expert.id || d.expert.user_id;
-          window._currentExpertId = F.expertId;
-          createSessionNow();
-        }
-      });
-    } else {
-      createSessionNow();
-    }
-  }
-
-  function createSessionNow() {
-    if (!F.expertId) return;
-    apiCall('POST','/sessions/request',{
-      expert_id: F.expertId,
-      channel:   F.channel,
-      type:      F.mode === 'instant' ? 'permin' : 'fixed',
-      client_notes: F.mode === 'book' ? 'Scheduled: '+F.bookDate+' '+F.bookTime : ''
-    }).then(function(d){
-      if (d.session) {
-        F.sessionId = d.session.id;
-        sessionStorage.setItem('ob_sess', JSON.stringify(d.session));
-        // Now get payment intent
-        createPaymentIntent();
-      }
-    }).catch(function(err){ console.warn('[OB] session create:', err); });
-  }
-
-  function createPaymentIntent() {
-    if (!F.sessionId) return;
-    apiCall('POST','/payments/authorize',{
-      session_id: F.sessionId,
-      pre_auth_amount: 30
-    }).then(function(d){
-      if (d.client_secret) {
-        F.piSecret = d.client_secret;
-        mountStripeElement(d.client_secret, d.publishable_key);
-      } else if (d.error && d.error.indexOf('not configured') >= 0) {
-        // Stripe not set up — show manual payment bypass
-        showStripeNotConfigured();
-      }
-    }).catch(function(){ showStripeNotConfigured(); });
-  }
-
-  function showStripeNotConfigured() {
-    var placeholder = el('obf-stripe-placeholder');
-    if (placeholder) {
-      placeholder.innerHTML = '<div style="background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:12px;font-size:12px;color:#92400e;text-align:left;">'
-        + '<strong>⚠️ Payment setup required</strong><br>Stripe keys not configured. '
-        + 'Add STRIPE_SECRET_KEY and STRIPE_PUBLISHABLE_KEY in Railway environment variables to enable payments.'
-        + '<br><br><button onclick="window.obBypassPayment()" style="background:#C4622D;color:white;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-weight:600;font-size:12px;">Continue without payment (demo mode)</button>'
-        + '</div>';
-    }
-    if (el('obf-stripe-card-el')) el('obf-stripe-card-el').style.display = 'none';
-    if (el('obf-pay-btn')) el('obf-pay-btn').style.display = 'none';
-  }
-
-  window.obBypassPayment = function() {
-    // Demo mode — skip payment, go to pre-session
-    goToPreSession(true);
-  };
-
-  function loadStripe() {
-    if (window.Stripe) return;
-    var script = document.createElement('script');
-    script.src = 'https://js.stripe.com/v3/';
-    script.onload = function() { console.log('[OB] Stripe loaded'); };
-    document.head.appendChild(script);
-  }
-
-  function mountStripeElement(clientSecret, pubKey) {
-    if (!pubKey || !window.Stripe) {
-      // Wait for Stripe to load
-      setTimeout(function(){ mountStripeElement(clientSecret, pubKey); }, 500);
+  }).catch(function(e){console.log("PM load:",e);});
+}
+function expertLoadPayouts(days){
+  var list=document.getElementById("payout-history-list");
+  if(!list)return;
+  expertApiCall("GET","/api/experts/payouts?days="+days).then(function(d){
+    if(!d.payouts||!d.payouts.length){
+      list.innerHTML="<div style=\"text-align:center;padding:32px;color:var(--gray-400);\">No payouts yet.</div>";
       return;
     }
-    try {
-      F.stripe = Stripe(pubKey);
-      var appearance = {
-        theme: 'flat',
-        variables: { colorPrimary: '#C4622D', colorBackground: '#f8f5f0', borderRadius: '10px', fontFamily: 'DM Sans, sans-serif' }
-      };
-      F.elements = F.stripe.elements({ clientSecret: clientSecret, appearance: appearance });
-      var paymentEl = F.elements.create('payment', {
-        wallets: { applePay: 'auto', googlePay: 'auto' }  // Enable Apple Pay + Google Pay
-      });
-      var placeholder = el('obf-stripe-placeholder');
-      if (placeholder) placeholder.style.display = 'none';
-      paymentEl.mount('#obf-stripe-card-el');
-      if (el('obf-pay-btn')) el('obf-pay-btn').style.display = 'block';
-    } catch(e) {
-      console.warn('[OB] Stripe mount error:', e);
-    }
-  }
-
-  window.obSubmitPayment = function() {
-    if (!F.stripe || !F.elements) {
-      // If no Stripe, just proceed
-      goToPreSession(true);
-      return;
-    }
-    var btn = el('obf-pay-btn');
-    if (btn) { btn.disabled = true; }
-    if (el('obf-pay-btn-txt')) el('obf-pay-btn-txt').textContent = 'Processing…';
-    showErr('ob-payment-err','');
-
-    F.stripe.confirmPayment({
-      elements: F.elements,
-      confirmParams: { return_url: window.location.href },
-      redirect: 'if_required'
-    }).then(function(result) {
-      if (btn) btn.disabled = false;
-      if (result.error) {
-        if (el('obf-pay-btn-txt')) el('obf-pay-btn-txt').textContent = 'Pay & Continue →';
-        showErr('ob-payment-err', result.error.message);
-      } else {
-        // Payment succeeded
-        goToPreSession(false);
-      }
-    }).catch(function(e){
-      if (btn) btn.disabled = false;
-      if (el('obf-pay-btn-txt')) el('obf-pay-btn-txt').textContent = 'Pay & Continue →';
-      showErr('ob-payment-err', e.message || 'Payment failed. Please try again.');
+    var html="<table style=\"width:100%;border-collapse:collapse;\">";
+    html+="<thead><tr style=\"border-bottom:2px solid var(--gray-200);\">";
+    html+="<th style=\"text-align:left;padding:8px;font-size:11px;color:var(--gray-400);\">Date</th>";
+    html+="<th style=\"text-align:left;padding:8px;font-size:11px;color:var(--gray-400);\">Gross</th>";
+    html+="<th style=\"text-align:left;padding:8px;font-size:11px;color:var(--gray-400);\">Fee</th>";
+    html+="<th style=\"text-align:right;padding:8px;font-size:11px;color:var(--gray-400);\">Net</th>";
+    html+="<th style=\"text-align:right;padding:8px;font-size:11px;color:var(--gray-400);\">Status</th>";
+    html+="</tr></thead><tbody>";
+    d.payouts.forEach(function(p){
+      var col=(p.status==="paid"||p.status==="available")?"#16a34a":"#a16207";
+      html+="<tr style=\"border-bottom:1px solid var(--gray-200);\">";
+      html+="<td style=\"padding:10px 8px;font-size:13px;\">"+new Date(p.created_at).toLocaleDateString()+"</td>";
+      html+="<td style=\"padding:10px 8px;font-size:13px;\">$"+((p.gross||p.amount||0).toFixed(2))+"</td>";
+      html+="<td style=\"padding:10px 8px;font-size:13px;color:var(--gray-400);\">&minus;$"+((p.fee||0).toFixed(2))+"</td>";
+      html+="<td style=\"padding:10px 8px;font-weight:700;text-align:right;\">$"+((p.net||p.amount||0).toFixed(2))+"</td>";
+      html+="<td style=\"padding:10px 8px;text-align:right;\"><span style=\"color:"+col+"\">"+p.status+"</span></td>";
+      html+="</tr>";
     });
+    html+="</tbody></table>";
+    list.innerHTML=html;
+  }).catch(function(e){if(list)list.innerHTML="<div style=\"padding:20px;color:var(--gray-400);\">Could not load.</div>";});
+}
+function expertRequestPayout(){
+  var bal=document.getElementById("ep-balance-available");
+  var amt=bal?bal.textContent:"$0.00";
+  if(!confirm("Request payout of "+amt+"?"))return;
+  expertApiCall("POST","/api/experts/payouts/request",{}).then(function(d){
+    if(d.success){alert("Payout requested! Arrives within 2-7 business days.");expertLoadPayouts(30);}
+    else alert("Error: "+(d.error||"Unknown"));
+  }).catch(function(e){alert("Network error: "+e.message);});
+}
+(function(){
+  var orig=window.dbNav;
+  window.dbNav=function(el,panel){
+    if(orig)orig(el,panel);
+    if(panel==="payments")setTimeout(expertLoadPayments,150);
   };
-
-  // ── Step 4: Pre-session / Confirmation ────────────────────
-  function goToPreSession(bypass) {
-    var chLabels = {chat:'💬 Text Chat', voice:'🎤 Voice Call', video:'📹 Video Call'};
-
-    // Expert avatar
-    var ini = F.expertName.split(' ').map(function(w){return w.charAt(0);}).join('').toUpperCase().slice(0,2);
-    if (el('obf-confirm-av')) el('obf-confirm-av').textContent = ini;
-    if (el('obf-confirm-name')) el('obf-confirm-name').textContent = F.expertName;
-    if (el('obf-confirm-type-label')) el('obf-confirm-type-label').textContent = chLabels[F.channel] || F.channel;
-
-    if (F.mode === 'instant') {
-      if (el('obf-confirm-name'))   el('obf-confirm-name').textContent   = 'Ready to connect!';
-      if (el('obf-confirm-type-label'))     el('obf-confirm-type-label').textContent     = bypass ? 'Demo mode — no charge' : 'Payment authorized';
-      if (el('obf-confirm-icon'))    el('obf-confirm-icon').textContent    = '⚡';
-      if (el('obf-confirm-rate-lbl')) el('obf-confirm-rate-lbl').textContent = 'Rate';
-      if (el('obf-confirm-rate-val'))    el('obf-confirm-rate-val').textContent    = fmtMoney(F.rate)+'/min';
-      var dateRow = el('obf-booked-ui');
-      if (dateRow) dateRow.style.display = 'none';
-      if (el('obf-presess-ui')) el('obf-presess-ui').style.display = 'block';
-      if (el('obf-booked-ui')) el('obf-booked-ui').style.display = 'none';
-    } else {
-      if (el('obf-confirm-name'))   el('obf-confirm-name').textContent   = 'Booking confirmed!';
-      if (el('obf-confirm-type-label'))     el('obf-confirm-type-label').textContent     = 'Confirmation sent to your email';
-      if (el('obf-confirm-icon'))    el('obf-confirm-icon').textContent    = '✅';
-      if (el('obf-confirm-rate-lbl')) el('obf-confirm-rate-lbl').textContent = 'Rate';
-      if (el('obf-confirm-rate-val'))    el('obf-confirm-rate-val').textContent    = fmtMoney(F.rate)+'/min';
-      if (el('obf-booked-date'))    el('obf-booked-date').textContent    = F.bookDate+' at '+F.bookTime;
-      var dr2 = el('obf-booked-ui');
-      if (dr2) dr2.style.display = 'flex';
-      if (el('obf-presess-ui'))  el('obf-presess-ui').style.display  = 'none';
-      if (el('obf-booked-ui')) el('obf-booked-ui').style.display = 'block';
-    }
-
-    showStep(4);
-  }
-
-  // ── Start live session ─────────────────────────────────────
-  window.obStartSession = function() {
-    window.obFunnelClose();
-    // Pass session info to the session view
-    var sessData = JSON.parse(sessionStorage.getItem('ob_sess') || '{}');
-    sessData.channel = F.channel;
-    sessData.expertName = F.expertName;
-    sessData.rate = F.rate;
-    sessionStorage.setItem('ob_sess', JSON.stringify(sessData));
-
-    if (typeof switchView === 'function') switchView(5);
-
-    // Activate the correct phone screen based on channel
-    setTimeout(function() {
-      // Set up session header info
-      var titleEl = el('a3-session-title') || el('a4-session-title');
-      if (titleEl) titleEl.textContent = F.expertName + ' · ' + (F.channel.charAt(0).toUpperCase()+F.channel.slice(1));
-
-      var sess = JSON.parse(sessionStorage.getItem('ob_sess') || '{}');
-      if (window.OwnlyAPI && window.OwnlyAPI.initSessionView) {
-        window.OwnlyAPI.initSessionView(sess, F.channel);
-      }
-
-      // Show correct UI inside phone
-      var content = el('phone-content');
-      if (content) {
-        // Hide all screens, show A3 (free/entry screen)
-        content.querySelectorAll('.phone-screen').forEach(function(s){ s.classList.remove('active'); });
-        var screen = el('screen-A3');
-        if (screen) screen.classList.add('active');
-
-        // Show correct channel UI
-        ['chat','voice','video'].forEach(function(ch) {
-          var ui = el('a3-'+ch+'-ui');
-          if (ui) ui.style.display = (ch === F.channel) ? 'flex' : 'none';
-        });
-      }
-
-      // Connect WebSocket for real-time messaging
-      if (window.OwnlyAPI && window.OwnlyAPI.connectSession) {
-        window.OwnlyAPI.connectSession(sess.id, F.channel);
-      }
-    }, 400);
-  };
-
-  // ── Wire existing chat inputs in session view ─────────────
-  function wireSessionInputs() {
-    // Wire "free" chat input
-    var freeInput = el('free-chat-input');
-    if (freeInput && !freeInput._wired) {
-      freeInput._wired = true;
-      freeInput.addEventListener('keydown', function(e) {
-        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMsgFromInput(freeInput, 'free-chat-messages'); }
-      });
-    }
-    // Wire "paid" chat input
-    var paidInput = el('paid-chat-input');
-    if (paidInput && !paidInput._wired) {
-      paidInput._wired = true;
-      paidInput.addEventListener('keydown', function(e) {
-        if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMsgFromInput(paidInput, 'paid-chat-messages'); }
-      });
-    }
-  }
-
-  function sendMsgFromInput(input, messagesContainerId) {
-    var text = input.value.trim();
-    if (!text) return;
-    input.value = '';
-    if (window.OwnlyAPI && window.OwnlyAPI.sendMessage) {
-      window.OwnlyAPI.sendMessage(text);
-    } else {
-      // Local echo only
-      appendToChat(messagesContainerId, 'You', text, 'me');
-    }
-  }
-
-  function appendToChat(containerId, sender, text, role) {
-    var box = el(containerId);
-    if (!box) return;
-    var div = document.createElement('div');
-    div.style.cssText = 'padding:8px 10px;border-radius:10px;margin-bottom:6px;max-width:80%;font-size:13px;'
-      + (role==='me'     ? 'margin-left:auto;background:var(--terra,#C4622D);color:white;' :
-         role==='system' ? 'text-align:center;color:rgba(255,255,255,.4);font-size:11px;width:100%;max-width:100%;background:none;' :
-                           'background:rgba(255,255,255,.1);color:rgba(246,241,233,.9);');
-    if (role !== 'system') {
-      var nm = document.createElement('div');
-      nm.style.cssText = 'font-size:10px;opacity:.6;margin-bottom:2px;';
-      nm.textContent = sender;
-      div.appendChild(nm);
-    }
-    var t = document.createElement('div'); t.textContent = text;
-    div.appendChild(t);
-    box.appendChild(div);
-    box.scrollTop = box.scrollHeight;
-  }
-
-  // Expose so OwnlyAPI can use it
-  window.obAppendToChat = appendToChat;
-
-  // Wire inputs after DOM ready
-  document.addEventListener('DOMContentLoaded', wireSessionInputs);
-  setTimeout(wireSessionInputs, 1500);
-
-  // ── Expose F state for OwnlyAPI ───────────────────────────
-  window.obFunnelState = F;
-
-  // ── Wire send buttons in session view ─────────────────────
-  document.addEventListener('click', function(e) {
-    var btn = e.target;
-    if (!btn) return;
-    // Free session send button
-    if (btn.closest && btn.closest('#screen-A3') && btn.textContent.trim() === '➤') {
-      var input = el('free-chat-input');
-      if (input) sendMsgFromInput(input, 'free-chat-messages');
-    }
-    // Paid session send button
-    if (btn.closest && btn.closest('#screen-A4') && btn.textContent.trim() === '➤') {
-      var input2 = el('paid-chat-input');
-      if (input2) sendMsgFromInput(input2, 'paid-chat-messages');
-    }
-  });
-
-  console.log('[OB] Booking funnel v2 loaded');
-
 })();
-
-
-
+// END EXPERT STRIPE JS
 </script>
 
-<iframe name="__privateStripeMetricsController2370" frameborder="0" allowtransparency="true" scrolling="no" role="presentation" allow="payment *" src="https://js.stripe.com/v3/m-outer-3437aaddcdf6922d623e172c2d6f9278.html#url=https%3A%2F%2Fownlybiz.com%2F&amp;title=Ownlybiz%20%E2%80%94%20Own%20your%20expertise.%20Own%20your%20income.&amp;referrer=&amp;muid=eb47a147-6373-453b-99a5-38ec9f75990d777cfe&amp;sid=NA&amp;version=6&amp;preview=false&amp;__shared_params__[version]=v3" aria-hidden="true" tabindex="-1" style="border: none !important; margin: 0px !important; padding: 0px !important; width: 1px !important; min-width: 100% !important; overflow: hidden !important; display: block !important; visibility: hidden !important; position: fixed !important; height: 1px !important; pointer-events: none !important; user-select: none !important;"></iframe>
-<script>
-undefined
-
-undefined
-</script>
-</body><grammarly-desktop-integration data-grammarly-shadow-root="true"></grammarly-desktop-integration></html>
+<iframe name="__privateStripeMetricsController2370" frameborder="0" allowtransparency="true" scrolling="no" role="presentation" allow="payment *" src="https://js.stripe.com/v3/m-outer-3437aaddcdf6922d623e172c2d6f9278.html#url=https%3A%2F%2Fownlybiz.com%2F&amp;title=Ownlybiz%20%E2%80%94%20Own%20your%20expertise.%20Own%20your%20income.&amp;referrer=&amp;muid=eb47a147-6373-453b-99a5-38ec9f75990d777cfe&amp;sid=NA&amp;version=6&amp;preview=false&amp;__shared_params__[version]=v3" aria-hidden="true" tabindex="-1" style="border: none !important; margin: 0px !important; padding: 0px !important; width: 1px !important; min-width: 100% !important; overflow: hidden !important; display: block !important; visibility: hidden !important; position: fixed !important; height: 1px !important; pointer-events: none !important; user-select: none !important;"></iframe></body><grammarly-desktop-integration data-grammarly-shadow-root="true"></grammarly-desktop-integration></html>

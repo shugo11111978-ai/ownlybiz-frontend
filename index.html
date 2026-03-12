@@ -9354,21 +9354,70 @@ function connectPaymentMethod(method) {
   var labels = {bank:'Bank Account (ACH)', wise:'Wise', crypto:'Crypto (USDC)'};
   _showToast('Opening ' + (labels[method]||method) + ' connection flow…', 'green');
 }
-function testPaymentGateway(provider) {
-  var resultEl = document.getElementById(provider + '-test-result');
-  if (!resultEl) return;
-  resultEl.style.display = 'block';
-  resultEl.style.background = 'rgba(255,255,255,.06)';
-  resultEl.style.color = 'rgba(246,241,233,.5)';
-  resultEl.textContent = 'Testing ' + provider + ' connection…';
-  setTimeout(function() {
-    resultEl.style.background = 'rgba(34,197,94,.1)';
-    resultEl.style.color = '#4ade80';
-    resultEl.textContent = '✓ ' + provider.charAt(0).toUpperCase() + provider.slice(1) + ' API responding · Credentials valid · Webhooks active';
-  }, 1000);
+function testPaymentGateway(type){
+  if(type!=="stripe")return;
+  var el=document.getElementById("stripe-test-result")||document.querySelector(".stripe-test-status");
+  var btn=Array.from(document.querySelectorAll("button")).find(function(b){return b.textContent.includes("Test Connection");});
+  if(el)el.textContent="Testing...";
+  if(btn){btn.disabled=true;btn.textContent="Testing...";}
+  var token=sessionStorage.getItem("ob_t");
+  var base="https://ownlybiz-backend-production.up.railway.app";
+  fetch(base+"/api/admin/settings/test-stripe",{
+    method:"GET",
+    headers:{"Authorization":"Bearer "+token,"Content-Type":"application/json"}
+  }).then(function(r){return r.json();}).then(function(d){
+    if(btn){btn.disabled=false;btn.textContent="Test Connection";}
+    var msg=d.valid
+      ?"Stripe API responding - Credentials valid"+(d.account_name?" - "+d.account_name:"")
+      :"Failed: "+(d.error||"Invalid credentials");
+    var color=d.valid?"#16a34a":"#dc2626";
+    if(el){el.textContent=msg;el.style.color=color;}
+    else{
+      var status=document.createElement("div");
+      status.textContent=msg;status.style.cssText="margin-top:8px;font-size:12px;font-weight:600;color:"+color+";";
+      var parent=btn?btn.parentNode:null;
+      if(parent)parent.appendChild(status);
+      setTimeout(function(){if(status.parentNode)status.parentNode.removeChild(status);},4000);
+    }
+  }).catch(function(e){
+    if(btn){btn.disabled=false;btn.textContent="Test Connection";}
+    var msg="Error: "+e.message;
+    if(el){el.textContent=msg;el.style.color="#dc2626";}
+  });
 }
-function savePaymentGateway(provider) {
-  _showToast(provider.charAt(0).toUpperCase() + provider.slice(1) + ' configuration saved', 'green');
+function savePaymentGateway(type){
+  if(type!=="stripe")return;
+  var gv=function(id){var el=document.getElementById(id);return el?el.value.trim():"";};
+  var sk=gv("stripe-sk")||gv("admin-stripe-sk")||gv("stripe_secret_key");
+  var pk=gv("stripe-pk")||gv("admin-stripe-pk")||gv("stripe_publishable_key");
+  var wh=gv("stripe-wh")||gv("admin-stripe-wh")||gv("stripe_webhook_secret");
+  var modeEl=document.querySelector("select#stripe-env,select[name=stripe-env],select[name=stripe-mode]");
+  var mode=modeEl?modeEl.value:"live";
+  if(!sk){alert("Please enter your Stripe Secret Key (sk_live_... or sk_test_...)");return;}
+  if(!pk){alert("Please enter your Stripe Publishable Key (pk_live_... or pk_test_...)");return;}
+  var btn=Array.from(document.querySelectorAll("button")).find(function(b){return b.textContent.includes("Save Stripe");});
+  if(btn){btn.disabled=true;btn.textContent="Saving...";}
+  var token=sessionStorage.getItem("ob_t");
+  var base="https://ownlybiz-backend-production.up.railway.app";
+  fetch(base+"/api/admin/settings",{
+    method:"POST",
+    headers:{"Authorization":"Bearer "+token,"Content-Type":"application/json"},
+    body:JSON.stringify({stripe_secret_key:sk,stripe_publishable_key:pk,stripe_webhook_secret:wh,stripe_mode:mode})
+  }).then(function(r){return r.json();}).then(function(d){
+    if(btn){btn.disabled=false;btn.textContent="Save Stripe Config";}
+    if(d.success){
+      var ok=document.createElement("div");
+      ok.textContent="Saved successfully";
+      ok.style.cssText="margin-top:8px;font-size:12px;font-weight:600;color:#16a34a;";
+      var parent=btn?btn.parentNode:null;
+      if(parent){parent.appendChild(ok);setTimeout(function(){if(ok.parentNode)ok.parentNode.removeChild(ok);},3000);}
+    } else {
+      alert("Save failed: "+(d.error||"Unknown error"));
+    }
+  }).catch(function(e){
+    if(btn){btn.disabled=false;btn.textContent="Save Stripe Config";}
+    alert("Network error: "+e.message);
+  });
 }
 function updateFeeDisplay(slider, inputId) {
   var input = document.getElementById(inputId);

@@ -9796,7 +9796,9 @@ async function savePaymentConfig() {
         voice:    parseFloat(e.rate_voice || 4.00),
         video:    parseFloat(e.rate_video || 5.00),
         packages: d.packages   || []
-      };
+      }
+    window.currentExpert = e;
+    window._expertId = e.id;;
       var name = e.name || slug;
       var first = name.split(' ')[0];
       var biz = (e.business_name || name) + ' Consulting';
@@ -10261,32 +10263,86 @@ async function savePaymentConfig() {
   };
 
   window.clientLogin = function() {
-    var email = ($('client-login-email')||{value:''}).value.trim();
-    var pass  = ($('client-login-pass')||{value:''}).value;
-    showErr('client-login-err', '');
-    if (!email || !pass) { showErr('client-login-err', 'Please enter email and password.'); return; }
-    apiCall('POST', '/auth/login', {email: email, password: pass}).then(function(d) {
-      Auth.save(d.token, d.user);
-      showToast('Welcome back, ' + (d.user.name.split(' ')[0]) + '!');
-      if (typeof completClientLogin === 'function') completClientLogin();
-      else if (typeof window.completClientLogin === 'function') window.completClientLogin();
-    }).catch(function(err){ showErr('client-login-err', err.message); });
-  };
-
-  window.clientSignup = function() {
-    var name  = ($('client-signup-name')||{value:''}).value.trim();
-    var email = ($('client-signup-email')||{value:''}).value.trim();
-    var pass  = ($('client-signup-pass')||{value:''}).value;
-    showErr('client-signup-err', '');
-    if (!name || !email || !pass) { showErr('client-signup-err', 'Please fill in all fields.'); return; }
-    if (pass.length < 8) { showErr('client-signup-err', 'Password must be at least 8 characters.'); return; }
-    apiCall('POST', '/auth/signup', {name: name, email: email, password: pass, role: 'client'}).then(function(d) {
-      Auth.save(d.token, d.user);
-      showToast('Account created! Welcome, ' + name.split(' ')[0] + '!');
-      if (typeof completClientLogin === 'function') completClientLogin();
-      else if (typeof window.completClientLogin === 'function') window.completClientLogin();
-    }).catch(function(err){ showErr('client-signup-err', err.message); });
-  };
+  var email = (document.getElementById("client-login-email")||{}).value||"";
+  var pass = (document.getElementById("client-login-pass")||{}).value||"";
+  var errEl = document.getElementById("client-login-err");
+  if(errEl) errEl.textContent = "";
+  if(!email || !pass) { if(errEl) errEl.textContent = "Please enter email and password."; return; }
+  var base = "https://ownlybiz-backend-production.up.railway.app";
+  fetch(base + "/api/auth/login", {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({email: email, password: pass})
+  }).then(function(r){ return r.json(); }).then(function(d) {
+    if(d.token) {
+      sessionStorage.setItem("ob_ct", d.token);
+      sessionStorage.setItem("ob_cu", JSON.stringify(d.user||{}));
+      window._obClient = d.user;
+      document.getElementById("client-login-gate").style.display = "none";
+      if(window._expertId) {
+        fetch(base + "/api/experts/me/client-link", {
+          method: "POST",
+          headers: {"Content-Type":"application/json","Authorization":"Bearer "+d.token},
+          body: JSON.stringify({expert_id: window._expertId})
+        }).catch(function(){});
+      }
+      if(window._obAfterAuth) { window._obAfterAuth(); window._obAfterAuth = null; }
+    } else {
+      if(errEl) errEl.textContent = d.error || "Invalid email or password.";
+    }
+  }).catch(function(e) {
+    if(errEl) errEl.textContent = "Network error. Please try again.";
+  });
+};
+window.clientSignup = function() {
+  var name = (document.getElementById("client-signup-name")||{}).value||"";
+  var email = (document.getElementById("client-signup-email")||{}).value||"";
+  var pass = (document.getElementById("client-signup-pass")||{}).value||"";
+  var errEl = document.getElementById("client-signup-err");
+  if(errEl) errEl.textContent = "";
+  if(!name||!email||!pass) { if(errEl) errEl.textContent = "Please fill all fields."; return; }
+  if(pass.length < 6) { if(errEl) errEl.textContent = "Password must be at least 6 characters."; return; }
+  var base = "https://ownlybiz-backend-production.up.railway.app";
+  fetch(base + "/api/auth/signup", {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({name: name, email: email, password: pass, role: "client"})
+  }).then(function(r){ return r.json(); }).then(function(d) {
+    if(d.token) {
+      sessionStorage.setItem("ob_ct", d.token);
+      sessionStorage.setItem("ob_cu", JSON.stringify(d.user||{}));
+      window._obClient = d.user;
+      document.getElementById("client-login-gate").style.display = "none";
+      if(window._expertId) {
+        fetch(base + "/api/experts/me/client-link", {
+          method: "POST",
+          headers: {"Content-Type":"application/json","Authorization":"Bearer "+d.token},
+          body: JSON.stringify({expert_id: window._expertId})
+        }).catch(function(){});
+      }
+      if(window._obAfterAuth) { window._obAfterAuth(); window._obAfterAuth = null; }
+    } else {
+      if(errEl) errEl.textContent = d.error || "Could not create account. Try a different email.";
+    }
+  }).catch(function(e) {
+    if(errEl) errEl.textContent = "Network error. Please try again.";
+  });
+};
+window.obFunnelOpen = function(mode) {
+  var token = sessionStorage.getItem("ob_ct");
+  window._funnelMode = mode || "instant";
+  if(!token) {
+    var gate = document.getElementById("client-login-gate");
+    if(gate) { gate.style.display = "flex"; }
+    window._obAfterAuth = function() { window.obFunnelOpen(window._funnelMode); };
+    return;
+  }
+  var overlay = document.getElementById("booking-overlay");
+  if(overlay) { overlay.style.display = "flex"; }
+  if(typeof window._obFunnelStep === "function") {
+    window._obFunnelStep(1);
+  }
+};;
 
   // ── Logout ────────────────────────────────────────────
   window.logout = window.expertLogout = window.adminLogout = window.obLogout = function() {

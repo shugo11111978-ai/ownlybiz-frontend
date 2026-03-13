@@ -9111,7 +9111,10 @@ function toggleApiKeyVisibility() {
 // ══════════════════════════════════════════
 function configureStripe() {
   var panel = document.getElementById('stripe-config-panel');
-  if (panel) panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+  if (!panel) return;
+  var opening = panel.style.display === 'none' || panel.style.display === '';
+  panel.style.display = opening ? 'block' : 'none';
+  if (opening) loadAdminPaymentSettings();
 }
 function configurePaypal() {
   var panel = document.getElementById('paypal-config-panel');
@@ -9126,20 +9129,46 @@ function connectPaymentMethod(method) {
   _showToast('Opening ' + (labels[method]||method) + ' connection flow…', 'green');
 }
 function testPaymentGateway(provider) {
-  var resultEl = document.getElementById(provider + '-test-result');
-  if (!resultEl) return;
-  resultEl.style.display = 'block';
-  resultEl.style.background = 'rgba(255,255,255,.06)';
-  resultEl.style.color = 'rgba(246,241,233,.5)';
-  resultEl.textContent = 'Testing ' + provider + ' connection…';
-  setTimeout(function() {
-    resultEl.style.background = 'rgba(34,197,94,.1)';
-    resultEl.style.color = '#4ade80';
-    resultEl.textContent = '✓ ' + provider.charAt(0).toUpperCase() + provider.slice(1) + ' API responding · Credentials valid · Webhooks active';
-  }, 1000);
+  if (provider !== 'stripe') { _showToast(provider + ' not supported yet', 'red'); return; }
+  var el = document.getElementById('stripe-test-result');
+  if (el) { el.style.display = 'block'; el.textContent = 'Testing connection...'; el.style.color = ''; }
+  var tok = sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t');
+  fetch('https://ownlybiz-backend-production.up.railway.app/api/admin/settings/test-stripe', {
+    headers: { 'Authorization': 'Bearer ' + tok }
+  }).then(function(r) { return r.json(); }).then(function(d) {
+    if (!el) return;
+    if (d.success) {
+      el.textContent = 'Connected (' + (d.mode || 'live') + ' mode)';
+      el.style.color = '#22c55e';
+    } else {
+      el.textContent = 'Failed: ' + (d.error || 'Check your secret key');
+      el.style.color = '#ef4444';
+    }
+  }).catch(function(e) {
+    if (el) { el.textContent = 'Network error: ' + e.message; el.style.color = '#ef4444'; }
+  });
 }
 function savePaymentGateway(provider) {
-  _showToast(provider.charAt(0).toUpperCase() + provider.slice(1) + ' configuration saved', 'green');
+  if (provider !== 'stripe') { _showToast(provider + ' not yet supported', 'red'); return; }
+  var sk = (document.getElementById('stripe-secret-key') || {}).value || '';
+  var pk = (document.getElementById('stripe-pub-key') || {}).value || '';
+  var wh = (document.getElementById('stripe-webhook-secret') || {}).value || '';
+  if (!sk || !pk) { _showToast('Secret key and publishable key are required', 'red'); return; }
+  var tok = sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t');
+  var btn = document.querySelector('[onclick*="savePaymentGateway"]');
+  if (btn) btn.disabled = true;
+  fetch('https://ownlybiz-backend-production.up.railway.app/api/admin/settings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + tok },
+    body: JSON.stringify({ stripe_secret_key: sk, stripe_publishable_key: pk, stripe_webhook_secret: wh })
+  }).then(function(r) { return r.json(); }).then(function(d) {
+    if (btn) btn.disabled = false;
+    if (d.success !== false) { _showToast('Stripe configuration saved', 'green'); }
+    else { _showToast('Save failed: ' + (d.error || 'Unknown error'), 'red'); }
+  }).catch(function(e) {
+    if (btn) btn.disabled = false;
+    _showToast('Network error: ' + e.message, 'red');
+  });
 }
 function updateFeeDisplay(slider, inputId) {
   var input = document.getElementById(inputId);
@@ -10847,7 +10876,29 @@ async function savePaymentConfig() {
     }
   });
 
-  </script>
+  
+function loadAdminPaymentSettings() {
+  var tok = sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t');
+  if (!tok) return;
+  fetch('https://ownlybiz-backend-production.up.railway.app/api/admin/settings', {
+    headers: { 'Authorization': 'Bearer ' + tok }
+  }).then(function(r) { return r.json(); }).then(function(d) {
+    var s = d.settings || d || {};
+    var skEl = document.getElementById('stripe-secret-key');
+    var pkEl = document.getElementById('stripe-pub-key');
+    var whEl = document.getElementById('stripe-webhook-secret');
+    if (skEl && s.stripe_secret_key) {
+      skEl.placeholder = s.stripe_secret_key.substring(0, 8) + '...(saved)';
+    }
+    if (pkEl && s.stripe_publishable_key) {
+      pkEl.placeholder = s.stripe_publishable_key.substring(0, 8) + '...(saved)';
+    }
+    if (whEl && s.stripe_webhook_secret) {
+      whEl.placeholder = 'whsec_...(saved)';
+    }
+  }).catch(function() {});
+}
+</script>
 
   <style>
   @media(max-width:768px){

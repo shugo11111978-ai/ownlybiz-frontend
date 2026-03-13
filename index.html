@@ -8551,8 +8551,15 @@ function addFixedSession() {
 
 // ===== PACKAGE MODAL =====
 function openAddPackageModal() {
-  document.getElementById('connector-modal-content').innerHTML = '<div class="modal-title">Create Package</div><div class="modal-sub">Build a session bundle to offer clients</div><div class="modal-field"><label class="modal-label">Package Name</label><input type="text" class="modal-input" placeholder="Growth Bundle"></div><div class="modal-field"><label class="modal-label">Number of Sessions</label><input type="number" class="modal-input" value="5"></div><div class="modal-field"><label class="modal-label">Package Price ($)</label><input type="number" class="modal-input" value="450"></div><div class="modal-field"><label class="modal-label">Description</label><input type="text" class="modal-input" placeholder="5 one-hour sessions"></div><div class="modal-actions"><button class="btn btn-primary" onclick="closeConnectorModal()">Create Package</button><button class="btn btn-secondary" onclick="closeConnectorModal()">Cancel</button></div>';
-  document.getElementById('connector-modal').classList.add('open');
+  var modal = document.getElementById('add-package-modal');
+  if (modal) { modal.style.display = 'flex'; return; }
+  var name = prompt('Package name (e.g. 30-min Strategy Call):');
+  if (!name) return;
+  var price = parseFloat(prompt('Price ($):') || '0');
+  var mins = parseInt(prompt('Duration (minutes):') || '60');
+  var channel = prompt('Channel (chat/voice/video):') || 'video';
+  if (!price || price <= 0) { _showToast('Invalid price', 'red'); return; }
+  saveNewPackage({ name: name, price: price, duration_min: mins, channel: channel });
 }
 
 // ===== BIG REVENUE CHART =====
@@ -8652,26 +8659,24 @@ var connectorData = {
   webhooks: {title:'Custom Webhooks', icon:'🔗', status:'configured', fields:[{label:'Endpoint URL 1',val:'https://myapp.com/ownlybiz/sessions',type:'text'},{label:'Endpoint URL 2',val:'https://myapp.com/ownlybiz/payments',type:'text'},{label:'Events',type:'select',opts:['All events','Session events only','Payment events only']},{label:'Include auth header',type:'toggle'}]},
   api: {title:'Ownlybiz REST API', icon:'🛠️', status:'', fields:[{label:'API Key Name',val:'',placeholder:'My App',type:'text'},{label:'Permissions',type:'select',opts:['Read only','Read + Write','Admin']}]},
 };
-function openConnectorModal(id) {
-  var d = connectorData[id] || {title: id.charAt(0).toUpperCase()+id.slice(1), icon:'🔌', fields:[]};
-  var html = '<div class="modal-title">' + d.icon + ' ' + d.title + '</div>';
-  html += '<div class="modal-sub">' + (d.status === 'connected' ? '✅ Connected and active' : d.status === 'configured' ? '⚙️ Configured' : 'Connect your account to get started') + '</div>';
-  d.fields.forEach(function(f) {
-    html += '<div class="modal-field"><label class="modal-label">' + f.label + '</label>';
-    if (f.type === 'select') {
-      html += '<select class="modal-input"><option>' + (f.opts||[]).join('</option><option>') + '</option></select>';
-    } else if (f.type === 'toggle') {
-      html += '<label class="toggle-sm"><input type="checkbox" checked><div class="toggle-sm-track"></div><div class="toggle-sm-thumb"></div></label>';
+function openConnectorModal(type) {
+  if (type !== 'stripe') { _showToast(type + ' not supported yet', 'red'); return; }
+  var tok = sessionStorage.getItem('ob_t');
+  if (!tok) { _showToast('Please log in first', 'red'); return; }
+  _showToast('Connecting to Stripe...', 'green');
+  fetch('https://ownlybiz-backend-production.up.railway.app/api/experts/stripe/connect', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + tok },
+    body: JSON.stringify({ return_url: window.location.href })
+  }).then(function(r) { return r.json(); }).then(function(d) {
+    if (d.url) {
+      window.location.href = d.url;
+    } else if (d.account_id) {
+      _showToast('Stripe already connected: ' + d.account_id.substring(0,12) + '...', 'green');
     } else {
-      html += '<input type="' + f.type + '" class="modal-input" value="' + (f.val||'') + '" placeholder="' + (f.placeholder||'') + '">';
+      _showToast('Error: ' + (d.error || 'Could not connect Stripe'), 'red');
     }
-    html += '</div>';
-  });
-  html += '<div class="modal-actions"><button class="btn btn-primary" onclick="closeConnectorModal()">Save Configuration</button><button class="btn btn-secondary" onclick="closeConnectorModal()">Cancel</button>';
-  if (d.status === 'connected') html += '<button class="btn" style="color:#ef4444;border-color:#ef4444;" onclick="closeConnectorModal()">Disconnect</button>';
-  html += '</div>';
-  document.getElementById('connector-modal-content').innerHTML = html;
-  document.getElementById('connector-modal').classList.add('open');
+  }).catch(function(e) { _showToast('Network error: ' + e.message, 'red'); });
 }
 function closeConnectorModal() {
   document.getElementById('connector-modal').classList.remove('open');
@@ -8956,19 +8961,12 @@ function settingsNav(el, blockId) {
 // SAVE SETTINGS WITH CONFIRMATION
 // ══════════════════════════════════════════
 function saveSettingsBlock(section) {
+  if (section === 'pricing') { saveExpertPricing(); return; }
   var statusEl = document.getElementById('save-status-' + section);
   if (!statusEl) return;
-  statusEl.textContent = 'Saving…';
+  statusEl.textContent = 'Saving...';
   statusEl.style.color = 'var(--gray-400)';
-  setTimeout(function() {
-    statusEl.textContent = '✓ Saved';
-    statusEl.style.color = '#16a34a';
-    // Show top indicator
-    var ind = document.getElementById('settings-save-indicator');
-    if (ind) { ind.style.display='flex'; setTimeout(function(){ ind.style.display='none'; }, 3000); }
-    // Clear status after 4s
-    setTimeout(function(){ statusEl.textContent = ''; }, 4000);
-  }, 700);
+  setTimeout(function() { statusEl.textContent = 'Saved'; statusEl.style.color = 'var(--green)'; }, 800);
 }
 
 // ══════════════════════════════════════════
@@ -9050,18 +9048,12 @@ function addPackageRow() {
   if (!list) return;
   var row = document.createElement('div');
   row.className = 'package-row-item';
-  row.style.cssText = 'border:1.5px solid var(--gray-200);border-radius:12px;padding:14px 16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;';
-  var btn = document.createElement('button');
-  btn.onclick = function(){ this.closest('.package-row-item').remove(); };
-  btn.style.cssText = 'border:none;background:none;color:var(--gray-300);cursor:pointer;font-size:18px;padding:4px;';
-  btn.title = 'Remove'; btn.textContent = '×';
-  var nameDiv = document.createElement('div');
-  nameDiv.style.cssText = 'flex:1;min-width:150px;';
-  nameDiv.innerHTML = '<input style="border:none;background:none;font-weight:700;font-size:14px;color:var(--brown);font-family:var(--font-body);width:100%;" placeholder="Package name…">';
-  var priceDiv = document.createElement('div');
-  priceDiv.style.cssText = 'display:flex;align-items:center;gap:6px;';
-  priceDiv.innerHTML = '<span style="font-size:13px;color:var(--gray-400);">$</span><input class="settings-field-input" value="100" type="number" style="width:80px;text-align:right;">';
-  row.appendChild(nameDiv); row.appendChild(priceDiv); row.appendChild(btn);
+  row.innerHTML = '<input type="text" class="pkg-name-input" placeholder="Package name" style="flex:2;padding:6px 10px;border-radius:6px;border:1px solid var(--gray-200);background:var(--gray-50);font-size:13px;">'
+    + '<input type="number" class="pkg-price-input" placeholder="Price ($)" step="0.01" min="0" style="flex:1;padding:6px 10px;border-radius:6px;border:1px solid var(--gray-200);background:var(--gray-50);font-size:13px;">'
+    + '<input type="number" class="pkg-mins-input" placeholder="Mins" min="5" style="width:70px;padding:6px 10px;border-radius:6px;border:1px solid var(--gray-200);background:var(--gray-50);font-size:13px;">'
+    + '<select class="pkg-channel-input" style="flex:1;padding:6px 10px;border-radius:6px;border:1px solid var(--gray-200);background:var(--gray-50);font-size:13px;">'
+    + '<option value="video">Video</option><option value="voice">Voice</option><option value="chat">Chat</option></select>'
+    + '<button onclick="this.closest('.package-row-item').remove()" style="padding:6px 10px;border-radius:6px;background:var(--red,#ef4444);color:#fff;border:none;cursor:pointer;font-size:12px;">Remove</button>';
   list.appendChild(row);
 }
 
@@ -9636,6 +9628,7 @@ async function savePaymentConfig() {
   }
 
   async function loadExpertDashboardForAdmin(expertId) {
+  loadExpertPricing();
     var name = window._adminViewingExpertName || 'Expert';
     var slug = window._adminViewingExpertSlug;
     _showAdminViewBanner(name);
@@ -10897,6 +10890,102 @@ function loadAdminPaymentSettings() {
       whEl.placeholder = 'whsec_...(saved)';
     }
   }).catch(function() {});
+}
+
+function saveExpertPricing() {
+  var tok = sessionStorage.getItem('ob_t');
+  if (!tok) { _showToast('Please log in first', 'red'); return; }
+  var statusEl = document.getElementById('save-status-pricing');
+  if (statusEl) { statusEl.textContent = 'Saving...'; statusEl.style.color = 'var(--gray-400)'; }
+
+  var getVal = function(id) { var el = document.getElementById(id); return el ? parseFloat(el.value) || 0 : 0; };
+  var getInt = function(id) { var el = document.getElementById(id); return el ? parseInt(el.value) || 0 : 0; };
+
+  var rates = {
+    chat_pm: getVal('rate-chat'),
+    chat_free_min: getInt('fm-chat'),
+    chat_enabled: getVal('rate-chat') > 0 ? 1 : 0,
+    voice_pm: getVal('rate-voice'),
+    voice_free_min: getInt('fm-voice'),
+    voice_enabled: getVal('rate-voice') > 0 ? 1 : 0,
+    video_pm: getVal('rate-video'),
+    video_free_min: getInt('fm-video'),
+    video_enabled: getVal('rate-video') > 0 ? 1 : 0
+  };
+
+  fetch('https://ownlybiz-backend-production.up.railway.app/api/experts/rates', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + tok },
+    body: JSON.stringify(rates)
+  }).then(function(r) { return r.json(); }).then(function(d) {
+    if (d.success !== false) {
+      if (statusEl) { statusEl.textContent = 'Saved'; statusEl.style.color = 'var(--green,#22c55e)'; }
+      _showToast('Pricing saved', 'green');
+      saveExpertPackages(tok);
+    } else {
+      if (statusEl) statusEl.textContent = 'Error';
+      _showToast('Error: ' + (d.error || 'Save failed'), 'red');
+    }
+  }).catch(function(e) {
+    if (statusEl) statusEl.textContent = 'Error';
+    _showToast('Network error: ' + e.message, 'red');
+  });
+}
+function saveExpertPackages(tok) {
+  var list = document.getElementById('packages-list');
+  if (!list) return;
+  var rows = list.querySelectorAll('.package-row-item');
+  var packages = [];
+  rows.forEach(function(row) {
+    var nameEl = row.querySelector('.pkg-name-input,[id*=pkg-name]');
+    var priceEl = row.querySelector('.pkg-price-input,[id*=pkg-price]');
+    var minsEl = row.querySelector('.pkg-mins-input,[id*=pkg-mins]');
+    var channelEl = row.querySelector('.pkg-channel-input,[id*=pkg-channel]');
+    var name = nameEl ? nameEl.value.trim() : '';
+    var price = priceEl ? parseFloat(priceEl.value) : 0;
+    var mins = minsEl ? parseInt(minsEl.value) : 60;
+    var channel = channelEl ? channelEl.value : 'video';
+    if (name && price > 0) packages.push({name:name, price:price, duration_min:mins, channel:channel});
+  });
+  if (!packages.length) return;
+  var authTok = tok || sessionStorage.getItem('ob_t');
+  packages.forEach(function(pkg) {
+    fetch('https://ownlybiz-backend-production.up.railway.app/api/experts/packages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + authTok },
+      body: JSON.stringify(pkg)
+    }).catch(function(){});
+  });
+}
+function loadExpertPricing() {
+  var tok = sessionStorage.getItem('ob_t');
+  if (!tok) return;
+  fetch('https://ownlybiz-backend-production.up.railway.app/api/experts/rates', {
+    headers: { 'Authorization': 'Bearer ' + tok }
+  }).then(function(r) { return r.json(); }).then(function(d) {
+    var rates = d.rates || d || {};
+    var setVal = function(id, val) { var el = document.getElementById(id); if (el && val) el.value = val; };
+    setVal('rate-chat', rates.chat_pm);
+    setVal('rate-voice', rates.voice_pm);
+    setVal('rate-video', rates.video_pm);
+    setVal('fm-chat', rates.chat_free_min);
+    setVal('fm-voice', rates.voice_free_min);
+    setVal('fm-video', rates.video_free_min);
+    var rcEl = document.getElementById('rp-chat');
+    var rvEl = document.getElementById('rp-voice');
+    var rdEl = document.getElementById('rp-video');
+    if (rcEl && rates.chat_pm) rcEl.textContent = '$' + parseFloat(rates.chat_pm).toFixed(2) + '/min';
+    if (rvEl && rates.voice_pm) rvEl.textContent = '$' + parseFloat(rates.voice_pm).toFixed(2) + '/min';
+    if (rdEl && rates.video_pm) rdEl.textContent = '$' + parseFloat(rates.video_pm).toFixed(2) + '/min';
+  }).catch(function(){});
+  fetch('https://ownlybiz-backend-production.up.railway.app/api/experts/stripe/status', {
+    headers: { 'Authorization': 'Bearer ' + tok }
+  }).then(function(r) { return r.json(); }).then(function(d) {
+    if (d.connected) {
+      var connectBtn = document.querySelector('[onclick*="openConnectorModal"]');
+      if (connectBtn) { connectBtn.textContent = 'Stripe Connected'; connectBtn.style.background = 'var(--green,#22c55e)'; }
+    }
+  }).catch(function(){});
 }
 </script>
 

@@ -9570,7 +9570,11 @@ async function savePaymentConfig() {
      VIEW 3 — EXPERT DASHBOARD
   ══════════════════════════════════════════════════════ */
   async function loadExpertDashboard() {
-    if (!Auth.isExpert) return;
+    if (!Auth.isExpert && !(Auth.isAdmin && window._adminViewingExpertId)) return;
+    if (Auth.isAdmin && window._adminViewingExpertId) {
+      loadExpertDashboardForAdmin(window._adminViewingExpertId);
+      return;
+    }
     try {
       const [me, dash] = await Promise.all([
         api('GET','/auth/me'),
@@ -9581,7 +9585,48 @@ async function savePaymentConfig() {
       _renderSessionsList($('sessions-full-list'), dash.recent_sessions||[]);
       _renderOverviewMsgs(dash.recent_sessions||[]);
       _renderBarChart($('revenue-chart'), (dash.monthly_revenue||[]).slice(-7), 'revenue');
+      _hideAdminViewBanner();
     } catch(err){ console.warn('Dashboard:',err.message); }
+  }
+
+  function _showAdminViewBanner(name) {
+    var main = document.querySelector('#view-3 .db-main');
+    if (!main) return;
+    var existing = document.getElementById('admin-view-expert-banner');
+    if (existing) { existing.style.display=''; return; }
+    var banner = document.createElement('div');
+    banner.id = 'admin-view-expert-banner';
+    banner.style.cssText = 'background:linear-gradient(90deg,rgba(196,98,45,.2),rgba(196,98,45,.08));border-bottom:1px solid rgba(196,98,45,.3);padding:10px 20px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;';
+    banner.innerHTML = '<span style="font-size:13px;font-weight:600;color:var(--terra);">👁 Viewing <strong>'+ (name||'Expert').replace(/</g,'&lt;') + '</strong>\'s dashboard</span>' +
+      '<button onclick="window._adminViewingExpertId=null;window._adminViewingExpertName=null;window._adminViewingExpertSlug=null;_hideAdminViewBanner();if(typeof switchView===\'function\') switchView(6);" style="background:rgba(255,255,255,.1);color:rgba(246,241,233,.9);border:1px solid rgba(255,255,255,.2);padding:6px 14px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;">← Back to Admin</button>';
+    main.insertBefore(banner, main.firstChild);
+  }
+  function _hideAdminViewBanner() {
+    var b = document.getElementById('admin-view-expert-banner');
+    if (b) b.style.display = 'none';
+  }
+
+  async function loadExpertDashboardForAdmin(expertId) {
+    var name = window._adminViewingExpertName || 'Expert';
+    var slug = window._adminViewingExpertSlug;
+    _showAdminViewBanner(name);
+    try {
+      var d = await api('GET', '/admin/experts/' + expertId + '/dashboard');
+      var me = { user: d.user, profile: d.profile };
+      var dash = d.dashboard || d;
+      _applyProfile(me);
+      _applyDashStats(dash);
+      _renderSessionsList($('sessions-full-list'), dash.recent_sessions||[]);
+      _renderOverviewMsgs(dash.recent_sessions||[]);
+      _renderBarChart($('revenue-chart'), (dash.monthly_revenue||[]).slice(-7), 'revenue');
+    } catch(err) {
+      if (typeof toast === 'function') toast('Could not load expert dashboard: ' + (err.message||'unknown'), 'err');
+      var pan = document.querySelector('#view-3 .db-tab-panel[id="db-panel-overview"]') || document.querySelector('#view-3 .db-tab-panel');
+      if (pan) {
+        var slugLink = '<p style="margin-top:12px;"><button onclick="var s=window._adminViewingExpertSlug;if(s){window._browseExpert=s;switchView(4);if(window.OwnlyAPI&&window.OwnlyAPI.loadExpertWebsite) window.OwnlyAPI.loadExpertWebsite(s);}" style="color:var(--terra);text-decoration:underline;background:none;border:none;cursor:pointer;">View public page →</button></p>';
+        pan.innerHTML = '<div class="db-content" style="padding:24px;"><div style="text-align:center;color:rgba(246,241,233,.6);">Dashboard data for this expert is not available.</div>'+slugLink+'</div>';
+      }
+    }
   }
 
   function _applyProfile(me) {
@@ -10279,9 +10324,11 @@ async function savePaymentConfig() {
           ? '<span style="background:rgba(185,28,28,.2);color:#f87171;border:1px solid rgba(248,113,113,.3);font-size:11px;font-weight:600;padding:3px 10px;border-radius:100px;">Suspended</span>'
           : '<span style="background:rgba(196,157,60,.2);color:#fbbf24;border:1px solid rgba(251,191,36,.3);font-size:11px;font-weight:600;padding:3px 10px;border-radius:100px;">⏳ Pending</span>';
 
+        var jName = (e.name||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+        var jSlug = (e.slug||'').replace(/\\/g,'\\\\').replace(/'/g,"\\'");
         const actions = isPending && !isSuspended
-          ? '<button onclick="adminApproveExpert(\''+esc(e.id)+'\')" style="background:rgba(45,106,79,.25);color:#4ade80;border:1px solid rgba(74,222,128,.3);padding:4px 12px;border-radius:7px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;margin-right:4px;">✓ Approve</button> <button onclick="adminViewExpert(\''+esc(e.slug||'')+'\',\'preview\')" style="background:rgba(255,255,255,.06);color:rgba(246,241,233,.6);border:1px solid rgba(255,255,255,.1);padding:4px 12px;border-radius:7px;font-size:11px;cursor:pointer;font-family:inherit;">View</button>'
-          : '<button onclick="adminViewExpert(\''+esc(e.slug||'')+'\',\'preview\')" style="background:rgba(255,255,255,.06);color:rgba(246,241,233,.6);border:1px solid rgba(255,255,255,.1);padding:4px 12px;border-radius:7px;font-size:11px;cursor:pointer;font-family:inherit;margin-right:4px;">View</button> <button onclick="OwnlyAPI.adminToggleExpert(\''+esc(e.id)+'\','+(e.is_active==0)+')" style="background:rgba(196,98,45,.15);color:var(--terra,#C4622D);border:1px solid rgba(196,98,45,.3);padding:4px 12px;border-radius:7px;font-size:11px;cursor:pointer;font-family:inherit;">'+(e.is_active==0?'Restore':'Suspend')+'</button>';
+          ? '<button onclick="adminApproveExpert(\''+esc(e.id)+'\')" style="background:rgba(45,106,79,.25);color:#4ade80;border:1px solid rgba(74,222,128,.3);padding:4px 12px;border-radius:7px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;margin-right:4px;">✓ Approve</button> <button onclick="adminViewExpertDashboard(\''+esc(e.id)+'\',\''+jSlug+'\',\''+jName+'\')" style="background:rgba(255,255,255,.06);color:rgba(246,241,233,.6);border:1px solid rgba(255,255,255,.1);padding:4px 12px;border-radius:7px;font-size:11px;cursor:pointer;font-family:inherit;">View</button>'
+          : '<button onclick="adminViewExpertDashboard(\''+esc(e.id)+'\',\''+jSlug+'\',\''+jName+'\')" style="background:rgba(255,255,255,.06);color:rgba(246,241,233,.6);border:1px solid rgba(255,255,255,.1);padding:4px 12px;border-radius:7px;font-size:11px;cursor:pointer;font-family:inherit;margin-right:4px;">View</button> <button onclick="OwnlyAPI.adminToggleExpert(\''+esc(e.id)+'\','+(e.is_active==0)+')" style="background:rgba(196,98,45,.15);color:var(--terra,#C4622D);border:1px solid rgba(196,98,45,.3);padding:4px 12px;border-radius:7px;font-size:11px;cursor:pointer;font-family:inherit;">'+(e.is_active==0?'Restore':'Suspend')+'</button>';
 
         return '<tr style="border-bottom:1px solid rgba(255,255,255,.05);">'+
           '<td style="padding:12px;"><div style="display:flex;align-items:center;gap:10px;">'+
@@ -10480,7 +10527,7 @@ async function savePaymentConfig() {
     setTimeout(()=>{
       // Always try data loads - individual functions check READY/auth internally
       if(n===1){ if(READY) loadMarketing(); }
-      if(n===3){ if(READY && Auth.isExpert) loadExpertDashboard(); }
+      if(n===3){ if(READY && (Auth.isExpert || (Auth.isAdmin && window._adminViewingExpertId))) loadExpertDashboard(); }
       if(n===4){ if(READY) loadExpertWebsite(window._browseExpert); }
       if(n===6){ if(READY && Auth.isAdmin) { loadAdminDashboard(); loadAdminExperts(); } }
     },160);
@@ -10501,6 +10548,7 @@ async function savePaymentConfig() {
     loadExpertDashboard, loadAdminDashboard, loadAdminExperts, loadExpertWebsite,
     delPackage: async id=>{ try{ await api('DELETE',`/experts/me/packages/${id}`); loadPackages(); toast('Package removed'); }catch(err){ toast(err.message,'err'); } },
     adminViewExpert: (slug) => window.adminViewExpert(slug),
+    adminViewExpertDashboard: (id,slug,name) => window.adminViewExpertDashboard(id,slug,name),
     adminApproveExpert: (id) => window.adminApproveExpert(id),
     adminToggleExpert: async(id,active)=>{ try{ await api('PUT',`/admin/experts/${id}`,{is_active:active}); loadAdminExperts(); toast(active?'Expert restored':'Expert suspended'); }catch(err){ toast(err.message,'err'); } },
     adminViewUser: async id=>{ try{ const d=await api('GET',`/admin/users/${id}`); alert(`User: ${d.user?.name}\nEmail: ${d.user?.email}\nRole: ${d.user?.role}\nJoined: ${dt(d.user?.created_at)}`); }catch{} },
@@ -10752,7 +10800,18 @@ async function savePaymentConfig() {
     } catch(err) { if (typeof toast === 'function') toast(err.message, 'err'); }
   };
 
-  // ── Admin: view expert profile ────────────────────────
+  // ── Admin: view expert dashboard (view 3) ─────────────────
+  window.adminViewExpertDashboard = function(expertId, slug, name) {
+    if (!expertId) { if (typeof toast === 'function') toast('Invalid expert', 'err'); return; }
+    window._adminViewingExpertId = expertId;
+    window._adminViewingExpertName = name || '';
+    window._adminViewingExpertSlug = slug || '';
+    if (typeof switchView === 'function') switchView(3);
+    setTimeout(function() {
+      if (window.OwnlyAPI && window.OwnlyAPI.loadExpertDashboard) window.OwnlyAPI.loadExpertDashboard();
+    }, 200);
+  };
+  // Legacy: view public expert page (kept for any other callers)
   window.adminViewExpert = function(slug) {
     if (!slug) { if (typeof toast === 'function') toast('Expert has no slug yet', 'err'); return; }
     window._browseExpert = slug;

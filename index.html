@@ -11168,6 +11168,108 @@ function loadClients() {
   });
 }
 // === END OVERRIDES ===
+
+
+// === OWNLYBIZ OVERRIDES v6 ===
+
+// Fix 1: loadClients - use correct #db-clients-tbody container
+function loadClients() {
+  var tok = sessionStorage.getItem("ob_t");
+  var tbody = document.getElementById("db-clients-tbody");
+  if (!tok || !tbody) return;
+  tbody.innerHTML = '<tr><td colspan="6" style="padding:20px;text-align:center;color:var(--gray-400)">Loading clients...</td></tr>';
+  fetch("https://ownlybiz-backend-production.up.railway.app/api/experts/me/clients", {
+    headers: { "Authorization": "Bearer " + tok }
+  }).then(function(r){ return r.json(); }).then(function(d){
+    var clients = d.clients || [];
+    if (!clients.length) {
+      tbody.innerHTML = '<tr><td colspan="6" style="padding:24px;text-align:center;color:var(--gray-400)">No clients yet. Share your profile link to get started.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = clients.map(function(c){
+      var initials = (c.name||"?").split(" ").map(function(w){return w[0]||"";}).join("").substring(0,2).toUpperCase();
+      var sessions = c.session_count || 0;
+      var revenue = c.total_spent ? "$" + (c.total_spent/100).toFixed(0) : "$0";
+      var lastSess = c.last_session_at ? new Date(c.last_session_at*1000).toLocaleDateString() : "Never";
+      return '<tr>' +
+        '<td style="padding:12px 8px"><div style="display:flex;align-items:center;gap:10px">' +
+          '<div style="width:36px;height:36px;border-radius:50%;background:var(--terra);color:white;display:flex;align-items:center;justify-content:center;font-weight:600;font-size:13px;flex-shrink:0">' + initials + '</div>' +
+          '<div><div style="font-weight:600">' + (c.name||"Unknown") + '</div><div style="font-size:12px;color:var(--gray-400)">' + (c.email||"") + '</div></div></div></td>' +
+        '<td style="padding:12px 8px;text-align:center">' + sessions + '</td>' +
+        '<td style="padding:12px 8px;text-align:center">' + revenue + '</td>' +
+        '<td style="padding:12px 8px;text-align:center">' + lastSess + '</td>' +
+        '<td style="padding:12px 8px;text-align:center"><span style="color:#22c55e;font-size:12px">Active</span></td>' +
+        '<td style="padding:12px 8px;text-align:center"><button onclick="void(0)" style="font-size:12px;padding:4px 10px;border:1px solid var(--terra);color:var(--terra);background:none;border-radius:6px;cursor:pointer">View</button></td>' +
+      '</tr>';
+    }).join("");
+  }).catch(function(){
+    tbody.innerHTML = '<tr><td colspan="6" style="padding:20px;text-align:center;color:var(--gray-400)">Failed to load clients.</td></tr>';
+  });
+}
+
+// Fix 2: loadExpertWebsite - update nav-logo-text and fix slug fallback
+// We wrap the original by patching the result after it runs
+(function(){
+  var _origLEW = window.loadExpertWebsite;
+  window.loadExpertWebsite = function(slug) {
+    slug = slug || window._browseExpert || "sarah-chen";
+    // Call original first
+    if (_origLEW) _origLEW.call(this, slug);
+    // Then fetch from API and update nav-logo-text
+    fetch("https://ownlybiz-backend-production.up.railway.app/api/experts/" + slug)
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        var e = d.expert || d;
+        if (!e || !e.name) return;
+        // Update nav brand name
+        var navText = document.getElementById("nav-logo-text");
+        if (navText) navText.textContent = e.name + (e.title ? " " : "");
+        // Store for other functions
+        window._currentExpert = e;
+        window._currentExpertId = e.user_id || e.id;
+        // Update LIVE/OFFLINE badge
+        setExpertOnlineStatus(!!e.is_online);
+      }).catch(function(){});
+  };
+})();
+
+// Fix 3: After realExpertSignup completes, fix the View My Website slug
+// The signup completion shows slug from user input but DB may have different slug
+// Override to fetch real slug from DB after signup
+(function(){
+  var _origREAL = window.realExpertSignup;
+  window.realExpertSignup = async function() {
+    if (_origREAL) await _origREAL.call(this);
+    // After signup, fetch real slug from /auth/me
+    try {
+      var tok = sessionStorage.getItem("ob_t");
+      if (!tok) return;
+      var d = await fetch("https://ownlybiz-backend-production.up.railway.app/api/auth/me", {
+        headers: { "Authorization": "Bearer " + tok }
+      }).then(function(r){ return r.json(); });
+      var slug = d.user && d.user.slug ? d.user.slug : (d.slug || null);
+      if (!slug) {
+        // Try experts endpoint
+        var ep = await fetch("https://ownlybiz-backend-production.up.railway.app/api/experts/me/dashboard", {
+          headers: { "Authorization": "Bearer " + tok }
+        }).then(function(r){ return r.json(); });
+        slug = ep.profile && ep.profile.slug ? ep.profile.slug : null;
+      }
+      if (slug) {
+        var launchSlug = document.getElementById("launch-url-slug");
+        if (launchSlug) launchSlug.textContent = slug + ".ownlybiz.com";
+        window._browseExpert = slug;
+        // Update ob_u in sessionStorage
+        try {
+          var u = JSON.parse(sessionStorage.getItem("ob_u") || "{}");
+          u.slug = slug;
+          sessionStorage.setItem("ob_u", JSON.stringify(u));
+        } catch(e2) {}
+      }
+    } catch(e) {}
+  };
+})();
+// === END v6 ===
 </script>
 
   <style>

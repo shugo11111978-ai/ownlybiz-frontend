@@ -11023,6 +11023,151 @@ function loadExpertPricing() {
     }
   }).catch(function(){});
 }
+
+
+// === OWNLYBIZ OVERRIDES v5 - append-only, last definition wins ===
+
+// 1. Online/Offline toggle - calls PUT /experts/me/online-status
+function toggleOnlineStatus() {
+  expertOnline = !expertOnline;
+  _applyOnlineUI(expertOnline);
+  var tok = sessionStorage.getItem('ob_t');
+  if (!tok) return;
+  fetch('https://ownlybiz-backend-production.up.railway.app/api/experts/me/online-status', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + tok },
+    body: JSON.stringify({ is_online: expertOnline })
+  }).then(function(r) { return r.json(); }).then(function(d) {
+    if (!d.success) { expertOnline = !expertOnline; _applyOnlineUI(expertOnline); _showToast('Failed to update status', 'red'); }
+  }).catch(function() { expertOnline = !expertOnline; _applyOnlineUI(expertOnline); });
+}
+
+// 2. Apply online status to all UI elements
+function _applyOnlineUI(on) {
+  var jobs = {
+    'golive-btn': function(el){ el.style.background = on ? 'var(--sage)' : 'var(--gray-300,#d1d5db)'; },
+    'golive-dot': function(el){ el.style.background = on ? '#22c55e' : '#9ca3af'; },
+    'golive-label': function(el){ el.textContent = on ? 'Online' : 'Offline'; },
+    'ep-online-badge': function(el){ el.textContent = on ? 'LIVE' : 'OFFLINE'; el.style.color = on ? '#22c55e' : '#9ca3af'; el.style.background = on ? 'rgba(34,197,94,0.15)' : 'rgba(156,163,175,0.15)'; },
+    'nav-status-dot': function(el){ el.style.background = on ? 'rgba(34,197,94,0.1)' : 'rgba(156,163,175,0.15)'; },
+    'nav-status-label': function(el){ el.textContent = on ? 'LIVE' : 'OFFLINE'; el.style.color = on ? '#22c55e' : '#9ca3af'; }
+  };
+  Object.keys(jobs).forEach(function(id){ var el=document.getElementById(id); if(el) jobs[id](el); });
+}
+
+// 3. setExpertOnlineStatus - init from dashboard load
+function setExpertOnlineStatus(isOnline) {
+  expertOnline = !!isOnline;
+  _applyOnlineUI(expertOnline);
+}
+
+// 4. loadExpertOnlineStatus - fetches live status for expert website badge
+function loadExpertOnlineStatus(slug) {
+  if (!slug) return;
+  fetch('https://ownlybiz-backend-production.up.railway.app/api/experts/' + slug)
+    .then(function(r){ return r.json(); })
+    .then(function(d){ setExpertOnlineStatus(!!(d.is_online || (d.expert && d.expert.is_online))); })
+    .catch(function(){});
+}
+
+// 5. _applyProfile - populates all dashboard fields from expert data
+function _applyProfile(e) {
+  if (!e) return;
+  var set = function(id, val) { var el=document.getElementById(id); if(el&&val!=null) el.value=val; };
+  var setTxt = function(id, val) { var el=document.getElementById(id); if(el&&val!=null) el.textContent=val; };
+  set('sfield-name', e.name);
+  set('sfield-title', e.title);
+  set('sfield-bio', e.bio);
+  set('sfield-location', e.location);
+  set('sfield-phone', e.phone);
+  set('sfield-tagline', e.tagline);
+  set('sfield-slug', e.slug);
+  set('sfield-meta-title', e.meta_title);
+  set('sfield-meta-description', e.meta_description);
+  setTxt('db-expert-name', e.name);
+  setTxt('db-sidebar-name', e.name);
+  setExpertOnlineStatus(!!e.is_online);
+  var siteLinks = document.querySelectorAll('[id*="site-link"],[id*="website-link"],[onclick*="goToWebsite"]');
+  siteLinks.forEach(function(el){ if(e.slug && el.tagName==="A") el.href="/"+e.slug; });
+}
+
+// 6. loadSettings - fetches /me/dashboard and /auth/me, merges and applies profile
+function loadSettings() {
+  var tok = sessionStorage.getItem('ob_t');
+  if (!tok) return;
+  var hdrs = { 'Authorization': 'Bearer ' + tok };
+  Promise.all([
+    fetch('https://ownlybiz-backend-production.up.railway.app/api/auth/me', { headers: hdrs }).then(function(r){ return r.json(); }).catch(function(){ return {}; }),
+    fetch('https://ownlybiz-backend-production.up.railway.app/api/experts/me/dashboard', { headers: hdrs }).then(function(r){ return r.json(); }).catch(function(){ return {}; })
+  ]).then(function(results) {
+    var me = results[0].user || results[0];
+    var ep = results[1].profile || results[1].expert || {};
+    var merged = Object.assign({}, me, ep);
+    _applyProfile(merged);
+    loadExpertPricing();
+  });
+}
+
+// 7. saveSettingsBlock - routes save to correct API endpoint
+function saveSettingsBlock(section) {
+  if (section === 'pricing') { saveExpertPricing(); return; }
+  var tok = sessionStorage.getItem('ob_t');
+  if (!tok) { _showToast('Not logged in', 'red'); return; }
+  var g = function(id){ var el=document.getElementById(id); return el ? el.value.trim() : ""; };
+  var payload, endpoint;
+  if (section === 'profile') {
+    payload = { name:g("sfield-name"), title:g("sfield-title"), bio:g("sfield-bio"), location:g("sfield-location"), phone:g("sfield-phone"), tagline:g("sfield-tagline") };
+    endpoint = '/api/experts/me/profile';
+  } else if (section === 'website') {
+    payload = { slug:g("sfield-slug"), meta_title:g("sfield-meta-title"), meta_description:g("sfield-meta-description") };
+    endpoint = '/api/experts/me/profile';
+  } else {
+    _showToast('Saved', 'green'); return;
+  }
+  fetch('https://ownlybiz-backend-production.up.railway.app' + endpoint, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + tok },
+    body: JSON.stringify(payload)
+  }).then(function(r){ return r.json(); }).then(function(d){
+    if (d.success) { _showToast(section === 'profile' ? 'Profile saved' : 'Website settings saved', 'green'); }
+    else { _showToast('Error: ' + (d.error||'Save failed'), 'red'); }
+  }).catch(function(){ _showToast("Network error", "red"); });
+}
+
+// 8. loadClients - fetches /me/clients and renders client list
+function loadClients() {
+  var tok = sessionStorage.getItem('ob_t');
+  var container = document.getElementById("clients-list") || document.getElementById("client-list") || document.getElementById("db-clients-list");
+  if (!tok || !container) return;
+  container.innerHTML = '<p style="color:var(--gray-400);padding:20px">Loading clients...</p>';
+  fetch('https://ownlybiz-backend-production.up.railway.app/api/experts/me/clients', {
+    headers: { 'Authorization': 'Bearer ' + tok }
+  }).then(function(r){ return r.json(); }).then(function(d){
+    var clients = d.clients || [];
+    if (!clients.length) {
+      container.innerHTML = '<p style="color:var(--gray-400);padding:20px;text-align:center">No clients yet. Share your profile link to get started.</p>';
+      return;
+    }
+    container.innerHTML = clients.map(function(c){
+      var initials = (c.name||"?").split(" ").map(function(w){return w[0];}).join("").substring(0,2).toUpperCase();
+      var lastSeen = c.last_session_at ? new Date(c.last_session_at*1000).toLocaleDateString() : "No sessions yet";
+      return '<div style="display:flex;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--cream-dark,#e8e0d5)">' +
+        '<div style="width:40px;height:40px;border-radius:50%;background:var(--terra);color:white;display:flex;align-items:center;justify-content:center;font-weight:600;flex-shrink:0">' + initials + '</div>' +
+        '<div style="flex:1;min-width:0">' +
+          '<div style="font-weight:600;color:var(--dark)">' + (c.name||'Unknown') + '</div>' +
+          '<div style="font-size:13px;color:var(--gray-400)">' + (c.email||'') + '</div>' +
+        '</div>' +
+        '<div style="text-align:right;flex-shrink:0">' +
+          '<div style="font-size:13px;font-weight:600;color:var(--terra)">' + (c.session_count||0) + ' sessions</div>' +
+          '<div style="font-size:12px;color:var(--gray-400)">' + lastSeen + '</div>' +
+        '</div>' +
+      '</div>';
+    }).join("");
+  }).catch(function(){
+    container.innerHTML = '<p style="color:var(--gray-400);padding:20px">Failed to load clients.</p>';
+  });
+}
+// === END OVERRIDES ===
 </script>
 
   <style>

@@ -11270,6 +11270,88 @@ function loadClients() {
   };
 })();
 // === END v6 ===
+
+
+// === OWNLYBIZ OVERRIDES v7 ===
+
+// Helper: get current expert slug from sessionStorage or _currentExpert
+function _getMySlug() {
+  try {
+    var u = JSON.parse(sessionStorage.getItem("ob_u") || "{}");
+    if (u.slug) return u.slug;
+  } catch(e) {}
+  if (window._currentExpert && window._currentExpert.slug) return window._currentExpert.slug;
+  return null;
+}
+
+// Fix 1: Override switchView to pass correct slug when switching to expert website (view 4)
+(function(){
+  var _origSV = window.switchView;
+  window.switchView = function(n) {
+    if (n === 4) {
+      var mySlug = _getMySlug();
+      if (mySlug) {
+        window._browseExpert = mySlug;
+        window._currentExpertId = null; // reset so loadExpertWebsite fetches fresh
+      }
+    }
+    if (_origSV) _origSV.call(this, n);
+    if (n === 4) {
+      var slug = _getMySlug() || window._browseExpert || "sarah-chen";
+      setTimeout(function(){
+        fetch("https://ownlybiz-backend-production.up.railway.app/api/experts/" + slug)
+          .then(function(r){ return r.json(); })
+          .then(function(d){
+            var e = d.expert || d;
+            if (!e || !e.name) return;
+            var navText = document.getElementById("nav-logo-text");
+            if (navText) navText.textContent = e.name;
+            window._currentExpert = e;
+            window._currentExpertId = e.user_id || e.id;
+            setExpertOnlineStatus(!!e.is_online);
+          }).catch(function(){});
+      }, 100);
+    }
+  };
+})();
+
+// Fix 2: MutationObserver - watch nav-logo-text and correct it when wrong
+(function(){
+  var _navObserver = null;
+  function _startNavObserver() {
+    var el = document.getElementById("nav-logo-text");
+    if (!el || _navObserver) return;
+    _navObserver = new MutationObserver(function(mutations) {
+      mutations.forEach(function(m) {
+        var ce = window._currentExpert;
+        if (!ce || !ce.name) return;
+        var el2 = document.getElementById("nav-logo-text");
+        if (el2 && el2.textContent !== ce.name && window._browseExpert && window._browseExpert !== "sarah-chen") {
+          el2.textContent = ce.name;
+        }
+      });
+    });
+    _navObserver.observe(el, { childList: true, characterData: true, subtree: true });
+  }
+  // Start observer after page settles
+  setTimeout(_startNavObserver, 2000);
+})();
+
+// Fix 3: Override dbNav to ensure loadClients/loadSettings are called correctly
+(function(){
+  var _origDbNav = window.dbNav;
+  window.dbNav = function(el, section) {
+    if (_origDbNav) _origDbNav.call(this, el, section);
+    // Extra hooks for sections that need fresh data
+    if (section === "clients") {
+      setTimeout(function(){ if(typeof loadClients === "function") loadClients(); }, 100);
+    }
+    if (section === "settings" || section === "profile" || section === "website") {
+      setTimeout(function(){ if(typeof loadSettings === "function") loadSettings(); }, 100);
+    }
+  };
+})();
+// === END v7 ===
 </script>
 
   <style>

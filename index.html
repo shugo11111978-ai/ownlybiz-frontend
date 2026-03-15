@@ -11486,6 +11486,338 @@ function _openMyWebsite() {
     }).catch(function(){});
 }
 // === END v9 ===
+
+
+// === OWNLYBIZ OVERRIDES v10 ===
+// Fixes: public page selectors, online badge, ratings, rates sync,
+//        dashboard date, revenue chart, analytics, sessions, reviews
+
+// --- HELPER ---
+function _fmtMoney(n){ return n ? '$'+(+n).toFixed(2) : '$0.00'; }
+function _fmtRate(n){ return n ? '$'+(+n).toFixed(2)+'/min' : '--'; }
+function _stars(r){ var s=Math.round(r||0); return s>0?('\u2605'.repeat(s)+'\u2606'.repeat(5-s))+' '+r.toFixed(1):'No reviews yet'; }
+
+// --- P1-C: hero-status-badge in setExpertOnlineStatus ---
+(function(){
+  var _origSOS = window.setExpertOnlineStatus;
+  window.setExpertOnlineStatus = function(isOnline) {
+    if(_origSOS) _origSOS.call(this, isOnline);
+    var badge = document.getElementById('hero-status-badge');
+    if(badge) badge.textContent = isOnline ? '\uD83D\uDFE2 1 expert online now' : '\uD83D\uDD34 Expert is currently offline';
+  };
+})();
+
+// --- P1-B: _refreshPublicPage - fix all selector mismatches ---
+function _refreshPublicPage(e) {
+  if(!e || !e.name) return;
+
+  // Title - 3 placements
+  ['expert-hero-title','about-page-sub','booking-expert-title'].forEach(function(cls){
+    document.querySelectorAll('.'+cls).forEach(function(el){
+      if(cls==='booking-expert-title') el.textContent = e.title ? (e.title+' \u00B7 '+(e.avg_rating||0).toFixed(1)+' \u2605') : el.textContent;
+      else el.textContent = e.title || el.textContent;
+    });
+  });
+
+  // Bio - expert-about-strip and bare <p> inside ep-about
+  document.querySelectorAll('.expert-about-strip').forEach(function(el){ el.textContent = e.bio || el.textContent; });
+  var aboutSection = document.getElementById('ep-about');
+  if(aboutSection){
+    var bioPara = aboutSection.querySelector('p');
+    if(bioPara && e.bio) bioPara.textContent = e.bio;
+  }
+
+  // Rating display
+  var rating = e.avg_rating || 0;
+  var rCount = e.review_count || 0;
+  var ratingTxt = rCount > 0 ? ('\u2605\u2605\u2605\u2605\u2605 '+rating.toFixed(1)+' \u00B7 '+rCount+' reviews') : 'No reviews yet';
+  var credTxt = rCount > 0 ? ('\u2B50 '+rating.toFixed(1)+' rating across '+rCount+' client reviews') : 'No reviews yet';
+  document.querySelectorAll('.expert-stars').forEach(function(el){ el.textContent = ratingTxt; });
+  document.querySelectorAll('.cred-item').forEach(function(el){
+    if(el.textContent.indexOf('rating') > -1 || el.textContent.indexOf('review') > -1) el.textContent = credTxt;
+  });
+  // ep-reviews section summary
+  var epRev = document.getElementById('ep-reviews');
+  if(epRev){
+    var revSum = epRev.querySelector('[class*="review-summary"],[class*="rating-big"]');
+    if(revSum) revSum.textContent = rCount > 0 ? rating.toFixed(1) : '-';
+    var revCount = epRev.querySelector('[class*="review-count"],[class*="rev-count"]');
+    if(revCount) revCount.textContent = rCount+' reviews';
+  }
+
+  // Rates from expert_rates table (passed as e.rates if available, else use profile rates)
+  var chatPm  = e.chat_pm  || e.rate_chat  || 0;
+  var voicePm = e.voice_pm || e.rate_voice || 0;
+  var videoPm = e.video_pm || e.rate_video || 0;
+  var freeMins = e.chat_free_min || e.free_minutes || 0;
+
+  // service-mini-price items (3 of them: chat, voice, video in order)
+  var miniPrices = document.querySelectorAll('.service-mini-price');
+  if(miniPrices[0]) miniPrices[0].textContent = _fmtRate(chatPm) + (freeMins > 0 ? ' \u00B7 '+freeMins+' min free' : '');
+  if(miniPrices[1]) miniPrices[1].textContent = _fmtRate(voicePm);
+  if(miniPrices[2]) miniPrices[2].textContent = _fmtRate(videoPm);
+
+  // service-big-price (hero chat rate)
+  var bigPrice = document.querySelector('.service-big-price');
+  if(bigPrice) bigPrice.textContent = _fmtRate(chatPm);
+
+  // Booking overlay stype-grid items
+  var stypeItems = document.querySelectorAll('#stype-grid .stype-item,[class*="stype-card"]');
+  if(stypeItems[0]){
+    var chatLabel = stypeItems[0].querySelector('[class*="stype-price"],[class*="channel-price"]');
+    if(chatLabel) chatLabel.textContent = _fmtRate(chatPm)+(freeMins?' \u00B7 '+freeMins+' free':'');
+  }
+  if(stypeItems[1]){
+    var voiceLabel = stypeItems[1].querySelector('[class*="stype-price"],[class*="channel-price"]');
+    if(voiceLabel) voiceLabel.textContent = _fmtRate(voicePm);
+  }
+  if(stypeItems[2]){
+    var videoLabel = stypeItems[2].querySelector('[class*="stype-price"],[class*="channel-price"]');
+    if(videoLabel) videoLabel.textContent = _fmtRate(videoPm);
+  }
+
+  // bov-channel-detail (booking overlay header)
+  var bovDetail = document.getElementById('bov-channel-detail');
+  if(bovDetail) bovDetail.textContent = _fmtRate(chatPm)+(freeMins?' \u00B7 first '+freeMins+' minutes free':'');
+
+  // bk-free-row, bk-total in booking summary
+  var bkFreeRow = document.getElementById('bk-free-row');
+  if(bkFreeRow) bkFreeRow.textContent = 'Free Minutes' + (freeMins ? freeMins+' minutes included' : 'None');
+  var bkTotal = document.getElementById('bk-total');
+  if(bkTotal) bkTotal.textContent = _fmtRate(chatPm);
+
+  // hero-status-badge
+  var heroBadge = document.getElementById('hero-status-badge');
+  if(heroBadge) heroBadge.textContent = e.is_online ? '\uD83D\uDFE2 1 expert online now' : '\uD83D\uDD34 Expert is currently offline';
+
+  // nav-logo-text
+  var navText = document.getElementById('nav-logo-text');
+  if(navText && e.name) navText.textContent = e.name;
+
+  // Testimonials / reviews on public page
+  var testiInner = document.querySelector('.testimonials-inner');
+  if(testiInner && rCount === 0){
+    testiInner.style.display = 'none';
+    var noRevMsg = document.querySelector('.no-reviews-msg');
+    if(!noRevMsg){
+      var msg = document.createElement('div');
+      msg.className='no-reviews-msg';
+      msg.style.cssText='padding:32px;text-align:center;color:var(--gray-400);font-size:15px;';
+      msg.textContent='No reviews yet.';
+      testiInner.parentNode?.insertBefore(msg, testiInner);
+    }
+  } else if(testiInner && rCount > 0){
+    testiInner.style.display='';
+  }
+
+  // Packages on public page
+  var pkgSection = document.querySelector('.packages-section,[id*="ep-packages"]');
+  if(pkgSection && (!e.packages || e.packages.length === 0)){
+    pkgSection.style.display = 'none';
+  }
+
+  // Calendar current month
+  var calLabel = document.getElementById('cal-month-label');
+  if(calLabel && calLabel.textContent.indexOf('2025') > -1){
+    var now = new Date();
+    calLabel.textContent = now.toLocaleString('default',{month:'long'})+' '+now.getFullYear();
+  }
+}
+
+// --- Hook _refreshPublicPage into loadExpertWebsite wrapper ---
+(function(){
+  var _origLEW2 = window.loadExpertWebsite;
+  window.loadExpertWebsite = function(slug){
+    slug = slug || window._browseExpert || 'sarah-chen';
+    if(_origLEW2) _origLEW2.call(this, slug);
+    setTimeout(function(){
+      fetch('https://ownlybiz-backend-production.up.railway.app/api/experts/'+slug)
+        .then(function(r){ return r.json(); })
+        .then(function(d){
+          var e = d.expert || d;
+          if(!e || !e.name) return;
+          // Also fetch rates for this expert
+          var tok = sessionStorage.getItem('ob_t');
+          var ratePromise = tok
+            ? fetch('https://ownlybiz-backend-production.up.railway.app/api/experts/rates',{headers:{'Authorization':'Bearer '+tok}}).then(function(r){return r.json();}).catch(function(){return {};})
+            : Promise.resolve({});
+          ratePromise.then(function(rd){
+            if(rd.rates){ e.chat_pm=rd.rates.chat_pm; e.voice_pm=rd.rates.voice_pm; e.video_pm=rd.rates.video_pm; e.chat_free_min=rd.rates.chat_free_min; }
+            e.packages = d.packages || [];
+            window._currentExpert = e;
+            window._currentExpertId = e.user_id || e.id;
+            setExpertOnlineStatus(!!e.is_online);
+            _refreshPublicPage(e);
+          });
+        }).catch(function(){});
+    }, 200);
+  };
+})();
+
+// --- P2-B: Dashboard date ---
+function _fixDashboardDate(){
+  var el = document.querySelector('.db-date');
+  if(!el) return;
+  var now = new Date();
+  var days = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  var months = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  el.textContent = days[now.getDay()]+', '+months[now.getMonth()]+' '+now.getDate()+', '+now.getFullYear()+' \u00B7 '+now.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
+}
+
+// --- P2-A: Revenue chart from real data ---
+function _renderRevenueChart(monthlyRevenue){
+  var chart = document.getElementById('revenue-chart');
+  if(!chart) return;
+  if(!monthlyRevenue || !monthlyRevenue.length){
+    chart.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--gray-400);font-size:14px;">No revenue data yet</div>';
+    return;
+  }
+  var max = Math.max.apply(null, monthlyRevenue.map(function(d){return d.revenue||d.amount||0;}));
+  if(max===0){ chart.innerHTML='<div style="display:flex;align-items:center;justify-content:center;height:100%;color:var(--gray-400);font-size:14px;">No revenue data yet</div>'; return; }
+  chart.innerHTML = monthlyRevenue.map(function(d){
+    var val = d.revenue || d.amount || 0;
+    var pct = Math.round((val/max)*100);
+    var label = d.label || d.day || d.week || '';
+    return '<div class="chart-bar-wrap" style="display:flex;flex-direction:column;align-items:center;gap:4px;flex:1">'+
+      '<div style="font-size:11px;color:var(--gray-500)">$'+Math.round(val)+'</div>'+
+      '<div style="width:100%;background:var(--terra);border-radius:4px 4px 0 0;height:'+pct+'%;min-height:4px;max-height:80px;"></div>'+
+      '<div style="font-size:11px;color:var(--gray-400)">'+label+'</div></div>';
+  }).join('');
+  chart.style.cssText='display:flex;align-items:flex-end;gap:6px;height:100px;padding:8px;';
+}
+
+// --- P2-C: Analytics from real data ---
+function loadAnalytics(){
+  var tok = sessionStorage.getItem('ob_t');
+  if(!tok) return;
+  fetch('https://ownlybiz-backend-production.up.railway.app/api/experts/me/dashboard',{headers:{'Authorization':'Bearer '+tok}})
+    .then(function(r){return r.json();})
+    .then(function(d){
+      var s = d.stats || {};
+      var panel = document.getElementById('db-panel-analytics');
+      if(!panel) return;
+      var vals = panel.querySelectorAll('.stat-sum-val');
+      var labels = panel.querySelectorAll('.stat-sum-label');
+      var data = [
+        {val: _fmtMoney(s.total_earnings||s.total_revenue||0), label:'Total Revenue (YTD)'},
+        {val: (s.total_sessions||0)+'', label:'Total Sessions'},
+        {val: (s.review_count||0)+'', label:'Reviews'},
+        {val: s.avg_rating ? s.avg_rating.toFixed(1) : '0.0', label:'Avg Rating'},
+      ];
+      vals.forEach(function(el,i){ if(data[i]) el.textContent=data[i].val; });
+      labels.forEach(function(el,i){ if(data[i]) el.textContent=data[i].label; });
+    }).catch(function(){});
+}
+
+// --- P2-D: Recent sessions on overview from real data ---
+function _renderRecentSessions(sessions){
+  var container = document.querySelector('[class*="recent-sessions"],[id*="recent-sessions"]');
+  if(!container || !sessions) return;
+  if(!sessions.length){
+    container.innerHTML='<div style="padding:16px;text-align:center;color:var(--gray-400);font-size:13px;">No sessions yet</div>';
+    return;
+  }
+  container.innerHTML = sessions.slice(0,5).map(function(s){
+    var initials=(s.client_name||'?').split(' ').map(function(w){return w[0]||'';}).join('').substring(0,2).toUpperCase();
+    var dur = s.duration_secs ? Math.round(s.duration_secs/60)+'m' : 'Pending';
+    var ch = s.channel||'chat';
+    var earned = s.expert_earned ? '$'+(s.expert_earned/100).toFixed(2) : '$0.00';
+    return '<div class="session-item" style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--gray-100)">'+
+      '<div style="width:36px;height:36px;border-radius:50%;background:var(--terra);color:white;display:flex;align-items:center;justify-content:center;font-weight:600;font-size:13px;flex-shrink:0">'+initials+'</div>'+
+      '<div style="flex:1"><div style="font-weight:600;font-size:13px">'+(s.client_name||'Client')+'</div>'+
+      '<div style="font-size:12px;color:var(--gray-400)">'+ch+' \u00B7 '+dur+'</div></div>'+
+      '<div style="font-size:13px;font-weight:600;color:var(--terra)">'+earned+'</div></div>';
+  }).join('');
+}
+
+// --- P2-E: Reviews from real data ---
+function loadReviews(){
+  var tok = sessionStorage.getItem('ob_t');
+  var panel = document.getElementById('db-panel-reviews');
+  if(!tok || !panel) return;
+  fetch('https://ownlybiz-backend-production.up.railway.app/api/experts/me/dashboard',{headers:{'Authorization':'Bearer '+tok}})
+    .then(function(r){return r.json();})
+    .then(function(d){
+      var reviews = d.recent_reviews || [];
+      var container = panel.querySelector('[class*="review-list"],[class*="reviews-list"],[class*="testimonials"]');
+      if(!container) container = panel;
+      if(!reviews.length){
+        var existing = panel.querySelector('[class*="testi-card"],[class*="review-card"]');
+        if(existing){ existing.closest('[class*="testimonials"],[class*="reviews-wrap"]')?.remove(); }
+        var noRev = panel.querySelector('.no-reviews-placeholder');
+        if(!noRev){
+          var div=document.createElement('div');
+          div.className='no-reviews-placeholder';
+          div.style.cssText='padding:40px;text-align:center;color:var(--gray-400);font-size:15px;';
+          div.textContent='No reviews yet. Your first review will appear here after a completed session.';
+          panel.appendChild(div);
+        }
+        return;
+      }
+      // Render real reviews
+      var html = reviews.map(function(r){
+        var stars='\u2605'.repeat(Math.round(r.rating||5));
+        var initials=(r.client_name||'?').split(' ').map(function(w){return w[0]||'';}).join('').substring(0,2).toUpperCase();
+        return '<div class="testi-card" style="background:var(--white);border:1px solid var(--gray-100);border-radius:12px;padding:20px;margin-bottom:12px">'+
+          '<div style="display:flex;gap:10px;align-items:center;margin-bottom:10px">'+
+          '<div style="width:36px;height:36px;border-radius:50%;background:var(--terra);color:white;display:flex;align-items:center;justify-content:center;font-weight:600;font-size:13px">'+initials+'</div>'+
+          '<div><div style="font-weight:600;font-size:14px">'+(r.client_name||'Client')+'</div>'+
+          '<div style="color:var(--terra);font-size:14px">'+stars+'</div></div></div>'+
+          '<p style="font-size:14px;color:var(--gray-600);margin:0">'+(r.comment||r.text||'Great session!')+'</p></div>';
+      }).join('');
+      var wrap = panel.querySelector('[class*="testimonials-inner"],[class*="reviews-inner"]') || panel;
+      wrap.innerHTML = html;
+    }).catch(function(){});
+}
+
+// --- Wire everything into loadSettings + loadExpertDashboard ---
+(function(){
+  var _origLS = window.loadSettings;
+  window.loadSettings = function(){
+    _fixDashboardDate();
+    if(_origLS) _origLS.call(this);
+  };
+
+  var _origLED = window.loadExpertDashboard || (window.OwnlyAPI && window.OwnlyAPI.loadExpertDashboard);
+  function _patchedLED(){
+    var tok = sessionStorage.getItem('ob_t');
+    if(!tok) return;
+    _fixDashboardDate();
+    fetch('https://ownlybiz-backend-production.up.railway.app/api/experts/me/dashboard',{headers:{'Authorization':'Bearer '+tok}})
+      .then(function(r){return r.json();})
+      .then(function(d){
+        // KPI cards (already done by original, but ensure)
+        var vals = document.querySelectorAll('.kpi-value');
+        var s = d.stats||{};
+        if(vals[0]) vals[0].textContent = _fmtMoney((s.total_revenue||0)/100||0);
+        if(vals[1]) vals[1].textContent = _fmtMoney(0); // pending payout
+        if(vals[2]) vals[2].textContent = (s.total_sessions||0)+'';
+        if(vals[3]) vals[3].textContent = (s.avg_rating||0).toFixed(1)+' \u2605';
+        // Revenue chart
+        _renderRevenueChart(d.monthly_revenue||[]);
+        // Recent sessions
+        _renderRecentSessions(d.recent_sessions||[]);
+      }).catch(function(){});
+  }
+  if(_origLED) {
+    window.loadExpertDashboard = _patchedLED;
+    if(window.OwnlyAPI) window.OwnlyAPI.loadExpertDashboard = _patchedLED;
+  }
+})();
+
+// --- Wire analytics + reviews into dbNav ---
+(function(){
+  var _origDbNav2 = window.dbNav;
+  window.dbNav = function(el, section){
+    if(_origDbNav2) _origDbNav2.call(this, el, section);
+    if(section==='analytics') setTimeout(loadAnalytics, 100);
+    if(section==='reviews') setTimeout(loadReviews, 100);
+    if(section==='clients') setTimeout(function(){ if(typeof loadClients==='function') loadClients(); }, 100);
+    if(section==='settings'||section==='profile') setTimeout(function(){ if(typeof loadSettings==='function') loadSettings(); }, 100);
+  };
+})();
+// === END v10 ===
+
 </script>
 
   <style>

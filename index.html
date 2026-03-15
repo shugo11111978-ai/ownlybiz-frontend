@@ -11883,6 +11883,305 @@ function _applyOnlineUI(on) {
   }, 3000);
 })();
 // === END v12 ===
+
+
+// === OWNLYBIZ OVERRIDES v13 ===
+// Full admin control: every expert-settable action works from admin context too
+// Admin context is detected by window._adminViewingExpertId being set
+
+// Helper: get current expert ID for API calls (own or admin-viewed)
+function _expertId() {
+  return window._adminViewingExpertId || null;
+}
+function _isAdminCtx() {
+  return !!(window._adminViewingExpertId && window._adminViewingExpertSlug);
+}
+function _adminPath(suffix) {
+  return 'https://ownlybiz-backend-production.up.railway.app/api/admin/experts/' + window._adminViewingExpertId + suffix;
+}
+
+// Fix adminViewExpertDashboard to call loadExpertDashboardForAdmin (Cursor wrote it but never wired it)
+(function(){
+  var _origAVED = window.adminViewExpertDashboard;
+  window.adminViewExpertDashboard = function(expertId, slug, name) {
+    if(_origAVED) _origAVED.call(this, expertId, slug, name);
+    // After original sets the globals and switches to view-3, load real data
+    setTimeout(function(){
+      if(typeof loadExpertDashboardForAdmin === 'function') {
+        loadExpertDashboardForAdmin(expertId);
+      }
+      // Also load settings with admin context
+      if(typeof loadSettings === 'function') loadSettings();
+      if(typeof loadClients === 'function') loadClients();
+    }, 300);
+  };
+})();
+
+// loadSettings: when admin context, fetch from admin endpoint + /api/experts/:slug for online status
+(function(){
+  var _origLS = window.loadSettings;
+  window.loadSettings = function() {
+    if(!_isAdminCtx()) { if(_origLS) _origLS.call(this); return; }
+    var tok = sessionStorage.getItem('ob_t');
+    if(!tok) return;
+    var id = window._adminViewingExpertId;
+    var slug = window._adminViewingExpertSlug;
+    // Fix date
+    _fixDashboardDate && _fixDashboardDate();
+    Promise.all([
+      fetch(_adminPath('/profile'), {headers:{'Authorization':'Bearer '+tok}}).then(function(r){return r.json();}),
+      fetch('https://ownlybiz-backend-production.up.railway.app/api/experts/'+slug).then(function(r){return r.json();}),
+    ]).then(function(results){
+      var pr = results[0];
+      var pub = results[1];
+      var profile = pr.profile || {};
+      var user = pr.user || {};
+      var rates = pr.rates || {};
+      var merged = Object.assign({}, profile, user, rates, {
+        name: user.name || profile.name,
+        email: user.email,
+        chat_pm: rates.chat_pm, voice_pm: rates.voice_pm, video_pm: rates.video_pm,
+        chat_free_min: rates.chat_free_min,
+      });
+      // Populate profile fields in dashboard
+      if(typeof _applyProfile === 'function') _applyProfile(merged);
+      // Set online status from DB
+      var isOnline = !!(profile.is_online);
+      window.expertOnline = isOnline;
+      setExpertOnlineStatus(isOnline);
+      // Store for other functions
+      window._currentExpert = Object.assign(window._currentExpert||{}, profile, {
+        name: user.name, email: user.email,
+        chat_pm: rates.chat_pm, voice_pm: rates.voice_pm, video_pm: rates.video_pm,
+        chat_free_min: rates.chat_free_min,
+      });
+      // Load pricing
+      if(typeof loadExpertPricing === 'function') loadExpertPricing();
+    }).catch(function(e){ console.error('loadSettings admin error', e); });
+  };
+})();
+
+// loadExpertPricing: when admin context, use rates from /admin/experts/:id/profile
+(function(){
+  var _origLEP = window.loadExpertPricing;
+  window.loadExpertPricing = function() {
+    if(!_isAdminCtx()) { if(_origLEP) _origLEP.call(this); return; }
+    var tok = sessionStorage.getItem('ob_t');
+    fetch(_adminPath('/profile'), {headers:{'Authorization':'Bearer '+tok}})
+      .then(function(r){return r.json();})
+      .then(function(d){
+        var r = d.rates || {};
+        // Populate rate sliders
+        var rc = document.getElementById('rate-chat');
+        var rv = document.getElementById('rate-voice');
+        var rvid = document.getElementById('rate-video');
+        var rs = document.getElementById('rate-slider');
+        if(rc) rc.value = r.chat_pm || 0;
+        if(rv) rv.value = r.voice_pm || 0;
+        if(rvid) rvid.value = r.video_pm || 0;
+        if(rs) rs.value = r.chat_pm || 0;
+        // Free minutes
+        var fc = document.getElementById('free-min-chat');
+        var fv = document.getElementById('free-min-voice');
+        if(fc) fc.value = r.chat_free_min || 0;
+        if(fv) fv.value = r.voice_free_min || 0;
+        // Rate display
+        var rd = document.getElementById('db-rate-val');
+        if(rd) rd.textContent = '$'+(r.chat_pm||0).toFixed(2);
+        var rdisplay = document.getElementById('db-rate-display');
+        if(rdisplay) rdisplay.textContent = '$'+(r.chat_pm||0).toFixed(2);
+      }).catch(function(){});
+  };
+})();
+
+// toggleOnlineStatus: when admin context, call admin endpoint
+(function(){
+  var _origTOS = window.toggleOnlineStatus;
+  window.toggleOnlineStatus = function() {
+    if(!_isAdminCtx()) { if(_origTOS) _origTOS.call(this); return; }
+    var tok = sessionStorage.getItem('ob_t');
+    var newState = !window.expertOnline;
+    fetch(_adminPath('/online-status'), {
+      method:'PUT',
+      headers:{'Authorization':'Bearer '+tok,'Content-Type':'application/json'},
+      body: JSON.stringify({is_online: newState})
+    }).then(function(r){return r.json();})
+      .then(function(d){
+        if(d.success !== false) {
+          window.expertOnline = newState;
+          _applyOnlineUI(newState);
+        }
+      }).catch(function(){});
+  };
+})();
+
+// saveSettingsBlock: when admin context, route profile saves to admin endpoint
+(function(){
+  var _origSSB = window.saveSettingsBlock;
+  window.saveSettingsBlock = function(section) {
+    if(!_isAdminCtx()) { if(_origSSB) _origSSB.call(this, section); return; }
+    if(section !== 'profile' && section !== 'website') { if(_origSSB) _origSSB.call(this, section); return; }
+    var tok = sessionStorage.getItem('ob_t');
+    // Collect profile fields from DOM
+    var getName = function(id){ return document.getElementById(id)?.value?.trim()||null; };
+    var body = {
+      name:        getName('sfield-name'),
+      title:       getName('sfield-title'),
+      bio:         getName('sfield-bio'),
+      location:    getName('sfield-location'),
+      phone:       getName('sfield-phone'),
+      tagline:     getName('sfield-tagline'),
+      slug:        getName('sfield-slug'),
+      meta_title:  getName('sfield-meta-title'),
+      meta_description: getName('sfield-meta-desc'),
+    };
+    // Remove nulls
+    Object.keys(body).forEach(function(k){ if(!body[k]) delete body[k]; });
+    fetch(_adminPath('/profile'), {
+      method:'PUT',
+      headers:{'Authorization':'Bearer '+tok,'Content-Type':'application/json'},
+      body: JSON.stringify(body)
+    }).then(function(r){return r.json();})
+      .then(function(d){
+        if(typeof toast === 'function') toast(d.success ? 'Profile saved' : (d.error||'Save failed'), d.success?'ok':'err');
+      }).catch(function(){
+        if(typeof toast === 'function') toast('Save failed','err');
+      });
+  };
+})();
+
+// saveExpertPricing: when admin context, route to admin rates endpoint
+(function(){
+  var _origSEP = window.saveExpertPricing;
+  window.saveExpertPricing = function() {
+    if(!_isAdminCtx()) { if(_origSEP) _origSEP.call(this); return; }
+    var tok = sessionStorage.getItem('ob_t');
+    var gv = function(id){ var el=document.getElementById(id); return el ? parseFloat(el.value)||0 : 0; };
+    var gc = function(id){ var el=document.getElementById(id); return el ? (el.checked?1:0) : 1; };
+    var body = {
+      chat_pm:       gv('rate-chat'),
+      chat_free_min: gv('free-min-chat'),
+      chat_enabled:  gc('chat-enabled'),
+      voice_pm:      gv('rate-voice'),
+      voice_free_min:gv('free-min-voice'),
+      voice_enabled: gc('voice-enabled'),
+      video_pm:      gv('rate-video'),
+      video_free_min:gv('free-min-video'),
+      video_enabled: gc('video-enabled'),
+    };
+    fetch(_adminPath('/rates'), {
+      method:'PUT',
+      headers:{'Authorization':'Bearer '+tok,'Content-Type':'application/json'},
+      body: JSON.stringify(body)
+    }).then(function(r){return r.json();})
+      .then(function(d){
+        if(typeof toast === 'function') toast(d.success ? 'Rates saved' : (d.error||'Save failed'), d.success?'ok':'err');
+      }).catch(function(){
+        if(typeof toast === 'function') toast('Save failed','err');
+      });
+  };
+})();
+
+// saveExpertPackages: when admin context, route to admin packages endpoint
+(function(){
+  var _origSEPkg = window.saveExpertPackages;
+  window.saveExpertPackages = function(pkgs) {
+    if(!_isAdminCtx()) { if(_origSEPkg) _origSEPkg.call(this, pkgs); return; }
+    var tok = sessionStorage.getItem('ob_t');
+    fetch(_adminPath('/packages'), {
+      method:'POST',
+      headers:{'Authorization':'Bearer '+tok,'Content-Type':'application/json'},
+      body: JSON.stringify({packages: pkgs||[]})
+    }).then(function(r){return r.json();})
+      .then(function(d){
+        if(typeof toast === 'function') toast(d.success ? 'Packages saved' : (d.error||'Save failed'), d.success?'ok':'err');
+      }).catch(function(){
+        if(typeof toast === 'function') toast('Save failed','err');
+      });
+  };
+})();
+
+// loadClients: already handles admin context (from v8) - no change needed
+
+// loadAnalytics: when admin context, use admin dashboard endpoint
+(function(){
+  var _origLA = window.loadAnalytics;
+  window.loadAnalytics = function() {
+    if(!_isAdminCtx()) { if(_origLA) _origLA.call(this); return; }
+    var tok = sessionStorage.getItem('ob_t');
+    fetch(_adminPath('/dashboard'), {headers:{'Authorization':'Bearer '+tok}})
+      .then(function(r){return r.json();})
+      .then(function(d){
+        var s = d.dashboard?.stats || {};
+        var panel = document.getElementById('db-panel-analytics');
+        if(!panel) return;
+        var vals = panel.querySelectorAll('.stat-sum-val');
+        var data = [
+          '$'+(((s.total_earnings||s.total_revenue||0)/100)||0).toFixed(2),
+          (s.total_sessions||0)+'',
+          (s.review_count||0)+'',
+          (s.avg_rating||0).toFixed(1),
+        ];
+        vals.forEach(function(el,i){ if(data[i]!==undefined) el.textContent=data[i]; });
+      }).catch(function(){});
+  };
+})();
+
+// loadReviews: when admin context, use public expert data
+(function(){
+  var _origLR = window.loadReviews;
+  window.loadReviews = function() {
+    if(!_isAdminCtx()) { if(_origLR) _origLR.call(this); return; }
+    var slug = window._adminViewingExpertSlug;
+    if(!slug) { if(_origLR) _origLR.call(this); return; }
+    fetch('https://ownlybiz-backend-production.up.railway.app/api/experts/'+slug)
+      .then(function(r){return r.json();})
+      .then(function(d){
+        var reviews = d.reviews || [];
+        var panel = document.getElementById('db-panel-reviews');
+        if(!panel) return;
+        if(!reviews.length){
+          var np = panel.querySelector('.no-reviews-placeholder');
+          if(!np){
+            var div=document.createElement('div');
+            div.className='no-reviews-placeholder';
+            div.style.cssText='padding:40px;text-align:center;color:var(--gray-400);font-size:15px;';
+            div.textContent='No reviews yet for this expert.';
+            panel.appendChild(div);
+          }
+          return;
+        }
+        // render reviews (same as loadReviews logic)
+        var html = reviews.map(function(r){
+          var stars='\u2605'.repeat(Math.round(r.rating||5));
+          var initials=(r.client_name||'?').split(' ').map(function(w){return w[0]||'';}).join('').substring(0,2).toUpperCase();
+          return '<div style="background:var(--white);border:1px solid var(--gray-100);border-radius:12px;padding:20px;margin-bottom:12px">'+
+            '<div style="display:flex;gap:10px;align-items:center;margin-bottom:10px">'+
+            '<div style="width:36px;height:36px;border-radius:50%;background:var(--terra);color:white;display:flex;align-items:center;justify-content:center;font-weight:600;font-size:13px">'+initials+'</div>'+
+            '<div><div style="font-weight:600;font-size:14px">'+(r.client_name||'Client')+'</div>'+
+            '<div style="color:var(--terra);font-size:14px">'+stars+'</div></div></div>'+
+            '<p style="font-size:14px;color:var(--gray-600);margin:0">'+(r.comment||r.text||'Great session!')+'</p></div>';
+        }).join('');
+        var wrap = panel.querySelector('[class*="testimonials-inner"],[class*="reviews-inner"]') || panel;
+        wrap.innerHTML = html;
+      }).catch(function(){});
+  };
+})();
+
+// dbNav hook: also wire admin-aware functions when admin switches sections
+(function(){
+  var _origDbNav3 = window.dbNav;
+  window.dbNav = function(el, section) {
+    if(_origDbNav3) _origDbNav3.call(this, el, section);
+    if(section==='analytics')                    setTimeout(loadAnalytics, 100);
+    if(section==='reviews')                      setTimeout(loadReviews,   100);
+    if(section==='clients')                      setTimeout(function(){ if(typeof loadClients==='function') loadClients(); }, 100);
+    if(section==='settings'||section==='profile') setTimeout(function(){ if(typeof loadSettings==='function') loadSettings(); }, 100);
+    if(section==='payments')                     setTimeout(function(){ if(typeof loadExpertPricing==='function') loadExpertPricing(); }, 100);
+  };
+})();
+// === END v13 ===
+
 </script>
 
   <style>

@@ -11352,6 +11352,119 @@ function _getMySlug() {
   };
 })();
 // === END v7 ===
+
+
+// === OWNLYBIZ OVERRIDES v8 ===
+
+// Fix 1: _getMySlug - checks _currentExpert.slug, _adminViewingExpertSlug, ob_u.slug
+function _getMySlug() {
+  // 1. Admin viewing an expert - use that expert slug
+  if (window._adminViewingExpertSlug) return window._adminViewingExpertSlug;
+  // 2. _currentExpert set from expert website load
+  if (window._currentExpert && window._currentExpert.slug) return window._currentExpert.slug;
+  // 3. ob_u sessionStorage
+  try {
+    var u = JSON.parse(sessionStorage.getItem("ob_u") || "{}");
+    if (u.slug) return u.slug;
+  } catch(e) {}
+  return null;
+}
+
+// Fix 2: loadSettings - fetches /me/dashboard, stores slug into _currentExpert
+function loadSettings() {
+  var tok = sessionStorage.getItem("ob_t");
+  if (!tok) return;
+  var hdrs = { "Authorization": "Bearer " + tok };
+  Promise.all([
+    fetch("https://ownlybiz-backend-production.up.railway.app/api/auth/me", { headers: hdrs }).then(function(r){ return r.json(); }).catch(function(){ return {}; }),
+    fetch("https://ownlybiz-backend-production.up.railway.app/api/experts/me/dashboard", { headers: hdrs }).then(function(r){ return r.json(); }).catch(function(){ return {}; })
+  ]).then(function(results) {
+    var me = results[0].user || results[0];
+    var ep = results[1].profile || results[1].expert || {};
+    var merged = Object.assign({}, me, ep);
+    // Store slug so _getMySlug can find it
+    if (ep.slug) {
+      window._currentExpert = Object.assign(window._currentExpert || {}, ep);
+      window._currentExpertId = ep.user_id || ep.id || me.id;
+    }
+    _applyProfile(merged);
+    loadExpertPricing();
+  });
+}
+
+// Fix 3: loadClients - uses admin endpoint when admin is viewing an expert
+function loadClients() {
+  var tok = sessionStorage.getItem("ob_t");
+  var tbody = document.getElementById("db-clients-tbody");
+  if (!tok || !tbody) return;
+  tbody.innerHTML = '<tr><td colspan="6" style="padding:20px;text-align:center;color:var(--gray-400)">Loading clients...</td></tr>';
+
+  // Admin viewing expert - use admin endpoint
+  var adminId = window._adminViewingExpertId;
+  var url = adminId
+    ? "https://ownlybiz-backend-production.up.railway.app/api/admin/experts/" + adminId + "/clients"
+    : "https://ownlybiz-backend-production.up.railway.app/api/experts/me/clients";
+
+  fetch(url, { headers: { "Authorization": "Bearer " + tok } })
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      var clients = d.clients || [];
+      if (!clients.length) {
+        tbody.innerHTML = '<tr><td colspan="6" style="padding:24px;text-align:center;color:var(--gray-400)">No clients yet.</td></tr>';
+        return;
+      }
+      tbody.innerHTML = clients.map(function(c){
+        var initials = (c.name||"?").split(" ").map(function(w){return w[0]||"";}).join("").substring(0,2).toUpperCase();
+        var sessions = c.session_count || 0;
+        var revenue = c.total_spent ? "$"+(c.total_spent/100).toFixed(0) : "$0";
+        var lastSess = c.last_session_at ? new Date(c.last_session_at*1000).toLocaleDateString() : "Never";
+        return '<tr>'+
+          '<td style="padding:12px 8px"><div style="display:flex;align-items:center;gap:10px">'+
+          '<div style="width:36px;height:36px;border-radius:50%;background:var(--terra);color:white;display:flex;align-items:center;justify-content:center;font-weight:600;font-size:13px;flex-shrink:0">'+initials+'</div>'+
+          '<div><div style="font-weight:600;color:var(--dark)">'+( c.name||"Unknown")+'</div>'+
+          '<div style="font-size:12px;color:var(--gray-400)">'+( c.email||"")+'</div></div></div></td>'+
+          '<td style="padding:12px 8px;text-align:center">'+sessions+'</td>'+
+          '<td style="padding:12px 8px;text-align:center">'+revenue+'</td>'+
+          '<td style="padding:12px 8px;text-align:center">'+lastSess+'</td>'+
+          '<td style="padding:12px 8px;text-align:center"><span style="color:#22c55e;font-size:12px">Active</span></td>'+
+          '<td style="padding:12px 8px"></td>'+
+        '</tr>';
+      }).join("");
+    }).catch(function(){
+      tbody.innerHTML = '<tr><td colspan="6" style="padding:20px;text-align:center;color:var(--gray-400)">Failed to load clients.</td></tr>';
+    });
+}
+
+// Fix 4: switchView - use correct slug for view-4 from all sources
+(function(){
+  var _origSV4 = window.switchView;
+  window.switchView = function(n) {
+    if (n === 4) {
+      var slug = _getMySlug();
+      if (slug) {
+        window._browseExpert = slug;
+      }
+    }
+    if (_origSV4) _origSV4.call(this, n);
+    if (n === 4) {
+      var slug2 = _getMySlug() || window._browseExpert || "sarah-chen";
+      setTimeout(function(){
+        fetch("https://ownlybiz-backend-production.up.railway.app/api/experts/" + slug2)
+          .then(function(r){ return r.json(); })
+          .then(function(d){
+            var e = d.expert || d;
+            if (!e || !e.name) return;
+            var nav = document.getElementById("nav-logo-text");
+            if (nav) nav.textContent = e.name;
+            window._currentExpert = e;
+            window._currentExpertId = e.user_id || e.id;
+            setExpertOnlineStatus(!!e.is_online);
+          }).catch(function(){});
+      }, 150);
+    }
+  };
+})();
+// === END v8 ===
 </script>
 
   <style>

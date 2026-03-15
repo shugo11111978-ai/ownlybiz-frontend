@@ -12582,6 +12582,196 @@ function _openMyWebsite() {
 }
 // === END v16 ===
 
+
+
+// === OWNLYBIZ OVERRIDES v17 ===
+// UNIFIED EXPERT DASHBOARD: /dash/[slug]
+// - Admin visits /dash/testexpert: full control via admin endpoints, no password
+// - Expert visits /dash/sarah-chen: own dashboard via /me/ endpoints
+// - Admin "View" button opens /dash/[slug] in new tab
+// - Expert login redirects to /dash/[their-slug]
+
+// \u2500\u2500\u2500 Core: loadDashboard(slug) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+// THE single function for all dashboard loading. Clears all previous context.
+window.loadDashboard = function(slug) {
+  if(!slug) return;
+  var tok = sessionStorage.getItem('ob_t');
+  var u = {};
+  try { u = JSON.parse(sessionStorage.getItem('ob_u')||'{}'); } catch(e){}
+
+  // If not logged in at all - go to login
+  if(!tok) {
+    sessionStorage.setItem('ob_next', '/dash/'+slug);
+    window.location.href = '/';
+    return;
+  }
+
+  if(u.role === 'admin') {
+    // ADMIN PATH: fetch expert by slug to get their ID, then load with admin endpoints
+    window._adminViewingExpertSlug = slug;
+    window._adminViewingExpertId = null; // clear until we fetch it
+    window._adminViewingExpertName = '';
+    window._myExpertSlug = null;
+    fetch('https://ownlybiz-backend-production.up.railway.app/api/admin/experts/by-slug/'+slug, {
+      headers: {'Authorization':'Bearer '+tok}
+    }).then(function(r){return r.json();})
+      .then(function(d){
+        if(d.error || !d.expert) {
+          if(typeof toast==='function') toast('Expert not found: '+slug,'err');
+          return;
+        }
+        var e = d.expert;
+        window._adminViewingExpertId = e.id;
+        window._adminViewingExpertSlug = e.slug || slug;
+        window._adminViewingExpertName = e.name || '';
+        // Show dashboard
+        if(typeof switchView === 'function') switchView(3);
+        // Update sidebar name/title
+        var dbName = document.querySelector('.db-expert-name,.db-sidebar-name');
+        if(dbName) dbName.textContent = e.name||'';
+        var dbTitle = document.querySelector('.db-expert-title,.db-sidebar-title');
+        if(dbTitle) dbTitle.textContent = e.title||'';
+        // Show admin-viewing banner
+        var banner = document.getElementById('admin-viewing-banner');
+        if(banner) { banner.style.display='block'; banner.textContent='Admin view: '+e.name; }
+        // Load all sections with admin data
+        if(typeof loadSettings === 'function') loadSettings();
+        if(typeof loadClients === 'function') loadClients();
+        if(typeof loadExpertDashboardForAdmin === 'function') loadExpertDashboardForAdmin(e.id);
+      }).catch(function(err){
+        if(typeof toast==='function') toast('Load failed','err');
+      });
+
+  } else if(u.role === 'expert') {
+    // EXPERT PATH: verify slug matches their own
+    // Clear any admin context
+    window._adminViewingExpertId = null;
+    window._adminViewingExpertSlug = null;
+    window._adminViewingExpertName = '';
+    // Load their own slug from /me/dashboard to verify
+    fetch('https://ownlybiz-backend-production.up.railway.app/api/experts/me/dashboard', {
+      headers: {'Authorization':'Bearer '+tok}
+    }).then(function(r){return r.json();})
+      .then(function(d){
+        var mySlug = d.profile && d.profile.slug ? d.profile.slug : null;
+        window._myExpertSlug = mySlug;
+        if(mySlug && mySlug !== slug) {
+          // Wrong expert - show access denied
+          if(typeof toast==='function') toast('Access denied - not your dashboard','err');
+          window.location.href = '/dash/'+mySlug;
+          return;
+        }
+        // Their own dashboard
+        if(typeof switchView === 'function') switchView(3);
+        if(typeof loadSettings === 'function') loadSettings();
+        if(typeof loadClients === 'function') loadClients();
+        if(window.OwnlyAPI && window.OwnlyAPI.loadExpertDashboard) window.OwnlyAPI.loadExpertDashboard();
+      }).catch(function(){
+        if(typeof switchView === 'function') switchView(3);
+        if(typeof loadSettings === 'function') loadSettings();
+      });
+  } else {
+    // Client or unknown - redirect to home
+    window.location.href = '/';
+  }
+};
+
+// \u2500\u2500\u2500 URL routing: detect /dash/[slug] \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+(function(){
+  var rawPath = (window.location.pathname||'').replace(/^\/+/,'').replace(/\/+$/,'');
+  if(rawPath.indexOf('dash/') === 0) {
+    var dashSlug = rawPath.replace('dash/','').replace(/\/.*$/,'');
+    if(dashSlug) {
+      window._dashSlug = dashSlug;
+      // Wait for page to init then load dashboard
+      document.addEventListener('DOMContentLoaded', function(){
+        setTimeout(function(){ window.loadDashboard(dashSlug); }, 300);
+      });
+      // If DOM already loaded (script runs after DOMContentLoaded)
+      if(document.readyState !== 'loading') {
+        setTimeout(function(){ window.loadDashboard(dashSlug); }, 300);
+      }
+    }
+  }
+})();
+
+// \u2500\u2500\u2500 Admin "View" button: open /dash/[slug] in new tab \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+(function(){
+  var _origAVED17 = window.adminViewExpertDashboard;
+  window.adminViewExpertDashboard = function(expertId, slug, name) {
+    if(slug) {
+      window.open('/dash/'+slug, '_blank');
+    } else if(_origAVED17) {
+      _origAVED17.call(this, expertId, slug, name);
+    }
+  };
+})();
+
+// \u2500\u2500\u2500 Expert login: redirect to /dash/[slug] after login \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+(function(){
+  var _origSV17 = window.switchView;
+  window.switchView = function(n) {
+    if(n === 3) {
+      // Check if this is coming from a login (ob_u just set, no _dashSlug yet)
+      var u = {};
+      try { u = JSON.parse(sessionStorage.getItem('ob_u')||'{}'); } catch(e){}
+      // Only redirect if: expert role, on root/dashboard URL (not already on /dash/)
+      var path = (window.location.pathname||'').replace(/^\/+/,'').replace(/\/+$/,'');
+      var onDash = path.indexOf('dash/') === 0;
+      if(!onDash && u.role === 'expert' && !window._adminViewingExpertId) {
+        // Get their slug and redirect
+        var tok = sessionStorage.getItem('ob_t');
+        if(tok) {
+          fetch('https://ownlybiz-backend-production.up.railway.app/api/experts/me/dashboard', {headers:{'Authorization':'Bearer '+tok}})
+            .then(function(r){return r.json();})
+            .then(function(d){
+              var slug = d.profile && d.profile.slug ? d.profile.slug : null;
+              if(slug) {
+                window._myExpertSlug = slug;
+                window.history.replaceState({}, '', '/dash/'+slug);
+              }
+            }).catch(function(){});
+        }
+      }
+    }
+    if(_origSV17) _origSV17.call(this, n);
+  };
+})();
+
+// \u2500\u2500\u2500 _getMySlug: final clean version using _myExpertSlug \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+function _getMySlug() {
+  if(window._adminViewingExpertSlug) return window._adminViewingExpertSlug;
+  if(window._myExpertSlug) return window._myExpertSlug;
+  if(window._dashSlug) return window._dashSlug;
+  if(window._currentExpert && window._currentExpert.slug) return window._currentExpert.slug;
+  try { var u=JSON.parse(sessionStorage.getItem('ob_u')||'{}'); if(u.slug) return u.slug; } catch(e){}
+  return null;
+}
+
+// \u2500\u2500\u2500 _openMyWebsite: uses _getMySlug, no fallback to sarah-chen \u2500\u2500\u2500\u2500\u2500\u2500\u2500
+function _openMyWebsite() {
+  var slug = _getMySlug();
+  if(slug && slug !== 'sarah-chen') { window.open('/'+slug,'_blank'); return; }
+  if(slug === 'sarah-chen') {
+    // Verify it's really sarah or just the default fallback
+    var u = {};
+    try { u = JSON.parse(sessionStorage.getItem('ob_u')||'{}'); } catch(e){}
+    if(u.email === 'sarah@demo.com' || window._myExpertSlug === 'sarah-chen') {
+      window.open('/sarah-chen','_blank'); return;
+    }
+  }
+  // Fetch from /me/dashboard
+  var tok = sessionStorage.getItem('ob_t');
+  if(!tok) return;
+  fetch('https://ownlybiz-backend-production.up.railway.app/api/experts/me/dashboard',{headers:{'Authorization':'Bearer '+tok}})
+    .then(function(r){return r.json();})
+    .then(function(d){
+      var s = d.profile && d.profile.slug ? d.profile.slug : null;
+      if(s){ window._myExpertSlug=s; window.open('/'+s,'_blank'); }
+    }).catch(function(){});
+}
+// === END v17 ===
+
 </script>
 
   <style>

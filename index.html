@@ -12467,6 +12467,121 @@ setTimeout(function(){
 })();
 // === END v15 ===
 
+
+
+// === OWNLYBIZ OVERRIDES v16 ===
+// Fix 1: saveSettingsBlock('pricing') used PUT for /api/experts/rates but backend is POST
+// Fix 2: switchView(4) from expert dash now fetches real slug from /me/dashboard if not cached
+// Fix 3: _openMyWebsite always gets slug from /me/dashboard when ob_u.slug is missing
+
+// --- Fix 1: saveSettingsBlock - correct method for expert rates ---
+(function(){
+  var _origSSB16 = window.saveSettingsBlock;
+  window.saveSettingsBlock = function(section) {
+    if(section !== 'pricing'){ if(_origSSB16) _origSSB16.call(this, section); return; }
+    var tok = sessionStorage.getItem('ob_t');
+    if(!tok){ if(typeof toast==='function') toast('Not logged in','err'); return; }
+    var gv = function(id){ var el=document.getElementById(id); return el ? parseFloat(el.value)||0 : 0; };
+    var chatPm   = gv('sfield-chat-rate');
+    var voicePm  = gv('sfield-voice-rate');
+    var videoPm  = gv('sfield-video-rate');
+    var freeMins = gv('sfield-free-min');
+    var adminId  = window._adminViewingExpertId;
+    var hdr = {'Authorization':'Bearer '+tok,'Content-Type':'application/json'};
+    var ratesBody = {chat_pm:chatPm,chat_free_min:freeMins,chat_enabled:1,voice_pm:voicePm,voice_free_min:0,voice_enabled:1,video_pm:videoPm,video_free_min:0,video_enabled:1};
+    // Admin: PUT /admin/experts/:id/rates  |  Expert: POST /experts/rates
+    var ratesUrl = adminId
+      ? 'https://ownlybiz-backend-production.up.railway.app/api/admin/experts/'+adminId+'/rates'
+      : 'https://ownlybiz-backend-production.up.railway.app/api/experts/rates';
+    var ratesMethod = adminId ? 'PUT' : 'POST';
+    // Get packages from Settings panel
+    var pkgRows = Array.from(document.querySelectorAll('.settings-pkg-row,[class*="pkg-row"]'));
+    var packages = pkgRows.map(function(row){
+      var n=row.querySelector('input[type="text"]'); var p=row.querySelector('input[type="number"]');
+      return {name:(n?.value||'').trim(),price:parseFloat(p?.value)||0,duration_min:60,channel:'video'};
+    }).filter(function(p){return p.name;});
+    var pkgsUrl = adminId ? 'https://ownlybiz-backend-production.up.railway.app/api/admin/experts/'+adminId+'/packages' : 'https://ownlybiz-backend-production.up.railway.app/api/experts/packages';
+    Promise.all([
+      fetch(ratesUrl,{method:ratesMethod,headers:hdr,body:JSON.stringify(ratesBody)}).then(function(r){return r.json();}),
+      packages.length ? fetch(pkgsUrl,{method:'POST',headers:hdr,body:JSON.stringify({packages:packages})}).then(function(r){return r.json();}) : Promise.resolve({success:true}),
+    ]).then(function(results){
+      var ok = results[0].success !== false && results[1].success !== false;
+      if(typeof toast==='function') toast(ok?'Pricing saved':'Save failed: '+JSON.stringify(results[0]), ok?'ok':'err');
+    }).catch(function(e){
+      if(typeof toast==='function') toast('Save failed: '+e.message,'err');
+    });
+  };
+})();
+
+// --- Fix 2: _getMySlug with /me/dashboard async fallback stored in _myExpertSlug ---
+// When expert logs in directly, store their slug after loadSettings runs
+(function(){
+  var _origLS16 = window.loadSettings;
+  window.loadSettings = function() {
+    if(_origLS16) _origLS16.call(this);
+    // If NOT admin context, fetch /me/dashboard and cache the slug
+    if(!window._adminViewingExpertId) {
+      var tok = sessionStorage.getItem('ob_t');
+      if(!tok) return;
+      fetch('https://ownlybiz-backend-production.up.railway.app/api/experts/me/dashboard',{headers:{'Authorization':'Bearer '+tok}})
+        .then(function(r){return r.json();})
+        .then(function(d){
+          var slug = d.profile && d.profile.slug ? d.profile.slug : null;
+          if(slug) {
+            window._myExpertSlug = slug;
+            // Also cache rates in sfield inputs
+            var r = {};
+            fetch('https://ownlybiz-backend-production.up.railway.app/api/experts/rates',{headers:{'Authorization':'Bearer '+tok}})
+              .then(function(r2){return r2.json();})
+              .then(function(rd){
+                r = rd.rates||{};
+                var sc=document.getElementById('sfield-chat-rate');
+                var sv=document.getElementById('sfield-voice-rate');
+                var svid=document.getElementById('sfield-video-rate');
+                var sf=document.getElementById('sfield-free-min');
+                if(sc&&r.chat_pm!==undefined) sc.value=r.chat_pm;
+                if(sv&&r.voice_pm!==undefined) sv.value=r.voice_pm;
+                if(svid&&r.video_pm!==undefined) svid.value=r.video_pm;
+                if(sf&&r.chat_free_min!==undefined) sf.value=r.chat_free_min;
+              }).catch(function(){});
+          }
+        }).catch(function(){});
+    }
+  };
+})();
+
+// --- Fix 3: _getMySlug always checks _myExpertSlug (set above) ---
+function _getMySlug() {
+  // Admin context: use viewed expert slug
+  if(window._adminViewingExpertSlug) return window._adminViewingExpertSlug;
+  // Expert direct login: use cached slug from /me/dashboard
+  if(window._myExpertSlug) return window._myExpertSlug;
+  // _currentExpert set by loadExpertWebsite
+  if(window._currentExpert && window._currentExpert.slug) return window._currentExpert.slug;
+  // ob_u sessionStorage fallback
+  try { var u=JSON.parse(sessionStorage.getItem('ob_u')||'{}'); if(u.slug) return u.slug; } catch(e){}
+  return null;
+}
+
+// --- Fix 4: _openMyWebsite - always async-fetches slug if needed ---
+function _openMyWebsite() {
+  var slug = _getMySlug();
+  if(slug){ window.open('/'+slug,'_blank'); return; }
+  // Not cached yet - fetch from /me/dashboard
+  var tok = sessionStorage.getItem('ob_t');
+  if(!tok) return;
+  fetch('https://ownlybiz-backend-production.up.railway.app/api/experts/me/dashboard',{headers:{'Authorization':'Bearer '+tok}})
+    .then(function(r){return r.json();})
+    .then(function(d){
+      var s = d.profile && d.profile.slug ? d.profile.slug : null;
+      if(s){
+        window._myExpertSlug = s;
+        window.open('/'+s,'_blank');
+      }
+    }).catch(function(){});
+}
+// === END v16 ===
+
 </script>
 
   <style>

@@ -3878,7 +3878,7 @@ if (!window.toast) {
                   </div>
                   <div style="display:flex;align-items:center;gap:6px;">
                     <span style="font-size:14px;color:var(--gray-400);">$</span>
-                    <input class="settings-field-input" value="3.50" type="number" step="0.50" min="1" style="width:90px;text-align:right;">
+                    <input class="settings-field-input" id="sfield-chat-rate" value="3.50" type="number" step="0.50" min="1" style="width:90px;text-align:right;">
                     <span style="font-size:13px;color:var(--gray-400);">/min</span>
                   </div>
                 </div>
@@ -3889,7 +3889,7 @@ if (!window.toast) {
                   </div>
                   <div style="display:flex;align-items:center;gap:6px;">
                     <span style="font-size:14px;color:var(--gray-400);">$</span>
-                    <input class="settings-field-input" value="4.50" type="number" step="0.50" min="1" style="width:90px;text-align:right;">
+                    <input class="settings-field-input" id="sfield-voice-rate" value="4.50" type="number" step="0.50" min="1" style="width:90px;text-align:right;">
                     <span style="font-size:13px;color:var(--gray-400);">/min</span>
                   </div>
                 </div>
@@ -3900,14 +3900,14 @@ if (!window.toast) {
                   </div>
                   <div style="display:flex;align-items:center;gap:6px;">
                     <span style="font-size:14px;color:var(--gray-400);">$</span>
-                    <input class="settings-field-input" value="6.00" type="number" step="0.50" min="1" style="width:90px;text-align:right;">
+                    <input class="settings-field-input" id="sfield-video-rate" value="6.00" type="number" step="0.50" min="1" style="width:90px;text-align:right;">
                     <span style="font-size:13px;color:var(--gray-400);">/min</span>
                   </div>
                 </div>
                 <div class="settings-field-row" style="margin-top:4px;">
                   <div><div class="settings-field-label">Free intro minutes</div><div class="settings-field-sub">First N minutes are free for new clients</div></div>
                   <div style="display:flex;align-items:center;gap:6px;">
-                    <input class="settings-field-input" value="3" type="number" min="0" max="10" style="width:70px;text-align:right;">
+                    <input class="settings-field-input" id="sfield-free-min" value="3" type="number" min="0" max="10" style="width:70px;text-align:right;">
                     <span style="font-size:13px;color:var(--gray-400);">min</span>
                   </div>
                 </div>
@@ -12181,6 +12181,183 @@ function _adminPath(suffix) {
   };
 })();
 // === END v13 ===
+
+
+
+// === OWNLYBIZ OVERRIDES v14 ===
+// Fix 1: One clean loadExpertWebsite - fetches expert data + rates, calls _refreshPublicPage
+// Fix 2: saveSettingsBlock('pricing') reads Settings inputs by their new IDs
+// Fix 3: loadSettings populates Settings pricing inputs from DB
+// Fix 4: Payments panel rates section hidden (Settings is the real UI)
+
+// --- Clean single loadExpertWebsite (replaces all previous wrappers) ---
+window.loadExpertWebsite = function(slug) {
+  slug = slug || window._browseExpert || 'sarah-chen';
+  window._browseExpert = slug;
+
+  // Call the ORIGINAL Cursor function (buried in s3) via OwnlyAPI if available
+  if(window.OwnlyAPI && window.OwnlyAPI.loadExpertWebsite) {
+    window.OwnlyAPI.loadExpertWebsite(slug);
+  }
+
+  // Fetch expert data + rates and refresh public page
+  setTimeout(function(){
+    fetch('https://ownlybiz-backend-production.up.railway.app/api/experts/' + slug)
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        var e = d.expert || d;
+        if(!e || !e.name) return;
+        // e now contains chat_pm, voice_pm, video_pm from expert_rates JOIN (backend fix)
+        // Also has rate_chat, rate_voice, rate_video from expert_profiles
+        // Use expert_rates values if available, fallback to expert_profiles
+        e.chat_pm  = e.chat_pm  || e.rate_chat  || 0;
+        e.voice_pm = e.voice_pm || e.rate_voice || 0;
+        e.video_pm = e.video_pm || e.rate_video || 0;
+        e.chat_free_min = e.chat_free_min || e.free_minutes || 0;
+        e.packages = d.packages || [];
+        window._currentExpert = e;
+        window._currentExpertId = e.user_id || e.id;
+        setExpertOnlineStatus(!!e.is_online);
+        _refreshPublicPage(e);
+      }).catch(function(){});
+  }, 200);
+};
+
+// --- Start live poll on expert public pages ---
+(function(){
+  var _pollTimer = null;
+  var _lastOnlineState = null;
+  function _poll(){
+    var slug = window._browseExpert || (window._currentExpert && window._currentExpert.slug);
+    if(!slug) return;
+    fetch('https://ownlybiz-backend-production.up.railway.app/api/experts/'+slug)
+      .then(function(r){return r.json();})
+      .then(function(d){
+        var e = d.expert||d;
+        if(!e) return;
+        var on = !!e.is_online;
+        if(_lastOnlineState === on) return;
+        _lastOnlineState = on;
+        setExpertOnlineStatus(on);
+        if(window._currentExpert) window._currentExpert.is_online = e.is_online;
+      }).catch(function(){});
+  }
+  function _startPoll(){ if(!_pollTimer){ _lastOnlineState=null; _pollTimer=setInterval(_poll,15000); } }
+  function _stopPoll(){ if(_pollTimer){ clearInterval(_pollTimer); _pollTimer=null; } }
+  // Hook switchView
+  var _origSVfinal = window.switchView;
+  window.switchView = function(n){
+    if(_origSVfinal) _origSVfinal.call(this,n);
+    if(n===4){ _lastOnlineState=null; _startPoll(); loadExpertWebsite(window._browseExpert||_getMySlug()||'sarah-chen'); }
+    else _stopPoll();
+  };
+  // Auto-start on slug URLs
+  setTimeout(function(){
+    var path = window.location.pathname;
+    if(path.length>1 && path.indexOf('dashboard')===-1 && path.indexOf('admin')===-1){
+      _startPoll();
+    }
+  }, 2000);
+})();
+
+// --- Fix loadSettings to populate Settings pricing inputs ---
+(function(){
+  var _origLS14 = window.loadSettings;
+  window.loadSettings = function(){
+    // Run original
+    if(_origLS14) _origLS14.call(this);
+    // Also populate the Settings pricing inputs
+    var tok = sessionStorage.getItem('ob_t');
+    if(!tok) return;
+    var adminId = window._adminViewingExpertId;
+    var url = adminId
+      ? 'https://ownlybiz-backend-production.up.railway.app/api/admin/experts/'+adminId+'/profile'
+      : 'https://ownlybiz-backend-production.up.railway.app/api/experts/rates';
+    var hdr = {'Authorization':'Bearer '+tok};
+    fetch(url, {headers:hdr})
+      .then(function(r){return r.json();})
+      .then(function(d){
+        var r = adminId ? (d.rates||{}) : (d.rates||{});
+        // Populate Settings inputs (with IDs we added)
+        var sc = document.getElementById('sfield-chat-rate');
+        var sv = document.getElementById('sfield-voice-rate');
+        var svid = document.getElementById('sfield-video-rate');
+        var sf = document.getElementById('sfield-free-min');
+        if(sc && r.chat_pm !== undefined)   sc.value = r.chat_pm;
+        if(sv && r.voice_pm !== undefined)  sv.value = r.voice_pm;
+        if(svid && r.video_pm !== undefined) svid.value = r.video_pm;
+        if(sf && r.chat_free_min !== undefined) sf.value = r.chat_free_min;
+      }).catch(function(){});
+  };
+})();
+
+// --- Fix saveSettingsBlock('pricing') to read Settings inputs ---
+(function(){
+  var _origSSB14 = window.saveSettingsBlock;
+  window.saveSettingsBlock = function(section){
+    if(section !== 'pricing'){ if(_origSSB14) _origSSB14.call(this,section); return; }
+    var tok = sessionStorage.getItem('ob_t');
+    if(!tok){ if(typeof toast==='function') toast('Not logged in','err'); return; }
+    // Read from Settings inputs (with IDs we added)
+    var gv = function(id){ var el=document.getElementById(id); return el ? parseFloat(el.value)||0 : 0; };
+    var chatPm   = gv('sfield-chat-rate');
+    var voicePm  = gv('sfield-voice-rate');
+    var videoPm  = gv('sfield-video-rate');
+    var freeMins = gv('sfield-free-min');
+    // Also read packages from Settings panel
+    var pkgInputs = Array.from(document.querySelectorAll('.settings-pkg-row,[class*="pkg-row"]'));
+    var packages = pkgInputs.map(function(row){
+      var nameInput = row.querySelector('input[type="text"],[type="text"]');
+      var priceInput = row.querySelector('input[type="number"],[type="number"]');
+      return {name:(nameInput?.value||'').trim(), price:parseFloat(priceInput?.value)||0, duration_min:60, channel:'video'};
+    }).filter(function(p){ return p.name; });
+    // Save rates
+    var adminId = window._adminViewingExpertId;
+    var ratesUrl = adminId ? 'https://ownlybiz-backend-production.up.railway.app/api/admin/experts/'+adminId+'/rates' : 'https://ownlybiz-backend-production.up.railway.app/api/experts/rates';
+    var pkgsUrl  = adminId ? 'https://ownlybiz-backend-production.up.railway.app/api/admin/experts/'+adminId+'/packages' : 'https://ownlybiz-backend-production.up.railway.app/api/experts/packages';
+    var hdr = {'Authorization':'Bearer '+tok,'Content-Type':'application/json'};
+    var body = {chat_pm:chatPm,chat_free_min:freeMins,chat_enabled:1,voice_pm:voicePm,voice_free_min:0,voice_enabled:1,video_pm:videoPm,video_free_min:0,video_enabled:1};
+    Promise.all([
+      fetch(ratesUrl,{method:'PUT',headers:hdr,body:JSON.stringify(body)}).then(function(r){return r.json();}),
+      packages.length ? fetch(pkgsUrl,{method:'POST',headers:hdr,body:JSON.stringify({packages:packages})}).then(function(r){return r.json();}) : Promise.resolve({success:true}),
+    ]).then(function(results){
+      var ok = results[0].success !== false && results[1].success !== false;
+      if(typeof toast==='function') toast(ok ? 'Pricing saved - your website will reflect the new rates' : 'Save failed','ok');
+    }).catch(function(){
+      if(typeof toast==='function') toast('Save failed','err');
+    });
+  };
+})();
+
+// --- Hide duplicate rates section in Payments panel (Settings is the real UI) ---
+(function(){
+  var _origDbNav14 = window.dbNav;
+  window.dbNav = function(el, section){
+    if(_origDbNav14) _origDbNav14.call(this, el, section);
+    if(section === 'payments'){
+      setTimeout(function(){
+        // Hide Per-Minute Session Rates, Fixed Session Pricing, Free Minutes, Session Packages
+        // from Payments panel - these are now managed in Settings
+        var panel = document.getElementById('db-panel-payments');
+        if(!panel) return;
+        var headings = Array.from(panel.querySelectorAll('h3,[class*="section-title"]'));
+        headings.forEach(function(h){
+          var txt = h.textContent.trim();
+          if(txt==='Per-Minute Session Rates'||txt==='Fixed Session Pricing'||txt==='Free Minutes & Trial Settings'||txt==='Session Packages'){
+            // Hide from the parent container up to next sibling section
+            var container = h.closest('[class*="payments-section"],[class*="panel-section"],section') || h.parentElement?.parentElement;
+            if(container) container.style.display='none';
+          }
+        });
+      }, 100);
+    }
+    if(section==='settings') setTimeout(function(){ if(typeof loadSettings==='function') loadSettings(); },100);
+    if(section==='analytics') setTimeout(loadAnalytics,100);
+    if(section==='reviews')   setTimeout(loadReviews,100);
+    if(section==='clients')   setTimeout(function(){ if(typeof loadClients==='function') loadClients(); },100);
+  };
+})();
+// === END v14 ===
 
 </script>
 

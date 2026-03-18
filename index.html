@@ -13666,92 +13666,55 @@ setTimeout(function(){
 <!-- STRIPE CONNECT RETURN HANDLER -->
 <script>
 (function(){
-  var BASE = window._apiBase || 'https://ownlybiz-backend-production.up.railway.app';
-
+  var BASE = 'https://ownlybiz-backend-production.up.railway.app';
   function tok(){ return sessionStorage.getItem('ob_t')||localStorage.getItem('ob_t')||''; }
   function hdr(){ return {Authorization:'Bearer '+tok(),'Content-Type':'application/json'}; }
-  function myRole(){try{return JSON.parse(atob(tok().split('.')[1])).role;}catch(e){return null;}}
 
-  // ── Handle ?stripe=success or ?stripe=refresh when returning from Stripe ──
-  function handleStripeReturn(){
-    var params = new URLSearchParams(window.location.search);
-    var stripeParam = params.get('stripe');
-    if(!stripeParam) return;
-
-    // Clean the URL param without reload
-    var clean = window.location.pathname;
-    history.replaceState(null,'', clean);
-
-    if(stripeParam === 'success' || stripeParam === 'refresh'){
-      // Call /stripe/status and update the UI
-      fetch(BASE+'/api/expert-payments/stripe/status',{headers:hdr()})
-        .then(function(r){return r.json();})
-        .then(function(d){
-          updateStripeUI(d);
-        }).catch(function(){});
-    }
+  // FIX 1: correct mount path is /api/experts (not /api/expert-payments)
+  function fetchStripeStatus(cb){
+    fetch(BASE+'/api/experts/stripe/status',{headers:hdr()})
+      .then(function(r){return r.json();})
+      .then(function(d){ cb(d); })
+      .catch(function(){});
   }
 
-  // ── Update the Connect Payment banner based on status ─────────────────────
   function updateStripeUI(d){
     var banner = document.getElementById('payment-setup-banner');
-    var badge = document.getElementById('stripe-status-badge');
-
+    var badge  = document.getElementById('stripe-status-badge');
     if(d.connected){
-      // Fully connected — hide the "Connect" banner
       if(banner) banner.style.display = 'none';
-      if(badge){
-        badge.textContent = '✓ Connected';
-        badge.style.cssText = 'background:#16a34a;color:#fff;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:600';
-      }
+      if(badge){ badge.textContent='✓ Connected'; badge.style.cssText='background:#16a34a;color:#fff;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:600'; }
     } else if(d.pending){
-      // Stripe account created, onboarding not fully complete
-      if(banner){
-        banner.innerHTML = banner.innerHTML
-          .replace('Connect your payment account to start earning','⏳ Stripe account connected — verification pending')
-          .replace('Connect Stripe or PayPal before clients can pay you. Your profile won't appear in search until this is done. Takes 2 minutes.','Stripe is processing your account. This usually takes a few minutes. Refresh this page to check again.')
-          .replace('Connect Now →','Check Status');
-        // Change the button onclick to re-check status
-        var btn = banner.querySelector('[onclick*="openConnectorModal"]');
-        if(btn) btn.setAttribute('onclick','obCheckStripeStatus()');
-      }
-      if(badge){
-        badge.textContent = '⏳ Pending';
-        badge.style.cssText = 'background:#ca8a04;color:#fff;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:600';
-      }
+      var heading = banner && Array.from(banner.querySelectorAll('*')).find(function(el){ return el.childNodes.length===1 && el.textContent.trim()==='Connect your payment account to start earning'; });
+      if(heading) heading.textContent = '⏳ Stripe connected — verification pending';
+      var sub = banner && Array.from(banner.querySelectorAll('*')).find(function(el){ return el.textContent.includes('Connect Stripe or PayPal'); });
+      if(sub) sub.textContent = 'Stripe is processing your account. Click Check Status to refresh.';
+      var btn = banner && banner.querySelector('[onclick*="openConnectorModal"]');
+      if(btn){ btn.textContent='Check Status'; btn.setAttribute('onclick','obCheckStripeStatus()'); }
+      if(badge){ badge.textContent='⏳ Pending'; badge.style.cssText='background:#ca8a04;color:#fff;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:600'; }
     }
   }
 
-  window.obCheckStripeStatus = function(){
-    fetch(BASE+'/api/expert-payments/stripe/status',{headers:hdr()})
-      .then(function(r){return r.json();})
-      .then(function(d){ updateStripeUI(d); })
-      .catch(function(){});
-  };
+  window.obCheckStripeStatus = function(){ fetchStripeStatus(updateStripeUI); };
 
-  // ── On page load: if expert, always check Stripe status ──────────────────
-  // This ensures the banner reflects real state even without the ?stripe= param
+  // FIX 2+3: no role check — runs for admin and expert on any /dash/ page
+  function handleStripeReturn(){
+    var params = new URLSearchParams(window.location.search);
+    var sp = params.get('stripe');
+    if(!sp) return;
+    history.replaceState(null,'', window.location.pathname);
+    if(sp==='success'||sp==='refresh') fetchStripeStatus(updateStripeUI);
+  }
+
   function initStripeStatus(){
-    var t = tok(); if(!t) return;
-    var role = myRole(); if(role !== 'expert') return;
-    // Small delay to let the dashboard render first
-    setTimeout(function(){
-      fetch(BASE+'/api/expert-payments/stripe/status',{headers:hdr()})
-        .then(function(r){return r.json();})
-        .then(function(d){ updateStripeUI(d); })
-        .catch(function(){});
-    }, 1500);
+    if(!tok()) return;
+    if(!window.location.pathname.includes('/dash/')) return;
+    setTimeout(function(){ fetchStripeStatus(updateStripeUI); }, 1500);
   }
 
-  if(document.readyState === 'loading'){
-    document.addEventListener('DOMContentLoaded', function(){
-      handleStripeReturn();
-      initStripeStatus();
-    });
-  } else {
-    handleStripeReturn();
-    initStripeStatus();
-  }
+  if(document.readyState==='loading'){
+    document.addEventListener('DOMContentLoaded',function(){ handleStripeReturn(); initStripeStatus(); });
+  } else { handleStripeReturn(); initStripeStatus(); }
 })();
 </script>
 <!-- END STRIPE CONNECT RETURN HANDLER -->

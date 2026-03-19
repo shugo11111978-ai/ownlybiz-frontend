@@ -13525,10 +13525,81 @@ _sessId=sid;window._obActiveSessId=sid;var _bo=document.getElementById('booking-
     row.appendChild(bub);box.appendChild(row);box.scrollTop=box.scrollHeight;
   }
   window.obAppendToPanel=appendMsg;
+  // === EXPERT DASHBOARD FIX: bypass READY gate in api-v2.js ===
+  function fixExpertDashboard(){
+    function esc(s){var d=document.createElement("div");d.textContent=String(s||"");return d.innerHTML;}
+    function connectExpertWs(sid){
+      if(window._expertWs&&window._expertWs.readyState<=1){
+        if(sid)setTimeout(function(){if(window._expertWs&&window._expertWs.readyState===1)window._expertWs.send(JSON.stringify({type:"join",session_id:sid}));},300);
+        return;
+      }
+      var ws=new WebSocket(BASE.replace("https://","wss://").replace("http://","ws://")+"/ws");
+      ws.onopen=function(){
+        ws.send(JSON.stringify({type:"auth",token:tok()}));
+        if(sid)setTimeout(function(){ws.send(JSON.stringify({type:"join",session_id:sid}));},300);
+      };
+      ws.onmessage=function(evt){
+        try{
+          var d=JSON.parse(evt.data);
+          if(d.type==="message"){
+            var me=myId();
+            if(d.sender_id!==me){
+              var box=document.getElementById("expert-chat-messages");
+              if(box){var row=document.createElement("div");row.className="chat-msg theirs";row.innerHTML="<div class=\"msg-bubble\">"+esc(d.content)+"</div>";box.appendChild(row);box.scrollTop=box.scrollHeight;}
+            }
+          }
+          if(d.type==="joined"&&d.history){
+            var me2=myId();var box2=document.getElementById("expert-chat-messages");
+            if(box2){box2.innerHTML="";d.history.forEach(function(m){var row=document.createElement("div");row.className="chat-msg "+(m.sender_id===me2?"mine":"theirs");row.innerHTML="<div class=\"msg-bubble\">"+esc(m.content||"")+"</div>";box2.appendChild(row);});box2.scrollTop=box2.scrollHeight;}
+          }
+          if(d.type==="session_request"){
+            showIncomingRequest(d.session&&d.session.id||d.sessionId,d.client&&d.client.name||d.clientName||"Client",d.session&&d.session.channel||"chat");
+          }
+        }catch(e){}
+      };
+      ws.onerror=function(){};
+      ws.onclose=function(){window._expertWs=null;if(myRole()==="expert")setTimeout(function(){connectExpertWs(window._sid||null);},4000);};
+      window._expertWs=ws;
+    }
+    window.acceptSessionRequest=async function(){
+      var sid=window._pendingSid;if(!sid)return;
+      try{
+        var r=await fetch(BASE+"/api/sessions/"+sid+"/accept",{method:"POST",headers:hdr()});
+        var d=await r.json();
+        if(d.session||d.success||d.status==="active"){
+          window._sid=sid;window._obActiveSessId=sid;window._pendingSid=null;
+          ["session-request-overlay","session-request-sheet","ob-expert-incoming"].forEach(function(id){var el=document.getElementById(id);if(el){el.style.display="none";el.classList.remove("show");}});
+          var liveNav=Array.from(document.querySelectorAll("[onclick]")).find(function(el){return el.getAttribute("onclick")==="dbNav(this,'live-session')";});
+          if(liveNav)liveNav.click();
+          connectExpertWs(sid);
+          fetch(BASE+"/api/sessions/"+sid,{headers:hdr()}).then(function(r){return r.json();}).then(function(data){
+            var msgs=data.messages||[];var me=myId();
+            var box=document.getElementById("expert-chat-messages");
+            if(box){box.innerHTML="";msgs.forEach(function(m){var row=document.createElement("div");row.className="chat-msg "+(m.sender_id===me?"mine":"theirs");row.innerHTML="<div class=\"msg-bubble\">"+esc(m.content||"")+"</div>";box.appendChild(row);});box.scrollTop=box.scrollHeight;}
+          }).catch(function(){});
+        }else{alert(d.error||"Could not accept session");}
+      }catch(e){alert("Network error accepting session");}
+    };
+    window.sendExpertMsg=function(){
+      var input=document.getElementById("expert-chat-input")||document.getElementById("chat-input");
+      var content=input?input.value.trim():"";if(!content)return;
+      var sid=window._sid||window._obActiveSessId;if(!sid)return;
+      input.value="";
+      var box=document.getElementById("expert-chat-messages");
+      if(box){var row=document.createElement("div");row.className="chat-msg mine";row.innerHTML="<div class=\"msg-bubble\">"+esc(content)+"</div>";box.appendChild(row);box.scrollTop=box.scrollHeight;}
+      fetch(BASE+"/api/sessions/"+sid+"/message",{method:"POST",headers:hdr(),body:JSON.stringify({content:content})}).catch(function(){});
+    };
+    setTimeout(function(){
+      var inp=document.getElementById("expert-chat-input");
+      if(inp&&!inp._v5wired){inp._v5wired=true;inp.addEventListener("keydown",function(e){if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();window.sendExpertMsg();}});}
+    },1000);
+    connectExpertWs(null);
+  }
+
   function init(){
     var t=tok();if(!t)return;var role=myRole();
     if(role==='expert'){_pollTimer=setInterval(expertPoll,15000);expertPoll();}
-    setTimeout(hookWS,1200);
+    setTimeout(hookWS,1200);if(role==='expert')setTimeout(fixExpertDashboard,1500);
   }
   if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',init);}
   else{setTimeout(init,500);}

@@ -2677,7 +2677,7 @@ if (!window.toast) {
                 <div style="width:10px;height:10px;border-radius:50%;background:#22c55e;animation:pulse-green 2s infinite;flex-shrink:0;"></div>
                 <h2 style="font-family:var(--font-head);font-size:22px;font-weight:700;color:var(--brown);margin:0;">Live Session</h2>
               </div>
-              <div style="font-size:14px;color:var(--gray-400);margin-top:4px;">Chat session with Marcus Thompson</div>
+              <div style="font-size:14px;color:var(--gray-400);margin-top:4px;" id="live-sess-subtitle">Chat session with Marcus Thompson</div>
             </div>
             <div style="display:flex;gap:10px;align-items:center;">
               <div style="text-align:right;">
@@ -2695,11 +2695,11 @@ if (!window.toast) {
               <div style="font-size:11px;color:var(--gray-400);margin-top:4px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;">Duration</div>
             </div>
             <div style="background:var(--white);border:1px solid var(--gray-200);border-radius:12px;padding:16px;text-align:center;">
-              <div style="font-size:22px;font-weight:700;color:var(--sage);font-family:var(--font-head);">$3.50</div>
+              <div style="font-size:22px;font-weight:700;color:var(--sage);font-family:var(--font-head);" id="live-sess-rate">$3.50</div>
               <div style="font-size:11px;color:var(--gray-400);margin-top:4px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;">Rate / min</div>
             </div>
             <div style="background:var(--white);border:1px solid var(--gray-200);border-radius:12px;padding:16px;text-align:center;">
-              <div style="font-size:22px;font-weight:700;color:var(--brown);font-family:var(--font-head);">80%</div>
+              <div style="font-size:22px;font-weight:700;color:var(--brown);font-family:var(--font-head);" id="live-sess-cut">80%</div>
               <div style="font-size:11px;color:var(--gray-400);margin-top:4px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;">Your cut</div>
             </div>
             <div style="background:rgba(34,197,94,.08);border:1.5px solid rgba(34,197,94,.25);border-radius:12px;padding:16px;text-align:center;">
@@ -2717,7 +2717,7 @@ if (!window.toast) {
               <div style="padding:14px 18px;border-bottom:1px solid var(--gray-200);display:flex;align-items:center;gap:10px;">
                 <div style="width:34px;height:34px;border-radius:50%;background:var(--sage);color:white;font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;">MT</div>
                 <div>
-                  <div style="font-weight:700;font-size:14px;color:var(--brown);">Marcus Thompson</div>
+                  <div style="font-weight:700;font-size:14px;color:var(--brown);" id="live-client-name">Marcus Thompson</div>
                   <div style="font-size:12px;color:#22c55e;font-weight:600;">● Online · typing...</div>
                 </div>
                 <div style="margin-left:auto;display:flex;gap:8px;">
@@ -13403,8 +13403,8 @@ setTimeout(function(){
       }
     }
     if(d.type==='new_session_request'){showIncomingRequest(d.sessionId,d.clientName||'Client',d.channel||'chat');}
-    if(d.type==='chat_message'&&d.sessionId===window._obActiveSessId){
-      if(d.senderId!==me){var pid=role==='expert'?'expert-chat-messages':'ob-client-chat-messages';appendMsg(pid,d.content,false,d.ts);}
+    if(d.type==='message'&&d.sessionId===window._obActiveSessId){
+      if(d.sender_id!==me&&d.content){var pid=role==='expert'?'expert-chat-messages':'paid-chat-messages';appendMsg(pid,d.content,false,d.ts);}
     }
     if(d.type==='typing'&&d.sessionId===window._obActiveSessId){
       var tiId=role==='expert'?'expert-typing-indicator':'ob-client-typing';
@@ -13434,7 +13434,25 @@ setTimeout(function(){
   window.obCancelWait=function(){
     stopStatusPoll();var ov=document.getElementById('ob-waiting-overlay');if(ov)ov.classList.remove('show');window._obPendingSessId=null;
   };
-  function openClientChat(sid){
+function openClientChat(sid){
+  _sessId=sid;window._obActiveSessId=sid;
+  var _bo=document.getElementById('booking-overlay');if(_bo){_bo.style.display='none';document.body.style.overflow='';}
+  sendWsMsg({type:'join_session',sessionId:sid});
+  if(typeof phoneGo==='function') phoneGo('A4');
+  var box=document.getElementById('paid-chat-messages');if(box)box.innerHTML='';
+  window.sendPaidMsg=function(){
+    var inp=document.getElementById('paid-chat-input');
+    var content=inp?inp.value.trim():'';if(!content)return;
+    inp.value='';
+    appendMsg('paid-chat-messages',content,true,Date.now());
+    fetch(BASE+'/api/sessions/'+sid+'/message',{method:'POST',headers:hdr(),body:JSON.stringify({content:content})}).catch(function(){});
+  };
+  setTimeout(function(){
+    var inp=document.getElementById('paid-chat-input');
+    if(inp&&!inp._v5wired){inp._v5wired=true;inp.addEventListener('keydown',function(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();window.sendPaidMsg();}});}
+    var sendBtn=document.querySelector('#screen-A4 .chat-send');if(sendBtn)sendBtn.onclick=window.sendPaidMsg;
+  },200);
+}
 _sessId=sid;window._obActiveSessId=sid;var _bo=document.getElementById('booking-overlay');if(_bo){_bo.style.display='none';document.body.style.overflow='';}sendWsMsg({type:'join_session',sessionId:sid});
     var panel=document.getElementById('ob-client-chat-panel');
     if(!panel){
@@ -13505,7 +13523,7 @@ _sessId=sid;window._obActiveSessId=sid;var _bo=document.getElementById('booking-
     var t=tok();if(!t)return;
     fetch(BASE+'/api/sessions/pending',{headers:hdr()}).then(function(r){return r.json();}).then(function(d){
       var sessions=d.sessions||[];
-      if(sessions.length>0){var s=sessions[0];if(s.id!==window._obIncomingSessId){showIncomingRequest(s.id,s.client_name||'Client',s.channel||'chat');}}
+      if(sessions.length>0&&!window._sid&&!window._obActiveSessId){var s=sessions[0];if(s.id!==window._obIncomingSessId){showIncomingRequest(s.id,s.client_name||'Client',s.channel||'chat');}}
     }).catch(function(){});
   }
   function loadHistory(sid,panelId){
@@ -13573,10 +13591,18 @@ _sessId=sid;window._obActiveSessId=sid;var _bo=document.getElementById('booking-
           if(liveNav)liveNav.click();
           connectExpertWs(sid);
           fetch(BASE+"/api/sessions/"+sid,{headers:hdr()}).then(function(r){return r.json();}).then(function(data){
-            var msgs=data.messages||[];var me=myId();
-            var box=document.getElementById("expert-chat-messages");
-            if(box){box.innerHTML="";msgs.forEach(function(m){var row=document.createElement("div");row.className="chat-msg "+(m.sender_id===me?"mine":"theirs");row.innerHTML="<div class=\"msg-bubble\">"+esc(m.content||"")+"</div>";box.appendChild(row);});box.scrollTop=box.scrollHeight;}
-          }).catch(function(){});
+            var sess=data.session||{};var msgs=data.messages||[];var me=myId();
+            // Populate Live Session panel with real data
+            var sub=document.getElementById('live-sess-subtitle');if(sub)sub.textContent=(sess.channel||'Chat')+' session with '+(sess.client_name||'Client');
+            var rateEl=document.getElementById('live-sess-rate');if(rateEl)rateEl.textContent='$'+(sess.rate_per_min||'0')+'/min';
+            var cutEl=document.getElementById('live-sess-cut');if(cutEl){var fee=0.2;try{fee=parseFloat(sess.platform_fee||20)/100;}catch(e){}cutEl.textContent=Math.round((1-fee)*100)+'%';}
+            var cnEl=document.getElementById('live-client-name');if(cnEl)cnEl.textContent=sess.client_name||'Client';
+            // Reset timer
+            if(typeof _expertSessSeconds!=='undefined'){window._expertSessSeconds=0;}
+            if(typeof startExpertSessionTimer==='function'){clearInterval(window._expertSessInterval);window._expertSessInterval=null;startExpertSessionTimer();}
+            // Load chat history
+            var box=document.getElementById('expert-chat-messages');
+            if(box){box.innerHTML='';msgs.forEach(function(m){var row=document.createElement('div');row.className='chat-msg '+(m.sender_id===me?'mine':'theirs');row.innerHTML='<div class="msg-bubble">'+(m.content||'')+'</div>';box.appendChild(row);});box.scrollTop=box.scrollHeight;}
         }else{alert(d.error||"Could not accept session");}
       }catch(e){alert("Network error accepting session");}
     };

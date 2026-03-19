@@ -13670,47 +13670,132 @@ setTimeout(function(){
   function tok(){ return sessionStorage.getItem('ob_t')||localStorage.getItem('ob_t')||''; }
   function hdr(){ return {Authorization:'Bearer '+tok(),'Content-Type':'application/json'}; }
 
-  // FIX 1: correct mount path is /api/experts (not /api/expert-payments)
+  // FIX 1: correct path /api/experts/stripe/status
   function fetchStripeStatus(cb){
     fetch(BASE+'/api/experts/stripe/status',{headers:hdr()})
       .then(function(r){return r.json();})
-      .then(function(d){ cb(d); })
-      .catch(function(){});
+      .then(function(d){cb(d);}).catch(function(){cb(null);});
   }
 
+  // FIX 2: UI — red when not configured, green when connected
   function updateStripeUI(d){
-    var banner = document.getElementById('payment-setup-banner');
-    var badge  = document.getElementById('stripe-status-badge');
+    if(!d) return;
+    var banner  = document.getElementById('payment-setup-banner');
+    var badge   = document.getElementById('stripe-status-badge');
+    // Find the Payments nav item in the sidebar to add indicator there too
+    var paymentsNav = Array.from(document.querySelectorAll('[onclick]'))
+      .find(function(el){ return el.getAttribute('onclick')==="dbNav(this,'payments')"; });
+
     if(d.connected){
-      if(banner) banner.style.display = 'none';
-      if(badge){ badge.textContent='✓ Connected'; badge.style.cssText='background:#16a34a;color:#fff;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:600'; }
-    } else if(d.pending){
-      var heading = banner && Array.from(banner.querySelectorAll('*')).find(function(el){ return el.childNodes.length===1 && el.textContent.trim()==='Connect your payment account to start earning'; });
-      if(heading) heading.textContent = '⏳ Stripe connected — verification pending';
-      var sub = banner && Array.from(banner.querySelectorAll('*')).find(function(el){ return el.textContent.includes('Connect Stripe or PayPal'); });
-      if(sub) sub.textContent = 'Stripe is processing your account. Click Check Status to refresh.';
-      var btn = banner && banner.querySelector('[onclick*="openConnectorModal"]');
-      if(btn){ btn.textContent='Check Status'; btn.setAttribute('onclick','obCheckStripeStatus()'); }
-      if(badge){ badge.textContent='⏳ Pending'; badge.style.cssText='background:#ca8a04;color:#fff;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:600'; }
+      // Green — fully connected
+      if(banner) banner.style.display='none';
+      if(badge){
+        badge.textContent='✓ Connected';
+        badge.style.cssText='background:#16a34a;color:#fff;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:600;display:inline-block';
+      }
+      // Green dot on Payments nav item
+      if(paymentsNav){
+        var existing = paymentsNav.querySelector('.ob-stripe-dot');
+        if(!existing){
+          var dot = document.createElement('span');
+          dot.className='ob-stripe-dot';
+          dot.style.cssText='width:8px;height:8px;background:#16a34a;border-radius:50%;display:inline-block;margin-left:6px;flex-shrink:0';
+          paymentsNav.appendChild(dot);
+        } else {
+          existing.style.background='#16a34a';
+        }
+      }
+      sessionStorage.setItem('ob_stripe_status','connected');
+    } else {
+      // Red — not configured
+      if(badge){
+        badge.textContent='⚠ Not configured';
+        badge.style.cssText='background:#dc2626;color:#fff;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:600;display:inline-block';
+      }
+      // Make the banner title red to draw attention
+      if(banner){
+        banner.style.borderLeft='3px solid #dc2626';
+        var heading = Array.from(banner.querySelectorAll('*')).find(function(el){
+          return el.childNodes.length===1 && el.textContent.trim()==='Connect your payment account to start earning';
+        });
+        if(heading) heading.style.color='#dc2626';
+      }
+      // Red dot on Payments nav item
+      if(paymentsNav){
+        var existing2 = paymentsNav.querySelector('.ob-stripe-dot');
+        if(!existing2){
+          var dot2 = document.createElement('span');
+          dot2.className='ob-stripe-dot';
+          dot2.style.cssText='width:8px;height:8px;background:#dc2626;border-radius:50%;display:inline-block;margin-left:6px;flex-shrink:0;animation:ob-pulse-red 1.5s infinite';
+          paymentsNav.appendChild(dot2);
+        } else {
+          existing2.style.background='#dc2626';
+        }
+      }
+      sessionStorage.setItem('ob_stripe_status','none');
     }
   }
 
   window.obCheckStripeStatus = function(){ fetchStripeStatus(updateStripeUI); };
 
-  // FIX 2+3: no role check — runs for admin and expert on any /dash/ page
+  // FIX 3: send expert_user_id so admin's connect saves to expert's record
+  var origOpenConnector = window.openConnectorModal;
+  window.openConnectorModal = function(type){
+    // Inject expert_user_id into the request by patching fetch temporarily
+    var expertUserId = window._currentDashUserId || window._viewingExpertUserId || '';
+    window._obConnectExpertUserId = expertUserId;
+    if(origOpenConnector) origOpenConnector(type);
+  };
+
+  // Intercept the stripe/connect POST to inject expert_user_id
+  var origFetch = window.fetch;
+  window.fetch = function(url, opts){
+    if(typeof url === 'string' && url.includes('/stripe/connect') && opts && opts.method === 'POST') {
+      try{
+        var body = JSON.parse(opts.body || '{}');
+        if(!body.expert_user_id && window._obConnectExpertUserId){
+          body.expert_user_id = window._obConnectExpertUserId;
+          opts = Object.assign({}, opts, {body: JSON.stringify(body)});
+        }
+      }catch(e){}
+    }
+    return origFetch.apply(this, arguments);
+  };
+
+  // Capture expert user ID when admin views a dash
+  function captureExpertUserId(){
+    // From the dashboard data — look for _viewingExpertId or similar
+    var uid = window._dashExpertUserId || window._expertUserId || window._currentExpertUserId;
+    if(uid) window._currentDashUserId = uid;
+    // Also try from the dashboard init response
+    if(!uid && window._dbData && window._dbData.user_id) window._currentDashUserId = window._dbData.user_id;
+  }
+
   function handleStripeReturn(){
     var params = new URLSearchParams(window.location.search);
     var sp = params.get('stripe');
     if(!sp) return;
     history.replaceState(null,'', window.location.pathname);
-    if(sp==='success'||sp==='refresh') fetchStripeStatus(updateStripeUI);
+    if(sp==='success'||sp==='refresh'){
+      // Small delay so dashboard fully renders
+      setTimeout(function(){ fetchStripeStatus(updateStripeUI); }, 800);
+    }
   }
 
   function initStripeStatus(){
     if(!tok()) return;
     if(!window.location.pathname.includes('/dash/')) return;
-    setTimeout(function(){ fetchStripeStatus(updateStripeUI); }, 1500);
+    // Check once per page load — don't use cache so status is always fresh
+    setTimeout(function(){
+      captureExpertUserId();
+      fetchStripeStatus(updateStripeUI);
+    }, 1800);
   }
+
+  // Add pulsing red animation
+  var style = document.createElement('style');
+  style.textContent = '@keyframes ob-pulse-red{0%,100%{opacity:1}50%{opacity:.4}}';
+  document.head.appendChild(style);
 
   if(document.readyState==='loading'){
     document.addEventListener('DOMContentLoaded',function(){ handleStripeReturn(); initStripeStatus(); });

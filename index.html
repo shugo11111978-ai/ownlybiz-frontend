@@ -13599,28 +13599,28 @@ function openClientChat(sid){
     connectExpertWs(null);
   }
 
-  function init(){window._obPendingSessId=null;window._obActiveSessId=null;
+  function init(){
+    // Expose functions to window ALWAYS - even before login
+    window.openClientChat=openClientChat;
+    window.sendPaidMsg=window.sendPaidMsg; // already set below
+    window._v5AppendMsg=appendMsg;
+    window._v5HandleWsMsg=handleWsMsg;
+    window._obPendingSessId=null;window._obActiveSessId=null;
     var t=tok();if(!t)return;var role=myRole();
     if(role==='expert'){expertPoll();_pollTimer=setInterval(expertPoll,8000);}
     setTimeout(hookWS,1200);if(role==='expert')setTimeout(fixExpertDashboard,1500);
-    // Expose client functions to window regardless of role
-    window.openClientChat=openClientChat;
-    window._v5AppendMsg=appendMsg;
-    window._v5HandleWsMsg=handleWsMsg;
-    // For client role: wire the existing api-v2 WS to also call handleWsMsg
-    if(role==='client'){
-      setTimeout(function(){
-        var ws=window._obWs||window._obClientWs;
-        if(ws){
-          var origOnMsg=ws.onmessage;
-          ws.onmessage=function(evt){
-            if(origOnMsg)origOnMsg.call(ws,evt);
-            try{handleWsMsg(JSON.parse(evt.data));}catch(e){}
-          };
-          console.log('[v5] client WS hooked');
-        }
-      },2000);
-    }
+    // Hook client WS after 2s so api-v2 has time to connect
+    setTimeout(function(){
+      var ws=window._obWs||window._obClientWs;
+      if(ws){
+        var orig=ws.onmessage;
+        ws.onmessage=function(evt){
+          if(orig)orig.call(ws,evt);
+          try{handleWsMsg(JSON.parse(evt.data));}catch(e){}
+        };
+        console.log('[v5] WS hooked role='+role);
+      }
+    },2000);
   }
   // Expose sendPaidMsg globally from inside IIFE (has access to BASE, hdr, appendMsg)
   window.sendPaidMsg=function(){

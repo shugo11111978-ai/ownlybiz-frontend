@@ -7696,7 +7696,7 @@ function openBookingOverlay(channelId) {
       _bovGoStep(2); // need payment
     } else {
       _bovGoStep(3); // free minutes → connecting
-      setTimeout(function() { _launchSession(false); }, 1800);
+      setTimeout(function() { window._beginSession(); }, 1800);
     }
   } else {
     _bovGoStep(1);
@@ -7791,7 +7791,7 @@ function bovSignup() {
     _bovGoStep(2);
   } else {
     _bovGoStep(3);
-    setTimeout(function() { _launchSession(false); }, 1800);
+    setTimeout(function() { window._beginSession(); }, 1800);
   }
 }
 
@@ -7803,7 +7803,7 @@ function bovAuthorize() {
   if (badge) { badge.style.background = '#dcfce7'; badge.style.color = '#166534'; }
   setTimeout(function() {
     if (conn) { conn.style.background = '#dcfce7'; conn.style.color = '#166534'; conn.textContent = '✓ Connected'; }
-    setTimeout(function() { _launchSession(true); }, 700);
+    setTimeout(function() { window._beginSession(); }, 700);
   }, 1200);
 }
 
@@ -7817,7 +7817,7 @@ function _launchSession(isPaid) {
   var ch = selectedChannel;
   var fm = freeMinutes[ch.id] || 0;
   var el;
-  el = document.getElementById('presess-title'); if(el) el.textContent = ch.name + ' with Sarah Chen';
+  el = document.getElementById('presess-title'); if(el) el.textContent = ch.name + ' with ' + ((window._currentExpert&&(window._currentExpert.name||window._currentExpert.display_name))||'Expert');
   el = document.getElementById('presess-channel-icon'); if(el) el.textContent = ch.icon;
   el = document.getElementById('presess-channel-name'); if(el) el.textContent = ch.name;
   el = document.getElementById('presess-type'); if(el) el.textContent = ch.name + ' · Per-minute';
@@ -7856,7 +7856,7 @@ function _startSessionScreen(paidMode) {
   var ch = selectedChannel;
   // Update A3 (free session)
   var t3 = document.getElementById('a3-session-title');
-  if(t3) t3.textContent = 'Sarah Chen · ' + ch.name;
+  if(t3) t3.textContent = ((window._currentExpert&&(window._currentExpert.name||window._currentExpert.display_name))||'Expert') + ' · ' + ch.name;
   var a3chat = document.getElementById('a3-chat-ui');
   var a3voice = document.getElementById('a3-voice-ui');
   var a3video = document.getElementById('a3-video-ui');
@@ -7865,9 +7865,9 @@ function _startSessionScreen(paidMode) {
   if(a3video) a3video.style.display = ch.id==='video' ? 'flex' : 'none';
   // Update A4 (paid session)
   var t4 = document.getElementById('a4-session-title');
-  if(t4) t4.textContent = 'Sarah Chen · ' + ch.name;
+  if(t4) t4.textContent = ((window._currentExpert&&(window._currentExpert.name||window._currentExpert.display_name))||'Expert') + ' · ' + ch.name;
   var r4 = document.getElementById('a4-session-rate');
-  if(r4) r4.textContent = 'Billing Active · ' + ch.price;
+  if(r4) r4.textContent = 'Billing Active · $' + ((window._currentExpert&&window._currentExpert.rate_chat)||ch.price||'0') + '/min';
   var a4chat = document.getElementById('a4-chat-ui');
   var a4voice = document.getElementById('a4-voice-ui');
   var a4video = document.getElementById('a4-video-ui');
@@ -7900,7 +7900,7 @@ function _startSessionScreen(paidMode) {
   // Pre-fill receipt
   var rt = document.getElementById('receipt-session-type');
   var rr = document.getElementById('receipt-rate');
-  if(rt) rt.textContent = ch.name + ' with Sarah Chen';
+  if(rt) rt.textContent = ch.name + ' with ' + ((window._currentExpert&&(window._currentExpert.name||window._currentExpert.display_name))||'Expert');
   if(rr) rr.textContent = ch.price;
 }
 
@@ -13436,10 +13436,21 @@ setTimeout(function(){
   };
 function openClientChat(sid){
   _sessId=sid;window._obActiveSessId=sid;
+  // Hide booking overlay
   var _bo=document.getElementById('booking-overlay');if(_bo){_bo.style.display='none';document.body.style.overflow='';}
+  // Join WS session
   sendWsMsg({type:'join_session',sessionId:sid});
+  // Clear demo messages from A4
+  var box=document.getElementById('paid-chat-messages');
+  if(box){box.innerHTML='';}
+  // Populate A4 with real expert/rate data
+  var expertName=((window._currentExpert&&(window._currentExpert.name||window._currentExpert.display_name))||window._obPendingExpertName||'Expert');
+  var rate=((window._currentExpert&&window._currentExpert.rate_chat)||'?');
+  var t4=document.getElementById('a4-session-title');if(t4)t4.textContent=expertName+'  -  Chat';
+  var r4=document.getElementById('a4-session-rate');if(r4)r4.textContent='Billing Active  -  $'+rate+'/min';
+  // Switch to A4 screen
   if(typeof phoneGo==='function') phoneGo('A4');
-  var box=document.getElementById('paid-chat-messages');if(box)box.innerHTML='';
+  // Wire sendPaidMsg to real API
   window.sendPaidMsg=function(){
     var inp=document.getElementById('paid-chat-input');
     var content=inp?inp.value.trim():'';if(!content)return;
@@ -13447,25 +13458,15 @@ function openClientChat(sid){
     appendMsg('paid-chat-messages',content,true,Date.now());
     fetch(BASE+'/api/sessions/'+sid+'/message',{method:'POST',headers:hdr(),body:JSON.stringify({content:content})}).catch(function(){});
   };
+  // Wire UI: Enter key + send button
   setTimeout(function(){
     var inp=document.getElementById('paid-chat-input');
     if(inp&&!inp._v5wired){inp._v5wired=true;inp.addEventListener('keydown',function(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();window.sendPaidMsg();}});}
     var sendBtn=document.querySelector('#screen-A4 .chat-send');if(sendBtn)sendBtn.onclick=window.sendPaidMsg;
   },200);
+  // Load real message history
+  loadHistory(sid,'paid-chat-messages');
 }
-_sessId=sid;window._obActiveSessId=sid;var _bo=document.getElementById('booking-overlay');if(_bo){_bo.style.display='none';document.body.style.overflow='';}sendWsMsg({type:'join_session',sessionId:sid});
-    var panel=document.getElementById('ob-client-chat-panel');
-    if(!panel){
-      panel=document.createElement('div');panel.id='ob-client-chat-panel';
-      panel.style.cssText='position:fixed;bottom:0;right:0;width:360px;height:520px;background:#1c0f07;border-radius:16px 16px 0 0;box-shadow:0 -4px 40px rgba(0,0,0,.5);z-index:99980;display:flex;flex-direction:column;overflow:hidden';
-      panel.innerHTML='<div style="padding:14px 16px;background:#2a1408;display:flex;align-items:center;justify-content:space-between;flex-shrink:0"><div><div id="ob-client-chat-title" style="color:#fff;font-weight:700;font-size:15px">Chat</div><div style="font-size:11px;color:#c2622d">Session active</div></div><button onclick="obClientEndSession()" style="background:none;border:1px solid rgba(255,100,100,.4);color:rgba(255,100,100,.7);padding:5px 12px;border-radius:6px;cursor:pointer;font-size:12px">End</button></div><div id="ob-client-chat-messages" style="flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:8px"></div><div id="ob-client-typing" style="padding:4px 12px;font-size:11px;color:rgba(255,255,255,.4);min-height:20px;flex-shrink:0"></div><div style="padding:10px 12px;background:#2a1408;display:flex;gap:8px;flex-shrink:0"><textarea id="ob-client-input" placeholder="Type a message..." style="flex:1;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.12);border-radius:8px;color:#fff;padding:8px 12px;font-size:13px;outline:none;resize:none;height:36px;line-height:20px;font-family:inherit" rows="1"></textarea><button onclick="obClientSend()" style="background:#c2622d;border:none;color:#fff;padding:8px 14px;border-radius:8px;cursor:pointer;font-size:18px">&#10148;</button></div>';
-      document.body.appendChild(panel);
-      document.getElementById('ob-client-input').onkeydown=function(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();obClientSend();}};
-    }
-    panel.style.display='flex';
-    var titleEl=document.getElementById('ob-client-chat-title');if(titleEl)titleEl.textContent=window._obPendingExpertName||'Expert';
-    loadHistory(sid,'ob-client-chat-messages');
-  }
   window.openClientChat=openClientChat;
   window.obClientSend=function(){
     var inp=document.getElementById('ob-client-input');var content=inp?inp.value.trim():'';

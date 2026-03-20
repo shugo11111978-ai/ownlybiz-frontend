@@ -1562,19 +1562,6 @@ if (!window.toast) {
 
 (function(){var p=new URLSearchParams(window.location.search),be=p.get('backend');if(be==='staging')localStorage.setItem('ob_backend','https://courteous-expression-production-6e1c.up.railway.app');else if(be==='production')localStorage.removeItem('ob_backend');var base=localStorage.getItem('ob_backend')||'https://ownlybiz-backend-production.up.railway.app';window._OB_BACKEND=base;if(localStorage.getItem('ob_backend')){document.addEventListener('DOMContentLoaded',function(){var b=document.createElement('div');b.id='staging-banner';b.style.cssText='position:fixed;top:0;left:0;right:0;z-index:99999;background:#f59e0b;color:#000;text-align:center;padding:6px 12px;font-size:12px;font-weight:600;';b.innerHTML='[STAGING MODE] <a href="?backend=production" style="margin-left:8px;color:#000;text-decoration:underline">Switch to Production</a>';document.body.appendChild(b);});}var _o=window.fetch;window.fetch=function(url,opts){if(typeof url==='string'&&url.indexOf('https://ownlybiz-backend-production.up.railway.app')===0)url=base+url.substring('https://ownlybiz-backend-production.up.railway.app'.length);return _o.call(this,url,opts);};})();
 
-// Global sendPaidMsg fallback - uses current active session id
-function sendPaidMsg(){
-  var inp=document.getElementById('paid-chat-input');
-  var content=inp?inp.value.trim():'';if(!content)return;
-  var sid=window._obActiveSessId||window._sessId||_sessId;if(!sid)return;
-  inp.value='';
-  if(typeof appendMsg==='function')appendMsg('paid-chat-messages',content,true,Date.now());
-  var tok=sessionStorage.getItem('ob_t')||localStorage.getItem('ob_t');
-  fetch('https://ownlybiz-backend-production.up.railway.app/api/sessions/'+sid+'/message',{
-    method:'POST',headers:{Authorization:'Bearer '+tok,'Content-Type':'application/json'},
-    body:JSON.stringify({content:content})
-  }).catch(function(){});
-}
 </script>
 
 
@@ -13616,7 +13603,34 @@ function openClientChat(sid){
     var t=tok();if(!t)return;var role=myRole();
     if(role==='expert'){expertPoll();_pollTimer=setInterval(expertPoll,8000);}
     setTimeout(hookWS,1200);if(role==='expert')setTimeout(fixExpertDashboard,1500);
+    // Expose client functions to window regardless of role
+    window.openClientChat=openClientChat;
+    window._v5AppendMsg=appendMsg;
+    window._v5HandleWsMsg=handleWsMsg;
+    // For client role: wire the existing api-v2 WS to also call handleWsMsg
+    if(role==='client'){
+      setTimeout(function(){
+        var ws=window._obWs||window._obClientWs;
+        if(ws){
+          var origOnMsg=ws.onmessage;
+          ws.onmessage=function(evt){
+            if(origOnMsg)origOnMsg.call(ws,evt);
+            try{handleWsMsg(JSON.parse(evt.data));}catch(e){}
+          };
+          console.log('[v5] client WS hooked');
+        }
+      },2000);
+    }
   }
+  // Expose sendPaidMsg globally from inside IIFE (has access to BASE, hdr, appendMsg)
+  window.sendPaidMsg=function(){
+    var inp=document.getElementById('paid-chat-input');
+    var content=inp?inp.value.trim():'';if(!content)return;
+    var sid=window._obActiveSessId||_sessId;if(!sid)return;
+    inp.value='';
+    appendMsg('paid-chat-messages',content,true,Date.now());
+    fetch(BASE+'/api/sessions/'+sid+'/message',{method:'POST',headers:hdr(),body:JSON.stringify({content:content})}).catch(function(){});
+  };
   if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',init);}
   else{setTimeout(init,500);}
 })();

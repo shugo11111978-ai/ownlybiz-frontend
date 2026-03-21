@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+  <script src="https://js.stripe.com/v3/"></script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Ownlybiz — Own your expertise. Own your income.</title>
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;0,900;1,400;1,600&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,300;1,9..40,400&display=swap" rel="stylesheet">
@@ -4703,6 +4704,9 @@ if (!window.toast) {
           <div id="bov-pay-explainer" style="background:rgba(122,140,110,.07);border:1px solid rgba(122,140,110,.2);border-radius:10px;padding:12px 14px;margin-bottom:18px;font-size:12px;color:var(--brown);line-height:1.6;">
             🔐 Your card is <strong>authorized but not charged</strong> until your session ends. You only pay for the exact minutes you use.
           </div>
+          <!-- Stripe card element -->
+          <div id="bov-card-element" style="background:#fff;border:1px solid #d1d5db;border-radius:10px;padding:14px 12px;margin-bottom:16px;font-size:14px;min-height:44px;"></div>
+          <div id="bov-card-error" style="color:#dc2626;font-size:12px;margin-bottom:10px;min-height:16px;display:none;"></div>
           <div class="pm-tabs" style="margin-bottom:14px;">
             <div class="pm-tab active" onclick="selectPmTab(this)">💳 Card</div>
             <div class="pm-tab" onclick="selectPmTab(this)">🅿️ PayPal</div>
@@ -7674,6 +7678,29 @@ function openBookingOverlay(channelId) {
   if (clientLoggedIn) {
     if (mode === 'upfront' || fm === 0) {
       _bovGoStep(2); // need payment
+      // Mount Stripe card element when step 2 is shown
+      setTimeout(function() {
+        var BASE2 = 'https://ownlybiz-backend-production.up.railway.app';
+        var t2 = sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || '';
+        if (!t2) return;
+        fetch(BASE2 + '/api/payments/config')
+          .then(function(r){ return r.json(); })
+          .then(function(cfg){
+            if (!cfg.publishable_key) return;
+            var stripe = Stripe(cfg.publishable_key);
+            var elements = stripe.elements();
+            var card = elements.create('card', {
+              style: { base: { fontSize: '15px', color: '#3b1f0e', '::placeholder': { color: '#9ca3af' } } },
+              hidePostalCode: true
+            });
+            var mount = document.getElementById('bov-card-element');
+            if (mount && !mount._stripeCard) {
+              mount._stripeCard = true;
+              card.mount('#bov-card-element');
+              window._bovCardElement = card;
+            }
+          }).catch(function(){});
+      }, 100);
     } else {
       _bovGoStep(3); // free minutes → connecting
       setTimeout(function() { window._beginSession(); }, 1800);
@@ -7776,15 +7803,65 @@ function bovSignup() {
 }
 
 function bovAuthorize() {
-  _bovGoStep(3);
-  // Show connecting state
-  var badge = document.getElementById('bov-step-pay-badge');
-  var conn = document.getElementById('bov-step-conn-badge');
-  if (badge) { badge.style.background = '#dcfce7'; badge.style.color = '#166534'; }
-  setTimeout(function() {
-    if (conn) { conn.style.background = '#dcfce7'; conn.style.color = '#166534'; conn.textContent = '✓ Connected'; }
-    setTimeout(function() { _launchSession(true); }, 700);
-  }, 1200);
+  var BASE = 'https://ownlybiz-backend-production.up.railway.app';
+  var btn = document.getElementById('bov-pay-btn');
+  var errEl = document.getElementById('bov-card-error');
+  if (btn) { btn.disabled = true; btn.textContent = 'Processing…'; }
+  if (errEl) { errEl.style.display = 'none'; }
+
+  function showErr(msg) {
+    if (errEl) { errEl.textContent = msg; errEl.style.display = 'block'; }
+    if (btn) { btn.disabled = false; btn.textContent = 'Authorize & Start Session →'; }
+  }
+
+  var t = sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || '';
+  if (!t) { showErr('Please log in first.'); return; }
+
+  // Get Stripe publishable key from backend, then confirm card setup
+  fetch(BASE + '/api/payments/config')
+    .then(function(r){ return r.json(); })
+    .then(function(cfg){
+      if (!cfg.publishable_key) { showErr('Payment not configured — contact support.'); return; }
+
+      var stripe = Stripe(cfg.publishable_key);
+
+      // Get or create card element
+      var cardEl = window._bovCardElement;
+      if (!cardEl) { showErr('Card element not ready. Please refresh.'); return; }
+
+      // Create SetupIntent
+      fetch(BASE + '/api/payments/methods/setup', {
+        method: 'POST',
+        headers: { Authorization: 'Bearer ' + t, 'Content-Type': 'application/json' }
+      })
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if (!d.client_secret) { showErr(d.error || 'Could not initialize payment.'); return; }
+
+        stripe.confirmCardSetup(d.client_secret, {
+          payment_method: { card: cardEl }
+        }).then(function(result){
+          if (result.error) {
+            showErr(result.error.message);
+          } else {
+            // Card saved — store payment method id and proceed
+            window._bovPaymentMethodId = result.setupIntent.payment_method;
+            if (btn) { btn.textContent = 'Card authorized ✓'; }
+            // Show connecting state
+            _bovGoStep(3);
+            var badge = document.getElementById('bov-step-pay-badge');
+            var conn  = document.getElementById('bov-step-conn-badge');
+            if (badge) { badge.style.background = '#dcfce7'; badge.style.color = '#166534'; }
+            setTimeout(function() {
+              if (conn) { conn.style.background = '#dcfce7'; conn.style.color = '#166534'; conn.textContent = '✓ Connected'; }
+              setTimeout(function() { _launchSession(true); }, 700);
+            }, 800);
+          }
+        });
+      })
+      .catch(function(){ showErr('Network error. Please try again.'); });
+    })
+    .catch(function(){ showErr('Network error. Please try again.'); });
 }
 
 function _launchSession(isPaid) {
@@ -9434,7 +9511,7 @@ async function savePaymentConfig() {
         window._sid = d.session?.id;
         WS.send({type:'join',session_id:d.session.id});
         toast('Session started! 🚀');
-        if(typeof window.openClientChat==='function'){window.openClientChat(d.session.id||window._sid);}else if(typeof _launchSession==='function'){_launchSession(true);}
+        if(typeof _launchSession==='function') _launchSession(true);
         break;
       case 'session_declined':
         toast('Expert declined — try again', 'err');
@@ -9457,7 +9534,7 @@ async function savePaymentConfig() {
   /* ── Chat helpers ─────────────────────────────────── */
   function _appendMsg(m) {
     const mine = m.sender_id===Auth.user?.id;
-    const role=typeof myRole==='function'?myRole():(sessionStorage.getItem('ob_u')?JSON.parse(sessionStorage.getItem('ob_u')).role:null);const list=(role==='client'?$('paid-chat-messages'):null)||$('expert-chat-messages')||$('chat-msg-list');
+    const list = $('expert-chat-messages')||$('chat-msg-list');
     if (!list) return;
     const d=document.createElement('div');
     d.className='chat-msg '+(mine?'mine':'theirs');
@@ -13425,9 +13502,6 @@ function openClientChat(sid){
   var rate=((window._currentExpert&&window._currentExpert.rate_chat)||'?');
   var t4=document.getElementById('a4-session-title');if(t4)t4.textContent=expertName+' - Chat';
   var r4=document.getElementById('a4-session-rate');if(r4)r4.textContent='Billing Active - $'+rate+'/min';
-  // Switch to A4 screen and clear demo messages
-  if(typeof phoneGo==='function')phoneGo('A4');
-  var _pbox=document.getElementById('paid-chat-messages');if(_pbox)_pbox.innerHTML='';
   // Wire sendPaidMsg to real API
   window.sendPaidMsg=function(){
     var inp=document.getElementById('paid-chat-input');
@@ -13583,7 +13657,6 @@ function openClientChat(sid){
             // Load chat history
             var box=document.getElementById('expert-chat-messages');
             if(box){box.innerHTML='';msgs.forEach(function(m){var row=document.createElement('div');row.className='chat-msg '+(m.sender_id===me?'mine':'theirs');row.innerHTML='<div class="msg-bubble">'+(m.content||'')+'</div>';box.appendChild(row);});box.scrollTop=box.scrollHeight;}
-          }).catch(function(){});
         }else{alert(d.error||"Could not accept session");}
       }catch(e){alert("Network error accepting session");}
     };

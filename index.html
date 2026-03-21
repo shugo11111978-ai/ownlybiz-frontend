@@ -1,4 +1,73 @@
-<!DOCTYPE html>
+async function bovAuthorize() {
+  var BASE = 'https://ownlybiz-backend-production.up.railway.app';
+  var btn = document.getElementById('bov-pay-btn');
+  var errEl = document.getElementById('bov-card-error');
+  if (btn) { btn.disabled = true; btn.textContent = 'Processing…'; }
+  if (errEl) { errEl.style.display = 'none'; }
+
+  function showErr(msg) {
+    if (errEl) { errEl.textContent = msg; errEl.style.display = 'block'; }
+    if (btn) { btn.disabled = false; btn.textContent = 'Authorize & Start Session →'; }
+  }
+
+  var t = sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || '';
+  if (!t) { showErr('Please log in first.'); return; }
+
+  try {
+    var cfg = await fetch(BASE + '/api/payments/config').then(function(r){return r.json();});
+    if (!cfg.publishable_key) { showErr('Payment not configured. Please contact support.'); return; }
+
+    var stripe = Stripe(cfg.publishable_key);
+
+    // Always create a fresh card element
+    var mountEl = document.getElementById('bov-card-element');
+    if (!mountEl) { showErr('Payment form unavailable. Please refresh.'); return; }
+    if (mountEl._stripeCard && window._bovCardElement) {
+      // already mounted, use existing
+    } else {
+      mountEl.innerHTML = '';
+      mountEl._stripeCard = false;
+      var elements = stripe.elements();
+      var card = elements.create('card', {
+        style: { base: { fontSize: '16px', color: '#3b1f0e', '::placeholder': { color: '#9ca3af' } } },
+        hidePostalCode: true
+      });
+      card.mount('#bov-card-element');
+      window._bovCardElement = card;
+      window._bovStripe = stripe;
+      await new Promise(function(res){ setTimeout(res, 400); });
+    }
+
+    // Create SetupIntent
+    var setupData = await fetch(BASE + '/api/payments/methods/setup', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + t, 'Content-Type': 'application/json' }
+    }).then(function(r){return r.json();});
+
+    if (!setupData.client_secret) { showErr(setupData.error || 'Could not initialize payment.'); return; }
+
+    var result = await (window._bovStripe || stripe).confirmCardSetup(setupData.client_secret, {
+      payment_method: { card: window._bovCardElement }
+    });
+
+    if (result.error) {
+      showErr(result.error.message);
+      return;
+    }
+
+    // Card saved successfully
+    window._bovPaymentMethodId = result.setupIntent.payment_method;
+    if (btn) { btn.textContent = '✓ Card authorized'; }
+
+    // Close booking overlay and start session
+    var overlay = document.getElementById('booking-overlay');
+    if (overlay) { overlay.style.display = 'none'; document.body.style.overflow = ''; }
+    window._beginSession();
+
+  } catch(e) {
+    showErr('Error: ' + (e.message || 'Please try again.'));
+  }
+}<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -4713,7 +4782,7 @@ if (!window.toast) {
             <div class="pm-tab" onclick="selectPmTab(this)">🍎 Pay</div>
             <div class="pm-tab" onclick="selectPmTab(this)">G Pay</div>
           </div>
-          <div class="card-form">
+          <div class="card-form" style="display:none;">
             <input type="text" class="form-input" placeholder="Card number" style="margin-bottom:10px;">
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
               <input type="text" class="form-input" placeholder="MM / YY">
@@ -13596,7 +13665,13 @@ function openClientChat(sid){
     var t=tok();if(!t)return;
     fetch(BASE+'/api/sessions/pending',{headers:hdr()}).then(function(r){return r.json();}).then(function(d){
       var sessions=d.sessions||[];
-      if(sessions.length>0&&!window._sid&&!window._obActiveSessId){var s=sessions[0];if(s.id!==window._obIncomingSessId){showIncomingRequest(s.id,s.client_name||'Client',s.channel||'chat');}}
+      if(sessions.length>0&&!window._sid&&!window._obActiveSessId){
+        var s=sessions[0];
+        // Only show if session is less than 10 minutes old
+        var age=(Date.now()/1000)-(s.created_at||0);
+        if(s.id!==window._obIncomingSessId&&age<600){showIncomingRequest(s.id,s.client_name||'Client',s.channel||'chat');
+        } else if(age>=600){/* stale, ignore */}
+      }
       else if(sessions.length===0&&!window._sid){var sro=document.getElementById('session-request-overlay');if(sro&&sro.style.display==='flex'){sro.style.display='none';var srs=document.getElementById('session-request-sheet');if(srs)srs.style.display='none';}}
     }).catch(function(){});
   }

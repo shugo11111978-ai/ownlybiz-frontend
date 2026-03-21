@@ -7854,7 +7854,7 @@ async function bovAuthorize() {
       .then(function(d){
         if (!d.client_secret) { showErr(d.error || 'Could not initialize payment.'); return; }
 
-        var _confirmPromise = stripe.confirmCardSetup(d.client_secret, { payment_method: { card: cardEl } });
+        var _confirmPromise = (window._bovStripe||stripe).confirmCardSetup(d.client_secret, { payment_method: { card: window._bovCardElement||cardEl } });
         var _timeoutPromise = new Promise(function(_, rej){ setTimeout(function(){ rej(new Error('Payment timed out. Please check your card details and try again.'));}, 25000); });
         Promise.race([_confirmPromise, _timeoutPromise]).then(function(result){
           if (result.error) {
@@ -10230,8 +10230,34 @@ async function savePaymentConfig() {
       clientLoggedIn = true;
       WS.connect();
       _linkClientToCurrentExpert();
-      if(typeof _bovGoStep==='function') _bovGoStep(2);
-      else _origBovSignup?.();
+      if(typeof _bovGoStep==='function') {
+        _bovGoStep(2);
+        // Mount Stripe card element after step 2 shows
+        setTimeout(async function() {
+          try {
+            var _BASE='https://ownlybiz-backend-production.up.railway.app';
+            var _tok=sessionStorage.getItem('ob_t')||localStorage.getItem('ob_t')||'';
+            if(!_tok||typeof Stripe==='undefined') return;
+            var _cfg=await fetch(_BASE+'/api/payments/config').then(function(r){return r.json();});
+            if(!_cfg||!_cfg.publishable_key) return;
+            var _stripe=Stripe(_cfg.publishable_key);
+            var _elements=_stripe.elements();
+            var _card=_elements.create('card',{
+              style:{base:{fontSize:'18px',lineHeight:'44px',color:'#3b1f0e','::placeholder':{color:'#9ca3af'}}},
+              hidePostalCode:true
+            });
+            var _mount=document.getElementById('bov-card-element');
+            if(_mount){
+              _mount.innerHTML='';
+              _mount._stripeCard=true;
+              _card.mount('#bov-card-element');
+              window._bovCardElement=_card;
+              window._bovStripe=_stripe;
+              console.log('[BOV] Card mounted after signup, iframe h='+(_mount.querySelector('iframe')?.getBoundingClientRect().height));
+            }
+          } catch(e){ console.error('[BOV] Card mount error:',e); }
+        }, 600);
+      } else _origBovSignup?.();
     } catch(err){
       toast(err.message,'err');
       _origBovSignup?.();

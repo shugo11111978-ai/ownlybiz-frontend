@@ -13424,7 +13424,7 @@ function openClientChat(sid){
   var expertName=((window._currentExpert&&(window._currentExpert.name||window._currentExpert.display_name))||window._obPendingExpertName||'Expert');
   var rate=((window._currentExpert&&window._currentExpert.rate_chat)||'?');
   var t4=document.getElementById('a4-session-title');if(t4)t4.textContent=expertName+' - Chat';
-  var r4=document.getElementById('a4-session-rate');if(r4)r4.textContent='Billing Active - 
+  var r4=document.getElementById('a4-session-rate');if(r4)r4.textContent='Billing Active - $'+rate+'/min';
   // Wire sendPaidMsg to real API
   window.sendPaidMsg=function(){
     var inp=document.getElementById('paid-chat-input');
@@ -13571,7 +13571,7 @@ function openClientChat(sid){
             var sess=data.session||{};var msgs=data.messages||[];var me=myId();
             // Populate Live Session panel with real data
             var sub=document.getElementById('live-sess-subtitle');if(sub)sub.textContent=(sess.channel||'Chat')+' session with '+(sess.client_name||'Client');
-            var rateEl=document.getElementById('live-sess-rate');if(rateEl)rateEl.textContent='+(sess.rate_per_min||'0')+'/min';window._expertSessRate=parseFloat(sess.rate_per_min||3.50);
+            var rateEl=document.getElementById('live-sess-rate');if(rateEl)rateEl.textContent='$'+(sess.rate_per_min||'?')+'/min';window._expertSessRate=parseFloat(sess.rate_per_min||3.5);
             var cutEl=document.getElementById('live-sess-cut');if(cutEl){var fee=0.2;try{fee=parseFloat(sess.platform_fee||20)/100;}catch(e){}cutEl.textContent=Math.round((1-fee)*100)+'%';}
             var cnEl=document.getElementById('live-client-name');if(cnEl)cnEl.textContent=sess.client_name||'Client';
             // Reset timer
@@ -13600,6 +13600,10 @@ function openClientChat(sid){
   }
 
   function init(){
+    window.openClientChat=openClientChat;
+    window.sendPaidMsg=window.sendPaidMsg;
+    window._v5HandleWsMsg=handleWsMsg;
+    
     // Expose functions to window ALWAYS - even before login
     window.openClientChat=openClientChat;
     window.sendPaidMsg=window.sendPaidMsg; // already set below
@@ -13609,6 +13613,7 @@ function openClientChat(sid){
     var t=tok();if(!t)return;var role=myRole();
     if(role==='expert'){expertPoll();_pollTimer=setInterval(expertPoll,8000);}
     setTimeout(hookWS,1200);if(role==='expert')setTimeout(fixExpertDashboard,1500);
+    setTimeout(function(){var ws=window._obWs||window._obClientWs;if(ws&&ws.readyState<=1){var orig=ws.onmessage;ws.onmessage=function(evt){if(orig)orig.call(ws,evt);try{handleWsMsg(JSON.parse(evt.data));}catch(e){}};console.log('[v5] WS hooked');}},2500);
     // Hook client WS after 2s so api-v2 has time to connect
     setTimeout(function(){
       var ws=window._obWs||window._obClientWs;
@@ -13633,6 +13638,15 @@ function openClientChat(sid){
   };
   if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',init);}
   else{setTimeout(init,500);}
+  // Expose sendPaidMsg from IIFE scope (has access to BASE, hdr, appendMsg)
+  window.sendPaidMsg=function(){
+    var inp=document.getElementById('paid-chat-input');
+    var content=inp?inp.value.trim():'';if(!content)return;
+    var sid=window._obActiveSessId||_sessId;if(!sid)return;
+    inp.value='';
+    appendMsg('paid-chat-messages',content,true,Date.now());
+    fetch(BASE+'/api/sessions/'+sid+'/message',{method:'POST',headers:hdr(),body:JSON.stringify({content:content})}).catch(function(){});
+  };
 })();
 </script>
 <!-- END CHAT FEATURE v5 -->

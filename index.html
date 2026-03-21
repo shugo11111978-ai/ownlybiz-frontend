@@ -7640,7 +7640,7 @@ function showPaymentSheet(){
 // ===== SESSION STATE =====
 var selectedChannel = { id:'chat', icon:'💬', name:'Chat', price:'$3.50/min', hasFree:true };
 var sessionStartMode = { chat:'free', voice:'upfront', video:'upfront' };
-var freeMinutes = { chat:3, voice:0, video:0 };
+var freeMinutes = { chat:0, voice:0, video:0 }; // populated from expert data on load
 var walletBalance = 0;
 var currentBookMode = 'permin';   // 'permin' | 'fixed' | 'written'
 var currentBookChannel = 'chat';  // 'chat' | 'voice' | 'video'
@@ -7802,7 +7802,7 @@ function bovSignup() {
   }
 }
 
-function bovAuthorize() {
+async function bovAuthorize() {
   var BASE = 'https://ownlybiz-backend-production.up.railway.app';
   var btn = document.getElementById('bov-pay-btn');
   var errEl = document.getElementById('bov-card-error');
@@ -7827,7 +7827,21 @@ function bovAuthorize() {
 
       // Get or create card element
       var cardEl = window._bovCardElement;
-      if (!cardEl) { showErr('Card element not ready. Please refresh.'); return; }
+      if (!cardEl) {
+        // Try to remount inline
+        var mountEl = document.getElementById('bov-card-element');
+        if (!mountEl) { showErr('Payment form not available. Please refresh.'); return; }
+        // Remount fresh card element
+        var stripeInst = Stripe(cfg.publishable_key);
+        var elems = stripeInst.elements();
+        cardEl = elems.create('card', { style: { base: { fontSize:'15px', color:'#3b1f0e' } }, hidePostalCode: true });
+        mountEl._stripeCard = false;
+        mountEl.innerHTML = '';
+        cardEl.mount('#bov-card-element');
+        window._bovCardElement = cardEl;
+        // Need to wait a tick for Stripe to initialize
+        await new Promise(res => setTimeout(res, 300));
+      }
 
       // Create SetupIntent
       fetch(BASE + '/api/payments/methods/setup', {
@@ -9534,7 +9548,7 @@ async function savePaymentConfig() {
   /* ── Chat helpers ─────────────────────────────────── */
   function _appendMsg(m) {
     const mine = m.sender_id===Auth.user?.id;
-    const list = $('expert-chat-messages')||$('chat-msg-list');
+    const role=sessionStorage.getItem('ob_u')?JSON.parse(sessionStorage.getItem('ob_u')||'{}').role:null;const list=(role==='client'?$('paid-chat-messages'):null)||$('expert-chat-messages')||$('chat-msg-list');
     if (!list) return;
     const d=document.createElement('div');
     d.className='chat-msg '+(mine?'mine':'theirs');

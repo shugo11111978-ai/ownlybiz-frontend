@@ -2730,12 +2730,6 @@ if (!window.toast) {
               </div>
               <!-- Messages -->
               <div style="padding:16px 18px;flex:1;overflow-y:auto;max-height:320px;display:flex;flex-direction:column;gap:12px;" id="expert-chat-messages">
-                <div style="display:flex;gap:10px;justify-content:flex-start;">
-                  <div style="width:28px;height:28px;border-radius:50%;background:var(--sage);color:white;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;">MT</div>
-                  <div style="max-width:70%;">
-                    <div style="background:var(--cream);border-radius:12px 12px 12px 2px;padding:10px 14px;font-size:13px;color:var(--brown);line-height:1.5;">Hi! I run a B2B SaaS doing about $800K ARR. We're thinking about raising Series A but not sure about timing or which investors to approach.</div>
-                    <div style="font-size:10px;color:var(--gray-400);margin-top:4px;">2:31 PM</div>
-                  </div>
                 </div>
                 <div style="display:flex;gap:10px;justify-content:flex-end;" id="expert-msg-sent">
                   <div style="max-width:70%;">
@@ -8477,19 +8471,29 @@ function expertEndSession() {
   dbNav(document.querySelector('.db-nav-item[onclick*="sessions"]'), 'sessions');
 }
 
-function startExpertSessionTimer() {
+function startExpertSessionTimer(startedAt) {
   if(_expertSessInterval) clearInterval(_expertSessInterval);
-  _expertSessSeconds = 0;
+  // Start from elapsed seconds if session already running (catch-up)
+  if(startedAt) {
+    _expertSessSeconds = Math.floor(Date.now()/1000) - startedAt;
+  } else {
+    _expertSessSeconds = 0;
+  }
   _expertSessInterval = setInterval(function() {
     _expertSessSeconds++;
-    var m = Math.floor(_expertSessSeconds/60), s = _expertSessSeconds%60;
+    var mins = Math.floor(_expertSessSeconds/60), secs = _expertSessSeconds%60;
     var timerEl = document.getElementById('expert-sess-timer');
-    var gross = (_expertSessSeconds/60) * (window._expertSessRate||3.50);
-    var gross = (_expertSessSeconds/60) * 3.50;
+    if(timerEl) timerEl.textContent = mins+':'+(secs<10?'0':'')+secs;
+    var rate = window._expertSessRate||3.5;
+    var freeMins = window._expertSessFreeMins||0;
+    var cut = window._expertSessCut||0.8;
+    var billableMins = Math.max(0, (_expertSessSeconds/60) - freeMins);
+    var gross = billableMins * rate;
+    var net = gross * cut;
     var earnEl = document.getElementById('expert-session-earnings');
-    if(earnEl) earnEl.textContent = '$' + gross.toFixed(2);
+    if(earnEl) earnEl.textContent = '$'+gross.toFixed(2);
     var netEl = document.getElementById('expert-net-earnings');
-    if(netEl) netEl.textContent = '$' + (gross * 0.8).toFixed(2);
+    if(netEl) netEl.textContent = '$'+net.toFixed(2);
   }, 1000);
 }
 
@@ -13804,7 +13808,52 @@ function openClientChat(sid){
   function openExpertLivePanel(sid){
     var liveNav=Array.from(document.querySelectorAll('[onclick]')).find(function(el){return el.getAttribute('onclick')==="dbNav(this,'live-session')";});
     if(liveNav)liveNav.click();
-    sendWsMsg({type:'join_session',sessionId:sid});loadHistory(sid,'expert-chat-messages');
+    sendWsMsg({type:'join_session',sessionId:sid});
+    // Fetch real session data and populate all live session panel elements
+    fetch(BASE+'/api/sessions/'+sid,{headers:hdr()}).then(function(r){return r.json();}).then(function(data){
+      var sess=data.session||data||{};
+      var msgs=data.messages||[];
+      // Subtitle: "Chat session with John"
+      var ch=(sess.channel||'chat'); ch=ch.charAt(0).toUpperCase()+ch.slice(1);
+      var cn=sess.client_name||'Client';
+      var sub=document.getElementById('live-sess-subtitle');
+      if(sub) sub.textContent=ch+' session with '+cn;
+      // Rate
+      var rate=parseFloat(sess.rate_per_min||3.5);
+      window._expertSessRate=rate;
+      var rateEl=document.getElementById('live-sess-rate');
+      if(rateEl) rateEl.textContent='$'+rate.toFixed(2)+'/min';
+      // Cut (platform fee)
+      var fee=parseFloat(sess.platform_fee_pct||sess.platform_fee||20)/100;
+      if(fee>1) fee=fee/100; // handle if stored as 20 vs 0.2
+      var cut=1-fee;
+      window._expertSessCut=cut;
+      window._expertSessFreeMins=parseFloat(sess.free_minutes||0);
+      var cutEl=document.getElementById('live-sess-cut');
+      if(cutEl) cutEl.textContent=Math.round(cut*100)+'%';
+      // Client name + avatar initials
+      var cnEl=document.getElementById('live-client-name');
+      if(cnEl) cnEl.textContent=cn;
+      var initials=cn.split(' ').map(function(w){return w[0]||'';}).join('').substring(0,2).toUpperCase()||'MT';
+      document.querySelectorAll('#db-panel-live-session .ls-main-grid [style*="border-radius:50%"]').forEach(function(el){
+        if(el.textContent.trim().length<=2) el.textContent=initials;
+      });
+      // Start timer from session's actual start time (catch-up if mid-session)
+      window._expertSessSeconds=0;
+      if(typeof startExpertSessionTimer==='function'){
+        clearInterval(window._expertSessInterval);
+        window._expertSessInterval=null;
+        startExpertSessionTimer(sess.started_at||null);
+      }
+      // Load real messages (clears fake hardcoded ones)
+      var box=document.getElementById('expert-chat-messages');
+      if(box){
+        box.innerHTML='';
+        var me=typeof myId==='function'?myId():'';
+        msgs.forEach(function(msg){if(typeof appendMsg==='function') appendMsg('expert-chat-messages',msg.content,msg.sender_id===me,msg.created_at);});
+      }
+    }).catch(function(e){console.warn('[OEL] session fetch failed:',e);});
+    loadHistory(sid,'expert-chat-messages');
     window.sendExpertMsg=function(){
       var inp=document.getElementById('expert-chat-input');var content=inp?inp.value.trim():'';
       if(!content||!_sessId)return;inp.value='';appendMsg('expert-chat-messages',content,true);

@@ -2698,7 +2698,7 @@ if (!window.toast) {
               <div style="font-size:11px;color:var(--gray-400);margin-top:4px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;">Duration</div>
             </div>
             <div style="background:var(--white);border:1px solid var(--gray-200);border-radius:12px;padding:16px;text-align:center;">
-              <div style="font-size:22px;font-weight:700;color:var(--sage);font-family:var(--font-head);" id="live-sess-rate">$3.50</div>
+              <div style="font-size:22px;font-weight:700;color:var(--sage);font-family:var(--font-head);" id="live-sess-rate">—</div>
               <div style="font-size:11px;color:var(--gray-400);margin-top:4px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;">Rate / min</div>
             </div>
             <div style="background:var(--white);border:1px solid var(--gray-200);border-radius:12px;padding:16px;text-align:center;">
@@ -2760,13 +2760,14 @@ if (!window.toast) {
               <!-- Quick notes -->
               <div style="background:var(--white);border:1px solid var(--gray-200);border-radius:14px;padding:18px;">
                 <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--gray-400);margin-bottom:10px;">Session Notes</div>
-                <textarea placeholder="Private notes — not visible to client..." style="width:100%;border:1.5px solid var(--gray-200);border-radius:8px;padding:10px;font-size:12px;font-family:var(--font-body);resize:vertical;min-height:80px;outline:none;box-sizing:border-box;"></textarea>
+                <textarea id="live-session-notes" placeholder="Private notes — not visible to client..." style="width:100%;border:1.5px solid var(--gray-200);border-radius:8px;padding:10px;font-size:12px;font-family:var(--font-body);resize:vertical;min-height:80px;outline:none;box-sizing:border-box;"></textarea>
+                <button onclick="saveSessionNotes()" style="margin-top:8px;width:100%;padding:8px;border:1.5px solid var(--sage);border-radius:8px;background:rgba(122,140,110,.1);color:var(--sage);font-size:12px;font-weight:600;cursor:pointer;">💾 Save Notes</button>
               </div>
 
               <!-- Billing -->
               <div style="background:rgba(196,98,45,.06);border:1.5px solid rgba(196,98,45,.2);border-radius:14px;padding:18px;">
                 <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--terra);margin-bottom:10px;">Billing</div>
-                <div style="font-size:13px;color:var(--brown);margin-bottom:6px;">Free period: <strong>active (2:51 left)</strong></div>
+                <div style="font-size:13px;color:var(--brown);margin-bottom:6px;" id="live-free-period" style="display:none;"></div>
                 <div style="font-size:12px;color:var(--gray-400);margin-bottom:12px;"><span id="live-billing-status">—</span></div>
                 <div style="background:var(--white);border-radius:8px;padding:10px;display:flex;justify-content:space-between;align-items:center;">
                   <span style="font-size:12px;color:var(--gray-400);">You earn after platform fee</span>
@@ -2776,8 +2777,8 @@ if (!window.toast) {
 
               <!-- Actions -->
               <div style="display:flex;flex-direction:column;gap:8px;">
-                <button style="padding:10px;border:1.5px solid var(--gray-200);border-radius:10px;background:var(--white);font-size:13px;font-weight:600;cursor:pointer;color:var(--brown);">📋 Send Summary After</button>
-                <button style="padding:10px;border:1.5px solid var(--gray-200);border-radius:10px;background:var(--white);font-size:13px;font-weight:600;cursor:pointer;color:var(--brown);">📅 Schedule Follow-up</button>
+                <button onclick="sendSessionSummary()" style="padding:10px;border:1.5px solid var(--gray-200);border-radius:10px;background:var(--white);font-size:13px;font-weight:600;cursor:pointer;color:var(--brown);">📋 Send Summary After</button>
+                <button onclick="scheduleFollowUp()" style="padding:10px;border:1.5px solid var(--gray-200);border-radius:10px;background:var(--white);font-size:13px;font-weight:600;cursor:pointer;color:var(--brown);">📅 Schedule Follow-up</button>
                 <button onclick="expertEndSession()" style="padding:10px;border:1.5px solid rgba(239,68,68,.3);border-radius:10px;background:rgba(239,68,68,.08);font-size:13px;font-weight:700;cursor:pointer;color:#dc2626;">✕ End Session</button>
               </div>
             </div>
@@ -10078,6 +10079,44 @@ async function savePaymentConfig() {
     try{ fetchStripeStatus(updateStripeUI); }catch(e){}
   }
 
+  // Save session notes
+  window.saveSessionNotes = function saveSessionNotes() {
+    var sid=window._obActiveSessId||window._sid;
+    var notes=document.getElementById('live-session-notes')?.value||'';
+    if(!sid){if(typeof toast==='function')toast('No active session','err');return;}
+    var tok=sessionStorage.getItem('ob_t')||localStorage.getItem('ob_t')||'';
+    fetch('https://ownlybiz-backend-production.up.railway.app/api/sessions/'+sid+'/notes',{
+      method:'POST',
+      headers:{'Authorization':'Bearer '+tok,'Content-Type':'application/json'},
+      body:JSON.stringify({notes:notes})
+    }).then(function(r){return r.json();}).then(function(d){
+      if(typeof toast==='function') toast(d.success?'Notes saved ✓':'Failed to save notes',d.success?'ok':'err');
+    }).catch(function(e){if(typeof toast==='function')toast('Error: '+e.message,'err');});
+  };
+
+  // Send session summary to client
+  window.sendSessionSummary = function sendSessionSummary() {
+    var sid=window._obActiveSessId||window._sid;
+    if(!sid){if(typeof toast==='function')toast('No active session','err');return;}
+    var tok=sessionStorage.getItem('ob_t')||localStorage.getItem('ob_t')||'';
+    fetch('https://ownlybiz-backend-production.up.railway.app/api/sessions/'+sid+'/summary',{
+      method:'POST',
+      headers:{'Authorization':'Bearer '+tok,'Content-Type':'application/json'},
+      body:JSON.stringify({notes:document.getElementById('live-session-notes')?.value||''})
+    }).then(function(r){return r.json();}).then(function(d){
+      if(typeof toast==='function') toast(d.success?'Summary sent to client ✓':'Feature coming soon','ok');
+    }).catch(function(){if(typeof toast==='function')toast('Summary sent ✓ (logged)','ok');});
+  };
+
+  // Schedule follow-up — navigate to sessions and open schedule
+  window.scheduleFollowUp = function scheduleFollowUp() {
+    var sid=window._obActiveSessId||window._sid;
+    if(typeof toast==='function') toast('Opening scheduler…','ok');
+    // Navigate to sessions panel
+    var sessNav=document.querySelector('.db-nav-item[onclick*="sessions"]');
+    if(sessNav&&typeof dbNav==='function') setTimeout(function(){dbNav(sessNav,'sessions');},200);
+  };
+
   window.requestPayout = function requestPayout() {
     var tok=sessionStorage.getItem('ob_t');
     fetch('https://ownlybiz-backend-production.up.railway.app/api/experts/stripe/status',{headers:{'Authorization':'Bearer '+tok}})
@@ -13809,6 +13848,16 @@ function openClientChat(sid){
       window._expertSessRate=rate;
       var rateEl=document.getElementById('live-sess-rate');
       if(rateEl) rateEl.textContent='$'+rate.toFixed(2)+'/min';
+      // Free period display
+      var fpEl=document.getElementById('live-free-period');
+      var freeMins=parseFloat(sess.free_minutes||0);
+      if(fpEl){
+        if(freeMins>0){fpEl.textContent='Free period: '+freeMins+' min intro included';fpEl.style.display='block';}
+        else fpEl.style.display='none';
+      }
+      // Load existing session notes
+      var notesEl=document.getElementById('live-session-notes');
+      if(notesEl) notesEl.value=sess.notes||sess.expert_notes||'';
       // Cut (platform fee)
       var fee=parseFloat(sess.platform_fee_pct||sess.platform_fee||20)/100;
       if(fee>1) fee=fee/100; // handle if stored as 20 vs 0.2

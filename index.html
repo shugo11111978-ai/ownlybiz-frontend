@@ -9211,8 +9211,35 @@ function configurePaypal() {
   if (panel) panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
 }
 function disconnectPayment(provider) {
-  if (!confirm('Disconnect ' + provider + '? This will stop routing payments to this account.')) return;
-  _showToast(provider + ' disconnected', 'gray');
+  if (!confirm('Disconnect ' + provider + '? This will remove the connection and stop routing payments to this account.')) return;
+  var tok=sessionStorage.getItem('ob_t')||localStorage.getItem('ob_t')||'';
+  if(!tok){ if(typeof toast==='function') toast('Not logged in','err'); return; }
+  fetch('https://ownlybiz-backend-production.up.railway.app/api/payments/disconnect',{
+    method:'POST',
+    headers:{'Authorization':'Bearer '+tok,'Content-Type':'application/json'},
+    body:JSON.stringify({provider:provider})
+  }).then(function(r){return r.json();}).then(function(d){
+    if(d.success){
+      if(typeof toast==='function') toast(provider.charAt(0).toUpperCase()+provider.slice(1)+' disconnected','ok');
+      // Reset UI: show banner, remove connected class, reset badge
+      var banner=document.getElementById('payment-setup-banner');
+      if(banner) banner.style.display='flex';
+      var card=document.querySelector('.pay-processor[onclick*="'+provider+'"]');
+      if(card){
+        card.classList.remove('connected');
+        var badge=card.querySelector('.pay-proc-badge');
+        if(badge){badge.textContent='Not connected';badge.className='pay-proc-badge';}
+        var btn=card.querySelector('button');
+        if(btn){btn.textContent='Connect '+provider.charAt(0).toUpperCase()+provider.slice(1);}
+      }
+      var statusBadge=document.getElementById('stripe-status-badge');
+      if(statusBadge){statusBadge.textContent='● Stripe Not Connected';statusBadge.style.color='#f87171';}
+    } else {
+      if(typeof toast==='function') toast('Disconnect failed: '+(d.error||'unknown error'),'err');
+    }
+  }).catch(function(e){
+    if(typeof toast==='function') toast('Disconnect failed: '+e.message,'err');
+  });
 }
 function connectPaymentMethod(method) {
   var labels = {bank:'Bank Account (ACH)', wise:'Wise', crypto:'Crypto (USDC)'};

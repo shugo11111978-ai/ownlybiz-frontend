@@ -13806,34 +13806,38 @@ function openClientChat(sid){
     // Start polling session status — fallback for when WS session_ended doesn't arrive
     startExpertSessionPoller(sid);
   }
-  // ── Session status poller: fallback for when WS session_ended doesn't arrive ──
-  var _expertSessionPoller=null;
-  window.startExpertSessionPoller = function startExpertSessionPoller(sid){
-    if(_expertSessionPoller) clearInterval(_expertSessionPoller);
-    _expertSessionPoller=setInterval(function(){
-      var t=tok();
-      if(!t||!sid) return;
-      fetch(BASE+'/api/sessions/'+sid,{headers:{Authorization:'Bearer '+t}})
+  // ── Session status poller: 100% self-contained, no closure deps ──
+  window.startExpertSessionPoller = function(sid){
+    if(window._expertSessionPoller) clearInterval(window._expertSessionPoller);
+    console.log('[POLLER] starting for sid='+sid);
+    window._expertSessionPoller = setInterval(function(){
+      var t = sessionStorage.getItem('ob_t')||localStorage.getItem('ob_t')||'';
+      var activeSid = sid || window._obActiveSessId || window._sid;
+      if(!t || !activeSid){ clearInterval(window._expertSessionPoller); return; }
+      fetch('https://ownlybiz-backend-production.up.railway.app/api/sessions/'+activeSid,
+        {headers:{Authorization:'Bearer '+t}})
         .then(function(r){return r.json();})
         .then(function(d){
-          var sess=d.session||d;
-          if(sess.status==='ended'){
-            clearInterval(_expertSessionPoller); _expertSessionPoller=null;
-            console.log('[POLL] session ended, closing expert UI');
-            _sessId=null; window._sid=null; window._obActiveSessId=null; window._expertSessActive=false;
+          var sess = d.session || d;
+          console.log('[POLLER] status='+sess.status+' sid='+activeSid.substring(0,8));
+          if(sess.status === 'ended'){
+            clearInterval(window._expertSessionPoller); window._expertSessionPoller = null;
+            console.log('[POLLER] ENDED — closing expert UI, earned='+sess.expert_earned);
+            window._obActiveSessId = null; window._sid = null; window._expertSessActive = false;
             if(window._expertTimerInterval){clearInterval(window._expertTimerInterval);window._expertTimerInterval=null;}
             if(window._expertSessInterval){clearInterval(window._expertSessInterval);window._expertSessInterval=null;}
-            var earned=typeof fmt$==='function'?fmt$(sess.expert_earned||0):'$'+(sess.expert_earned||0).toFixed(2);
-            if(typeof toast==='function') toast('Session ended · Earned: '+earned);
-            var earnEl=document.getElementById('expert-session-earnings');
-            if(earnEl) earnEl.textContent=earned;
-            var sessNav=document.querySelector('.db-nav-item[onclick*="sessions"]');
-            if(sessNav&&typeof dbNav==='function') dbNav(sessNav,'sessions');
-            setTimeout(function(){if(typeof loadExpertDashboard==='function')loadExpertDashboard();},500);
+            var earned = '$'+(+(sess.expert_earned||0)).toFixed(2);
+            try{ if(typeof fmt$==='function') earned=fmt$(sess.expert_earned||0); }catch(e){}
+            try{ if(typeof toast==='function') toast('Session ended · Earned: '+earned); }catch(e){}
+            var earnEl = document.getElementById('expert-session-earnings');
+            if(earnEl) earnEl.textContent = earned;
+            var sessNav = document.querySelector('.db-nav-item[onclick*=\'sessions\']');
+            if(sessNav){ try{ dbNav(sessNav,'sessions'); }catch(e){} }
+            setTimeout(function(){ try{ loadExpertDashboard(); }catch(e){} }, 500);
           }
-        }).catch(function(){});
-    },5000);
-  }
+        }).catch(function(e){ console.warn('[POLLER] fetch error:'+e.message); });
+    }, 4000);
+  };
 
   function expertPoll(){
     var t=tok();if(!t)return;

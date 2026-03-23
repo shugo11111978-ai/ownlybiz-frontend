@@ -12199,32 +12199,40 @@ function _adminPath(suffix) {
 (function(){
   var _origLEP = window.loadExpertPricing;
   window.loadExpertPricing = function() {
-    if(!_isAdminCtx()) { if(_origLEP) _origLEP.call(this); return; }
-    var tok = sessionStorage.getItem('ob_t');
-    fetch(_adminPath('/profile'), {headers:{'Authorization':'Bearer '+tok}})
+    var BASE_URL='https://ownlybiz-backend-production.up.railway.app';
+    var tk=sessionStorage.getItem('ob_t')||localStorage.getItem('ob_t')||'';
+    var authHdr={'Authorization':'Bearer '+tk};
+    function setVal(id,v){var el=document.getElementById(id);if(el&&v!==undefined&&v!==null){el.value=v;}}
+    function setTxt(id,v){var el=document.getElementById(id);if(el&&v!==undefined&&v!==null){el.textContent=v;}}
+    function nullSafe(v,def){return (v!==null&&v!==undefined)?+v:def;}
+    // Always load from rates API — works for both expert and admin-viewing-expert
+    var ratesUrl = _isAdminCtx()
+      ? BASE_URL+'/api/admin/experts/'+window._adminViewingExpertId+'/rates'
+      : BASE_URL+'/api/experts/rates';
+    fetch(ratesUrl,{headers:authHdr})
       .then(function(r){return r.json();})
       .then(function(d){
-        var r = d.rates || {};
-        // Populate rate sliders
-        var rc = document.getElementById('rate-chat');
-        var rv = document.getElementById('rate-voice');
-        var rvid = document.getElementById('rate-video');
-        var rs = document.getElementById('rate-slider');
-        if(rc) rc.value = r.chat_pm || 0;
-        if(rv) rv.value = r.voice_pm || 0;
-        if(rvid) rvid.value = r.video_pm || 0;
-        if(rs) rs.value = r.chat_pm || 0;
-        // Free minutes
-        var fc = document.getElementById('free-min-chat');
-        var fv = document.getElementById('free-min-voice');
-        if(fc) fc.value = r.chat_free_min || 0;
-        if(fv) fv.value = r.voice_free_min || 0;
-        // Rate display
-        var rd = document.getElementById('db-rate-val');
-        if(rd) rd.textContent = '$'+(r.chat_pm||0).toFixed(2);
-        var rdisplay = document.getElementById('db-rate-display');
-        if(rdisplay) rdisplay.textContent = '$'+(r.chat_pm||0).toFixed(2);
-      }).catch(function(){});
+        var r=d.rates||{};
+        // Settings panel fields
+        setVal('sfield-chat-rate', nullSafe(r.chat_pm,3.5));
+        setVal('sfield-voice-rate', nullSafe(r.voice_pm,4));
+        setVal('sfield-video-rate', nullSafe(r.video_pm,5));
+        setVal('sfield-free-min', nullSafe(r.chat_free_min,0));
+        // Payments panel fields
+        setVal('rate-chat', nullSafe(r.chat_pm,3.5));
+        setVal('rate-voice', nullSafe(r.voice_pm,4));
+        setVal('rate-video', nullSafe(r.video_pm,5));
+        setTxt('fm-chat', nullSafe(r.chat_free_min,0));
+        setTxt('fm-voice', nullSafe(r.voice_free_min,0));
+        setTxt('fm-video', nullSafe(r.video_free_min,0));
+        // Legacy fields
+        setVal('rate-slider', nullSafe(r.chat_pm,3.5));
+        setVal('free-min-chat', nullSafe(r.chat_free_min,0));
+        setVal('free-min-voice', nullSafe(r.voice_free_min,0));
+        setTxt('db-rate-val','$'+(nullSafe(r.chat_pm,3.5)).toFixed(2));
+        setTxt('db-rate-display','$'+(nullSafe(r.chat_pm,3.5)).toFixed(2));
+        if(typeof updateRatePreview==='function'){['chat','voice','video'].forEach(function(c){updateRatePreview(c);});}
+      }).catch(function(err){console.warn('[LEP]',err);});
   };
 })();
 
@@ -13696,7 +13704,24 @@ function openClientChat(sid){
   loadHistory(sid,'paid-chat-messages');
 }
   window.openClientChat=openClientChat;
-  window.clientEndSession=function(){var sid=window._obActiveSessId||window._sid;var t=sessionStorage.getItem('ob_t')||localStorage.getItem('ob_t')||'';if(sid&&t){fetch(BASE+'/api/sessions/'+sid+'/end',{method:'POST',headers:hdr(),body:'{}'}).catch(function(){});}if(window._clientTimerInterval){clearInterval(window._clientTimerInterval);window._clientTimerInterval=null;}if(typeof phoneGo==='function')phoneGo('A5');};
+  window.clientEndSession=function(){
+  var sid=window._obActiveSessId||window._sid;
+  var t=sessionStorage.getItem('ob_t')||localStorage.getItem('ob_t')||'';
+  console.log('[END_SESSION] sid='+sid+' hasToken='+(!!t));
+  if(sid&&t){
+    fetch('https://ownlybiz-backend-production.up.railway.app/api/sessions/'+sid+'/end',{
+      method:'POST',
+      headers:{'Authorization':'Bearer '+t,'Content-Type':'application/json'},
+      body:'{}'
+    }).then(function(r){return r.json();}).then(function(d){
+      console.log('[END_SESSION] response='+JSON.stringify(d));
+    }).catch(function(e){console.error('[END_SESSION] error',e);});
+  } else {
+    console.warn('[END_SESSION] SKIPPED: sid='+sid+' token='+(t?'ok':'missing'));
+  }
+  if(window._clientTimerInterval){clearInterval(window._clientTimerInterval);window._clientTimerInterval=null;}
+  if(typeof phoneGo==='function')phoneGo('A5');
+};
   window.obClientSend=function(){
     var inp=document.getElementById('ob-client-input');var content=inp?inp.value.trim():'';
     if(!content||!_sessId)return;inp.value='';appendMsg('ob-client-chat-messages',content,true);

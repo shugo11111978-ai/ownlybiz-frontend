@@ -4706,10 +4706,7 @@ if (!window.toast) {
           </div>
           <button class="btn btn-primary" style="width:100%;margin-top:16px;padding:14px;" id="bov-pay-btn" onclick="bovAuthorize()">Authorize & Start Session →</button>
           <p style="font-size:11px;color:var(--gray-400);text-align:center;margin-top:8px;">🔒 256-bit SSL · Only charged for time used · Cancel any time</p>
-          <div style="text-align:center;margin-top:10px;">
-            <span style="font-size:12px;color:var(--gray-400);">Prefer to use balance? </span>
-            <span style="font-size:12px;color:var(--terra);font-weight:600;cursor:pointer;" onclick="closeBookingOverlay();switchView(5);phoneGo('WALLET')">Add funds →</span>
-          </div>
+
         </div>
 
         <!-- STEP 3: Connecting -->
@@ -7646,10 +7643,19 @@ function openBookingOverlay(channelId) {
   if (fm > 0 && mode === 'free') detail += ' · first ' + fm + ' minutes free';
   document.getElementById('bov-channel-detail').textContent = detail;
 
-  // If already logged in, skip to step 2 or straight to session
+  // If already logged in (check token in storage), skip signup
+  var _tok = sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || '';
+  if (_tok) clientLoggedIn = true;
+  // If client has already authorized payment before, track it
+  var _hpm = localStorage.getItem('ob_hpm') === '1';
   if (clientLoggedIn) {
     if (mode === 'upfront' || fm === 0) {
-      _bovGoStep(2); // need payment
+      if (_hpm) {
+        // Already has payment method — skip straight to connecting
+        _bovGoStep(3);
+        setTimeout(function() { window._beginSession(); }, 1800);
+      } else {
+        _bovGoStep(2); // need payment
       // Mount Stripe card element when step 2 is shown
       setTimeout(function() {
         var BASE2 = 'https://ownlybiz-backend-production.up.railway.app';
@@ -7675,6 +7681,7 @@ function openBookingOverlay(channelId) {
             }
           }).catch(function(){});
       }, 500);
+      }
     } else {
       _bovGoStep(3); // free minutes → connecting
       setTimeout(function() { window._beginSession(); }, 1800);
@@ -7769,7 +7776,13 @@ function bovSignup() {
   var mode = sessionStartMode[ch.id] || 'upfront';
   var fm = freeMinutes[ch.id] || 0;
   if (mode === 'upfront' || fm === 0) {
-    _bovGoStep(2);
+    // Skip payment step if client already has payment authorized
+    if (localStorage.getItem('ob_hpm') === '1') {
+      _bovGoStep(3);
+      setTimeout(function() { window._beginSession(); }, 1800);
+    } else {
+      _bovGoStep(2);
+    }
   } else {
     _bovGoStep(3);
     setTimeout(function() { window._beginSession(); }, 1800);
@@ -7834,7 +7847,8 @@ async function bovAuthorize() {
             // Card saved — store payment method id and proceed
             window._bovPaymentMethodId = result.setupIntent.payment_method;
             if (btn) { btn.textContent = 'Card authorized ✓'; }
-            // Show connecting state
+            // Show connecting state — mark payment as authorized for future sessions
+            localStorage.setItem('ob_hpm','1');
             _bovGoStep(3);
             var badge = document.getElementById('bov-step-pay-badge');
             var conn  = document.getElementById('bov-step-conn-badge');
@@ -9556,8 +9570,12 @@ async function savePaymentConfig() {
         if(window._expertTimerInterval){clearInterval(window._expertTimerInterval);window._expertTimerInterval=null;}
         if(window._expertSessInterval){clearInterval(window._expertSessInterval);window._expertSessInterval=null;}
         var _e=fmt$(d.session?.expert_earned||0);
-        toast('Session ended · Earned: '+_e);
-        set('expert-session-earnings',_e);
+        if(Auth.isExpert){
+          toast('Session ended · Earned: '+_e);
+          set('expert-session-earnings',_e);
+        } else {
+          toast('Session complete!');
+        }
         if(Auth.isExpert){
           // Close live session panel directly — don't re-POST /end (already ended)
           var earnEl=document.getElementById('expert-session-earnings');

@@ -2702,7 +2702,7 @@ if (!window.toast) {
               <div style="font-size:11px;color:var(--gray-400);margin-top:4px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;">Rate / min</div>
             </div>
             <div style="background:var(--white);border:1px solid var(--gray-200);border-radius:12px;padding:16px;text-align:center;">
-              <div style="font-size:22px;font-weight:700;color:var(--brown);font-family:var(--font-head);" id="live-sess-cut">80%</div>
+              <div style="font-size:22px;font-weight:700;color:var(--brown);font-family:var(--font-head);" id="live-sess-cut">—</div>
               <div style="font-size:11px;color:var(--gray-400);margin-top:4px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;">Your cut</div>
             </div>
             <div style="background:rgba(34,197,94,.08);border:1.5px solid rgba(34,197,94,.25);border-radius:12px;padding:16px;text-align:center;">
@@ -8435,7 +8435,33 @@ function dbNav(el, panel) {
   var titleEl = document.getElementById('db-page-title');
   if (titleEl && titles[panel]) titleEl.textContent = titles[panel];
   if (panel === 'analytics') buildBigChart();
-  if (panel === 'live-session' && (window._sid||window._obActiveSessId)) startExpertSessionTimer();
+  if (panel === 'live-session') {
+    if (window._sid||window._obActiveSessId) {
+      startExpertSessionTimer();
+    } else {
+      // No active session — show the expert's configured cut% from plan
+      var _tok=sessionStorage.getItem('ob_t')||localStorage.getItem('ob_t')||'';
+      var _BASE='https://ownlybiz-backend-production.up.railway.app';
+      if(_tok) {
+        fetch(_BASE+'/api/experts/rates',{headers:{Authorization:'Bearer '+_tok}})
+          .then(function(r){return r.json();}).then(function(rd){
+            fetch(_BASE+'/api/experts/platform-fees').then(function(r){return r.json();}).then(function(pf){
+              var _plan='starter'; // default plan
+              var _feeRaw=parseFloat(pf['fee_starter_pct']||12);
+              var _fee=_feeRaw>1?_feeRaw/100:_feeRaw;
+              var _cut=Math.round((1-_fee)*100);
+              var cutEl=document.getElementById('live-sess-cut');
+              if(cutEl) cutEl.textContent=_cut+'%';
+              var rateEl=document.getElementById('live-sess-rate');
+              var rt=parseFloat(rd.rates?.chat_pm||rd.rate_chat||3.5);
+              if(rateEl) rateEl.textContent='$'+rt.toFixed(2)+'/min';
+              var earnRateEl=document.getElementById('live-earn-rate');
+              if(earnRateEl) earnRateEl.textContent='$'+((rt*(1-_fee)).toFixed(2))+'/min';
+            }).catch(function(){});
+          }).catch(function(){});
+      }
+    }
+  }
   // Close mobile sidebar after nav
   closeDbSidebar();
 
@@ -10828,15 +10854,16 @@ async function savePaymentConfig() {
     const panel=$('admin-panel-fee-config'); if(!panel) return;
     try {
       const d=await api('GET','/admin/fees');
+      const f=d.fees||d; // API returns {fees:{...}} — unwrap
       const fm={
-        'fee-pct-chat':d.platform_fee_chat,'fee-pct-voice':d.platform_fee_voice,
-        'fee-pct-video':d.platform_fee_video,'fee-pct-pkg':d.platform_fee_fixed,
-        'fee-bar-expert':d.platform_fee_chat,
-        'fee-starter-pct':d.fee_starter_pct,'fee-pro-pct':d.fee_pro_pct,
-        'fee-scale-pct':d.fee_scale_pct,'fee-enterprise-pct':d.fee_enterprise_pct,
-        'price-starter-monthly':d.price_starter_monthly,'price-starter-trial':d.price_starter_trial,
-        'price-pro-monthly':d.price_pro_monthly,'price-pro-annual':d.price_pro_annual,
-        'price-scale-monthly':d.price_scale_monthly,'price-scale-annual':d.price_scale_annual,
+        'fee-pct-chat':f.platform_fee_chat,'fee-pct-voice':f.platform_fee_voice,
+        'fee-pct-video':f.platform_fee_video,'fee-pct-pkg':f.platform_fee_fixed,
+        'fee-bar-expert':f.platform_fee_chat,
+        'fee-starter-pct':f.fee_starter_pct,'fee-pro-pct':f.fee_pro_pct,
+        'fee-scale-pct':f.fee_scale_pct,'fee-enterprise-pct':f.fee_enterprise_pct,
+        'price-starter-monthly':f.price_starter_monthly,'price-starter-trial':f.price_starter_trial,
+        'price-pro-monthly':f.price_pro_monthly,'price-pro-annual':f.price_pro_annual,
+        'price-scale-monthly':f.price_scale_monthly,'price-scale-annual':f.price_scale_annual,
       };
       Object.entries(fm).forEach(([id,v])=>{ const e=$(id); if(e&&v!=null) e.value=v; });
       if(typeof updateFeeDisplay==='function') updateFeeDisplay();

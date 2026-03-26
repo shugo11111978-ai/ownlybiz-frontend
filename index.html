@@ -8371,13 +8371,14 @@ function phoneGo(screenId){
 function startFreeTimer(){
   clearInterval(freeTimerInterval);
   if(!freeSeconds||freeSeconds<=0) freeSeconds=180; // openClientChat sets this from actual session
+  var _totalSecs=freeSeconds;
   freeTimerInterval=setInterval(()=>{
     freeSeconds--;
     var m=Math.floor(freeSeconds/60),s=freeSeconds%60;
     var disp=(m+':'+(s<10?'0':'')+s);
     var el=document.getElementById('free-timer');
     if(el) el.textContent=disp;
-    var pct=(freeSeconds/180)*100;
+    var pct=(freeSeconds/(_totalSecs||freeSeconds||180))*100;
     var mf=document.getElementById('free-meter-fill');
     if(mf) mf.style.width=pct+'%';
     var mv=document.getElementById('free-meter-val');
@@ -13954,9 +13955,19 @@ body.expert-page #mob-cta-bar{display:none!important;}
     }
     if(d.type==='new_session_request'){showIncomingRequest(d.sessionId,d.clientName||'Client',d.channel||'chat');}
     if(d.type==='message'&&d.sessionId===window._obActiveSessId){
-      // Only append here for client role — expert messages are handled by connectExpertWs (_expertWs)
       if(d.sender_id!==me&&d.content&&role!=='expert'){
+        appendMsg('free-chat-messages',d.content,false,d.ts);
         appendMsg('paid-chat-messages',d.content,false,d.ts);
+      }
+    }
+    if(d.type==='session_ended'){
+      if(role==='expert'){
+        try{ clearInterval(window._expertTimerInterval||window.freeTimerInterval); }catch(e){}
+        var dbNav=document.querySelectorAll('.db-nav-item');
+        if(dbNav.length>0&&typeof window.dbNav==='function') window.dbNav(dbNav[0],'overview');
+        else { var lsp=document.getElementById('db-panel-live-session'); if(lsp)lsp.classList.remove('active'); var op=document.getElementById('db-panel-overview'); if(op)op.classList.add('active'); }
+        if(typeof toast==='function') toast('Session ended by client');
+        window._obActiveSessId=null; window._sid=null;
       }
     }
     if(d.type==='typing'&&d.sessionId===window._obActiveSessId){
@@ -14035,9 +14046,9 @@ function openClientChat(sid){
   // Wire Enter keys + send buttons for both screens
   setTimeout(function(){
     var inpF=document.getElementById('free-chat-input');
-    if(inpF&&!inpF._wired){inpF._wired=true;inpF.addEventListener('keydown',function(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();window.sendFreeMsg();}});}
+    if(inpF){inpF.onkeydown=function(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();window.sendFreeMsg();}};}
     var inpP=document.getElementById('paid-chat-input');
-    if(inpP&&!inpP._wired){inpP._wired=true;inpP.addEventListener('keydown',function(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();window.sendPaidMsg();}});}
+    if(inpP){inpP.onkeydown=function(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();window.sendPaidMsg();}};}
     var sendF=document.querySelector('#screen-A3 .chat-send');if(sendF)sendF.onclick=window.sendFreeMsg;
     var sendP=document.querySelector('#screen-A4 .chat-send');if(sendP)sendP.onclick=window.sendPaidMsg;
   },200);

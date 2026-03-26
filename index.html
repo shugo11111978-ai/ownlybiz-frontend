@@ -8370,7 +8370,7 @@ function phoneGo(screenId){
 
 function startFreeTimer(){
   clearInterval(freeTimerInterval);
-  freeSeconds=180;
+  if(!freeSeconds||freeSeconds<=0) freeSeconds=180; // openClientChat sets this from actual session
   freeTimerInterval=setInterval(()=>{
     freeSeconds--;
     var m=Math.floor(freeSeconds/60),s=freeSeconds%60;
@@ -10560,7 +10560,7 @@ async function savePaymentConfig() {
     } else _origSendMsg?.();
   };
 
-  window.sendPaidMsg=window.sendFreeMsg=window.sendExpertMsg;
+  // sendFreeMsg/sendPaidMsg wired per-session in openClientChat
 
   /* ── Expert client linkage helper ────────────────── */
   async function _linkClientToCurrentExpert(){
@@ -14004,37 +14004,44 @@ body.expert-page #mob-cta-bar{display:none!important;}
     stopStatusPoll();var ov=document.getElementById('ob-waiting-overlay');if(ov)ov.classList.remove('show');window._obPendingSessId=null;
   };
 function openClientChat(sid){
-  _sessId=sid;window._obActiveSessId=sid;
+  _sessId=sid;window._obActiveSessId=sid;window._sid=sid;
   // Hide booking overlay
   var _bo=document.getElementById('booking-overlay');if(_bo){_bo.style.display='none';document.body.style.overflow='';}
   // Must switch to session view (view 5) first so phone screens are visible
   if(typeof switchView==='function') switchView(5);
-  // Pick free (A3) or paid (A4) screen based on session free minutes
+  // Pick free (A3) or paid (A4) screen based on actual session free minutes
   var _ch = (window.selectedChannel&&window.selectedChannel.id)||window._selectedChannel||'chat';
   var _fm = (window.freeMinutes&&window.freeMinutes[_ch])||0;
   var _screen = (_fm > 0) ? 'A3' : 'A4';
+  // Fix free timer to use actual free_minutes not hardcoded 180
+  if(_fm > 0){ freeSeconds = _fm * 60; }
   if(typeof phoneGo==='function') phoneGo(_screen);
-  // Populate A4 with real expert/rate data BEFORE switching screen
+  // Populate screens with real expert/rate data
   var expertName=((window._currentExpert&&(window._currentExpert.name||window._currentExpert.display_name))||window._obPendingExpertName||'Expert');
   var rate=((window._currentExpert&&window._currentExpert.rate_chat)||'?');
+  var t3=document.getElementById('a3-session-title');if(t3)t3.textContent=expertName+' - Chat';
   var t4=document.getElementById('a4-session-title');if(t4)t4.textContent=expertName+' - Chat';
   var r4=document.getElementById('a4-session-rate');if(r4)r4.textContent='Billing Active · $'+parseFloat(rate).toFixed(2)+'/min';
-  // Wire sendPaidMsg to real API
-  window.sendPaidMsg=function(){
-    var inp=document.getElementById('paid-chat-input');
+  // Wire BOTH send functions to real session API (overrides expert WS assignment)
+  function _clientSendMsg(inputId, panelId){
+    var inp=document.getElementById(inputId);
     var content=inp?inp.value.trim():'';if(!content)return;
     inp.value='';
-    appendMsg('paid-chat-messages',content,true,Date.now());
+    appendMsg(panelId,content,true,Date.now());
     fetch(BASE+'/api/sessions/'+sid+'/message',{method:'POST',headers:hdr(),body:JSON.stringify({content:content})}).catch(function(){});
-  };
-  // Wire UI: Enter key + send button
+  }
+  window.sendFreeMsg=function(){ _clientSendMsg('free-chat-input','free-chat-messages'); };
+  window.sendPaidMsg=function(){ _clientSendMsg('paid-chat-input','paid-chat-messages'); };
+  // Wire Enter keys + send buttons for both screens
   setTimeout(function(){
-    var inp=document.getElementById('paid-chat-input');
-    if(inp&&!inp._v5wired){inp._v5wired=true;inp.addEventListener('keydown',function(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();window.sendPaidMsg();}});}
-    var sendBtn=document.querySelector('#screen-A4 .chat-send');if(sendBtn)sendBtn.onclick=window.sendPaidMsg;
+    var inpF=document.getElementById('free-chat-input');
+    if(inpF&&!inpF._wired){inpF._wired=true;inpF.addEventListener('keydown',function(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();window.sendFreeMsg();}});}
+    var inpP=document.getElementById('paid-chat-input');
+    if(inpP&&!inpP._wired){inpP._wired=true;inpP.addEventListener('keydown',function(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();window.sendPaidMsg();}});}
+    var sendF=document.querySelector('#screen-A3 .chat-send');if(sendF)sendF.onclick=window.sendFreeMsg;
+    var sendP=document.querySelector('#screen-A4 .chat-send');if(sendP)sendP.onclick=window.sendPaidMsg;
   },200);
-  // Load real message history
-  loadHistory(sid,'paid-chat-messages');
+  loadHistory(sid, _screen==='A3' ? 'free-chat-messages' : 'paid-chat-messages');
 }
   window.openClientChat=openClientChat;
   window.clientEndSession=function(){

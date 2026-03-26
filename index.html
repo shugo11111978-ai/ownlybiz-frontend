@@ -7850,6 +7850,32 @@ function bovContinueLoggedIn() {
   } else {
     // Need to add payment method first
     _bovGoStep(2);
+    // Mount Stripe card element after step 2 shows
+    setTimeout(function() {
+      if (window._bovCardElement) return; // already mounted
+      var BASE2 = 'https://ownlybiz-backend-production.up.railway.app';
+      var t2 = sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || '';
+      if (!t2) return;
+      fetch(BASE2 + '/api/payments/config')
+        .then(function(r){ return r.json(); })
+        .then(function(cfg){
+          if (!cfg.publishable_key) return;
+          var stripe = Stripe(cfg.publishable_key);
+          var elements = stripe.elements();
+          var card = elements.create('card', {
+            style: { base: { fontSize: '18px', lineHeight: '44px', color: '#3b1f0e', '::placeholder': { color: '#9ca3af' } } },
+            hidePostalCode: true
+          });
+          var mount = document.getElementById('bov-card-element');
+          if (mount) {
+            mount.innerHTML = '';
+            mount._stripeCard = true;
+            card.mount('#bov-card-element');
+            window._bovCardElement = card;
+            window._bovStripe = stripe;
+          }
+        }).catch(function(){});
+    }, 500);
   }
 }
 
@@ -7940,7 +7966,9 @@ async function bovAuthorize() {
       .then(function(d){
         if (!d.client_secret) { showErr(d.error || 'Could not initialize payment.'); return; }
 
-        var _confirmPromise = (window._bovStripe||stripe).confirmCardSetup(d.client_secret, { payment_method: { card: window._bovCardElement||cardEl } });
+        // Small delay to ensure Stripe card element is fully initialized
+        var _cardReady = window._bovCardElement || cardEl;
+        var _confirmPromise = (window._bovStripe||stripe).confirmCardSetup(d.client_secret, { payment_method: { card: _cardReady } });
         var _timeoutPromise = new Promise(function(_, rej){ setTimeout(function(){ rej(new Error('Payment timed out. Please check your card details and try again.'));}, 25000); });
         Promise.race([_confirmPromise, _timeoutPromise]).then(function(result){
           if (result.error) {

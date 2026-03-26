@@ -7686,7 +7686,7 @@ function openBookingOverlay(channelId) {
       if (_hpm) {
         // Already has payment method — skip straight to connecting
         _bovGoStep(3);
-        setTimeout(function() { window._beginSession(); }, 1800);
+        setTimeout(function(){ if(typeof _launchSession==='function') _launchSession(true); }, 300);
       } else {
         _bovGoStep(2); // need payment
       // Mount Stripe card element when step 2 is shown
@@ -7854,8 +7854,8 @@ function bovContinueLoggedIn() {
   if (localStorage.getItem('ob_hpm') === '1') {
     // Already has payment method on file — go straight to connecting
     _bovGoStep(3);
-    // Show pre-session waiting screen (don't auto-start — let user click Begin)
-    setTimeout(function(){ window._beginSession(); }, 800);
+    // Show PRESESS screen — user clicks "Begin Session" to trigger API call
+    setTimeout(function(){ if(typeof _launchSession==='function') _launchSession(true); }, 200);
   } else {
     // Need to add payment method first
     _bovGoStep(2);
@@ -13993,6 +13993,7 @@ body.expert-page #mob-cta-bar{display:none!important;}
   }
   var _origBegin=window._beginSession;
   window._beginSession=function(){if(myRole()==='admin'||myRole()==='expert'){if(_origBegin)_origBegin();return;}
+    if(window._obPendingSessId){console.log('[_beginSession] skipped — already pending:'+window._obPendingSessId);return;}
     var t=tok();if(!t){if(_origBegin)_origBegin();return;}
     var expertId=window._currentExpertId;
     var expertName=(window._currentExpert&&window._currentExpert.name)||'Expert';
@@ -14060,16 +14061,19 @@ function openClientChat(sid){
 }
   window.openClientChat=openClientChat;
   window.clientEndSession=function(){
-  var sid=window._obActiveSessId||window._sid;
+  var sid=window._obActiveSessId||window._sid||window._obPendingSessId;
   var t=sessionStorage.getItem('ob_t')||localStorage.getItem('ob_t')||'';
-  console.log('[END_SESSION] sid='+sid+' hasToken='+(!!t));
+  var isPending=!window._obActiveSessId&&!!window._obPendingSessId;
+  var endpoint=isPending?'decline':'end';
+  console.log('[END_SESSION] sid='+sid+' endpoint=/'+endpoint);
   if(sid&&t){
-    fetch('https://ownlybiz-backend-production.up.railway.app/api/sessions/'+sid+'/end',{
+    fetch('https://ownlybiz-backend-production.up.railway.app/api/sessions/'+sid+'/'+endpoint,{
       method:'POST',
       headers:{'Authorization':'Bearer '+t,'Content-Type':'application/json'},
       body:'{}'
     }).then(function(r){return r.json();}).then(function(d){
       console.log('[END_SESSION] response='+JSON.stringify(d));
+      window._obPendingSessId=null;
     }).catch(function(e){console.error('[END_SESSION] error',e);});
   } else {
     console.warn('[END_SESSION] SKIPPED: sid='+sid+' token='+(t?'ok':'missing'));

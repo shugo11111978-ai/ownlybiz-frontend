@@ -4666,18 +4666,28 @@ if (!window.toast) {
 
         <!-- STEP 1: Account (signup / already logged in) -->
         <div id="bov-step1" style="padding:20px 24px 32px;">
-          <h2 style="font-size:20px;font-family:var(--font-head);color:var(--brown);margin-bottom:6px;">Create your account</h2>
-          <p style="font-size:13px;color:var(--gray-400);margin-bottom:20px;">One quick account so your expert can connect with you and send your receipt.</p>
-          <div class="sso-buttons" style="margin-bottom:12px;">
-            <button class="sso-btn" style="background:#000;color:white;border-color:#000;" onclick="bovSignup()">⬛ Continue with Apple</button>
-            <button class="sso-btn" style="background:white;color:#333;border-color:rgba(0,0,0,.15);" onclick="bovSignup()">🌐 Continue with Google</button>
+          <!-- Logged-in state (shown when already authenticated) -->
+          <div id="bov-loggedin-state" style="display:none;text-align:center;padding:8px 0 16px;">
+            <div style="width:52px;height:52px;background:var(--terra);border-radius:50%;margin:0 auto 12px;display:flex;align-items:center;justify-content:center;font-size:22px;color:white;font-weight:700;" id="bov-client-avatar">?</div>
+            <div style="font-size:18px;font-weight:700;color:var(--brown);margin-bottom:4px;" id="bov-client-name-display">Welcome back!</div>
+            <div style="font-size:13px;color:var(--gray-400);margin-bottom:16px;" id="bov-client-email-display"></div>
+            <button class="btn btn-primary" style="width:100%;padding:14px;margin-bottom:10px;" onclick="bovContinueLoggedIn()">Continue as this account →</button>
+            <button onclick="bovLogout()" style="background:none;border:none;color:var(--gray-400);font-size:12px;cursor:pointer;text-decoration:underline;">Not you? Sign out</button>
           </div>
-          <div class="divider-line"><span>or email</span></div>
-          <input type="text" class="form-input" placeholder="Your name" style="margin-bottom:10px;" id="bov-name">
-          <input type="email" class="form-input" placeholder="Email address" style="margin-bottom:16px;" id="bov-email">
-          <button class="btn btn-primary" style="width:100%;padding:14px;" id="bov-signup-btn" onclick="bovSignup()">Continue →</button>
-          <p style="font-size:11px;color:var(--gray-400);text-align:center;margin-top:10px;line-height:1.5;">By continuing you agree to our Terms. You won't be charged without confirmation.</p>
-          <p style="font-size:12px;text-align:center;margin-top:8px;color:var(--gray-400);">Already have an account? <span style="color:var(--terra);font-weight:600;cursor:pointer;" onclick="bovSignup()">Sign in →</span></p>
+          <!-- Auth form (signup / login) -->
+          <div id="bov-auth-form">
+            <h2 style="font-size:20px;font-family:var(--font-head);color:var(--brown);margin-bottom:6px;" id="bov-auth-title">Create your account</h2>
+            <p style="font-size:13px;color:var(--gray-400);margin-bottom:18px;" id="bov-auth-sub">One quick account so your expert can connect with you and send your receipt.</p>
+            <div id="bov-name-row" style="margin-bottom:10px;">
+              <input type="text" class="form-input" placeholder="Your name" id="bov-name">
+            </div>
+            <input type="email" class="form-input" placeholder="Email address" style="margin-bottom:10px;" id="bov-email">
+            <input type="password" class="form-input" placeholder="Password (min 8 chars)" style="margin-bottom:6px;" id="bov-password">
+            <div id="bov-auth-err" style="display:none;color:#ef4444;font-size:12px;margin-bottom:8px;padding:8px 12px;background:rgba(239,68,68,.08);border-radius:8px;"></div>
+            <button class="btn btn-primary" style="width:100%;padding:14px;margin-top:8px;" id="bov-signup-btn" onclick="bovDoAuth()">Continue →</button>
+            <p style="font-size:11px;color:var(--gray-400);text-align:center;margin-top:10px;line-height:1.5;">By continuing you agree to our Terms. You won't be charged without confirmation.</p>
+            <p style="font-size:12px;text-align:center;margin-top:8px;color:var(--gray-400);" id="bov-toggle-row">Already have an account? <span style="color:var(--terra);font-weight:600;cursor:pointer;" id="bov-toggle-link" onclick="bovToggleAuthMode()">Sign in →</span></p>
+          </div>
         </div>
 
         <!-- STEP 2: Payment -->
@@ -7646,6 +7656,21 @@ function openBookingOverlay(channelId) {
   // If already logged in (check token in storage), skip signup
   var _tok = sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || '';
   if (_tok) clientLoggedIn = true;
+  // If already logged in, show logged-in state in step 1 instead of form
+  if (_tok) {
+    var _u = {}; try{_u=JSON.parse(localStorage.getItem('ob_u')||'{}');}catch(e){}
+    var liEl = document.getElementById('bov-loggedin-state');
+    var afEl = document.getElementById('bov-auth-form');
+    if(liEl) liEl.style.display = 'block';
+    if(afEl) afEl.style.display = 'none';
+    var avatarEl = document.getElementById('bov-client-avatar');
+    var nameEl = document.getElementById('bov-client-name-display');
+    var emailEl = document.getElementById('bov-client-email-display');
+    var uName = _u.name||_u.email||'Client';
+    if(avatarEl) avatarEl.textContent = uName.charAt(0).toUpperCase();
+    if(nameEl) nameEl.textContent = 'Welcome back, '+uName.split(' ')[0]+'!';
+    if(emailEl) emailEl.textContent = _u.email||'';
+  }
   // If client has already authorized payment before, track it
   var _hpm = localStorage.getItem('ob_hpm') === '1';
   if (clientLoggedIn) {
@@ -7770,22 +7795,98 @@ function selectCalDay(el) {
 }
 
 
-function bovSignup() {
+function bovSignup() { bovDoAuth(); } // legacy alias
+
+// Toggle between signup and signin mode
+window._bovAuthMode = 'signup';
+function bovToggleAuthMode() {
+  var isSignup = window._bovAuthMode === 'signup';
+  window._bovAuthMode = isSignup ? 'login' : 'signup';
+  var title = document.getElementById('bov-auth-title');
+  var sub = document.getElementById('bov-auth-sub');
+  var nameRow = document.getElementById('bov-name-row');
+  var toggleLink = document.getElementById('bov-toggle-link');
+  var toggleRow = document.getElementById('bov-toggle-row');
+  var btn = document.getElementById('bov-signup-btn');
+  if (window._bovAuthMode === 'login') {
+    if(title) title.textContent = 'Sign in to your account';
+    if(sub) sub.textContent = 'Welcome back! Sign in to continue.';
+    if(nameRow) nameRow.style.display = 'none';
+    if(toggleLink) toggleLink.textContent = 'Create account →';
+    if(toggleRow) toggleRow.innerHTML = "Don't have an account? <span style='color:var(--terra);font-weight:600;cursor:pointer;' id='bov-toggle-link' onclick='bovToggleAuthMode()'>Create account →</span>";
+    if(btn) btn.textContent = 'Sign In →';
+  } else {
+    if(title) title.textContent = 'Create your account';
+    if(sub) sub.textContent = 'One quick account so your expert can connect with you and send your receipt.';
+    if(nameRow) nameRow.style.display = 'block';
+    if(toggleRow) toggleRow.innerHTML = "Already have an account? <span style='color:var(--terra);font-weight:600;cursor:pointer;' id='bov-toggle-link' onclick='bovToggleAuthMode()'>Sign in →</span>";
+    if(btn) btn.textContent = 'Continue →';
+  }
+}
+
+function bovLogout() {
+  localStorage.removeItem('ob_t');
+  localStorage.removeItem('ob_u');
+  localStorage.removeItem('ob_hpm');
+  sessionStorage.removeItem('ob_t');
+  sessionStorage.removeItem('ob_u');
+  clientLoggedIn = false;
+  window._bovAuthMode = 'signup';
+  // Reset UI back to signup form
+  var li = document.getElementById('bov-loggedin-state');
+  var af = document.getElementById('bov-auth-form');
+  var nameRow = document.getElementById('bov-name-row');
+  if(li) li.style.display = 'none';
+  if(af) af.style.display = 'block';
+  if(nameRow) nameRow.style.display = 'block';
+  bovToggleAuthMode(); bovToggleAuthMode(); // reset to signup
+}
+
+function bovContinueLoggedIn() {
   clientLoggedIn = true;
   var ch = selectedChannel;
   var mode = sessionStartMode[ch.id] || 'upfront';
   var fm = freeMinutes[ch.id] || 0;
-  if (mode === 'upfront' || fm === 0) {
-    // Skip payment step if client already has payment authorized
-    if (localStorage.getItem('ob_hpm') === '1') {
-      _bovGoStep(3);
-      setTimeout(function() { window._beginSession(); }, 1800);
-    } else {
-      _bovGoStep(2);
+  if (mode === 'free' && fm > 0) { _bovGoStep(3); setTimeout(function(){window._beginSession();},1800); }
+  else if (localStorage.getItem('ob_hpm') === '1') { _bovGoStep(3); setTimeout(function(){window._beginSession();},1800); }
+  else { _bovGoStep(2); }
+}
+
+async function bovDoAuth() {
+  var BASE = 'https://ownlybiz-backend-production.up.railway.app';
+  var name = (document.getElementById('bov-name')||{}).value||'';
+  var email = (document.getElementById('bov-email')||{}).value||'';
+  var pw = (document.getElementById('bov-password')||{}).value||'';
+  var errEl = document.getElementById('bov-auth-err');
+  var btn = document.getElementById('bov-signup-btn');
+  function showErr(msg){ if(errEl){errEl.textContent=msg;errEl.style.display='block';} if(btn){btn.textContent=window._bovAuthMode==='login'?'Sign In →':'Continue →';btn.disabled=false;} }
+  if(!email){ showErr('Please enter your email.'); return; }
+  if(!pw){ showErr('Please enter your password.'); return; }
+  if(window._bovAuthMode==='signup'&&!name){ showErr('Please enter your name.'); return; }
+  if(pw.length<8){ showErr('Password must be at least 8 characters.'); return; }
+  if(btn){btn.textContent='Please wait…';btn.disabled=true;}
+  if(errEl) errEl.style.display='none';
+  try {
+    var url = window._bovAuthMode==='login' ? BASE+'/api/auth/login' : BASE+'/api/auth/signup';
+    var body = window._bovAuthMode==='login' ? {email,password:pw} : {name,email,password:pw,role:'client'};
+    var r = await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    var d = await r.json();
+    if(!r.ok){
+      // If signup fails with "already registered", auto-switch to login
+      if(r.status===409){ window._bovAuthMode='login'; bovToggleAuthMode(); showErr('Email already registered. Signing you in…'); setTimeout(()=>bovDoAuth(),800); return; }
+      showErr(d.error||'Something went wrong. Please try again.'); return;
     }
-  } else {
-    _bovGoStep(3);
-    setTimeout(function() { window._beginSession(); }, 1800);
+    // Success — store token
+    var tok = d.token;
+    var user = d.user||{};
+    localStorage.setItem('ob_t', tok);
+    localStorage.setItem('ob_u', JSON.stringify(user));
+    sessionStorage.setItem('ob_t', tok);
+    sessionStorage.setItem('ob_u', JSON.stringify(user));
+    clientLoggedIn = true;
+    bovContinueLoggedIn();
+  } catch(err) {
+    showErr('Network error. Please try again.');
   }
 }
 

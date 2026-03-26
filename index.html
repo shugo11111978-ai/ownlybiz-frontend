@@ -8446,10 +8446,13 @@ function dbNav(el, panel) {
         fetch(_BASE+'/api/experts/rates',{headers:{Authorization:'Bearer '+_tok}})
           .then(function(r){return r.json();}).then(function(rd){
             fetch(_BASE+'/api/experts/platform-fees').then(function(r){return r.json();}).then(function(pf){
-              var _plan='starter'; // default plan
-              var _feeRaw=parseFloat(pf['fee_starter_pct']||12);
+              var _uData2={}; try{_uData2=JSON.parse(sessionStorage.getItem('ob_u')||'{}');}catch(e){}
+              var _plan=(_uData2.plan||_uData2.subscription_plan||'starter').toLowerCase();
+              var _planKey2=_plan==='free'?'starter':_plan;
+              var _feeRaw=parseFloat(pf['fee_'+_planKey2+'_pct']||pf['fee_starter_pct']||12);
               var _fee=_feeRaw>1?_feeRaw/100:_feeRaw;
               var _cut=Math.round((1-_fee)*100);
+              window._expertSessCut=parseFloat((1-_fee).toFixed(4));
               var cutEl=document.getElementById('live-sess-cut');
               if(cutEl) cutEl.textContent=_cut+'%';
               var rateEl=document.getElementById('live-sess-rate');
@@ -14152,7 +14155,14 @@ function openClientChat(sid){
             // Populate Live Session panel with real data
             var sub=document.getElementById('live-sess-subtitle');if(sub)sub.textContent=(sess.channel||'Chat')+' session with '+(sess.client_name||'Client');
             var rateEl=document.getElementById('live-sess-rate');if(rateEl)rateEl.textContent='$'+(sess.rate_per_min||'?')+'/min';window._expertSessRate=parseFloat(sess.rate_per_min||3.5);
-            var cutEl=document.getElementById('live-sess-cut');if(cutEl){var fee=0.2;try{fee=parseFloat(sess.platform_fee||20)/100;}catch(e){}cutEl.textContent=Math.round((1-fee)*100)+'%';}
+            // Fetch real platform fee for this expert's plan
+            var _sPlan2=(sess.expert_plan||'starter').toLowerCase();
+            var _sPKey=_sPlan2==='free'?'starter':_sPlan2;
+            window._expertSessFreeMins=parseFloat(sess.free_minutes||0);
+            window._expertSessCut=0.8; // default until fetch resolves
+            var cutEl=document.getElementById('live-sess-cut');
+            if(cutEl) cutEl.textContent=Math.round(window._expertSessCut*100)+'%';
+            fetch('https://ownlybiz-backend-production.up.railway.app/api/experts/platform-fees').then(function(r){return r.json();}).then(function(pf){var _fr=parseFloat(pf['fee_'+_sPKey+'_pct']||pf.fee_starter_pct||12);var _f=_fr>1?_fr/100:_fr;var _c=parseFloat((1-_f).toFixed(4));window._expertSessCut=_c;if(cutEl)cutEl.textContent=Math.round(_c*100)+'%';var erEl=document.getElementById('live-earn-rate');if(erEl)erEl.textContent='$'+((window._expertSessRate||3.5)*_c).toFixed(2)+'/min';}).catch(function(){});
             var cnEl=document.getElementById('live-client-name');if(cnEl)cnEl.textContent=sess.client_name||'Client';
             // Reset timer
             if(typeof _expertSessSeconds!=='undefined'){window._expertSessSeconds=0;}

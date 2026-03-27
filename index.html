@@ -9705,7 +9705,7 @@ async function savePaymentConfig() {
       try {
         this.ws = new WebSocket(WSS);
         this.ws.onopen = ()=>{
-          if (Auth.tok) this.send({type:'auth',token:Auth.tok});
+          var _wsTok=typeof tok==='function'?tok():(sessionStorage.getItem('ob_t')||localStorage.getItem('ob_t')||''); if(_wsTok) this.send({type:'auth',token:_wsTok});
           this._ping = setInterval(()=>this.send({type:'ping'}),25000);
           if (window._sid) this.send({type:'join',session_id:window._sid});
         };
@@ -9721,12 +9721,24 @@ async function savePaymentConfig() {
     switch(d.type) {
       case 'session_request':
         window._pendingSid = d.session?.id;
-        set('req-client-name', d.client?.name||'Client');
-        set('req-client-sub',  d.session?.channel+' session');
-        set('req-session-type', d.session?.channel);
-        set('req-rate', fmt$(d.session?.rate_per_min)+'/min');
-        show('session-request-overlay','flex');
-        show('session-request-sheet','flex');
+        if(typeof showSessionRequest==='function'){
+          showSessionRequest({
+            clientName: d.client?.name||'Client',
+            clientSub: d.session?.channel+' session',
+            initials: ((d.client?.name||'CL').match(/w/g)||['C','L']).slice(0,2).join('').toUpperCase(),
+            sessionType: d.session?.channel||'chat',
+            rate: fmt$(d.session?.rate_per_min)+'/min',
+            freeMin: (d.session?.free_minutes!=null?d.session.free_minutes:0)+' min free'
+          });
+        } else {
+          set('req-client-name', d.client?.name||'Client');
+          set('req-client-sub',  d.session?.channel+' session');
+          set('req-session-type', d.session?.channel);
+          set('req-rate', fmt$(d.session?.rate_per_min)+'/min');
+          set('req-free', (d.session?.free_minutes!=null?d.session.free_minutes:0)+' min free');
+          show('session-request-overlay','flex');
+          show('session-request-sheet','flex');
+        }
         break;
       case 'session_accepted':
         window._sid = d.session?.id;
@@ -11171,7 +11183,7 @@ async function savePaymentConfig() {
 
     // Health check in background - no blocking
     fetch(`${API}/health`,{signal:AbortSignal.timeout(5000)})
-      .then(function(r){ if(r.ok){ READY=true; if(Auth.ok) WS.connect(); } })
+      .then(function(r){ if(r.ok){ READY=true; if(Auth.ok||(typeof tok==='function'&&tok())) WS.connect(); } })
       .catch(function(){});
     } catch(err){
       console.warn('%c Backend offline  running in demo mode','color:#b45309;font-weight:bold;',err.message);
@@ -14079,6 +14091,23 @@ function openClientChat(sid){
     }).then(function(r){return r.json();}).then(function(d){
       console.log('[END_SESSION] response='+JSON.stringify(d));
       window._obPendingSessId=null;
+      // Fill receipt with real data from /end response
+      var _s=d.session||d||{};
+      var _fm=_s.free_minutes!=null?_s.free_minutes:0;
+      var _dur=Math.round((_s.duration_secs||0)/60);
+      var _billed=Math.max(0,_dur-_fm);
+      var _rt=parseFloat(_s.rate_per_min||0);
+      var _total=_s.client_charged!=null?_s.client_charged:(_billed*_rt);
+      var _ch=_s.channel||'Chat'; _ch=_ch.charAt(0).toUpperCase()+_ch.slice(1);
+      var _en=_s.expert_name||_s.expert_slug||'Expert';
+      var _rSess=document.getElementById('receipt-session-type');
+      var _rDur=document.getElementById('receipt-duration');
+      var _rRate=document.getElementById('receipt-rate');
+      var _rTot=document.getElementById('receipt-total');
+      if(_rSess) _rSess.textContent=_ch+' with '+_en;
+      if(_rDur) _rDur.textContent=_dur+' min ('+_fm+' free + '+_billed+' billed)';
+      if(_rRate) _rRate.textContent=(_rt>0?'$'+_rt.toFixed(2):'-')+'/min';
+      if(_rTot) _rTot.textContent='$'+(_total).toFixed(2);
     }).catch(function(e){console.error('[END_SESSION] error',e);});
   } else {
     console.warn('[END_SESSION] SKIPPED: sid='+sid+' token='+(t?'ok':'missing'));

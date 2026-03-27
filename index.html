@@ -9760,26 +9760,8 @@ async function savePaymentConfig() {
         if(window._expertSessInterval){clearInterval(window._expertSessInterval);window._expertSessInterval=null;}
         var _isExpertSide=(function(){try{var _u=JSON.parse(sessionStorage.getItem('ob_u')||localStorage.getItem('ob_u')||'null');return !!(_u&&_u.role==='expert');}catch(e){return false;}})();
         var _e=fmt$(d.session?.expert_earned||0);
-        if(_isExpertSide){
-          toast('Session ended · Earned: '+_e);
-          set('expert-session-earnings',_e);
-        } else {
-          toast('Session complete!');
-        }
-        if(_isExpertSide){
-          // Close live session panel directly — don't re-POST /end (already ended)
-          var earnEl=document.getElementById('expert-session-earnings');
-          var netEl=document.getElementById('expert-net-earnings');
-          var timerEl=document.getElementById('expert-sess-timer');
-          if(earnEl) earnEl.textContent=_e;
-          if(netEl) netEl.textContent=_e;
-          if(timerEl) timerEl.textContent='0:00';
-          // Navigate back to sessions
-          var sessNav=document.querySelector('.db-nav-item[onclick*="sessions"]');
-          if(sessNav && typeof dbNav==='function') dbNav(sessNav,'sessions');
-          setTimeout(loadExpertDashboard,500);
-        }
-        else { var _s=d.session||{};var _bm=Math.max(0,(_s.duration_secs||0)/60-(_s.free_minutes||0));var _tm=Math.round((_s.duration_secs||0)/60);var _fm=_s.free_minutes||0;var _rt=parseFloat(_s.rate_per_min||0);var _re=document.getElementById('receipt-total');if(_re)_re.textContent=fmt$(_bm*_rt);var _rd=document.getElementById('receipt-duration');if(_rd)_rd.textContent=_tm+' min';var _rr=document.getElementById('receipt-rate');if(_rr)_rr.textContent=_rt.toFixed(2)+'/min';if(typeof phoneGo==='function') phoneGo('A5');}
+        // Route session_ended through master handler (handles both expert + client)
+        if(typeof window._obHandleWsMsg==='function') window._obHandleWsMsg(d);
         break; }
       case 'message':    _appendMsg(d); break;
       case 'typing':     _showTyping(d); break;
@@ -13955,59 +13937,84 @@ body.expert-page #mob-cta-bar{display:none!important;}
     },8000);
   }
   function stopStatusPoll(){if(_statusPollTimer){clearInterval(_statusPollTimer);_statusPollTimer=null;}}
-  function handleWsMsg(d){
-    var me=myId();var role=myRole();
-    if(d.type==='session_accepted'){
-      var sid=d.sessionId||(d.session&&d.session.id);
-      if(sid&&(sid===window._obPendingSessId||!window._obPendingSessId)){
-        stopStatusPoll();
-        var ov=document.getElementById('ob-waiting-overlay');if(ov)ov.classList.remove('show');
-        _sessId=sid;window._obActiveSessId=sid;
-        if(role==='expert'){openExpertLivePanel(sid);}else{openClientChat(sid);}
-      }
-    }
-    if(d.type==='session_declined'){
-      var sid2=d.sessionId||(d.session&&d.session.id);
-      if(sid2&&sid2===window._obPendingSessId){
-        stopStatusPoll();
-        var ov2=document.getElementById('ob-waiting-overlay');if(ov2)ov2.classList.remove('show');
-        window._obPendingSessId=null;alert('The expert declined the session.');
-      }
-    }
-    if(d.type==='new_session_request'){showIncomingRequest(d.sessionId,d.clientName||'Client',d.channel||'chat');}
-    if(d.type==='message'&&d.sessionId===window._obActiveSessId){
-      if(d.sender_id!==me&&d.content&&role!=='expert'){
-        appendMsg('free-chat-messages',d.content,false,d.ts);
-        appendMsg('paid-chat-messages',d.content,false,d.ts);
-      }
-    }
-    if(d.type==='session_ended'){
-      if(role==='expert'){
-        try{ clearInterval(window._expertTimerInterval||window.freeTimerInterval); }catch(e){}
-        var dbNav=document.querySelectorAll('.db-nav-item');
-        if(dbNav.length>0&&typeof window.dbNav==='function') window.dbNav(dbNav[0],'overview');
-        else { var lsp=document.getElementById('db-panel-live-session'); if(lsp)lsp.classList.remove('active'); var op=document.getElementById('db-panel-overview'); if(op)op.classList.add('active'); }
-        if(typeof toast==='function') toast('Session ended by client');
-        window._obActiveSessId=null; window._sid=null;
-      }
-    }
-    if(d.type==='typing'&&d.sessionId===window._obActiveSessId){
-      var tiId=role==='expert'?'expert-typing-indicator':'ob-client-typing';
-      var ti=document.getElementById(tiId);
-      if(ti){
-        ti.innerHTML=d.is_typing?'<span style="font-size:11px;color:rgba(246,241,233,.55);font-style:italic;">Expert is typing</span><div class="typing-indicator"><span></span><span></span><span></span></div>':'';
-        clearTimeout(ti._t);
-        if(d.is_typing) ti._t=setTimeout(function(){ti.innerHTML='';},3000);
-      }
-      // Also update paid screen indicator
-      var tiPaid=document.getElementById('expert-typing-indicator-paid');
-      if(tiPaid){
-        tiPaid.innerHTML=d.is_typing?'<span style="font-size:11px;color:rgba(246,241,233,.55);font-style:italic;">Expert is typing</span><div class="typing-indicator"><span></span><span></span><span></span></div>':'';
-        clearTimeout(tiPaid._t);
-        if(d.is_typing) tiPaid._t=setTimeout(function(){tiPaid.innerHTML='';},3000);
-      }
-    }
+  window._obHandleWsMsg=function(d){
+  var _isExp=(function(){try{var u=JSON.parse(sessionStorage.getItem('ob_u')||localStorage.getItem('ob_u')||'null');return !!(u&&u.role==='expert');}catch(e){return false;}})();
+  var _myId=(function(){try{var u=JSON.parse(sessionStorage.getItem('ob_u')||localStorage.getItem('ob_u')||'null');return u&&u.id;}catch(e){return null;}})();
+  // session_request / new_session_request → expert popup with real data
+  if(d.type==='session_request'||d.type==='new_session_request'){
+    if(!_isExp)return;
+    window._pendingSid=d.session&&d.session.id||d.sessionId;
+    window._obIncomingSessId=window._pendingSid;
+    if(typeof showSessionRequest==='function'){
+      var _n=d.client&&d.client.name||d.clientName||'Client';
+      showSessionRequest({clientName:_n,clientSub:(d.session&&d.session.channel||'chat')+' session',initials:(_n.match(/\b\w/g)||['C','L']).slice(0,2).join('').toUpperCase(),sessionType:d.session&&d.session.channel||'chat',rate:(typeof fmt$==='function'?fmt$(d.session&&d.session.rate_per_min||0):'$'+(d.session&&d.session.rate_per_min||0).toFixed(2))+'/min',freeMin:(d.session&&d.session.free_minutes!=null?d.session.free_minutes:0)+' min free'});
+    }else if(typeof showIncomingRequest==='function'){showIncomingRequest(window._pendingSid,d.client&&d.client.name||d.clientName||'Client',d.session&&d.session.channel||'chat');}
+    return;
   }
+  // session_accepted → client starts / expert navigates to live session
+  if(d.type==='session_accepted'){
+    var _sid=d.sessionId||(d.session&&d.session.id);
+    if(!_isExp&&_sid){
+      if(typeof stopStatusPoll==='function')stopStatusPoll();
+      var _ov=document.getElementById('ob-waiting-overlay');if(_ov)_ov.classList.remove('show');
+      window._obPendingSessId=null;window._obActiveSessId=_sid;window._sid=_sid;
+      if(typeof openClientChat==='function')openClientChat(_sid);
+    }
+    return;
+  }
+  // session_declined → notify client
+  if(d.type==='session_declined'){
+    if(!_isExp){
+      if(typeof stopStatusPoll==='function')stopStatusPoll();
+      var _ov2=document.getElementById('ob-waiting-overlay');if(_ov2)_ov2.classList.remove('show');
+      window._obPendingSessId=null;
+      if(typeof toast==='function')toast('Expert declined — try again','err');
+      if(typeof closeBookingOverlay==='function')closeBookingOverlay();
+    }
+    return;
+  }
+  // session_ended → unified end handler for BOTH sides
+  if(d.type==='session_ended'){
+    ['_expertTimerInterval','_expertSessInterval','_expertEarnInterval','_expertSessionPoller','_clientTimerInterval'].forEach(function(k){if(window[k]){clearInterval(window[k]);window[k]=null;}});
+    window._sid=null;window._expertSessActive=false;window._obActiveSessId=null;
+    if(_isExp){
+      var _earn=d.session&&d.session.expert_earned;
+      var _earnStr=_earn!=null?' · Earned: $'+(+_earn).toFixed(2):'';
+      if(typeof toast==='function')toast('Session ended'+_earnStr);
+      var _earnEl=document.getElementById('expert-session-earnings');if(_earnEl&&_earn!=null)_earnEl.textContent='$'+(+_earn).toFixed(2);
+      var _sn=document.querySelector('.db-nav-item[onclick*="sessions"]');
+      if(_sn&&typeof dbNav==='function'){try{dbNav(_sn,'sessions');}catch(e){}}
+      else{document.querySelectorAll('.db-tab-panel').forEach(function(p){p.classList.remove('active');});var _sp=document.getElementById('db-panel-sessions');if(_sp)_sp.classList.add('active');}
+      setTimeout(function(){try{loadExpertDashboard();}catch(e){}},500);
+    }else{
+      var _s=d.session||{};var _fm=_s.free_minutes!=null?_s.free_minutes:0;var _dur=Math.round((_s.duration_secs||0)/60);var _billed=Math.max(0,_dur-_fm);var _rt=parseFloat(_s.rate_per_min||0);var _tot=_s.client_charged!=null?_s.client_charged:(_billed*_rt);var _ch=_s.channel||'Chat';_ch=_ch.charAt(0).toUpperCase()+_ch.slice(1);var _en=_s.expert_name||_s.expert_slug||'Expert';
+      var _rS=document.getElementById('receipt-session-type');var _rD=document.getElementById('receipt-duration');var _rR=document.getElementById('receipt-rate');var _rT=document.getElementById('receipt-total');
+      if(_rS)_rS.textContent=_ch+' with '+_en;if(_rD)_rD.textContent=_dur+' min ('+_fm+' free + '+_billed+' billed)';if(_rR)_rR.textContent=(_rt>0?'$'+_rt.toFixed(2):'-')+'/min';if(_rT)_rT.textContent='$'+_tot.toFixed(2);
+      if(typeof phoneGo==='function')phoneGo('A5');
+    }
+    return;
+  }
+  // message → append to correct chat panel
+  if(d.type==='message'){
+    var _asid=window._obActiveSessId||window._sid;
+    if(d.sessionId===_asid&&d.sender_id!==_myId&&d.content){
+      if(_isExp){if(typeof appendMsg==='function')appendMsg('expert-chat-messages',d.content,false,d.ts);}
+      else{if(typeof appendMsg==='function'){appendMsg('free-chat-messages',d.content,false,d.ts);appendMsg('paid-chat-messages',d.content,false,d.ts);}}
+    }
+    return;
+  }
+  // typing indicator
+  if(d.type==='typing'&&d.sessionId===(window._obActiveSessId||window._sid)){
+    var _lbl=_isExp?'Client':'Expert';
+    ['expert-typing-indicator','ob-client-typing','typing-indicator','expert-typing-indicator-paid'].forEach(function(id){
+      var _ti=document.getElementById(id);if(!_ti)return;
+      _ti.innerHTML=d.is_typing?'<span style="font-size:11px;color:rgba(246,241,233,.55);font-style:italic;">'+_lbl+' is typing</span><div class="typing-indicator"><span></span><span></span><span></span></div>':'';
+      clearTimeout(_ti._t);if(d.is_typing)_ti._t=setTimeout(function(){_ti.innerHTML='';},3000);
+    });
+    return;
+  }
+};
+  function handleWsMsg(d){if(typeof window._obHandleWsMsg==='function')window._obHandleWsMsg(d);}
   var _origBegin=window._beginSession;
   window._beginSession=function(){if(myRole()==='admin'||myRole()==='expert'){if(_origBegin)_origBegin();return;}
     if(window._obPendingSessId){console.log('[_beginSession] skipped — already pending:'+window._obPendingSessId);return;}
@@ -14343,25 +14350,13 @@ function openClientChat(sid){
       ws.onmessage=function(evt){
         try{
           var d=JSON.parse(evt.data);
-          // messages handled by H1 (_appendMsg)
+          // History load: specific to _expertWs, populate expert chat box
           if(d.type==="joined"&&d.history){
             var me2=myId();var box2=document.getElementById("expert-chat-messages");
             if(box2){box2.innerHTML="";d.history.forEach(function(m){var row=document.createElement("div");row.className="chat-msg "+(m.sender_id===me2?"mine":"theirs");row.innerHTML="<div class=\"msg-bubble\">"+esc(m.content||"")+"</div>";box2.appendChild(row);});box2.scrollTop=box2.scrollHeight;}
           }
-          if(d.type==="session_request"){
-            showIncomingRequest(d.session&&d.session.id||d.sessionId,d.client&&d.client.name||d.clientName||"Client",d.session&&d.session.channel||"chat");
-          }
-          if(d.type==="session_ended"){
-            window._sid=null; window._expertSessActive=false;
-            if(window._expertTimerInterval){clearInterval(window._expertTimerInterval);window._expertTimerInterval=null;}
-            if(window._expertSessInterval){clearInterval(window._expertSessInterval);window._expertSessInterval=null;}
-            if(window._expertEarnInterval){clearInterval(window._expertEarnInterval);window._expertEarnInterval=null;}
-            var overviewEl=Array.from(document.querySelectorAll('.db-nav-item')).find(function(el){return el.getAttribute('onclick')&&el.getAttribute('onclick').includes('overview');});
-            if(overviewEl) overviewEl.click();
-            else { document.querySelectorAll('.db-tab-panel').forEach(function(p){p.classList.remove('active');}); var op=document.getElementById('db-panel-overview'); if(op)op.classList.add('active'); }
-            if(typeof _showToast==='function') _showToast('Session ended by client','gray');
-            else if(typeof toast==='function') toast('Session ended by client');
-          }
+          // Route ALL other message types through master handler (single source of truth)
+          if(typeof window._obHandleWsMsg==='function') window._obHandleWsMsg(d);
         }catch(e){}
       };
       ws.onerror=function(){};
@@ -14377,9 +14372,12 @@ function openClientChat(sid){
           window._sid=sid;window._obActiveSessId=sid;window._pendingSid=null;
           if(typeof window.startExpertSessionPoller==='function') window.startExpertSessionPoller(sid);
           ["session-request-overlay","session-request-sheet","ob-expert-incoming"].forEach(function(id){var el=document.getElementById(id);if(el){el.style.display="none";el.classList.remove("show");}});
-          var liveNav=Array.from(document.querySelectorAll("[onclick]")).find(function(el){return el.getAttribute("onclick")==="dbNav(this,'live-session')";});
-          if(liveNav)liveNav.click();
           connectExpertWs(sid);
+          setTimeout(function(){
+            var liveNav=Array.from(document.querySelectorAll("[onclick]")).find(function(el){return el.getAttribute("onclick")==="dbNav(this,'live-session')";});
+            if(liveNav){liveNav.click();}
+            else{var lsp=document.getElementById('db-panel-live-session');if(lsp){document.querySelectorAll('.db-tab-panel').forEach(function(p){p.classList.remove('active');});lsp.classList.add('active');}}
+          },100);
           fetch(BASE+"/api/sessions/"+sid,{headers:hdr()}).then(function(r){return r.json();}).then(function(data){
             var sess=data.session||{};var msgs=data.messages||[];var me=myId();
             // Populate Live Session panel with real data

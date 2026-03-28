@@ -4678,7 +4678,7 @@ if (!window.toast) {
           <input type="password" class="form-input" placeholder="Password" style="margin-bottom:16px;" id="bov-pass">
           <button class="btn btn-primary" style="width:100%;padding:14px;" id="bov-signup-btn" onclick="bovSignup()">Continue →</button>
           <p style="font-size:11px;color:var(--gray-400);text-align:center;margin-top:10px;line-height:1.5;">By continuing you agree to our Terms. You won't be charged without confirmation.</p>
-          <p style="font-size:12px;text-align:center;margin-top:8px;color:var(--gray-400);">Already have an account? <span style="color:var(--terra);font-weight:600;cursor:pointer;" onclick="bovSwitchToLogin()">Sign in →</span></p>
+          <p style="font-size:12px;text-align:center;margin-top:8px;color:var(--gray-400);" id="bov-auth-toggle">Already have an account? <span style="color:var(--terra);font-weight:600;cursor:pointer;" onclick="bovToggleMode()">Sign in →</span></p>
         </div>
 
         <!-- STEP 2: Payment -->
@@ -7646,7 +7646,24 @@ function openBookingOverlay(channelId) {
 
   // If already logged in (check token in storage), skip signup
   var _tok = sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || '';
+  var _loggedUser = null;
+  try{ _loggedUser=JSON.parse(sessionStorage.getItem('ob_u')||localStorage.getItem('ob_u')||'null'); }catch(e){}
   if (_tok) clientLoggedIn = true;
+  // Show logged-in indicator bar
+  var _loggedBar = document.getElementById('bov-loggedin-bar');
+  if(!_loggedBar){
+    _loggedBar = document.createElement('div');
+    _loggedBar.id='bov-loggedin-bar';
+    _loggedBar.style.cssText='background:var(--gray-100);border-radius:10px;padding:10px 14px;margin:0 0 14px;display:flex;align-items:center;justify-content:space-between;font-size:13px;';
+    var _step1=document.getElementById('bov-step1');
+    if(_step1) _step1.insertBefore(_loggedBar, _step1.firstChild);
+  }
+  if(clientLoggedIn && _loggedUser){
+    _loggedBar.style.display='flex';
+    _loggedBar.innerHTML='<span>👤 Signed in as <strong>'+(_loggedUser.name||_loggedUser.email||'Client')+'</strong></span><span style="color:var(--terra);font-weight:600;cursor:pointer;font-size:12px;" onclick="bovClientLogout()">Sign out</span>';
+  } else {
+    _loggedBar.style.display='none';
+  }
   // If client has already authorized payment before, track it
   var _hpm = localStorage.getItem('ob_hpm') === '1';
   if (clientLoggedIn) {
@@ -10447,30 +10464,41 @@ async function savePaymentConfig() {
   }
 
   /* ── Booking overlay — client signup ─────────────── */
-  // Toggle between signup and login modes
-  window._bovIsLogin = false;
-  window.bovSwitchToLogin = function(){
-    window._bovIsLogin = true;
-    var nameInput = document.getElementById('bov-name');
-    if(nameInput) nameInput.parentElement.style.display='none';
+  window._bovLoginMode = false;
+  window.bovToggleMode = function(){
+    window._bovLoginMode = !window._bovLoginMode;
+    var nameRow = document.getElementById('bov-name');
+    var title = document.querySelector('#bov-step1 h2');
     var btn = document.getElementById('bov-signup-btn');
-    if(btn) btn.textContent='Sign In →';
-    var toggle = document.querySelector('[onclick="bovSwitchToLogin()"]');
-    if(toggle) { toggle.textContent='Create account →'; toggle.setAttribute('onclick','bovSwitchToSignup()'); }
+    var toggle = document.getElementById('bov-auth-toggle');
+    if(window._bovLoginMode){
+      if(nameRow) nameRow.style.display='none';
+      if(title) title.textContent='Sign in';
+      if(btn) btn.textContent='Sign In →';
+      if(toggle) toggle.innerHTML='New here? <span style="color:var(--terra);font-weight:600;cursor:pointer;" onclick="bovToggleMode()">Create account →</span>';
+    } else {
+      if(nameRow) nameRow.style.display='';
+      if(title) title.textContent='Create your account';
+      if(btn) btn.textContent='Continue →';
+      if(toggle) toggle.innerHTML='Already have an account? <span style="color:var(--terra);font-weight:600;cursor:pointer;" onclick="bovToggleMode()">Sign in →</span>';
+    }
   };
-  window.bovSwitchToSignup = function(){
-    window._bovIsLogin = false;
-    var nameInput = document.getElementById('bov-name');
-    if(nameInput) nameInput.parentElement.style.display='';
-    var btn = document.getElementById('bov-signup-btn');
-    if(btn) btn.textContent='Continue →';
-    var toggle = document.querySelector('[onclick="bovSwitchToSignup()"]');
-    if(toggle) { toggle.textContent='Sign in →'; toggle.setAttribute('onclick','bovSwitchToLogin()'); }
+  window.bovClientLogout = function(){
+    sessionStorage.removeItem('ob_t'); sessionStorage.removeItem('ob_u');
+    localStorage.removeItem('ob_t'); localStorage.removeItem('ob_u');
+    localStorage.removeItem('ob_hpm');
+    clientLoggedIn=false;
+    // Refresh the overlay to show step1 again
+    var loggedEl=document.getElementById('bov-loggedin-bar');
+    if(loggedEl) loggedEl.style.display='none';
+    _bovGoStep(1);
+    toast('Signed out');
   };
   const _origBovSignup=window.bovSignup;
   window.bovSignup=async function(){
+    const isLogin = window._bovLoginMode;
     const name=val('bov-name'), email=val('bov-email'), pass=val('bov-pass')||'Temp1234!';
-    if(window._bovIsLogin){ if(!email||!pass) return toast('Email and password required','err'); }
+    if(isLogin){ if(!email||!pass) return toast('Email and password required','err'); }
     else { if(!name||!email) return toast('Name and email required','err'); }
     const btn=$$('[onclick*="bovSignup"]')[0]; btnLoad(btn,true);
     try {

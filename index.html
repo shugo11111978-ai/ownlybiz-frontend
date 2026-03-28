@@ -14090,17 +14090,22 @@ function openClientChat(sid){
   window.clientEndSession=function(){
   var sid=window._obActiveSessId||window._sid||window._obPendingSessId;
   var t=sessionStorage.getItem('ob_t')||localStorage.getItem('ob_t')||'';
-  var isPending=!(window._obActiveSessId||window._sid)&&!!window._obPendingSessId;
-  var endpoint=isPending?'decline':'end';
-  console.log('[END_SESSION] sid='+sid+' endpoint=/'+endpoint);
-  if(sid&&t){
-    fetch('https://ownlybiz-backend-production.up.railway.app/api/sessions/'+sid+'/'+endpoint,{
-      method:'POST',
-      headers:{'Authorization':'Bearer '+t,'Content-Type':'application/json'},
-      body:'{}'
-    }).then(function(r){return r.json();}).then(function(d){
-      console.log('[END_SESSION] response='+JSON.stringify(d));
-      window._obPendingSessId=null;
+  if(window._clientTimerInterval){clearInterval(window._clientTimerInterval);window._clientTimerInterval=null;}
+  if(typeof phoneGo==='function') phoneGo('A5');
+  if(!sid||!t){console.warn('[CES] no sid or token');return;}
+  // Ask server for real session status — never guess from local state
+  fetch('https://ownlybiz-backend-production.up.railway.app/api/sessions/'+sid,{
+    headers:{'Authorization':'Bearer '+t}
+  }).then(function(r){return r.json();}).then(function(chk){
+    var status=(chk.session||chk).status;
+    var endpoint=(status==='active')?'end':'decline';
+    console.log('[CES] sid='+sid.substring(0,8)+' server_status='+status+' -> /'+endpoint);
+    return fetch('https://ownlybiz-backend-production.up.railway.app/api/sessions/'+sid+'/'+endpoint,{
+      method:'POST',headers:{'Authorization':'Bearer '+t,'Content-Type':'application/json'},body:'{}'
+    });
+  }).then(function(r){return r.json();}).then(function(d){
+    console.log('[CES] response='+JSON.stringify(d).substring(0,100));
+    window._obPendingSessId=null;window._obActiveSessId=null;window._sid=null;
       // Fill receipt with real data from /end response
       var _s=d.session||d||{};
       var _fm=_s.free_minutes!=null?_s.free_minutes:0;

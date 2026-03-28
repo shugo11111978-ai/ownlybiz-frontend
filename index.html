@@ -7669,8 +7669,9 @@ function openBookingOverlay(channelId) {
   if (clientLoggedIn) {
     if (mode === 'upfront' || fm === 0) {
       if (_hpm) {
-        // Already has payment method — show PRESESS so client can confirm before connecting
-        _launchSession(true);
+        // Already has payment method — skip straight to connecting
+        _bovGoStep(3);
+        setTimeout(function() { window._beginSession(); }, 1800);
       } else {
         _bovGoStep(2); // need payment
       // Mount Stripe card element when step 2 is shown
@@ -9631,9 +9632,6 @@ async function savePaymentConfig() {
           set('expert-session-earnings',_e);
         } else {
           toast('Session complete!');
-          // Clear client session state so next session can start cleanly
-          window._obActiveSessId=null; window._obPendingSessId=null; window._sid=null;
-          var _ovSE=document.getElementById('ob-waiting-overlay');if(_ovSE)_ovSE.classList.remove('show');
         }
         if(Auth.isExpert){
           // Close live session panel directly — don't re-POST /end (already ended)
@@ -13864,11 +13862,7 @@ body.expert-page #mob-cta-bar{display:none!important;}
         stopStatusPoll();
         var ov=document.getElementById('ob-waiting-overlay');if(ov)ov.classList.remove('show');
         _sessId=sid;window._obActiveSessId=sid;
-        if(role==='expert'){openExpertLivePanel(sid);}else{
-          // Show PRESESS before chat — client must tap "Begin Session"
-          window._pendingSessionScreen='A4';
-          switchView(5); phoneGo('PRESESS');
-        }
+        if(role==='expert'){openExpertLivePanel(sid);}else{openClientChat(sid);}
       }
     }
     if(d.type==='session_declined'){
@@ -13947,13 +13941,6 @@ function openClientChat(sid){
   window.clientEndSession=function(){
   var sid=window._obActiveSessId||window._sid;
   var t=sessionStorage.getItem('ob_t')||localStorage.getItem('ob_t')||'';
-  // Clear state immediately so next session starts fresh
-  window._obActiveSessId=null; window._obPendingSessId=null; window._sid=null;
-  var _ovE=document.getElementById('ob-waiting-overlay');if(_ovE)_ovE.classList.remove('show');
-  // Force-close old WS so ensureClientWS creates a fresh authenticated connection
-  if(window._obWs){try{window._obWs.close();}catch(e){}window._obWs=null;}
-  if(window._obClientWs){try{window._obClientWs.close();}catch(e){}window._obClientWs=null;}
-  window._obWsConnecting=false;
   console.log('[END_SESSION] sid='+sid+' hasToken='+(!!t));
   if(sid&&t){
     fetch('https://ownlybiz-backend-production.up.railway.app/api/sessions/'+sid+'/end',{

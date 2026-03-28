@@ -10446,17 +10446,48 @@ async function savePaymentConfig() {
   }
 
   /* ── Booking overlay — client signup ─────────────── */
+  // Mode switcher: 'signup' (default) or 'login'
+  window._bovMode = 'signup';
+  window.bovSwitchMode = function(mode) {
+    window._bovMode = mode;
+    var nameRow = document.getElementById('bov-name-row');
+    var btn = document.getElementById('bov-signup-btn');
+    var toggle = document.getElementById('bov-mode-toggle');
+    if (mode === 'login') {
+      if (nameRow) nameRow.style.display = 'none';
+      if (btn) btn.textContent = 'Sign In →';
+      if (toggle) toggle.innerHTML = 'New here? <span style="color:var(--terra);font-weight:600;cursor:pointer;" onclick="bovSwitchMode('signup')">Create account →</span>';
+    } else {
+      if (nameRow) nameRow.style.display = '';
+      if (btn) btn.textContent = 'Create Account →';
+      if (toggle) toggle.innerHTML = 'Already have an account? <span style="color:var(--terra);font-weight:600;cursor:pointer;" onclick="bovSwitchMode('login')">Sign in →</span>';
+    }
+  };
   const _origBovSignup=window.bovSignup;
   window.bovSignup=async function(){
-    const name=val('bov-name'), email=val('bov-email'), pass=val('bov-pass')||'Temp1234!';
-    if(!name||!email) return toast('Name and email required','err');
-    const btn=$$('[onclick*="bovSignup"]')[0]; btnLoad(btn,true);
+    const mode = window._bovMode || 'signup';
+    const name=val('bov-name'), email=val('bov-email'), pass=val('bov-pass');
+    if(!email||!pass) return toast('Email and password required','err');
+    if(mode==='signup'&&!name) return toast('Name required','err');
+    const btn=document.getElementById('bov-signup-btn');
+    if(btn){btn.disabled=true;btn.textContent='Please wait…';}
     try {
       let d;
-      try{
+      if(mode==='login'){
         d=await api('POST','/auth/login',{email,password:pass});
-      } catch{
-        d=await api('POST','/auth/signup',{name,email,password:pass,role:'client'});
+      } else {
+        try{
+          d=await api('POST','/auth/signup',{name,email,password:pass,role:'client'});
+        } catch(e){
+          if(e.message&&e.message.includes('409')||e.message&&e.message.toLowerCase().includes('exist')){
+            // Email exists — switch to login mode and retry
+            bovSwitchMode('login');
+            toast('Account exists — signing you in','err');
+            if(btn){btn.disabled=false;btn.textContent='Sign In →';}
+            return;
+          }
+          throw e;
+        }
       }
       Auth.save(d.token,d.user);
       clientLoggedIn = true;

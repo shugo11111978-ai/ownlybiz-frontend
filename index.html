@@ -7303,7 +7303,7 @@ function clientSignupPkg(){
 }
 // ===== END NEW JS =====
 function switchView(n){
-  if(n===3){ /* removed demo showSessionRequest */ }
+  if(n===3){ setTimeout(function(){ if(window.innerWidth<=768) showSessionRequest(); },4000); }
   document.querySelectorAll('.view-panel').forEach(p=>p.classList.remove('active'));
   document.querySelectorAll('.view-btn').forEach(b=>b.classList.remove('active'));
   document.getElementById('view-'+n).classList.add('active');
@@ -7669,8 +7669,9 @@ function openBookingOverlay(channelId) {
   if (clientLoggedIn) {
     if (mode === 'upfront' || fm === 0) {
       if (_hpm) {
-        // Already has payment method — show PRESESS first (same flow as session 1)
-        _launchSession(true);
+        // Already has payment method — skip straight to connecting
+        _bovGoStep(3);
+        setTimeout(function() { window._beginSession(); }, 1800);
       } else {
         _bovGoStep(2); // need payment
       // Mount Stripe card element when step 2 is shown
@@ -8957,12 +8958,10 @@ function showSessionRequest(opts) {
     document.getElementById('session-request-sheet').style.transform = 'translateY(0)';
   }, 20);
 
-  // Clear any existing countdown before starting fresh
-  clearInterval(_sessionRequestTimer); clearInterval(window._sessionRequestTimer); _sessionRequestTimer=window._sessionRequestTimer=null;
   // Start countdown
   _sessionRequestCountdown = 30;
   _updateRequestCountdown();
-  _sessionRequestTimer = window._sessionRequestTimer = setInterval(function() {
+  _sessionRequestTimer = setInterval(function() {
     _sessionRequestCountdown--;
     _updateRequestCountdown();
     if (_sessionRequestCountdown <= 0) {
@@ -9041,7 +9040,13 @@ function _showToast(msg, color) {
 
 // Demo: simulate an incoming session request after 3s when view-3 is active
 // (In production this would come from a websocket)
-function _simulateIncomingRequest() { /* removed demo */ }
+function _simulateIncomingRequest() {
+  setTimeout(function() {
+    if (document.querySelector('#view-3.active') || document.getElementById('view-3').style.display !== 'none') {
+      showSessionRequest();
+    }
+  }, 8000);
+}
 
 // ══════════════════════════════════════════
 // SETTINGS NAVIGATION
@@ -9627,7 +9632,6 @@ async function savePaymentConfig() {
           set('expert-session-earnings',_e);
         } else {
           toast('Session complete!');
-          if(typeof phoneGo==='function') phoneGo('A5');
         }
         if(Auth.isExpert){
           // Close live session panel directly — don't re-POST /end (already ended)
@@ -9644,7 +9648,7 @@ async function savePaymentConfig() {
         }
         else { var _s=d.session||{};var _bm=Math.max(0,(_s.duration_secs||0)/60-(_s.free_minutes||0));var _tm=Math.round((_s.duration_secs||0)/60);var _fm=_s.free_minutes||0;var _rt=parseFloat(_s.rate_per_min||0);var _re=document.getElementById('receipt-total');if(_re)_re.textContent=fmt$(_bm*_rt);var _rd=document.getElementById('receipt-duration');if(_rd)_rd.textContent=_tm+' min';var _rr=document.getElementById('receipt-rate');if(_rr)_rr.textContent=_rt.toFixed(2)+'/min';if(typeof phoneGo==='function') phoneGo('A5');}
         break; }
-      case 'message':    if(myRole()!=='client') _appendMsg(d); break;
+      case 'message':    _appendMsg(d); break;
       case 'typing':     _showTyping(d); break;
       case 'joined':     _loadHistory(d.history||[]); break;
       case 'expert_status': if(typeof setExpertOnlineStatus==='function') setExpertOnlineStatus(d.is_online); break;
@@ -10393,7 +10397,6 @@ async function savePaymentConfig() {
         await api('POST',`/sessions/${window._pendingSid}/accept`,{});
         window._sid=window._pendingSid; window._pendingSid=null;
         WS.connect(); WS.send({type:'join',session_id:window._sid});
-        clearInterval(window._sessionRequestTimer);window._sessionRequestTimer=null;
         hide('session-request-overlay'); hide('session-request-sheet');
         toast('Session started!');
       } catch(err){ toast(err.message,'err'); }
@@ -13821,7 +13824,7 @@ body.expert-page #mob-cta-bar{display:none!important;}
     if(window._obWsHooked)return true;
     if(ws.readyState===1)sendWsAuth(ws);
     var origOpen=ws.onopen;ws.onopen=function(e){if(origOpen)origOpen.call(ws,e);sendWsAuth(ws);};
-    // do NOT re-wrap onmessage — ensureClientWS already wired handleWsMsg
+    var origMsg=ws.onmessage;ws.onmessage=function(evt){if(origMsg)origMsg.call(ws,evt);try{handleWsMsg(JSON.parse(evt.data));}catch(e){}};
     window._obWsHooked=true;return true;
   }
   function hookWS(){
@@ -13938,13 +13941,6 @@ function openClientChat(sid){
   window.clientEndSession=function(){
   var sid=window._obActiveSessId||window._sid;
   var t=sessionStorage.getItem('ob_t')||localStorage.getItem('ob_t')||'';
-  // Clear state immediately so next session starts clean
-  window._obActiveSessId=null; window._obPendingSessId=null; window._sid=null;
-  clearInterval(window._sessionRequestTimer); window._sessionRequestTimer=null;
-  if(window._obWs){try{window._obWs.close();}catch(e){}window._obWs=null;}
-  if(window._obClientWs){try{window._obClientWs.close();}catch(e){}window._obClientWs=null;}
-  window._obWsConnecting=false; window._obWsHooked=false; window._obHookAttempts=0;
-  var _ov=document.getElementById('ob-waiting-overlay');if(_ov)_ov.classList.remove('show');
   console.log('[END_SESSION] sid='+sid+' hasToken='+(!!t));
   if(sid&&t){
     fetch('https://ownlybiz-backend-production.up.railway.app/api/sessions/'+sid+'/end',{
@@ -14166,7 +14162,7 @@ function openClientChat(sid){
     var box=document.getElementById(panelId);if(!box)return;
     var row=document.createElement('div');row.style.cssText='display:flex;justify-content:'+(isMine?'flex-end':'flex-start')+';margin:3px 0';
     var bub=document.createElement('div');
-    bub.style.cssText='max-width:75%;padding:8px 12px;border-radius:12px;font-size:13px;line-height:1.4;word-break:break-word;background:'+(isMine?'#c2622d':'rgba(80,50,30,.55)')+';color:#fff';
+    bub.style.cssText='max-width:75%;padding:8px 12px;border-radius:12px;font-size:13px;line-height:1.4;word-break:break-word;background:'+(isMine?'#c2622d':'rgba(255,255,255,.12)')+';color:#fff';
     bub.textContent=content;
     if(ts){var tEl=document.createElement('div');tEl.style.cssText='font-size:10px;opacity:.5;margin-top:2px';tEl.textContent=new Date(typeof ts==='number'?ts:ts).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});bub.appendChild(tEl);}
     row.appendChild(bub);box.appendChild(row);box.scrollTop=box.scrollHeight;
@@ -14194,7 +14190,7 @@ function openClientChat(sid){
             if(box2){box2.innerHTML="";d.history.forEach(function(m){var row=document.createElement("div");row.className="chat-msg "+(m.sender_id===me2?"mine":"theirs");row.innerHTML="<div class=\"msg-bubble\">"+esc(m.content||"")+"</div>";box2.appendChild(row);});box2.scrollTop=box2.scrollHeight;}
           }
           if(d.type==="session_request"){
-            window._obIncomingSessId=d.session&&d.session.id||d.sessionId; // session_request handled by _wsMsg→showSessionRequest only
+            showIncomingRequest(d.session&&d.session.id||d.sessionId,d.client&&d.client.name||d.clientName||"Client",d.session&&d.session.channel||"chat");
           }
         }catch(e){}
       };
@@ -14209,7 +14205,6 @@ function openClientChat(sid){
         var d=await r.json();
         if(d.session||d.success||d.status==="active"){
           window._sid=sid;window._obActiveSessId=sid;window._pendingSid=null;
-          clearInterval(window._sessionRequestTimer);window._sessionRequestTimer=null;
           if(typeof window.startExpertSessionPoller==='function') window.startExpertSessionPoller(sid);
           ["session-request-overlay","session-request-sheet","ob-expert-incoming"].forEach(function(id){var el=document.getElementById(id);if(el){el.style.display="none";el.classList.remove("show");}});
           var liveNav=Array.from(document.querySelectorAll("[onclick]")).find(function(el){return el.getAttribute("onclick")==="dbNav(this,'live-session')";});
@@ -14269,8 +14264,19 @@ function openClientChat(sid){
     var t=tok();if(!t)return;var role=myRole();
     if(role==='expert'){expertPoll();_pollTimer=setInterval(expertPoll,8000);}
     setTimeout(hookWS,1200);if(role==='expert')setTimeout(fixExpertDashboard,1500);
-    /* v5 WS re-hook removed — handleWsMsg already wired by ensureClientWS */
-    /* v5 client WS hook removed — handleWsMsg already wired by ensureClientWS */;
+    setTimeout(function(){var ws=window._obWs||window._obClientWs;if(ws&&ws.readyState<=1){var orig=ws.onmessage;ws.onmessage=function(evt){if(orig)orig.call(ws,evt);try{handleWsMsg(JSON.parse(evt.data));}catch(e){}};console.log('[v5] WS hooked');}},2500);
+    // Hook client WS after 2s so api-v2 has time to connect
+    setTimeout(function(){
+      var ws=window._obWs||window._obClientWs;
+      if(ws){
+        var orig=ws.onmessage;
+        ws.onmessage=function(evt){
+          if(orig)orig.call(ws,evt);
+          try{handleWsMsg(JSON.parse(evt.data));}catch(e){}
+        };
+        console.log('[v5] WS hooked role='+role);
+      }
+    },2000);
   }
   // Expose sendPaidMsg globally from inside IIFE (has access to BASE, hdr, appendMsg)
   window.sendPaidMsg=function(){

@@ -13937,6 +13937,13 @@ function openClientChat(sid){
   window.clientEndSession=function(){
   var sid=window._obActiveSessId||window._sid;
   var t=sessionStorage.getItem('ob_t')||localStorage.getItem('ob_t')||'';
+  // Clear state immediately so next session starts clean
+  window._obActiveSessId=null; window._obPendingSessId=null; window._sid=null;
+  clearInterval(window._sessionRequestTimer); window._sessionRequestTimer=null;
+  if(window._obWs){try{window._obWs.close();}catch(e){}window._obWs=null;}
+  if(window._obClientWs){try{window._obClientWs.close();}catch(e){}window._obClientWs=null;}
+  window._obWsConnecting=false; window._obWsHooked=false; window._obHookAttempts=0;
+  var _ov=document.getElementById('ob-waiting-overlay');if(_ov)_ov.classList.remove('show');
   console.log('[END_SESSION] sid='+sid+' hasToken='+(!!t));
   if(sid&&t){
     fetch('https://ownlybiz-backend-production.up.railway.app/api/sessions/'+sid+'/end',{
@@ -14158,7 +14165,7 @@ function openClientChat(sid){
     var box=document.getElementById(panelId);if(!box)return;
     var row=document.createElement('div');row.style.cssText='display:flex;justify-content:'+(isMine?'flex-end':'flex-start')+';margin:3px 0';
     var bub=document.createElement('div');
-    bub.style.cssText='max-width:75%;padding:8px 12px;border-radius:12px;font-size:13px;line-height:1.4;word-break:break-word;background:'+(isMine?'#c2622d':'rgba(255,255,255,.12)')+';color:#fff';
+    bub.style.cssText='max-width:75%;padding:8px 12px;border-radius:12px;font-size:13px;line-height:1.4;word-break:break-word;background:'+(isMine?'#c2622d':'rgba(80,50,30,.55)')+';color:#fff';
     bub.textContent=content;
     if(ts){var tEl=document.createElement('div');tEl.style.cssText='font-size:10px;opacity:.5;margin-top:2px';tEl.textContent=new Date(typeof ts==='number'?ts:ts).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});bub.appendChild(tEl);}
     row.appendChild(bub);box.appendChild(row);box.scrollTop=box.scrollHeight;
@@ -14186,7 +14193,7 @@ function openClientChat(sid){
             if(box2){box2.innerHTML="";d.history.forEach(function(m){var row=document.createElement("div");row.className="chat-msg "+(m.sender_id===me2?"mine":"theirs");row.innerHTML="<div class=\"msg-bubble\">"+esc(m.content||"")+"</div>";box2.appendChild(row);});box2.scrollTop=box2.scrollHeight;}
           }
           if(d.type==="session_request"){
-            showIncomingRequest(d.session&&d.session.id||d.sessionId,d.client&&d.client.name||d.clientName||"Client",d.session&&d.session.channel||"chat");
+            window._obIncomingSessId=d.session&&d.session.id||d.sessionId; // session_request handled by _wsMsg→showSessionRequest only
           }
         }catch(e){}
       };
@@ -14260,19 +14267,8 @@ function openClientChat(sid){
     var t=tok();if(!t)return;var role=myRole();
     if(role==='expert'){expertPoll();_pollTimer=setInterval(expertPoll,8000);}
     setTimeout(hookWS,1200);if(role==='expert')setTimeout(fixExpertDashboard,1500);
-    setTimeout(function(){var ws=window._obWs||window._obClientWs;if(ws&&ws.readyState<=1){var orig=ws.onmessage;ws.onmessage=function(evt){if(orig)orig.call(ws,evt);try{handleWsMsg(JSON.parse(evt.data));}catch(e){}};console.log('[v5] WS hooked');}},2500);
-    // Hook client WS after 2s so api-v2 has time to connect
-    setTimeout(function(){
-      var ws=window._obWs||window._obClientWs;
-      if(ws){
-        var orig=ws.onmessage;
-        ws.onmessage=function(evt){
-          if(orig)orig.call(ws,evt);
-          try{handleWsMsg(JSON.parse(evt.data));}catch(e){}
-        };
-        console.log('[v5] WS hooked role='+role);
-      }
-    },2000);
+    /* v5 WS re-hook removed — handleWsMsg already wired by ensureClientWS */
+    /* v5 client WS hook removed — handleWsMsg already wired by ensureClientWS */;
   }
   // Expose sendPaidMsg globally from inside IIFE (has access to BASE, hdr, appendMsg)
   window.sendPaidMsg=function(){

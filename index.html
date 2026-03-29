@@ -7303,7 +7303,7 @@ function clientSignupPkg(){
 }
 // ===== END NEW JS =====
 function switchView(n){
-  if(n===3){ /* demo removed */ }
+  if(n===3){ setTimeout(function(){ if(window.innerWidth<=768) showSessionRequest(); },4000); }
   document.querySelectorAll('.view-panel').forEach(p=>p.classList.remove('active'));
   document.querySelectorAll('.view-btn').forEach(b=>b.classList.remove('active'));
   document.getElementById('view-'+n).classList.add('active');
@@ -7669,8 +7669,9 @@ function openBookingOverlay(channelId) {
   if (clientLoggedIn) {
     if (mode === 'upfront' || fm === 0) {
       if (_hpm) {
-        // Already has payment method — show PRESESS then connect (same as 1st session)
-        _launchSession(true);
+        // Already has payment method — skip straight to connecting
+        _bovGoStep(3);
+        setTimeout(function() { window._beginSession(); }, 1800);
       } else {
         _bovGoStep(2); // need payment
       // Mount Stripe card element when step 2 is shown
@@ -8960,7 +8961,7 @@ function showSessionRequest(opts) {
   // Start countdown
   _sessionRequestCountdown = 30;
   _updateRequestCountdown();
-  _sessionRequestTimer = window._sessionRequestTimer = setInterval(function() {
+  _sessionRequestTimer = setInterval(function() {
     _sessionRequestCountdown--;
     _updateRequestCountdown();
     if (_sessionRequestCountdown <= 0) {
@@ -9039,7 +9040,13 @@ function _showToast(msg, color) {
 
 // Demo: simulate an incoming session request after 3s when view-3 is active
 // (In production this would come from a websocket)
-function _simulateIncomingRequest() { /* demo removed */ }
+function _simulateIncomingRequest() {
+  setTimeout(function() {
+    if (document.querySelector('#view-3.active') || document.getElementById('view-3').style.display !== 'none') {
+      showSessionRequest();
+    }
+  }, 8000);
+}
 
 // ══════════════════════════════════════════
 // SETTINGS NAVIGATION
@@ -9625,7 +9632,6 @@ async function savePaymentConfig() {
           set('expert-session-earnings',_e);
         } else {
           toast('Session complete!');
-          if(typeof phoneGo==='function') phoneGo('A5');
         }
         if(Auth.isExpert){
           // Close live session panel directly — don't re-POST /end (already ended)
@@ -9642,7 +9648,7 @@ async function savePaymentConfig() {
         }
         else { var _s=d.session||{};var _bm=Math.max(0,(_s.duration_secs||0)/60-(_s.free_minutes||0));var _tm=Math.round((_s.duration_secs||0)/60);var _fm=_s.free_minutes||0;var _rt=parseFloat(_s.rate_per_min||0);var _re=document.getElementById('receipt-total');if(_re)_re.textContent=fmt$(_bm*_rt);var _rd=document.getElementById('receipt-duration');if(_rd)_rd.textContent=_tm+' min';var _rr=document.getElementById('receipt-rate');if(_rr)_rr.textContent=_rt.toFixed(2)+'/min';if(typeof phoneGo==='function') phoneGo('A5');}
         break; }
-      case 'message':    if(myRole()!=='client') _appendMsg(d); break;
+      case 'message':    _appendMsg(d); break;
       case 'typing':     _showTyping(d); break;
       case 'joined':     _loadHistory(d.history||[]); break;
       case 'expert_status': if(typeof setExpertOnlineStatus==='function') setExpertOnlineStatus(d.is_online); break;
@@ -10387,7 +10393,6 @@ async function savePaymentConfig() {
   const _origAccept=window.acceptSessionRequest;
   window.acceptSessionRequest=async function(){
     if(READY&&window._pendingSid){
-      clearInterval(window._sessionRequestTimer);window._sessionRequestTimer=null;
       try {
         await api('POST',`/sessions/${window._pendingSid}/accept`,{});
         window._sid=window._pendingSid; window._pendingSid=null;
@@ -13944,12 +13949,6 @@ function openClientChat(sid){
       body:'{}'
     }).then(function(r){return r.json();}).then(function(d){
       console.log('[END_SESSION] response='+JSON.stringify(d));
-      // Reset state and close WS after session ended on server
-      window._obActiveSessId=null; window._obPendingSessId=null; window._sid=null;
-      if(window._obWs){try{window._obWs.close();}catch(e){}window._obWs=null;}
-      if(window._obClientWs){try{window._obClientWs.close();}catch(e){}window._obClientWs=null;}
-      window._obWsConnecting=false; window._obWsHooked=false; window._obHookAttempts=0;
-      var _ov=document.getElementById('ob-waiting-overlay');if(_ov)_ov.classList.remove('show');
     }).catch(function(e){console.error('[END_SESSION] error',e);});
   } else {
     console.warn('[END_SESSION] SKIPPED: sid='+sid+' token='+(t?'ok':'missing'));
@@ -14163,7 +14162,7 @@ function openClientChat(sid){
     var box=document.getElementById(panelId);if(!box)return;
     var row=document.createElement('div');row.style.cssText='display:flex;justify-content:'+(isMine?'flex-end':'flex-start')+';margin:3px 0';
     var bub=document.createElement('div');
-    bub.style.cssText='max-width:75%;padding:8px 12px;border-radius:12px;font-size:13px;line-height:1.4;word-break:break-word;background:'+(isMine?'#c2622d':'rgba(60,35,20,.7)')+';color:#fff';
+    bub.style.cssText='max-width:75%;padding:8px 12px;border-radius:12px;font-size:13px;line-height:1.4;word-break:break-word;background:'+(isMine?'#c2622d':'rgba(255,255,255,.12)')+';color:#fff';
     bub.textContent=content;
     if(ts){var tEl=document.createElement('div');tEl.style.cssText='font-size:10px;opacity:.5;margin-top:2px';tEl.textContent=new Date(typeof ts==='number'?ts:ts).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});bub.appendChild(tEl);}
     row.appendChild(bub);box.appendChild(row);box.scrollTop=box.scrollHeight;
@@ -14191,7 +14190,7 @@ function openClientChat(sid){
             if(box2){box2.innerHTML="";d.history.forEach(function(m){var row=document.createElement("div");row.className="chat-msg "+(m.sender_id===me2?"mine":"theirs");row.innerHTML="<div class=\"msg-bubble\">"+esc(m.content||"")+"</div>";box2.appendChild(row);});box2.scrollTop=box2.scrollHeight;}
           }
           if(d.type==="session_request"){
-            window._obIncomingSessId=d.session&&d.session.id||d.sessionId; // handled by _wsMsg→showSessionRequest
+            showIncomingRequest(d.session&&d.session.id||d.sessionId,d.client&&d.client.name||d.clientName||"Client",d.session&&d.session.channel||"chat");
           }
         }catch(e){}
       };
@@ -14200,7 +14199,6 @@ function openClientChat(sid){
       window._expertWs=ws;
     }
     window.acceptSessionRequest=async function(){
-      clearInterval(window._sessionRequestTimer);window._sessionRequestTimer=null;
       var sid=window._pendingSid;if(!sid)return;
       try{
         var r=await fetch(BASE+"/api/sessions/"+sid+"/accept",{method:"POST",headers:hdr()});

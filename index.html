@@ -7621,6 +7621,15 @@ var expertOnline = true; var expertIsOnline = true;
 
 // ===== BOOKING OVERLAY (expert website) =====
 function openBookingOverlay(channelId) {
+  // Zero free minutes if client already used them with this expert
+  var _eid = window._currentExpertId;
+  if(_eid && localStorage.getItem('ob_free_used_'+_eid)==='1'){
+    if(typeof freeMinutes==='object'){freeMinutes.chat=0;freeMinutes.voice=0;freeMinutes.video=0;}
+    // Force upfront mode so HPM path is used (no free minutes)
+    if(typeof sessionStartMode==='object'){sessionStartMode.chat='upfront';}
+    // Update visible booking page card text to remove '· 1 free'
+    document.querySelectorAll('.stype-btn-price,.ep-chat-rate,[data-rate="chat"]').forEach(function(el){var t=el.textContent;if(t.indexOf('free')>=0)el.textContent=t.replace(/\s*·\s*\d+\s*free/,'');});
+  }
   var expert = window._currentExpert || {};
   var expertName = expert.name || 'this expert';
   var rateMap = {
@@ -9628,9 +9637,10 @@ async function savePaymentConfig() {
         break;
       case 'session_ended': {
         window._sid=null; window._expertSessActive=false;
-        window._obActiveSessId=null;window._obPendingSessId=null;window._pendingSid=null;
+        window._obActiveSessId=null;window._obPendingSessId=null;window._pendingSid=null;window._obIncomingSessId=null;
         // Zero free minutes so session 2 doesn't get free mins again
         if(typeof freeMinutes==='object'){freeMinutes.chat=0;freeMinutes.voice=0;freeMinutes.video=0;}
+        if(typeof sessionStartMode==='object'){sessionStartMode.chat='upfront';sessionStartMode.voice='upfront';sessionStartMode.video='upfront';}
         // Persist that free minutes were used with this expert
         try{var _eid=d.session&&d.session.expert_id||window._currentExpertId;if(_eid)localStorage.setItem('ob_free_used_'+_eid,'1');}catch(e){}
         if(window._expertTimerInterval){clearInterval(window._expertTimerInterval);window._expertTimerInterval=null;}
@@ -9656,6 +9666,8 @@ async function savePaymentConfig() {
           setTimeout(loadExpertDashboard,500);
           // Reconnect expert WS so it's ready for the next session request
           if(typeof connectExpertWs==='function') setTimeout(function(){connectExpertWs(null);},1000);
+          // Set cooldown to prevent stale pending sessions from triggering popup
+          window._sessionEndCooldown=Date.now();
         }
         else { try{if(window._obClientWs&&window._obClientWs.readyState<=1)window._obClientWs.close();}catch(e){}try{if(window._obWs&&window._obWs.readyState<=1)window._obWs.close();}catch(e){}window._obClientWs=null;window._obWs=null;window._obWsHooked=false;window._obWsConnecting=false;var _s=d.session||{};var _bm=Math.max(0,(_s.duration_secs||0)/60-(_s.free_minutes||0));var _tm=Math.round((_s.duration_secs||0)/60);var _fm=_s.free_minutes||0;var _rt=parseFloat(_s.rate_per_min||0);var _re=document.getElementById('receipt-total');if(_re)_re.textContent=fmt$(_bm*_rt);var _rd=document.getElementById('receipt-duration');if(_rd)_rd.textContent=_tm+' min';var _rr=document.getElementById('receipt-rate');if(_rr)_rr.textContent=_rt.toFixed(2)+'/min';if(typeof phoneGo==='function') phoneGo('A5');}
         break; }
@@ -13910,6 +13922,8 @@ body.expert-page #mob-cta-bar{display:none!important;}
     window._obActiveSessId=null;window._obPendingSessId=null;
     var expertId=window._currentExpertId;
     var expertName=(window._currentExpert&&window._currentExpert.name)||'Expert';
+    // Mark free minutes as used for this expert (persist across page reloads)
+    if(expertId)try{localStorage.setItem('ob_free_used_'+expertId,'1');}catch(e){}
     var channel=window._selectedChannel||'chat';
     var ov=document.getElementById('ob-waiting-overlay');
     document.getElementById('ob-wait-title').textContent='Waiting for '+expertName+'...';
@@ -14168,11 +14182,11 @@ function openClientChat(sid){
     var t=tok();if(!t)return;
     fetch(BASE+'/api/sessions/pending',{headers:hdr()}).then(function(r){return r.json();}).then(function(d){
       var sessions=d.sessions||[];
-      if(sessions.length>0&&!window._sid&&!window._obActiveSessId){
+      if(sessions.length>0&&!window._sid&&!window._obActiveSessId&&(!window._sessionEndCooldown||Date.now()-window._sessionEndCooldown>15000)){
         var s=sessions[0];
         // Only show if session is less than 10 minutes old
         var age=(Date.now()/1000)-(s.created_at||0);
-        if(s.id!==window._obIncomingSessId&&age<600){window._pendingSid=s.id;window._obIncomingSessId=s.id;if(typeof showSessionRequest==='function'){showSessionRequest({clientName:s.client_name||'Client',clientSub:(s.channel||'chat')+' session',initials:((s.client_name||'CL').match(/\b\w/g)||['C','L']).slice(0,2).join('').toUpperCase(),sessionType:s.channel||'chat',rate:'$'+(s.rate_per_min||'?')+'/min',freeMin:(s.free_minutes||0)+' min free'});}else{showIncomingRequest(s.id,s.client_name||'Client',s.channel||'chat');}
+        if(s.id!==window._obIncomingSessId&&!window._sid&&!window._expertSessActive&&age<90){window._pendingSid=s.id;window._obIncomingSessId=s.id;if(typeof showSessionRequest==='function'){showSessionRequest({clientName:s.client_name||'Client',clientSub:(s.channel||'chat')+' session',initials:((s.client_name||'CL').match(/\b\w/g)||['C','L']).slice(0,2).join('').toUpperCase(),sessionType:s.channel||'chat',rate:'$'+(s.rate_per_min||'?')+'/min',freeMin:(s.free_minutes||0)+' min free'});}else{showIncomingRequest(s.id,s.client_name||'Client',s.channel||'chat');}
         } else if(age>=600){/* stale, ignore */}
       }
       else if(sessions.length===0&&!window._sid){var sro=document.getElementById('session-request-overlay');if(sro&&sro.style.display==='flex'){sro.style.display='none';var srs=document.getElementById('session-request-sheet');if(srs)srs.style.display='none';}}

@@ -7670,8 +7670,7 @@ function openBookingOverlay(channelId) {
     if (mode === 'upfront' || fm === 0) {
       if (_hpm) {
         // Already has payment method — skip straight to connecting
-        _bovGoStep(3);
-        setTimeout(function() { window._beginSession(); }, 1800);
+        _launchSession(true);
       } else {
         _bovGoStep(2); // need payment
       // Mount Stripe card element when step 2 is shown
@@ -8961,7 +8960,7 @@ function showSessionRequest(opts) {
   // Start countdown
   _sessionRequestCountdown = 30;
   _updateRequestCountdown();
-  _sessionRequestTimer = setInterval(function() {
+  _sessionRequestTimer = window._sessionRequestTimer = setInterval(function() {
     _sessionRequestCountdown--;
     _updateRequestCountdown();
     if (_sessionRequestCountdown <= 0) {
@@ -9648,7 +9647,7 @@ async function savePaymentConfig() {
         }
         else { var _s=d.session||{};var _bm=Math.max(0,(_s.duration_secs||0)/60-(_s.free_minutes||0));var _tm=Math.round((_s.duration_secs||0)/60);var _fm=_s.free_minutes||0;var _rt=parseFloat(_s.rate_per_min||0);var _re=document.getElementById('receipt-total');if(_re)_re.textContent=fmt$(_bm*_rt);var _rd=document.getElementById('receipt-duration');if(_rd)_rd.textContent=_tm+' min';var _rr=document.getElementById('receipt-rate');if(_rr)_rr.textContent=_rt.toFixed(2)+'/min';if(typeof phoneGo==='function') phoneGo('A5');}
         break; }
-      case 'message':    _appendMsg(d); break;
+      case 'message':    if(Auth.isExpert) _appendMsg(d); break;
       case 'typing':     _showTyping(d); break;
       case 'joined':     _loadHistory(d.history||[]); break;
       case 'expert_status': if(typeof setExpertOnlineStatus==='function') setExpertOnlineStatus(d.is_online); break;
@@ -13954,6 +13953,11 @@ function openClientChat(sid){
     console.warn('[END_SESSION] SKIPPED: sid='+sid+' token='+(t?'ok':'missing'));
   }
   if(window._clientTimerInterval){clearInterval(window._clientTimerInterval);window._clientTimerInterval=null;}
+  // Clean up client WS state so next session can create fresh connections
+  try{if(window._obClientWs&&window._obClientWs.readyState<=1)window._obClientWs.close();}catch(e){}
+  try{if(window._obWs&&window._obWs.readyState<=1)window._obWs.close();}catch(e){}
+  window._obClientWs=null;window._obWs=null;window._obWsHooked=false;window._obWsConnecting=false;
+  window._obActiveSessId=null;window._obPendingSessId=null;
   if(typeof phoneGo==='function')phoneGo('A5');
 };
   window.obClientSend=function(){
@@ -14189,9 +14193,7 @@ function openClientChat(sid){
             var me2=myId();var box2=document.getElementById("expert-chat-messages");
             if(box2){box2.innerHTML="";d.history.forEach(function(m){var row=document.createElement("div");row.className="chat-msg "+(m.sender_id===me2?"mine":"theirs");row.innerHTML="<div class=\"msg-bubble\">"+esc(m.content||"")+"</div>";box2.appendChild(row);});box2.scrollTop=box2.scrollHeight;}
           }
-          if(d.type==="session_request"){
-            showIncomingRequest(d.session&&d.session.id||d.sessionId,d.client&&d.client.name||d.clientName||"Client",d.session&&d.session.channel||"chat");
-          }
+          // session_request handled by main WS _wsMsg -> showSessionRequest (removed duplicate showIncomingRequest)
         }catch(e){}
       };
       ws.onerror=function(){};

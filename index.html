@@ -1573,8 +1573,57 @@ window.OWNLY_API="https://ownlybiz-backend-production.up.railway.app";
       document.querySelectorAll("[data-rate=chat]").forEach(function(el){el.textContent=fmt(c.default_rates.chat)+"/min";});
       document.querySelectorAll("[data-rate=voice]").forEach(function(el){el.textContent=fmt(c.default_rates.voice)+"/min";});
       document.querySelectorAll("[data-rate=video]").forEach(function(el){el.textContent=fmt(c.default_rates.video)+"/min";});
+      var _rs=document.getElementById('rate-slider');var _rd=document.getElementById('rate-display');
+      if(_rs&&c.default_rates.chat){_rs.value=c.default_rates.chat;if(_rd)_rd.textContent=fmt(c.default_rates.chat);}
     }
   }).catch(function(){});
+})();
+
+/* === SAVE SIGNUP DATA ON STEP ADVANCE === */
+(function(){
+  var _realGoStep;
+  function hookGoStep(){
+    if(typeof goStep!=="function"||window._goStepHooked)return;
+    _realGoStep=goStep;
+    window._goStepHooked=true;
+    window.goStep=function(n){
+      var tok=sessionStorage.getItem("ob_t");
+      if(tok){
+        var data={};
+        var step=window.currentStep||0;
+        if(step===2){
+          var cat=document.querySelector(".cat-btn.selected .cat-btn-name");
+          var title=document.getElementById("signup-title");
+          if(cat)data.title=title&&title.value?title.value:cat.textContent;
+        }
+        if(step===3){
+          var bio=document.querySelector("#step-3 textarea");
+          var loc=document.querySelector("#step-3 input[placeholder*=\"New York\"]");
+          if(bio&&bio.value)data.bio=bio.value;
+          if(loc&&loc.value)data.location=loc.value;
+        }
+        if(step===5){
+          var rate=document.getElementById("rate-slider");
+          var fm=document.getElementById("free-min-val");
+          if(rate)data.rate_chat=parseFloat(rate.value);
+          if(fm)data.free_minutes=parseInt(fm.textContent)||0;
+        }
+        if(step===6){
+          var tz=document.getElementById("signup-timezone");
+          if(tz)data.timezone=tz.value;
+        }
+        if(Object.keys(data).length>0){
+          fetch((window.OWNLY_API||"https://ownlybiz-backend-production.up.railway.app")+"/api/auth/me",{
+            method:"PUT",headers:{"Content-Type":"application/json","Authorization":"Bearer "+tok},
+            body:JSON.stringify(data)
+          }).then(function(r){console.log("[SIGNUP] Saved step "+step+" data:",Object.keys(data));}).catch(function(){});
+        }
+      }
+      _realGoStep(n);
+    };
+  }
+  setTimeout(hookGoStep,2000);
+  setTimeout(hookGoStep,5000);
 })();
 </script>
 </head>
@@ -2321,7 +2370,7 @@ if (!window.toast) {
       <!-- STEP 1: Account -->
       <div class="signup-step active" id="step-1">
         <div class="signup-step-title">Create your account</div>
-        <div class="signup-step-sub">Start your independent expert practice — free for 2 months.</div>
+        <div class="signup-step-sub">Start your independent expert practice — free to get started.</div>
         <div class="form-row">
           <div class="form-group">
             <label class="form-label">First Name</label>
@@ -2339,10 +2388,6 @@ if (!window.toast) {
         <div class="form-group">
           <label class="form-label">Password</label>
           <input type="password" class="form-input" id="signup-pass" placeholder="Create a strong password (min 8 chars)">
-        </div>
-        <div class="form-group">
-          <label class="form-label">Practice Name</label>
-          <input type="text" class="form-input" placeholder="Expert Consulting">
         </div>
         <div class="tos-row">
           <input type="checkbox" id="tos-check">
@@ -2400,7 +2445,7 @@ if (!window.toast) {
         <div class="signup-step-sub">A short description helps clients understand who you are before they book.</div>
         <div class="form-group">
           <label class="form-label">Professional Bio (shown on your website)</label>
-          <textarea class="form-input form-textarea" placeholder="I help business owners and founders cut through complexity, make confident decisions, and build strategies that create results. 8+ years working with 500+ clients across 12 countries..."></textarea>
+          <textarea class="form-input form-textarea" placeholder="Describe your expertise, who you help, and what makes your approach unique..."></textarea>
         </div>
         <div class="form-row">
           <div class="form-group">
@@ -2492,15 +2537,15 @@ if (!window.toast) {
         <div class="form-group">
           <label class="form-label">Per-Minute Rate (Chat / Voice / Video)</label>
           <div class="rate-control">
-            <input type="range" min="1" max="20" value="3.50" step="0.50" id="rate-slider" oninput="updateRateDisplay(this.value)">
-            <span id="rate-display" style="font-weight:700;color:var(--terra);font-size:16px;min-width:60px;">$3.50</span>
+            <input type="range" min="1" max="20" value="1" step="0.50" id="rate-slider" data-config-default="chat_rate" oninput="updateRateDisplay(this.value)">
+            <span id="rate-display" style="font-weight:700;color:var(--terra);font-size:16px;min-width:60px;">$1.00</span>
           </div>
         </div>
         <div class="form-group">
           <label class="form-label">Free Intro Minutes (0–10)</label>
           <div class="rate-stepper">
             <button onclick="adjustFreeMin(-1)">−</button>
-            <div class="rate-stepper-val" id="free-min-val">3</div>
+            <div class="rate-stepper-val" id="free-min-val">1</div>
             <button onclick="adjustFreeMin(1)">+</button>
           </div>
           <p style="font-size:12px;color:var(--gray-400);margin-top:6px;">Clients get this many free minutes before billing starts. This is your marketing cost.</p>
@@ -2509,34 +2554,31 @@ if (!window.toast) {
           <label class="form-label">Active Channels</label>
           <div class="channel-toggles">
             <div class="channel-toggle active" onclick="toggleChannel(this)"><div class="channel-toggle-icon">💬</div><div class="channel-toggle-name">Chat</div></div>
-            <div class="channel-toggle active" onclick="toggleChannel(this)"><div class="channel-toggle-icon">🎙️</div><div class="channel-toggle-name">Voice</div></div>
-            <div class="channel-toggle active" onclick="toggleChannel(this)"><div class="channel-toggle-icon">🎥</div><div class="channel-toggle-name">Video</div></div>
+            <div class="channel-toggle" style="opacity:.45;pointer-events:none;position:relative;" onclick="toast('Voice coming soon!','err')"><div class="coming-soon-badge">Coming Soon</div><div class="channel-toggle-icon">🎙️</div><div class="channel-toggle-name">Voice</div></div>
+            <div class="channel-toggle" style="opacity:.45;pointer-events:none;position:relative;" onclick="toast('Video coming soon!','err')"><div class="coming-soon-badge">Coming Soon</div><div class="channel-toggle-icon">🎥</div><div class="channel-toggle-name">Video</div></div>
           </div>
         </div>
+        <div style="opacity:.45;position:relative;pointer-events:none;"><div class="coming-soon-badge" style="top:0;right:0;">Coming Soon</div>
         <div class="form-row">
           <div class="form-group">
             <label class="form-label">Fixed 30-min Session</label>
-            <input type="text" class="form-input" placeholder="$75.00">
+            <input type="text" class="form-input" placeholder="$75.00" disabled>
           </div>
           <div class="form-group">
             <label class="form-label">Fixed 60-min Session</label>
-            <input type="text" class="form-input" placeholder="$120.00">
+            <input type="text" class="form-input" placeholder="$120.00" disabled>
           </div>
         </div>
         <div class="form-row">
           <div class="form-group">
             <label class="form-label">Written/Async Fee</label>
-            <input type="text" class="form-input" placeholder="$45.00">
+            <input type="text" class="form-input" placeholder="$45.00" disabled>
           </div>
           <div class="form-group">
             <label class="form-label">5-Session Package</label>
-            <input type="text" class="form-input" placeholder="$480.00">
+            <input type="text" class="form-input" placeholder="$480.00" disabled>
           </div>
-        </div>
-        <div class="form-group">
-          <label class="form-label">Short Bio (for your profile)</label>
-          <textarea class="form-input form-textarea" placeholder="Tell potential clients about your background, expertise, and how you help them achieve results..."></textarea>
-        </div>
+        </div></div>
         <div class="signup-nav">
           <button class="btn" style="color:var(--gray-400)" onclick="goStep(4)">← Back</button>
           <div style="display:flex;gap:10px;align-items:center;">
@@ -2553,7 +2595,7 @@ if (!window.toast) {
         <div class="form-group">
           <label class="form-label">Available Days</label>
           <div class="day-picks">
-            <button class="day-btn" onclick="toggleDay(this)">Mon</button>
+            <button class="day-btn active" onclick="toggleDay(this)">Mon</button>
             <button class="day-btn active" onclick="toggleDay(this)">Tue</button>
             <button class="day-btn active" onclick="toggleDay(this)">Wed</button>
             <button class="day-btn active" onclick="toggleDay(this)">Thu</button>
@@ -2583,12 +2625,21 @@ if (!window.toast) {
         </div>
         <div class="form-group">
           <label class="form-label">Timezone</label>
-          <select class="form-input">
-            <option>Pacific Time (PT) — UTC-8</option>
-            <option selected>Eastern Time (ET) — UTC-5</option>
-            <option>Central European Time (CET) — UTC+1</option>
-            <option>GMT/UTC</option>
+          <select class="form-input" id="signup-timezone">
+            <option value="America/Los_Angeles">Pacific Time (PT)</option>
+            <option value="America/Denver">Mountain Time (MT)</option>
+            <option value="America/Chicago">Central Time (CT)</option>
+            <option value="America/New_York">Eastern Time (ET)</option>
+            <option value="Europe/London">GMT / London</option>
+            <option value="Europe/Paris">Central European (CET)</option>
+            <option value="Europe/Helsinki">Eastern European (EET)</option>
+            <option value="Asia/Jerusalem">Israel (IST)</option>
+            <option value="Asia/Dubai">Gulf (GST)</option>
+            <option value="Asia/Kolkata">India (IST)</option>
+            <option value="Asia/Tokyo">Japan (JST)</option>
+            <option value="Australia/Sydney">Australia Eastern (AEST)</option>
           </select>
+          <script>try{var _tz=Intl.DateTimeFormat().resolvedOptions().timeZone;var _sel=document.getElementById("signup-timezone");if(_sel){var _opt=_sel.querySelector('option[value="'+_tz+'"]');if(_opt)_opt.selected=true;else{var _n=document.createElement("option");_n.value=_tz;_n.textContent=_tz+" (detected)";_n.selected=true;_sel.prepend(_n);}};}catch(e){}</script>
         </div>
         <div class="signup-nav">
           <button class="btn" style="color:var(--gray-400)" onclick="goStep(5)">← Back</button>
@@ -2616,15 +2667,15 @@ if (!window.toast) {
               <span id="launch-url-slug" style="padding:14px 16px;font-size:15px;font-weight:700;color:var(--brown);flex:1;word-break:break-all;"><span id="launch-url-display">your-name.ownlybiz.com</span></span>
               <button style="padding:14px 16px;border:none;background:var(--terra);color:white;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap;" onclick="var u='https://'+(document.getElementById('launch-url-display')||{textContent:''}).textContent;if(navigator.clipboard&&u.length>8)navigator.clipboard.writeText(u);this.textContent='✓ Copied!';">Copy Link</button>
             </div>
-            <div style="font-size:12px;color:var(--sage);margin-top:8px;font-weight:600;">✓ SSL active · Custom domain connected</div>
+            <div style="font-size:12px;color:var(--sage);margin-top:8px;font-weight:600;">✓ Subdomain active</div>
           </div>
           <ul class="launch-checklist">
-            <li>Expert website published (5 pages)</li>
-            <li>Custom domain connected · SSL active</li>
+            <li>Expert website published</li>
+            <li>Subdomain active</li>
             <li>Services & rates configured</li>
             <li>Availability set</li>
             <li>Independent Professional ToS accepted</li>
-            <li>First 2 months completely free</li>
+            <li>Free to start — no credit card required</li>
           </ul>
           <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;">
             <button class="btn" style="color:var(--gray-400);font-size:13px;" onclick="goStep(6)">← Back</button>
@@ -7337,6 +7388,7 @@ function switchView(n){
   document.querySelectorAll('.view-panel').forEach(p=>p.classList.remove('active'));
   document.querySelectorAll('.view-btn').forEach(b=>b.classList.remove('active'));
   document.getElementById('view-'+n).classList.add('active');
+  var _cta=document.getElementById('mob-cta-bar');if(_cta)_cta.style.display=(n===2)?'none':'';
   document.querySelectorAll('.view-btn')[n-1].classList.add('active');
   window.scrollTo(0,0);
   if(n===3) buildChart();

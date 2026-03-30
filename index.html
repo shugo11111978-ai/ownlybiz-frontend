@@ -9046,7 +9046,7 @@ function acceptSessionRequest() {
 
 function declineSessionRequest() {
   _closeRequestSheet();
-  if(!window._sid&&!window._expertSessActive) _showToast('Session declined.', 'gray');
+  // Silent — no toast for auto-decline of stale sessions
 }
 
 function _showToast(msg, color) {
@@ -9639,13 +9639,17 @@ async function savePaymentConfig() {
           _launchSession(true);
         }
         break;
-      case 'session_declined':
+      case 'session_declined': {
+        var _dSid = d.session?.id || d.sessionId;
+        if(_dSid && _dSid !== window._pendingSid && _dSid !== window._obPendingSessId) break; // stale — ignore
         toast('Expert declined — try again', 'err');
         if(typeof closeBookingOverlay==='function') closeBookingOverlay();
-        break;
+        break; }
       case 'session_ended': {
         window._sid=null; window._expertSessActive=false;
-        window._obActiveSessId=null;window._obPendingSessId=null;window._pendingSid=null;window._obIncomingSessId=null;window._lastSessionEndedAt=Date.now()/1000;try{localStorage.setItem('ob_lastSessionEnded',''+(Date.now()/1000));}catch(e){}
+        window._obActiveSessId=null;window._obPendingSessId=null;window._pendingSid=null;window._obIncomingSessId=null;
+        // Kill any running auto-decline timer from stale session_request
+        clearInterval(window._sessionRequestTimer);window._sessionRequestTimer=null;window._lastSessionEndedAt=Date.now()/1000;try{localStorage.setItem('ob_lastSessionEnded',''+(Date.now()/1000));}catch(e){}
         // Zero free minutes so session 2 doesn't get free mins again
         if(typeof freeMinutes==='object'){freeMinutes.chat=0;freeMinutes.voice=0;freeMinutes.video=0;}
         if(typeof sessionStartMode==='object'){sessionStartMode.chat='upfront';sessionStartMode.voice='upfront';sessionStartMode.video='upfront';}
@@ -14203,7 +14207,7 @@ function openClientChat(sid){
         var s=sessions[0];
         // Only show if session is less than 10 minutes old
         var age=(Date.now()/1000)-(s.created_at||0);
-        if(s.id!==window._obIncomingSessId&&!window._sid&&!window._expertSessActive&&age<90&&(!(window._lastSessionEndedAt||parseFloat(localStorage.getItem('ob_lastSessionEnded')||'0'))||(s.created_at||0)>(window._lastSessionEndedAt||parseFloat(localStorage.getItem('ob_lastSessionEnded')||'0')))){window._pendingSid=s.id;window._obIncomingSessId=s.id;if(typeof showSessionRequest==='function'){showSessionRequest({clientName:s.client_name||'Client',clientSub:(s.channel||'chat')+' session',initials:((s.client_name||'CL').match(/\b\w/g)||['C','L']).slice(0,2).join('').toUpperCase(),sessionType:s.channel||'chat',rate:'$'+(s.rate_per_min||'?')+'/min',freeMin:(s.free_minutes||0)+' min free'});}else{showIncomingRequest(s.id,s.client_name||'Client',s.channel||'chat');}
+        if(s.id!==window._obIncomingSessId&&!window._sid&&!window._expertSessActive&&age<30&&(!(window._lastSessionEndedAt||parseFloat(localStorage.getItem('ob_lastSessionEnded')||'0'))||(s.created_at||0)>(window._lastSessionEndedAt||parseFloat(localStorage.getItem('ob_lastSessionEnded')||'0')))){window._pendingSid=s.id;window._obIncomingSessId=s.id;if(typeof showSessionRequest==='function'){showSessionRequest({clientName:s.client_name||'Client',clientSub:(s.channel||'chat')+' session',initials:((s.client_name||'CL').match(/\b\w/g)||['C','L']).slice(0,2).join('').toUpperCase(),sessionType:s.channel||'chat',rate:'$'+(s.rate_per_min||'?')+'/min',freeMin:(s.free_minutes||0)+' min free'});}else{showIncomingRequest(s.id,s.client_name||'Client',s.channel||'chat');}
         } else if(age>=600){/* stale, ignore */}
       }
       else if(sessions.length===0&&!window._sid){var sro=document.getElementById('session-request-overlay');if(sro&&sro.style.display==='flex'){sro.style.display='none';var srs=document.getElementById('session-request-sheet');if(srs)srs.style.display='none';}}

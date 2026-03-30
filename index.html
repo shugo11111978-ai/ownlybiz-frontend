@@ -13985,11 +13985,14 @@ function openClientChat(sid){
   window.obExpertAccept=function(){
     var sid=window._obIncomingSessId;if(!sid)return;
     document.getElementById('ob-expert-incoming').classList.remove('show');
+    // Also close bottom sheet and stop auto-decline timer
+    if(typeof _closeRequestSheet==='function')_closeRequestSheet();
+    clearInterval(window._sessionRequestTimer);
     var liveNav=Array.from(document.querySelectorAll('[onclick]')).find(function(el){return el.getAttribute('onclick')==="dbNav(this,'live-session')";});
     if(liveNav){liveNav.style.outline='';}
     fetch(BASE+'/api/sessions/'+sid+'/accept',{method:'POST',headers:hdr()}).then(function(r){return r.json();}).then(function(d){
       var ok=d.session||d.success||d.id||(d.status==='active');
-      if(ok){_sessId=sid;window._obActiveSessId=sid;openExpertLivePanel(sid);if(typeof window.startExpertSessionPoller==='function')window.startExpertSessionPoller(sid);}
+      if(ok){_sessId=sid;window._obActiveSessId=sid;window._sid=sid;connectExpertWs(sid);openExpertLivePanel(sid);if(typeof window.startExpertSessionPoller==='function')window.startExpertSessionPoller(sid);}
       else{alert(d.error||'Could not accept session');}
     }).catch(function(){alert('Network error');});
   };
@@ -14149,7 +14152,7 @@ function openClientChat(sid){
         var s=sessions[0];
         // Only show if session is less than 10 minutes old
         var age=(Date.now()/1000)-(s.created_at||0);
-        if(s.id!==window._obIncomingSessId&&age<600){showIncomingRequest(s.id,s.client_name||'Client',s.channel||'chat');
+        if(s.id!==window._obIncomingSessId&&age<600){window._pendingSid=s.id;window._obIncomingSessId=s.id;if(typeof showSessionRequest==='function'){showSessionRequest({clientName:s.client_name||'Client',clientSub:(s.channel||'chat')+' session',initials:((s.client_name||'CL').match(/\b\w/g)||['C','L']).slice(0,2).join('').toUpperCase(),sessionType:s.channel||'chat',rate:'$'+(s.rate_per_min||'?')+'/min',freeMin:(s.free_minutes||0)+' min free'});}else{showIncomingRequest(s.id,s.client_name||'Client',s.channel||'chat');}
         } else if(age>=600){/* stale, ignore */}
       }
       else if(sessions.length===0&&!window._sid){var sro=document.getElementById('session-request-overlay');if(sro&&sro.style.display==='flex'){sro.style.display='none';var srs=document.getElementById('session-request-sheet');if(srs)srs.style.display='none';}}
@@ -14166,7 +14169,7 @@ function openClientChat(sid){
     var box=document.getElementById(panelId);if(!box)return;
     var row=document.createElement('div');row.style.cssText='display:flex;justify-content:'+(isMine?'flex-end':'flex-start')+';margin:3px 0';
     var bub=document.createElement('div');
-    bub.style.cssText='max-width:75%;padding:8px 12px;border-radius:12px;font-size:13px;line-height:1.4;word-break:break-word;background:'+(isMine?'#c2622d':'rgba(255,255,255,.12)')+';color:#fff';
+    bub.style.cssText='max-width:75%;padding:8px 12px;border-radius:12px;font-size:13px;line-height:1.4;word-break:break-word;background:'+(isMine?'#c2622d':'#e8e0d5')+';color:'+(isMine?'#fff':'#251810');
     bub.textContent=content;
     if(ts){var tEl=document.createElement('div');tEl.style.cssText='font-size:10px;opacity:.5;margin-top:2px';tEl.textContent=new Date(typeof ts==='number'?ts:ts).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});bub.appendChild(tEl);}
     row.appendChild(bub);box.appendChild(row);box.scrollTop=box.scrollHeight;
@@ -14202,6 +14205,10 @@ function openClientChat(sid){
     }
     window.acceptSessionRequest=async function(){
       var sid=window._pendingSid;if(!sid)return;
+      // Close request sheet and stop auto-decline timer
+      if(typeof _closeRequestSheet==='function')_closeRequestSheet();
+      clearInterval(window._sessionRequestTimer);
+      var _incEl=document.getElementById('ob-expert-incoming');if(_incEl)_incEl.classList.remove('show');
       try{
         var r=await fetch(BASE+"/api/sessions/"+sid+"/accept",{method:"POST",headers:hdr()});
         var d=await r.json();

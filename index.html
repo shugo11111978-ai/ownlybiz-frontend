@@ -5383,8 +5383,9 @@ if (!window.toast) {
                 <div class="receipt-row" style="border-top:1px solid var(--gray-200);padding-top:8px;margin-top:4px;font-weight:700;"><span>Total Charged</span><span id="receipt-total">$52.50</span></div>
               </div>
               <div class="receipt-actions">
-                <button class="btn btn-primary" style="width:100%" onclick="switchView(4);showExpertPage('book')">Book Another Session</button>
-                <button class="btn btn-secondary" style="width:100%">View Receipt</button>
+                <button class="btn btn-primary" style="width:100%" onclick="if(typeof openBookingOverlay==='function'){openBookingOverlay();}else{switchView(4);showExpertPage('book');}">Book Another Session</button>
+                <button class="btn btn-secondary" style="width:100%" onclick="window.print();">View Receipt</button>
+                <button class="btn" style="width:100%;margin-top:8px;color:var(--gray-400);font-size:13px;background:none;border:none;cursor:pointer;" onclick="window.location.reload();">← Return to Expert Page</button>
               </div>
             </div>
           </div>
@@ -9623,6 +9624,7 @@ async function savePaymentConfig() {
         break;
       case 'session_ended': {
         window._sid=null; window._expertSessActive=false;
+        window._obActiveSessId=null;window._obPendingSessId=null;window._pendingSid=null;
         if(window._expertTimerInterval){clearInterval(window._expertTimerInterval);window._expertTimerInterval=null;}
         if(window._expertSessInterval){clearInterval(window._expertSessInterval);window._expertSessInterval=null;}
         var _e=fmt$(d.session?.expert_earned||0);
@@ -9644,8 +9646,10 @@ async function savePaymentConfig() {
           var sessNav=document.querySelector('.db-nav-item[onclick*="sessions"]');
           if(sessNav && typeof dbNav==='function') dbNav(sessNav,'sessions');
           setTimeout(loadExpertDashboard,500);
+          // Reconnect expert WS so it's ready for the next session request
+          if(typeof connectExpertWs==='function') setTimeout(function(){connectExpertWs(null);},1000);
         }
-        else { var _s=d.session||{};var _bm=Math.max(0,(_s.duration_secs||0)/60-(_s.free_minutes||0));var _tm=Math.round((_s.duration_secs||0)/60);var _fm=_s.free_minutes||0;var _rt=parseFloat(_s.rate_per_min||0);var _re=document.getElementById('receipt-total');if(_re)_re.textContent=fmt$(_bm*_rt);var _rd=document.getElementById('receipt-duration');if(_rd)_rd.textContent=_tm+' min';var _rr=document.getElementById('receipt-rate');if(_rr)_rr.textContent=_rt.toFixed(2)+'/min';if(typeof phoneGo==='function') phoneGo('A5');}
+        else { try{if(window._obClientWs&&window._obClientWs.readyState<=1)window._obClientWs.close();}catch(e){}try{if(window._obWs&&window._obWs.readyState<=1)window._obWs.close();}catch(e){}window._obClientWs=null;window._obWs=null;window._obWsHooked=false;window._obWsConnecting=false;var _s=d.session||{};var _bm=Math.max(0,(_s.duration_secs||0)/60-(_s.free_minutes||0));var _tm=Math.round((_s.duration_secs||0)/60);var _fm=_s.free_minutes||0;var _rt=parseFloat(_s.rate_per_min||0);var _re=document.getElementById('receipt-total');if(_re)_re.textContent=fmt$(_bm*_rt);var _rd=document.getElementById('receipt-duration');if(_rd)_rd.textContent=_tm+' min';var _rr=document.getElementById('receipt-rate');if(_rr)_rr.textContent=_rt.toFixed(2)+'/min';if(typeof phoneGo==='function') phoneGo('A5');}
         break; }
       case 'message':    if(Auth.isExpert) _appendMsg(d); break;
       case 'typing':     _showTyping(d); break;
@@ -13869,7 +13873,7 @@ body.expert-page #mob-cta-bar{display:none!important;}
       if(sid2&&sid2===window._obPendingSessId){
         stopStatusPoll();
         var ov2=document.getElementById('ob-waiting-overlay');if(ov2)ov2.classList.remove('show');
-        window._obPendingSessId=null;alert('The expert declined the session.');
+        window._obPendingSessId=null;if(typeof toast==='function')toast('Expert declined — try again','err');
       }
     }
     // new_session_request handled by session-request-sheet only (ob-expert-incoming removed to avoid duplicate popup)
@@ -13888,6 +13892,11 @@ body.expert-page #mob-cta-bar{display:none!important;}
   var _origBegin=window._beginSession;
   window._beginSession=function(){if(myRole()==='admin'||myRole()==='expert'){if(_origBegin)_origBegin();return;}
     var t=tok();if(!t){if(_origBegin)_origBegin();return;}
+    // Clean stale WS state from prior session so ensureClientWS creates fresh connection
+    try{if(window._obClientWs&&window._obClientWs.readyState<=1)window._obClientWs.close();}catch(e){}
+    try{if(window._obWs&&window._obWs.readyState<=1)window._obWs.close();}catch(e){}
+    window._obClientWs=null;window._obWs=null;window._obWsHooked=false;window._obWsConnecting=false;
+    window._obActiveSessId=null;window._obPendingSessId=null;
     var expertId=window._currentExpertId;
     var expertName=(window._currentExpert&&window._currentExpert.name)||'Expert';
     var channel=window._selectedChannel||'chat';

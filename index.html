@@ -4818,7 +4818,7 @@ if (!window.toast) {
           </div>
           <div class="expert-hero-btns">
             <button id="hero-primary-btn" class="btn btn-primary" onclick="handleExpertCTA()"><span id="ew-hero-cta">⚡ Start Session Now</span></button>
-            
+            <button id="hero-book-later-btn" class="btn" style="color:var(--cream);border:2px solid rgba(246,241,233,.3);padding:14px 28px;" onclick="openBookLaterModal()">📅 Book for Later</button>
           </div>
         </div>
       </div>
@@ -5120,59 +5120,6 @@ if (!window.toast) {
         </div>
 
         
-        <!-- SCHEDULE FOR LATER -->
-        <div id="book-later-section" style="background:var(--white);border:1px solid var(--gray-200);border-radius:16px;padding:24px;margin-bottom:28px;">
-          <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">
-            <span style="font-size:22px;">📅</span>
-            <div>
-              <div style="font-weight:700;font-size:16px;color:var(--brown);">Schedule a Session</div>
-              <div style="font-size:13px;color:var(--gray-400);">Pick a date and time that works for you</div>
-            </div>
-          </div>
-
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px;">
-            <div>
-              <label style="font-size:12px;font-weight:600;color:var(--gray-400);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:6px;">Date</label>
-              <input type="date" id="bfl-date" class="settings-field-input" style="cursor:pointer;" onchange="loadBookingSlots()">
-            </div>
-            <div>
-              <label style="font-size:12px;font-weight:600;color:var(--gray-400);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:6px;">Time Slot</label>
-              <select id="bfl-time" class="settings-field-input" style="cursor:pointer;">
-                <option value="">Select a date first</option>
-              </select>
-            </div>
-          </div>
-          <div id="bfl-no-slots" style="display:none;font-size:13px;color:var(--gray-400);padding:8px 0;text-align:center;">No available slots on this date. Try another day.</div>
-
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px;">
-            <div>
-              <label style="font-size:12px;font-weight:600;color:var(--gray-400);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:6px;">Your Name</label>
-              <input type="text" id="bfl-name" class="settings-field-input" placeholder="John Smith">
-            </div>
-            <div>
-              <label style="font-size:12px;font-weight:600;color:var(--gray-400);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:6px;">Your Email</label>
-              <input type="email" id="bfl-email" class="settings-field-input" placeholder="john@example.com">
-            </div>
-          </div>
-
-          <div style="margin-bottom:16px;">
-            <label style="font-size:12px;font-weight:600;color:var(--gray-400);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:6px;">Session Type</label>
-            <div style="display:flex;gap:8px;" id="bfl-channel-btns">
-              <button class="btn btn-sm bfl-ch-btn active" data-ch="chat" onclick="selectBflChannel(this)" style="flex:1;font-size:12px;">💬 Chat</button>
-              <button class="btn btn-sm bfl-ch-btn" data-ch="voice" onclick="selectBflChannel(this)" style="flex:1;font-size:12px;opacity:.5;pointer-events:none;">🎙 Voice <span style="font-size:9px;">(Soon)</span></button>
-              <button class="btn btn-sm bfl-ch-btn" data-ch="video" onclick="selectBflChannel(this)" style="flex:1;font-size:12px;opacity:.5;pointer-events:none;">🎥 Video <span style="font-size:9px;">(Soon)</span></button>
-            </div>
-          </div>
-
-          <div style="margin-bottom:16px;">
-            <label style="font-size:12px;font-weight:600;color:var(--gray-400);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:6px;">Notes (optional)</label>
-            <textarea id="bfl-notes" class="settings-field-input" rows="2" style="resize:vertical;" placeholder="What would you like to discuss?"></textarea>
-          </div>
-
-          <button class="btn btn-primary" style="width:100%;padding:14px;font-size:15px;" id="bfl-submit-btn" onclick="submitBookForLater()">Request Booking →</button>
-          <div id="bfl-status" style="display:none;text-align:center;padding:8px;margin-top:8px;border-radius:8px;font-size:13px;font-weight:600;"></div>
-        </div>
-
         <!-- BOOKING CONFIRMATION SCREEN -->
         <div id="booking-confirmed-screen" style="display:none;text-align:center;padding:40px 0;">
           <div style="font-size:72px;margin-bottom:16px;">✅</div>
@@ -8003,117 +7950,145 @@ function confirmBooking(){
   _showBookingPayment();
 
 
-// ══════════ BOOK FOR LATER ══════════
+// ══════════ BOOK FOR LATER — MODAL FLOW ══════════
 var _bflChannel = 'chat';
-function selectBflChannel(btn) {
-  document.querySelectorAll('.bfl-ch-btn').forEach(function(b){ b.classList.remove('active'); });
-  btn.classList.add('active');
-  _bflChannel = btn.getAttribute('data-ch');
+var _bflSelectedTime = '';
+var _bflSelectedDate = '';
+
+function openBookLaterModal() {
+  var ov = document.getElementById('bfl-overlay');
+  if (ov) { ov.style.display = 'flex'; document.body.style.overflow = 'hidden'; }
+  bflGoStep(1);
+  // Set min date
+  var dp = document.getElementById('bfl-date');
+  if (dp) { dp.min = new Date().toISOString().split('T')[0]; dp.value = ''; }
+  // Reset state
+  _bflSelectedTime = ''; _bflSelectedDate = '';
+  document.getElementById('bfl-slots-grid').innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:20px;color:var(--gray-400);font-size:13px;">Select a date to see available times</div>';
+  document.getElementById('bfl-no-slots').style.display = 'none';
+  var nb = document.getElementById('bfl-next-1'); if (nb) { nb.disabled = true; nb.style.opacity = '.5'; }
+}
+
+function closeBookLaterModal() {
+  var ov = document.getElementById('bfl-overlay');
+  if (ov) { ov.style.display = 'none'; document.body.style.overflow = ''; }
+}
+
+function bflGoStep(n) {
+  [1,2,3].forEach(function(s) {
+    var el = document.getElementById('bfl-step-' + s);
+    if (el) el.style.display = s === n ? 'block' : 'none';
+    var dot = document.getElementById('bfl-dot-' + s);
+    if (dot) dot.style.background = s <= n ? 'var(--terra)' : 'var(--gray-200)';
+  });
+  document.getElementById('bfl-step-success').style.display = 'none';
+  // Populate summary on step 3
+  if (n === 3) {
+    var d = new Date(_bflSelectedDate + 'T12:00:00');
+    document.getElementById('bfl-sum-date').textContent = d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+    var h = parseInt(_bflSelectedTime.split(':')[0]);
+    var m = _bflSelectedTime.split(':')[1];
+    var ampm = h >= 12 ? 'PM' : 'AM';
+    var h12 = h > 12 ? h - 12 : (h === 0 ? 12 : h);
+    document.getElementById('bfl-sum-time').textContent = h12 + ':' + m + ' ' + ampm;
+    document.getElementById('bfl-sum-type').textContent = _bflChannel.charAt(0).toUpperCase() + _bflChannel.slice(1);
+  }
+}
+
+function selectBflChannel(el) {
+  document.querySelectorAll('.bfl-type-btn').forEach(function(b) {
+    b.style.borderColor = 'var(--gray-200)'; b.style.background = 'var(--white)';
+    b.classList.remove('active');
+  });
+  el.style.borderColor = 'var(--terra)'; el.style.background = 'rgba(196,98,45,.06)';
+  el.classList.add('active');
+  _bflChannel = el.getAttribute('data-ch');
+}
+
+function selectBflSlot(btn, time) {
+  document.querySelectorAll('.bfl-slot-btn').forEach(function(b) {
+    b.style.background = 'var(--white)'; b.style.borderColor = 'var(--gray-200)'; b.style.color = 'var(--brown)';
+  });
+  btn.style.background = 'var(--terra)'; btn.style.borderColor = 'var(--terra)'; btn.style.color = '#fff';
+  _bflSelectedTime = time;
+  var nb = document.getElementById('bfl-next-1'); if (nb) { nb.disabled = false; nb.style.opacity = '1'; }
 }
 
 function loadBookingSlots() {
-  var dateInput = document.getElementById('bfl-date');
-  var timeSelect = document.getElementById('bfl-time');
+  var dp = document.getElementById('bfl-date');
+  var grid = document.getElementById('bfl-slots-grid');
   var noSlots = document.getElementById('bfl-no-slots');
-  if (!dateInput || !dateInput.value) return;
-  
+  if (!dp || !dp.value) return;
+  _bflSelectedDate = dp.value;
+  _bflSelectedTime = '';
+  var nb = document.getElementById('bfl-next-1'); if (nb) { nb.disabled = true; nb.style.opacity = '.5'; }
+
   var slug = window._currentExpert ? window._currentExpert.slug : '';
   if (!slug) { var h = window.location.hostname; var parts = h.split('.'); if (parts.length >= 3 && parts[1] === 'ownlybiz') slug = parts[0]; }
   if (!slug) return;
 
-  timeSelect.innerHTML = '<option value="">Loading...</option>';
+  grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:16px;color:var(--gray-400);font-size:13px;">Loading...</div>';
   noSlots.style.display = 'none';
 
-  fetch('https://ownlybiz-backend-production.up.railway.app/api/bookings/slots/' + slug + '?date=' + dateInput.value)
+  fetch('https://ownlybiz-backend-production.up.railway.app/api/bookings/slots/' + slug + '?date=' + dp.value)
     .then(function(r) { return r.json(); })
     .then(function(d) {
       if (!d.slots || d.slots.length === 0) {
-        timeSelect.innerHTML = '<option value="">No slots available</option>';
+        grid.innerHTML = '';
         noSlots.style.display = 'block';
         return;
       }
-      timeSelect.innerHTML = '<option value="">Choose a time</option>';
-      d.slots.forEach(function(s) {
+      noSlots.style.display = 'none';
+      grid.innerHTML = d.slots.map(function(s) {
         var h = parseInt(s.split(':')[0]);
         var m = s.split(':')[1];
         var ampm = h >= 12 ? 'PM' : 'AM';
         var h12 = h > 12 ? h - 12 : (h === 0 ? 12 : h);
-        var opt = document.createElement('option');
-        opt.value = s;
-        opt.textContent = h12 + ':' + m + ' ' + ampm;
-        timeSelect.appendChild(opt);
-      });
+        return '<button class="bfl-slot-btn" onclick="selectBflSlot(this,\'' + s + '\')" style="padding:10px 4px;border:1.5px solid var(--gray-200);border-radius:8px;background:var(--white);font-size:13px;font-weight:600;color:var(--brown);cursor:pointer;font-family:var(--font-body);transition:.15s;">' + h12 + ':' + m + ' ' + ampm + '</button>';
+      }).join('');
     })
-    .catch(function() {
-      timeSelect.innerHTML = '<option value="">Error loading slots</option>';
-    });
+    .catch(function() { grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:16px;color:#dc2626;">Error loading slots</div>'; });
 }
 
 function submitBookForLater() {
   var name = document.getElementById('bfl-name');
   var email = document.getElementById('bfl-email');
-  var date = document.getElementById('bfl-date');
-  var time = document.getElementById('bfl-time');
   var notes = document.getElementById('bfl-notes');
   var btn = document.getElementById('bfl-submit-btn');
   var status = document.getElementById('bfl-status');
 
   if (!name || !name.value.trim()) { alert('Please enter your name.'); return; }
   if (!email || !email.value.trim()) { alert('Please enter your email.'); return; }
-  if (!date || !date.value) { alert('Please select a date.'); return; }
-  if (!time || !time.value) { alert('Please select a time slot.'); return; }
+  if (!_bflSelectedDate || !_bflSelectedTime) { alert('Please select a date and time.'); return; }
 
   var slug = window._currentExpert ? window._currentExpert.slug : '';
   if (!slug) { var h = window.location.hostname; var parts = h.split('.'); if (parts.length >= 3 && parts[1] === 'ownlybiz') slug = parts[0]; }
 
-  btn.disabled = true;
-  btn.textContent = 'Submitting...';
+  btn.disabled = true; btn.textContent = 'Submitting...';
 
   fetch('https://ownlybiz-backend-production.up.railway.app/api/bookings', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      expert_slug: slug,
-      scheduled_date: date.value,
-      scheduled_time: time.value,
-      client_name: name.value.trim(),
-      client_email: email.value.trim(),
-      channel: _bflChannel,
+      expert_slug: slug, scheduled_date: _bflSelectedDate, scheduled_time: _bflSelectedTime,
+      client_name: name.value.trim(), client_email: email.value.trim(), channel: _bflChannel,
       notes: notes ? notes.value.trim() : ''
     })
   })
   .then(function(r) { return r.json(); })
   .then(function(d) {
+    btn.disabled = false; btn.textContent = 'Confirm Booking \u2192';
     if (d.success) {
-      status.style.display = 'block';
-      status.style.background = 'rgba(34,197,94,.1)';
-      status.style.color = '#15803d';
-      status.textContent = '✅ Booking request sent! The expert will confirm shortly.';
-      btn.textContent = 'Booking Sent ✓';
-      // Clear form after 3s
-      setTimeout(function() {
-        name.value = ''; email.value = ''; date.value = ''; time.innerHTML = '<option value="">Select a date first</option>'; notes.value = '';
-        btn.disabled = false; btn.textContent = 'Request Booking →'; status.style.display = 'none';
-      }, 5000);
+      [1,2,3].forEach(function(s) { var el = document.getElementById('bfl-step-' + s); if (el) el.style.display = 'none'; });
+      document.getElementById('bfl-step-success').style.display = 'block';
+      [1,2,3].forEach(function(s) { var dot = document.getElementById('bfl-dot-' + s); if (dot) dot.style.background = 'var(--terra)'; });
     } else {
-      status.style.display = 'block';
-      status.style.background = 'rgba(239,68,68,.1)';
-      status.style.color = '#dc2626';
-      status.textContent = d.error || 'Something went wrong. Please try again.';
-      btn.disabled = false; btn.textContent = 'Request Booking →';
+      status.style.display = 'block'; status.style.background = 'rgba(239,68,68,.1)'; status.style.color = '#dc2626';
+      status.textContent = d.error || 'Something went wrong.';
     }
   })
-  .catch(function() {
-    btn.disabled = false; btn.textContent = 'Request Booking →';
-    alert('Network error. Please try again.');
-  });
+  .catch(function() { btn.disabled = false; btn.textContent = 'Confirm Booking \u2192'; alert('Network error.'); });
 }
-
-// Set min date to today on the date picker
-(function() {
-  var dp = document.getElementById('bfl-date');
-  if (dp) { var now = new Date(); dp.min = now.toISOString().split('T')[0]; }
-})();
 
 // ══════════ EXPERT DASHBOARD BOOKINGS ══════════
 var _bookingsFilter = 'all';
@@ -15649,5 +15624,103 @@ function openClientChat(sid){
 })();
 </script>
 <!-- END STRIPE CONNECT RETURN HANDLER -->
+
+<!-- ═══ BOOK FOR LATER MODAL ═══ -->
+<div id="bfl-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:99999;align-items:center;justify-content:center;padding:20px;" onclick="if(event.target===this)closeBookLaterModal()">
+  <div style="background:var(--cream,#f6f1e9);border-radius:20px;max-width:480px;width:100%;max-height:90vh;overflow-y:auto;box-shadow:0 24px 80px rgba(0,0,0,.3);">
+    <!-- Header -->
+    <div style="padding:24px 24px 0;display:flex;align-items:center;justify-content:space-between;">
+      <div style="font-family:var(--font-head);font-size:22px;font-weight:700;color:var(--brown);">📅 Schedule a Session</div>
+      <button onclick="closeBookLaterModal()" style="background:none;border:none;font-size:22px;cursor:pointer;color:var(--gray-400);padding:4px;">×</button>
+    </div>
+    <div style="padding:0 24px;font-size:13px;color:var(--gray-400);margin-bottom:20px;">Pick a time that works for you. The expert will confirm.</div>
+
+    <!-- Step indicators -->
+    <div style="display:flex;gap:4px;padding:0 24px;margin-bottom:20px;">
+      <div class="bfl-step-dot active" id="bfl-dot-1" style="flex:1;height:4px;border-radius:4px;background:var(--terra);transition:.3s;"></div>
+      <div class="bfl-step-dot" id="bfl-dot-2" style="flex:1;height:4px;border-radius:4px;background:var(--gray-200);transition:.3s;"></div>
+      <div class="bfl-step-dot" id="bfl-dot-3" style="flex:1;height:4px;border-radius:4px;background:var(--gray-200);transition:.3s;"></div>
+    </div>
+
+    <!-- STEP 1: Date & Time -->
+    <div id="bfl-step-1" style="padding:0 24px 24px;">
+      <div style="margin-bottom:16px;">
+        <label style="font-size:12px;font-weight:700;color:var(--brown);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:8px;">Select a Date</label>
+        <input type="date" id="bfl-date" style="width:100%;padding:12px 14px;border:1.5px solid var(--gray-200);border-radius:10px;font-size:15px;font-family:var(--font-body);background:var(--white);color:var(--brown);cursor:pointer;" onchange="loadBookingSlots()">
+      </div>
+      <div style="margin-bottom:16px;">
+        <label style="font-size:12px;font-weight:700;color:var(--brown);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:8px;">Available Times</label>
+        <div id="bfl-slots-grid" style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;">
+          <div style="grid-column:1/-1;text-align:center;padding:20px;color:var(--gray-400);font-size:13px;">Select a date to see available times</div>
+        </div>
+        <div id="bfl-no-slots" style="display:none;text-align:center;padding:16px;color:var(--gray-400);font-size:13px;background:rgba(239,68,68,.05);border-radius:10px;">No available slots on this date. Try another day.</div>
+      </div>
+      <button class="btn btn-primary" style="width:100%;padding:14px;font-size:15px;" id="bfl-next-1" onclick="bflGoStep(2)" disabled>Continue →</button>
+    </div>
+
+    <!-- STEP 2: Session Type & Details -->
+    <div id="bfl-step-2" style="display:none;padding:0 24px 24px;">
+      <div style="margin-bottom:16px;">
+        <label style="font-size:12px;font-weight:700;color:var(--brown);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:8px;">Session Type</label>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;">
+          <div class="bfl-type-btn active" data-ch="chat" onclick="selectBflChannel(this)" style="border:1.5px solid var(--terra);background:rgba(196,98,45,.06);border-radius:10px;padding:12px;text-align:center;cursor:pointer;transition:.2s;">
+            <div style="font-size:20px;margin-bottom:4px;">💬</div>
+            <div style="font-size:12px;font-weight:600;color:var(--brown);">Chat</div>
+          </div>
+          <div class="bfl-type-btn" data-ch="voice" onclick="selectBflChannel(this)" style="border:1.5px solid var(--gray-200);background:var(--white);border-radius:10px;padding:12px;text-align:center;cursor:pointer;opacity:.5;pointer-events:none;">
+            <div style="font-size:20px;margin-bottom:4px;">🎙</div>
+            <div style="font-size:12px;font-weight:600;color:var(--gray-400);">Voice</div>
+            <div style="font-size:9px;color:var(--gray-300);">Coming Soon</div>
+          </div>
+          <div class="bfl-type-btn" data-ch="video" onclick="selectBflChannel(this)" style="border:1.5px solid var(--gray-200);background:var(--white);border-radius:10px;padding:12px;text-align:center;cursor:pointer;opacity:.5;pointer-events:none;">
+            <div style="font-size:20px;margin-bottom:4px;">🎥</div>
+            <div style="font-size:12px;font-weight:600;color:var(--gray-400);">Video</div>
+            <div style="font-size:9px;color:var(--gray-300);">Coming Soon</div>
+          </div>
+        </div>
+      </div>
+      <div style="margin-bottom:16px;">
+        <label style="font-size:12px;font-weight:700;color:var(--brown);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:8px;">Notes for the expert (optional)</label>
+        <textarea id="bfl-notes" style="width:100%;padding:12px 14px;border:1.5px solid var(--gray-200);border-radius:10px;font-size:14px;font-family:var(--font-body);background:var(--white);color:var(--brown);resize:vertical;min-height:60px;" placeholder="What would you like to discuss?"></textarea>
+      </div>
+      <div style="display:flex;gap:10px;">
+        <button class="btn" style="flex:1;padding:14px;color:var(--gray-400);" onclick="bflGoStep(1)">← Back</button>
+        <button class="btn btn-primary" style="flex:2;padding:14px;font-size:15px;" onclick="bflGoStep(3)">Continue →</button>
+      </div>
+    </div>
+
+    <!-- STEP 3: Your Details & Confirm -->
+    <div id="bfl-step-3" style="display:none;padding:0 24px 24px;">
+      <!-- Summary -->
+      <div style="background:var(--white);border:1px solid var(--gray-200);border-radius:12px;padding:16px;margin-bottom:16px;">
+        <div style="font-size:11px;font-weight:700;color:var(--gray-400);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;">Booking Summary</div>
+        <div style="display:flex;justify-content:space-between;font-size:14px;margin-bottom:6px;"><span style="color:var(--gray-400);">Date</span><span style="font-weight:600;color:var(--brown);" id="bfl-sum-date">—</span></div>
+        <div style="display:flex;justify-content:space-between;font-size:14px;margin-bottom:6px;"><span style="color:var(--gray-400);">Time</span><span style="font-weight:600;color:var(--brown);" id="bfl-sum-time">—</span></div>
+        <div style="display:flex;justify-content:space-between;font-size:14px;"><span style="color:var(--gray-400);">Type</span><span style="font-weight:600;color:var(--brown);" id="bfl-sum-type">Chat</span></div>
+      </div>
+      <div style="margin-bottom:12px;">
+        <label style="font-size:12px;font-weight:700;color:var(--brown);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:8px;">Your Name</label>
+        <input type="text" id="bfl-name" style="width:100%;padding:12px 14px;border:1.5px solid var(--gray-200);border-radius:10px;font-size:14px;font-family:var(--font-body);background:var(--white);" placeholder="John Smith">
+      </div>
+      <div style="margin-bottom:20px;">
+        <label style="font-size:12px;font-weight:700;color:var(--brown);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:8px;">Your Email</label>
+        <input type="email" id="bfl-email" style="width:100%;padding:12px 14px;border:1.5px solid var(--gray-200);border-radius:10px;font-size:14px;font-family:var(--font-body);background:var(--white);" placeholder="john@example.com">
+      </div>
+      <div style="display:flex;gap:10px;">
+        <button class="btn" style="flex:1;padding:14px;color:var(--gray-400);" onclick="bflGoStep(2)">← Back</button>
+        <button class="btn btn-primary" style="flex:2;padding:14px;font-size:15px;" id="bfl-submit-btn" onclick="submitBookForLater()">Confirm Booking →</button>
+      </div>
+      <div id="bfl-status" style="display:none;text-align:center;padding:10px;margin-top:10px;border-radius:10px;font-size:13px;font-weight:600;"></div>
+    </div>
+
+    <!-- SUCCESS SCREEN -->
+    <div id="bfl-step-success" style="display:none;padding:24px;text-align:center;">
+      <div style="font-size:56px;margin-bottom:12px;">✅</div>
+      <div style="font-family:var(--font-head);font-size:22px;font-weight:700;color:var(--brown);margin-bottom:8px;">Booking Requested!</div>
+      <div style="font-size:14px;color:var(--gray-400);margin-bottom:20px;">The expert will review and confirm your booking shortly. You'll receive an email confirmation.</div>
+      <button class="btn btn-primary" style="padding:14px 32px;" onclick="closeBookLaterModal()">Done</button>
+    </div>
+  </div>
+</div>
 </body>
 </html>

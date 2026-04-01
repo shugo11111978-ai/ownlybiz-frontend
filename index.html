@@ -3721,6 +3721,10 @@ if (!window.toast) {
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
                 Billing & Payouts
               </div>
+              <div class="settings-nav-item" onclick="settingsNav(this,'sblock-email')">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M22 7l-10 7L2 7"/></svg>
+                Email
+              </div>
               <div class="settings-nav-item" onclick="settingsNav(this,'sblock-security')">
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
                 Security
@@ -4362,6 +4366,49 @@ if (!window.toast) {
                 <div class="settings-save-row">
                   <button class="btn btn-primary" onclick="saveSettingsBlock('billing')">Save Billing Settings</button>
                   <span class="save-status" id="save-status-billing"></span>
+                </div>
+              </div>
+
+              <!-- ══════════════════ EMAIL PROVIDER ══════════════════ -->
+              <div class="settings-block" id="sblock-email" style="display:none;">
+                <h3 class="settings-section-title">Email Provider</h3>
+                <p style="font-size:13px;color:var(--gray-400);margin-bottom:20px;">Configure email delivery for booking confirmations and reminders. Leave empty to use Ownlybiz default.</p>
+
+                <div class="settings-field-row" style="flex-direction:column;align-items:stretch;">
+                  <div class="settings-field-label" style="margin-bottom:8px;">Provider</div>
+                  <select id="email-provider" class="settings-field-input" onchange="toggleEmailFields()">
+                    <option value="">None (use Ownlybiz default)</option>
+                    <option value="sendgrid">SendGrid</option>
+                    <option value="mailgun">Mailgun</option>
+                    <option value="smtp">Custom SMTP</option>
+                  </select>
+                </div>
+
+                <div id="email-api-fields" style="display:none;">
+                  <div class="settings-field-row" style="flex-direction:column;align-items:stretch;margin-top:16px;">
+                    <div class="settings-field-label" style="margin-bottom:8px;">API Key <span id="email-key-label">(SendGrid API Key)</span></div>
+                    <input type="password" id="email-api-key" class="settings-field-input" placeholder="SG.xxxx... or key-xxxx...">
+                    <div style="font-size:11px;color:var(--gray-400);margin-top:4px;" id="email-key-hint">Get your API key from your provider's dashboard.</div>
+                  </div>
+
+                  <div class="settings-field-row" style="flex-direction:column;align-items:stretch;margin-top:16px;">
+                    <div class="settings-field-label" style="margin-bottom:8px;">From Name</div>
+                    <input type="text" id="email-from-name" class="settings-field-input" placeholder="Your Business Name">
+                  </div>
+
+                  <div class="settings-field-row" style="flex-direction:column;align-items:stretch;margin-top:16px;">
+                    <div class="settings-field-label" style="margin-bottom:8px;">From Email</div>
+                    <input type="email" id="email-from-address" class="settings-field-input" placeholder="noreply@yourdomain.com">
+                  </div>
+                </div>
+
+                <div id="email-smtp-hint" style="display:none;margin-top:12px;padding:12px;background:rgba(196,98,45,.05);border-radius:10px;font-size:12px;color:var(--gray-500);">
+                  For custom SMTP, enter the API Key field as: <strong>host:port:username:password</strong><br>
+                  Example: <code>smtp.gmail.com:587:user@gmail.com:app-password</code>
+                </div>
+
+                <div class="settings-save-row" style="margin-top:20px;">
+                  <button class="btn btn-primary" onclick="saveEmailSettings()">Save Email Settings</button>
                 </div>
               </div>
 
@@ -10382,6 +10429,8 @@ async function savePaymentConfig() {
     if(aoEl) aoEl.checked = p.accept_offline !== 0;
     var aaEl=document.getElementById('avail-auto-accept');
     if(aaEl) aaEl.checked = !!p.auto_accept_bookings;
+    // Load email settings
+    if(typeof loadEmailSettings==='function') loadEmailSettings(p);
 
     // ── Populate availability days & hours ──
     var avail = me.availability || [];
@@ -15940,6 +15989,71 @@ function joinActiveBookingSession(sessionId, expertId, channel) {
     if (typeof _prevSSB === 'function') _prevSSB.call(this, section);
   };
 })();
+
+// ══════════ EMAIL SETTINGS ══════════
+function toggleEmailFields() {
+  var provider = document.getElementById('email-provider');
+  var fields = document.getElementById('email-api-fields');
+  var smtpHint = document.getElementById('email-smtp-hint');
+  var keyLabel = document.getElementById('email-key-label');
+  var keyHint = document.getElementById('email-key-hint');
+  if (!provider) return;
+  var val = provider.value;
+  if (val) {
+    fields.style.display = 'block';
+    smtpHint.style.display = val === 'smtp' ? 'block' : 'none';
+    if (val === 'sendgrid') { keyLabel.textContent = '(SendGrid API Key)'; keyHint.textContent = 'Get your API key from app.sendgrid.com > Settings > API Keys'; }
+    else if (val === 'mailgun') { keyLabel.textContent = '(Mailgun API Key)'; keyHint.textContent = 'Get your API key from app.mailgun.com > API Keys'; }
+    else if (val === 'smtp') { keyLabel.textContent = '(SMTP Connection String)'; keyHint.textContent = 'Format: host:port:username:password'; }
+  } else {
+    fields.style.display = 'none';
+    smtpHint.style.display = 'none';
+  }
+}
+
+function saveEmailSettings() {
+  var BASE = 'https://ownlybiz-backend-production.up.railway.app';
+  var tok = sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t');
+  if (!tok) { if(typeof toast==='function') toast('Not logged in','err'); return; }
+  var provider = document.getElementById('email-provider')?.value || '';
+  var apiKey = document.getElementById('email-api-key')?.value || '';
+  var fromName = document.getElementById('email-from-name')?.value || '';
+  var fromAddress = document.getElementById('email-from-address')?.value || '';
+
+  fetch(BASE + '/api/auth/me', {
+    method: 'PUT',
+    headers: {'Content-Type':'application/json', 'Authorization':'Bearer '+tok},
+    body: JSON.stringify({
+      email_provider: provider,
+      email_api_key: apiKey,
+      email_from_name: fromName,
+      email_from_address: fromAddress
+    })
+  })
+  .then(function(r){ return r.json(); })
+  .then(function(d){
+    if (d.success) { if(typeof toast==='function') toast('Email settings saved!'); }
+    else { if(typeof toast==='function') toast(d.error || 'Save failed','err'); }
+  })
+  .catch(function(e){ if(typeof toast==='function') toast('Error: '+e.message,'err'); });
+}
+
+// Load email settings into the form
+function loadEmailSettings(profile) {
+  if (!profile) return;
+  var provEl = document.getElementById('email-provider');
+  if (provEl && profile.email_provider) {
+    provEl.value = profile.email_provider;
+    toggleEmailFields();
+  }
+  var keyEl = document.getElementById('email-api-key');
+  if (keyEl && profile.email_api_key) keyEl.value = profile.email_api_key;
+  var nameEl = document.getElementById('email-from-name');
+  if (nameEl && profile.email_from_name) nameEl.value = profile.email_from_name;
+  var addrEl = document.getElementById('email-from-address');
+  if (addrEl && profile.email_from_address) addrEl.value = profile.email_from_address;
+}
+
 </script>
 <!-- ═══ BOOK FOR LATER MODAL ═══ -->
 <div id="bfl-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:99999;align-items:center;justify-content:center;padding:20px;" onclick="if(event.target===this)closeBookLaterModal()">

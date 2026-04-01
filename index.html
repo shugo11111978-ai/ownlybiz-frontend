@@ -15541,6 +15541,8 @@ window.bflGoStep = function(n) {
     var h12 = h > 12 ? h - 12 : (h === 0 ? 12 : h);
     document.getElementById('bfl-sum-time').textContent = h12 + ':' + m + ' ' + ampm;
     document.getElementById('bfl-sum-type').textContent = _bflChannel.charAt(0).toUpperCase() + _bflChannel.slice(1);
+    // Mount Stripe card element
+    if (typeof mountBflCardElement === 'function') mountBflCardElement();
   }
 }
 
@@ -15614,6 +15616,56 @@ window.bflAuthMode = function(mode) {
   var err = document.getElementById('bfl-auth-error'); if (err) err.style.display = 'none';
 };
 
+// Stripe Elements for booking card
+var _bflStripe = null;
+var _bflCardElement = null;
+var _bflCardReady = false;
+
+function mountBflCardElement() {
+  var cardDiv = document.getElementById('bfl-card-element');
+  var cardSection = document.getElementById('bfl-card-section');
+  if (!cardDiv || !cardSection) return;
+  // Show card section
+  cardSection.style.display = 'block';
+  
+  if (_bflCardElement) return; // Already mounted
+  
+  // Initialize Stripe
+  try {
+    var pk = window._stripePk || '';
+    if (!pk) {
+      // Fetch publishable key
+      fetch('https://ownlybiz-backend-production.up.railway.app/api/payments/config')
+        .then(function(r){ return r.json(); })
+        .then(function(d){
+          if (d.publishable_key) {
+            window._stripePk = d.publishable_key;
+            _bflStripe = Stripe(d.publishable_key);
+            var elements = _bflStripe.elements();
+            _bflCardElement = elements.create('card', {
+              style: { base: { fontSize: '14px', fontFamily: 'var(--font-body), sans-serif', color: '#5a3a1a', '::placeholder': { color: '#b0a08e' } } }
+            });
+            _bflCardElement.mount('#bfl-card-element');
+            _bflCardElement.on('ready', function(){ _bflCardReady = true; });
+            _bflCardElement.on('change', function(e){
+              var err = document.getElementById('bfl-card-error');
+              if (e.error) { err.textContent = e.error.message; err.style.display = 'block'; }
+              else { err.style.display = 'none'; }
+            });
+          }
+        }).catch(function(){ console.warn('Could not load Stripe config'); });
+    } else {
+      _bflStripe = Stripe(pk);
+      var elements = _bflStripe.elements();
+      _bflCardElement = elements.create('card', {
+        style: { base: { fontSize: '14px', fontFamily: 'var(--font-body), sans-serif', color: '#5a3a1a', '::placeholder': { color: '#b0a08e' } } }
+      });
+      _bflCardElement.mount('#bfl-card-element');
+      _bflCardElement.on('ready', function(){ _bflCardReady = true; });
+    }
+  } catch(e) { console.warn('Stripe init error:', e); }
+}
+
 window.submitBookForLater = function() {
   var btn = document.getElementById('bfl-submit-btn');
   var status = document.getElementById('bfl-status');
@@ -15627,10 +15679,9 @@ window.submitBookForLater = function() {
 
   btn.disabled = true; btn.textContent = 'Processing...';
 
-  // Step A: Authenticate (signup or login)
+  // ── STEP A: Authenticate ──
   var authPromise;
   if (_bflClientToken) {
-    // Already authenticated
     authPromise = Promise.resolve({token: _bflClientToken, name: '', email: ''});
   } else if (_bflAuthMode === 'signup') {
     var name = document.getElementById('bfl-name')?.value?.trim();
@@ -15663,8 +15714,49 @@ window.submitBookForLater = function() {
     });
   }
 
-  // Step B: Create booking with auth token
+  // ── STEP B: Save card (if Stripe is available) ──
   authPromise.then(function(auth) {
+    btn.textContent = 'Saving card...';
+    
+    // Skip card if Stripe not loaded or no card element
+    if (!_bflStripe || !_bflCardElement) {
+      return {auth: auth, cardSaved: false};
+    }
+
+    return fetch(BASE + '/api/payments/methods/setup', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json', 'Authorization':'Bearer '+auth.token}
+    })
+    .then(function(r){ return r.json(); })
+    .then(function(d) {
+      if (!d.client_secret) {
+        // Stripe not configured on backend — skip card
+        return {auth: auth, cardSaved: false};
+      }
+      return _bflStripe.confirmCardSetup(d.client_secret, {
+        payment_method: { card: _bflCardElement }
+      }).then(function(result) {
+        if (result.error) {
+          var cardErr = document.getElementById('bfl-card-error');
+          if (cardErr) { cardErr.textContent = result.error.message; cardErr.style.display = 'block'; }
+          throw new Error('card_error');
+        }
+        var savedEl = document.getElementById('bfl-card-saved');
+        if (savedEl) savedEl.style.display = 'block';
+        return {auth: auth, cardSaved: true};
+      });
+    })
+    .catch(function(e) {
+      if (e.message === 'card_error') throw e;
+      // Non-fatal: Stripe not configured, continue without card
+      console.warn('Card save skipped:', e.message);
+      return {auth: auth, cardSaved: false};
+    });
+
+  // ── STEP C: Create booking ──
+  }).then(function(data) {
+    btn.textContent = 'Confirming booking...';
+    var auth = data.auth;
     var clientName = auth.name || document.getElementById('bfl-name')?.value?.trim() || '';
     var clientEmail = auth.email || document.getElementById('bfl-email')?.value?.trim() || '';
     var notes = document.getElementById('bfl-notes')?.value?.trim() || '';
@@ -15679,6 +15771,7 @@ window.submitBookForLater = function() {
         notes: notes
       })
     }).then(function(r){return r.json();});
+
   }).then(function(d) {
     btn.disabled = false; btn.textContent = 'Confirm Booking \u2192';
     if (d && d.success) {
@@ -15690,7 +15783,7 @@ window.submitBookForLater = function() {
     }
   }).catch(function(e) {
     btn.disabled = false; btn.textContent = 'Confirm Booking \u2192';
-    if (e.message !== 'exists') {
+    if (e.message !== 'exists' && e.message !== 'card_error') {
       if(authErr){authErr.textContent=e.message;authErr.style.display='block';}
     }
   });
@@ -16162,6 +16255,13 @@ function loadEmailSettings(profile) {
         </div>
       </div>
       <div id="bfl-auth-error" style="display:none;background:rgba(239,68,68,.08);border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:12px;color:#dc2626;font-weight:600;"></div>
+      <div id="bfl-card-section" style="display:none;margin-bottom:16px;">
+        <label style="font-size:12px;font-weight:700;color:var(--brown);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:8px;">Payment Card</label>
+        <div style="font-size:12px;color:var(--gray-400);margin-bottom:10px;">Your card will be saved for the session. You won't be charged until the session starts.</div>
+        <div id="bfl-card-element" style="padding:12px 14px;border:1.5px solid var(--gray-200);border-radius:10px;background:var(--white);min-height:20px;"></div>
+        <div id="bfl-card-error" style="display:none;color:#dc2626;font-size:12px;margin-top:6px;font-weight:600;"></div>
+        <div id="bfl-card-saved" style="display:none;background:rgba(34,197,94,.08);border-radius:8px;padding:8px 12px;margin-top:8px;font-size:12px;color:#15803d;font-weight:600;">✓ Card saved securely</div>
+      </div>
       <div style="display:flex;gap:10px;">
         <button class="btn" style="flex:1;padding:14px;color:var(--gray-400);" onclick="bflGoStep(2)">← Back</button>
         <button class="btn btn-primary" style="flex:2;padding:14px;font-size:15px;" id="bfl-submit-btn" onclick="submitBookForLater()">Confirm Booking →</button>

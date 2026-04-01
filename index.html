@@ -4170,11 +4170,11 @@ if (!window.toast) {
                 </div>
                 <div class="settings-field-row">
                   <div><div class="settings-field-label">Auto-accept bookings</div><div class="settings-field-sub">Skip manual approval for scheduled sessions</div></div>
-                  <label class="toggle-sm"><input type="checkbox"><div class="toggle-sm-track"></div><div class="toggle-sm-thumb"></div></label>
+                  <label class="toggle-sm"><input type="checkbox" id="avail-auto-accept"><div class="toggle-sm-track"></div><div class="toggle-sm-thumb"></div></label>
                 </div>
                 <div class="settings-field-row">
                   <div><div class="settings-field-label">Accept sessions when offline</div><div class="settings-field-sub">Allow bookings even when your status is offline</div></div>
-                  <label class="toggle-sm"><input type="checkbox" checked><div class="toggle-sm-track"></div><div class="toggle-sm-thumb"></div></label>
+                  <label class="toggle-sm"><input type="checkbox" checked id="avail-accept-offline"><div class="toggle-sm-track"></div><div class="toggle-sm-thumb"></div></label>
                 </div>
 
                 <div class="settings-save-row">
@@ -7965,10 +7965,19 @@ function setExpertOnlineStatus(isOnline) {
     'presess-begin-btn':   function(el){ if(on){ el.disabled=false; el.style.opacity='1'; el.style.pointerEvents=''; el.innerHTML='Begin Session \u2192'; } else { el.disabled=true; el.style.opacity='.5'; el.style.pointerEvents='none'; el.innerHTML='Expert is Offline'; } },
     'hero-primary-btn':    function(el){ el.style.opacity = on ? '1' : '.5'; },
     'bottom-cta-btn':      function(el){ el.style.opacity = on ? '1' : '.5'; },
-    'confirm-booking-btn': function(el){ if(on){ el.style.opacity='1'; el.style.pointerEvents=''; } else { el.style.opacity='.5'; el.style.pointerEvents='none'; } }
+    'confirm-booking-btn': function(el){ if(on){ el.style.opacity='1'; el.style.pointerEvents=''; } else { el.style.opacity='.5'; el.style.pointerEvents='none'; } },
+    'hero-book-later-btn': function(el){
+      var acceptOffline = window._currentExpert ? window._currentExpert.accept_offline : 1;
+      if (on || acceptOffline !== 0) { el.style.display=''; } else { el.style.display='none'; }
+    }
   };
   Object.keys(jobs).forEach(function(id){ var el=document.getElementById(id); if(el) jobs[id](el); });
   document.querySelectorAll('#ep-services .btn').forEach(function(btn){ if(btn.textContent.match(/Start|Call|Book/i)){ btn.style.opacity=on?'1':'.5'; btn.style.pointerEvents=on?'':'none'; } });
+  // Hide/show all 'Schedule for Later' buttons based on accept_offline
+  var _acceptOffline = window._currentExpert ? window._currentExpert.accept_offline : 1;
+  document.querySelectorAll('[onclick*="openBookLaterModal"]').forEach(function(btn){
+    if (on || _acceptOffline !== 0) { btn.style.display=''; } else { btn.style.display='none'; }
+  });
 }
 function loadExpertOnlineStatus(slug) {
   if (!slug || slug === '') return;
@@ -10368,6 +10377,11 @@ async function savePaymentConfig() {
     var kr=document.getElementById('db-kpi-reviews');if(kr&&p?.review_count!=null)kr.textContent=p.review_count+' reviews';
     // Apply website content to template
     if(typeof _applyExpertWebsite==='function') _applyExpertWebsite(p);
+    // Booking toggles
+    var aoEl=document.getElementById('avail-accept-offline');
+    if(aoEl) aoEl.checked = p.accept_offline !== 0;
+    var aaEl=document.getElementById('avail-auto-accept');
+    if(aaEl) aaEl.checked = !!p.auto_accept_bookings;
   }
 
   function _applyDashStats(dash) {
@@ -10729,6 +10743,13 @@ async function savePaymentConfig() {
           days.push({day_of_week:dow,is_active:btn.classList.contains('active'),start_time:startTime,end_time:endTime});
         });
         await api('PUT','/experts/me/availability',{schedule:days});
+        // Save booking settings toggles
+        var acceptOffline = document.getElementById('avail-accept-offline');
+        var autoAccept = document.getElementById('avail-auto-accept');
+        await api('PUT','/auth/me',{
+          accept_offline: acceptOffline ? (acceptOffline.checked ? 1 : 0) : 1,
+          auto_accept_bookings: autoAccept ? (autoAccept.checked ? 1 : 0) : 0
+        });
         toast('Availability saved!'); if(_origSaveSettings) _origSaveSettings(section); btnLoad(btn,false); return;
       }
       if(section==='seo') {

@@ -15489,6 +15489,7 @@ var _bflClientToken = null;
 var _bflStripe = null;
 var _bflCardElement = null;
 var _bflCardReady = false;
+var _bflCardComplete = false;
 var _bflStripeConfigured = null;
 
 window.openBookLaterModal = function() {
@@ -15632,6 +15633,7 @@ function mountBflCardElement() {
               var err = document.getElementById('bfl-card-error');
               if (e.error) { err.textContent = e.error.message; err.style.display = 'block'; }
               else { err.style.display = 'none'; }
+              _bflCardComplete = !!e.complete;
             });
           } else {
             _bflStripeConfigured = false;
@@ -15692,11 +15694,20 @@ window.submitBookForLater = function() {
   // STEP B: Save card
   authPromise.then(function(auth) {
     btn.textContent = 'Saving card...';
-    if (_bflStripeConfigured === true && (!_bflStripe || !_bflCardElement)) {
-      var ce = document.getElementById('bfl-card-error');
-      if (ce) { ce.textContent = 'Payment card is required.'; ce.style.display = 'block'; }
-      btn.disabled = false; btn.textContent = 'Confirm Booking \u2192';
-      throw new Error('card_required');
+    // Block if Stripe is configured but card not filled in
+    if (_bflStripeConfigured === true) {
+      if (!_bflStripe || !_bflCardElement) {
+        var ce = document.getElementById('bfl-card-error');
+        if (ce) { ce.textContent = 'Payment card is required.'; ce.style.display = 'block'; }
+        btn.disabled = false; btn.textContent = 'Confirm Booking \u2192';
+        throw new Error('card_required');
+      }
+      if (!_bflCardComplete) {
+        var ce = document.getElementById('bfl-card-error');
+        if (ce) { ce.textContent = 'Please enter your complete card details.'; ce.style.display = 'block'; }
+        btn.disabled = false; btn.textContent = 'Confirm Booking \u2192';
+        throw new Error('card_required');
+      }
     }
     if (!_bflStripe || !_bflCardElement) { return { auth: auth, cardSaved: false }; }
     return fetch(BASE + '/api/payments/methods/setup', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + auth.token } })
@@ -15707,7 +15718,15 @@ window.submitBookForLater = function() {
           var sv = document.getElementById('bfl-card-saved'); if (sv) sv.style.display = 'block';
           return { auth: auth, cardSaved: true };
         });
-      }).catch(function(e) { if (e.message === 'card_error') throw e; return { auth: auth, cardSaved: false }; });
+      }).catch(function(e) { if (e.message === 'card_error') throw e;
+      // If Stripe is configured, card errors are fatal
+      if (_bflStripeConfigured === true) {
+        var ce = document.getElementById('bfl-card-error');
+        if (ce) { ce.textContent = e.message || 'Card save failed. Please try again.'; ce.style.display = 'block'; }
+        btn.disabled = false; btn.textContent = 'Confirm Booking \u2192';
+        throw new Error('card_error');
+      }
+      return { auth: auth, cardSaved: false }; });
 
   // STEP C: Create booking
   }).then(function(data) {

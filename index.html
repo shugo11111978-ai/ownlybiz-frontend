@@ -15712,6 +15712,12 @@ function renderBookings(bookings) {
         '<button class="btn btn-sm" style="background:rgba(239,68,68,.1);color:#dc2626;font-size:11px;padding:6px 14px;" onclick="updateBookingStatus(\'' + b.id + '\',\'declined\')">✗ Decline</button>' +
         '</div>';
     }
+    if (b.status === 'confirmed') {
+      actions = '<div style="display:flex;gap:6px;margin-top:10px;">' +
+        '<button class="btn btn-sm" style="background:var(--terra);color:white;font-size:12px;padding:8px 18px;font-weight:600;" onclick="startBookingSession(\x27' + b.id + '\x27)">▶ Start Session</button>' +
+        '<button class="btn btn-sm" style="background:rgba(239,68,68,.08);color:#dc2626;font-size:11px;padding:6px 14px;" onclick="updateBookingStatus(\x27' + b.id + '\x27,\x27cancelled\x27)">Cancel</button>' +
+        '</div>';
+    }
     return '<div class="db-card" style="padding:16px;">' +
       '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;">' +
         '<div style="flex:1;">' +
@@ -15749,6 +15755,145 @@ function updateBookingStatus(id, status) {
   })
   .catch(function() { alert('Network error'); });
 }
+
+// ══════════ START BOOKING SESSION (EXPERT SIDE) ══════════
+function startBookingSession(bookingId) {
+  var BASE = 'https://ownlybiz-backend-production.up.railway.app';
+  var tok = sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t');
+  if (!tok) { alert('Not logged in'); return; }
+
+  // Disable button
+  var btn = event && event.target;
+  if (btn) { btn.disabled = true; btn.textContent = 'Starting...'; }
+
+  fetch(BASE + '/api/bookings/' + bookingId + '/start', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json', 'Authorization':'Bearer '+tok}
+  })
+  .then(function(r){ return r.json(); })
+  .then(function(d) {
+    if (d.success && d.session) {
+      if(typeof toast==='function') toast('Session started! Connecting...','green');
+      // Store session info
+      window._sid = d.session.id;
+      window._obActiveSessId = d.session.id;
+      // Navigate to live session panel
+      var nav = document.querySelector('[onclick*="live-session"]');
+      if (nav) nav.click();
+      else if (typeof dbNav === 'function') dbNav(null, 'live-session');
+      // Reload bookings
+      if (typeof loadExpertBookings === 'function') loadExpertBookings();
+    } else {
+      alert(d.error || 'Failed to start session');
+      if (btn) { btn.disabled = false; btn.textContent = '▶ Start Session'; }
+    }
+  })
+  .catch(function(e) {
+    alert('Network error: ' + e.message);
+    if (btn) { btn.disabled = false; btn.textContent = '▶ Start Session'; }
+  });
+}
+
+// ══════════ CLIENT BOOKING JOIN ══════════
+// Check URL for ?booking=ID parameter — client joining a scheduled session
+(function(){
+  var params = new URLSearchParams(window.location.search);
+  var bookingId = params.get('booking');
+  if (!bookingId) return;
+
+  var BASE = 'https://ownlybiz-backend-production.up.railway.app';
+
+  // Show a joining overlay
+  function showBookingJoinScreen(data) {
+    // Remove existing overlay if any
+    var old = document.getElementById('booking-join-overlay');
+    if (old) old.remove();
+
+    var expertName = data.expert ? data.expert.name : 'Expert';
+    var date = data.booking ? data.booking.scheduled_date : '';
+    var time = data.booking ? data.booking.scheduled_time : '';
+    var channel = data.booking ? data.booking.channel : 'chat';
+    var status = data.status;
+
+    var d = new Date(date + 'T12:00:00');
+    var dateStr = d.toLocaleDateString('en-US', { weekday:'long', month:'long', day:'numeric' });
+    var h = parseInt((time||'').split(':')[0]||0), m = (time||'').split(':')[1]||'00';
+    var ampm = h >= 12 ? 'PM' : 'AM';
+    var h12 = h > 12 ? h - 12 : (h === 0 ? 12 : h);
+    var timeStr = h12 + ':' + m + ' ' + ampm;
+
+    var statusHTML = '';
+    if (status === 'active') {
+      statusHTML = '<div style="background:rgba(34,197,94,.1);border-radius:12px;padding:16px;text-align:center;margin-bottom:20px;">' +
+        '<div style="font-size:28px;margin-bottom:6px;">🟢</div>' +
+        '<div style="font-weight:700;color:#15803d;font-size:16px;">Session is Live!</div>' +
+        '<div style="font-size:13px;color:#15803d;">Click below to join the ' + channel + ' session.</div>' +
+        '</div>' +
+        '<button class="btn btn-primary" style="width:100%;padding:14px;font-size:16px;" onclick="joinActiveBookingSession(\'' + data.session.id + '\',\'' + data.booking.expert_id + '\',\'' + channel + '\')">Join Session →</button>';
+    } else if (status === 'waiting') {
+      statusHTML = '<div style="background:rgba(245,158,11,.08);border-radius:12px;padding:16px;text-align:center;margin-bottom:20px;">' +
+        '<div style="font-size:28px;margin-bottom:6px;">⏳</div>' +
+        '<div style="font-weight:700;color:#b45309;font-size:16px;">Waiting for Expert</div>' +
+        '<div style="font-size:13px;color:#92400e;">Your session is confirmed. The expert will start it at the scheduled time.</div>' +
+        '</div>' +
+        '<div style="font-size:12px;color:var(--gray-400);text-align:center;">This page will auto-refresh when the session starts.</div>';
+      // Poll every 10s
+      window._bookingPollTimer = setInterval(function(){ checkBookingStatus(bookingId); }, 10000);
+    } else {
+      statusHTML = '<div style="text-align:center;padding:16px;color:var(--gray-400);font-size:14px;">Booking status: ' + status + '</div>';
+    }
+
+    var overlay = document.createElement('div');
+    overlay.id = 'booking-join-overlay';
+    overlay.style.cssText = 'position:fixed;inset:0;background:var(--cream);z-index:99998;display:flex;align-items:center;justify-content:center;padding:20px;';
+    overlay.innerHTML = '<div style="background:var(--white);border-radius:20px;max-width:440px;width:100%;padding:32px;box-shadow:0 16px 60px rgba(0,0,0,.12);">' +
+      '<div style="text-align:center;margin-bottom:20px;">' +
+        '<div style="font-family:var(--font-head);font-size:24px;font-weight:700;color:var(--brown);margin-bottom:4px;">Scheduled Session</div>' +
+        '<div style="font-size:14px;color:var(--gray-400);">with ' + expertName + '</div>' +
+      '</div>' +
+      '<div style="background:var(--cream);border-radius:12px;padding:16px;margin-bottom:20px;">' +
+        '<div style="display:flex;justify-content:space-between;font-size:14px;margin-bottom:8px;"><span style="color:var(--gray-400);">Date</span><span style="font-weight:600;color:var(--brown);">' + dateStr + '</span></div>' +
+        '<div style="display:flex;justify-content:space-between;font-size:14px;margin-bottom:8px;"><span style="color:var(--gray-400);">Time</span><span style="font-weight:600;color:var(--brown);">' + timeStr + '</span></div>' +
+        '<div style="display:flex;justify-content:space-between;font-size:14px;"><span style="color:var(--gray-400);">Type</span><span style="font-weight:600;color:var(--brown);">' + channel.charAt(0).toUpperCase() + channel.slice(1) + '</span></div>' +
+      '</div>' +
+      statusHTML +
+    '</div>';
+    document.body.appendChild(overlay);
+  }
+
+  function checkBookingStatus(bid) {
+    fetch(BASE + '/api/bookings/' + bid + '/join')
+      .then(function(r){ return r.json(); })
+      .then(function(d) {
+        if (d.status === 'active' && d.session) {
+          if (window._bookingPollTimer) clearInterval(window._bookingPollTimer);
+          showBookingJoinScreen(d);
+        }
+      })
+      .catch(function(){});
+  }
+
+  // Initial check
+  fetch(BASE + '/api/bookings/' + bookingId + '/join')
+    .then(function(r){ return r.json(); })
+    .then(function(d) { showBookingJoinScreen(d); })
+    .catch(function(e) { console.error('Booking join error:', e); });
+})();
+
+// Client joins an active booking session — connects to the existing live chat
+function joinActiveBookingSession(sessionId, expertId, channel) {
+  // Store session info for the WS connection
+  window._obActiveSessId = sessionId;
+  window._pendingSid = sessionId;
+  // Remove the join overlay
+  var ov = document.getElementById('booking-join-overlay');
+  if (ov) ov.remove();
+  // Open the booking overlay / live session (reuse existing flow)
+  if (typeof openBookingOverlay === 'function') {
+    openBookingOverlay(channel);
+  }
+}
+
 
 
 // ══════════ FIX: AVAILABILITY SAVE (GLOBAL SCOPE) ══════════

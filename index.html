@@ -7944,107 +7944,7 @@ function confirmBooking(){
   _showBookingPayment();
 
 
-// ══════════ EXPERT DASHBOARD BOOKINGS ══════════
-var _bookingsFilter = 'all';
-function filterBookings(btn, filter) {
-  document.querySelectorAll('.bk-filter').forEach(function(b){ b.classList.remove('active'); });
-  btn.classList.add('active');
-  _bookingsFilter = filter;
-  renderBookings(window._expertBookings || []);
-}
 
-function loadExpertBookings() {
-  var tok = sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t');
-  if (!tok) return;
-  fetch('https://ownlybiz-backend-production.up.railway.app/api/bookings/me', {
-    headers: { 'Authorization': 'Bearer ' + tok }
-  })
-  .then(function(r) { return r.json(); })
-  .then(function(d) {
-    window._expertBookings = d.bookings || [];
-    renderBookings(window._expertBookings);
-  })
-  .catch(function() {
-    document.getElementById('bookings-list').innerHTML = '<div style="text-align:center;padding:20px;color:var(--gray-400);">Failed to load bookings.</div>';
-  });
-}
-
-function renderBookings(bookings) {
-  var list = document.getElementById('bookings-list');
-  var empty = document.getElementById('bookings-empty');
-  if (!list) return;
-
-  var filtered = bookings;
-  if (_bookingsFilter !== 'all') {
-    filtered = bookings.filter(function(b) { return b.status === _bookingsFilter; });
-  }
-
-  if (!filtered.length) {
-    list.innerHTML = '';
-    if (empty) empty.style.display = 'block';
-    return;
-  }
-  if (empty) empty.style.display = 'none';
-
-  var statusColors = { pending: '#f59e0b', confirmed: '#22c55e', declined: '#ef4444', cancelled: '#9ca3af' };
-  var statusLabels = { pending: 'Pending', confirmed: 'Confirmed', declined: 'Declined', cancelled: 'Cancelled' };
-
-  list.innerHTML = filtered.map(function(b) {
-    var d = new Date(b.scheduled_date + 'T12:00:00');
-    var dateStr = d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-    var h = parseInt(b.scheduled_time.split(':')[0]);
-    var m = b.scheduled_time.split(':')[1];
-    var ampm = h >= 12 ? 'PM' : 'AM';
-    var h12 = h > 12 ? h - 12 : (h === 0 ? 12 : h);
-    var timeStr = h12 + ':' + m + ' ' + ampm;
-    var color = statusColors[b.status] || '#9ca3af';
-    var label = statusLabels[b.status] || b.status;
-    var name = b.client_user_name || b.client_name || 'Unknown';
-    var channelIcon = b.channel === 'voice' ? '🎙' : b.channel === 'video' ? '🎥' : '💬';
-    var actions = '';
-    if (b.status === 'pending') {
-      actions = '<div style="display:flex;gap:6px;margin-top:10px;">' +
-        '<button class="btn btn-sm" style="background:var(--sage);color:white;font-size:11px;padding:6px 14px;" onclick="updateBookingStatus(\'' + b.id + '\',\'confirmed\')">✓ Confirm</button>' +
-        '<button class="btn btn-sm" style="background:rgba(239,68,68,.1);color:#dc2626;font-size:11px;padding:6px 14px;" onclick="updateBookingStatus(\'' + b.id + '\',\'declined\')">✗ Decline</button>' +
-        '</div>';
-    }
-    return '<div class="db-card" style="padding:16px;">' +
-      '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;">' +
-        '<div style="flex:1;">' +
-          '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">' +
-            '<span style="font-size:16px;">' + channelIcon + '</span>' +
-            '<span style="font-weight:700;font-size:14px;color:var(--brown);">' + name + '</span>' +
-            '<span style="font-size:11px;font-weight:600;color:' + color + ';background:' + color + '18;padding:2px 8px;border-radius:20px;">' + label + '</span>' +
-          '</div>' +
-          '<div style="font-size:13px;color:var(--gray-400);">📅 ' + dateStr + ' · 🕐 ' + timeStr + '</div>' +
-          (b.client_email ? '<div style="font-size:12px;color:var(--gray-400);margin-top:2px;">✉️ ' + b.client_email + '</div>' : '') +
-          (b.notes ? '<div style="font-size:12px;color:var(--gray-500);margin-top:6px;padding:8px;background:var(--cream);border-radius:8px;">' + b.notes + '</div>' : '') +
-          actions +
-        '</div>' +
-      '</div>' +
-    '</div>';
-  }).join('');
-}
-
-function updateBookingStatus(id, status) {
-  var tok = sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t');
-  if (!tok) return;
-  fetch('https://ownlybiz-backend-production.up.railway.app/api/bookings/' + id + '/status', {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + tok },
-    body: JSON.stringify({ status: status })
-  })
-  .then(function(r) { return r.json(); })
-  .then(function(d) {
-    if (d.success) {
-      if (typeof _showToast === 'function') _showToast('Booking ' + status + '!', status === 'confirmed' ? 'green' : 'red');
-      loadExpertBookings();
-    } else {
-      alert(d.error || 'Failed to update');
-    }
-  })
-  .catch(function() { alert('Network error'); });
-}
 
 }
 // ===== UNIFIED AUTH STATE =====
@@ -15489,6 +15389,26 @@ window.openBookLaterModal = function() {
   var ov = document.getElementById('bfl-overlay');
   if (ov) { ov.style.display = 'flex'; document.body.style.overflow = 'hidden'; }
   bflGoStep(1);
+  // Check if already logged in as client
+  var ct = sessionStorage.getItem('ob_client_t') || sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t');
+  if (ct) {
+    _bflClientToken = ct;
+    var li = document.getElementById('bfl-logged-in');
+    var tabs = document.getElementById('bfl-auth-tabs');
+    var sf = document.getElementById('bfl-signup-fields');
+    var lf = document.getElementById('bfl-login-fields');
+    if (li) li.style.display = 'block';
+    if (tabs) tabs.style.display = 'none';
+    if (sf) sf.style.display = 'none';
+    if (lf) lf.style.display = 'none';
+  } else {
+    _bflClientToken = null;
+    var li = document.getElementById('bfl-logged-in');
+    var tabs = document.getElementById('bfl-auth-tabs');
+    if (li) li.style.display = 'none';
+    if (tabs) tabs.style.display = 'flex';
+    bflAuthMode('signup');
+  }
   // Set min date
   var dp = document.getElementById('bfl-date');
   if (dp) { dp.min = new Date().toISOString().split('T')[0]; dp.value = ''; }
@@ -15580,46 +15500,205 @@ window.loadBookingSlots = function() {
     .catch(function() { grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:16px;color:#dc2626;">Error loading slots</div>'; });
 }
 
+
+var _bflAuthMode = 'signup';
+var _bflClientToken = null;
+
+window.bflAuthMode = function(mode) {
+  _bflAuthMode = mode;
+  document.getElementById('bfl-signup-fields').style.display = mode === 'signup' ? 'block' : 'none';
+  document.getElementById('bfl-login-fields').style.display = mode === 'login' ? 'block' : 'none';
+  document.getElementById('bfl-tab-signup').style.background = mode === 'signup' ? 'var(--terra)' : 'var(--white)';
+  document.getElementById('bfl-tab-signup').style.color = mode === 'signup' ? '#fff' : 'var(--gray-400)';
+  document.getElementById('bfl-tab-login').style.background = mode === 'login' ? 'var(--terra)' : 'var(--white)';
+  document.getElementById('bfl-tab-login').style.color = mode === 'login' ? '#fff' : 'var(--gray-400)';
+  var err = document.getElementById('bfl-auth-error'); if (err) err.style.display = 'none';
+};
+
 window.submitBookForLater = function() {
-  var name = document.getElementById('bfl-name');
-  var email = document.getElementById('bfl-email');
-  var notes = document.getElementById('bfl-notes');
   var btn = document.getElementById('bfl-submit-btn');
   var status = document.getElementById('bfl-status');
+  var authErr = document.getElementById('bfl-auth-error');
+  if (authErr) authErr.style.display = 'none';
 
-  if (!name || !name.value.trim()) { alert('Please enter your name.'); return; }
-  if (!email || !email.value.trim()) { alert('Please enter your email.'); return; }
+  var BASE = 'https://ownlybiz-backend-production.up.railway.app';
+  var slug = window._currentExpert ? window._currentExpert.slug : '';
+  if (!slug) { var h = window.location.hostname; var pts = h.split('.'); if (pts.length >= 3 && pts[1] === 'ownlybiz') slug = pts[0]; }
   if (!_bflSelectedDate || !_bflSelectedTime) { alert('Please select a date and time.'); return; }
 
-  var slug = window._currentExpert ? window._currentExpert.slug : '';
-  if (!slug) { var h = window.location.hostname; var parts = h.split('.'); if (parts.length >= 3 && parts[1] === 'ownlybiz') slug = parts[0]; }
+  btn.disabled = true; btn.textContent = 'Processing...';
 
-  btn.disabled = true; btn.textContent = 'Submitting...';
+  // Step A: Authenticate (signup or login)
+  var authPromise;
+  if (_bflClientToken) {
+    // Already authenticated
+    authPromise = Promise.resolve({token: _bflClientToken, name: '', email: ''});
+  } else if (_bflAuthMode === 'signup') {
+    var name = document.getElementById('bfl-name')?.value?.trim();
+    var email = document.getElementById('bfl-email')?.value?.trim();
+    var pass = document.getElementById('bfl-password')?.value;
+    if (!name) { alert('Please enter your name.'); btn.disabled=false; btn.textContent='Confirm Booking \u2192'; return; }
+    if (!email) { alert('Please enter your email.'); btn.disabled=false; btn.textContent='Confirm Booking \u2192'; return; }
+    if (!pass || pass.length < 6) { if(authErr){authErr.textContent='Password must be at least 6 characters.';authErr.style.display='block';} btn.disabled=false; btn.textContent='Confirm Booking \u2192'; return; }
+    authPromise = fetch(BASE + '/api/auth/signup', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({name:name, email:email, password:pass, role:'client'})
+    }).then(function(r){return r.json();}).then(function(d){
+      if (d.token) { _bflClientToken = d.token; return {token:d.token, name:name, email:email}; }
+      if (d.error && d.error.toLowerCase().indexOf('exist') >= 0) {
+        if(authErr){authErr.textContent='Email already registered. Switch to Returning Client to log in.';authErr.style.display='block';}
+        throw new Error('exists');
+      }
+      throw new Error(d.error || 'Signup failed');
+    });
+  } else {
+    var loginEmail = document.getElementById('bfl-login-email')?.value?.trim();
+    var loginPass = document.getElementById('bfl-login-pass')?.value;
+    if (!loginEmail || !loginPass) { if(authErr){authErr.textContent='Enter your email and password.';authErr.style.display='block';} btn.disabled=false; btn.textContent='Confirm Booking \u2192'; return; }
+    authPromise = fetch(BASE + '/api/auth/login', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({email:loginEmail, password:loginPass})
+    }).then(function(r){return r.json();}).then(function(d){
+      if (d.token) { _bflClientToken = d.token; return {token:d.token, name:d.user?.name||'', email:loginEmail}; }
+      throw new Error(d.error || 'Login failed');
+    });
+  }
 
-  fetch('https://ownlybiz-backend-production.up.railway.app/api/bookings', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      expert_slug: slug, scheduled_date: _bflSelectedDate, scheduled_time: _bflSelectedTime,
-      client_name: name.value.trim(), client_email: email.value.trim(), channel: _bflChannel,
-      notes: notes ? notes.value.trim() : ''
-    })
-  })
-  .then(function(r) { return r.json(); })
-  .then(function(d) {
+  // Step B: Create booking with auth token
+  authPromise.then(function(auth) {
+    var clientName = auth.name || document.getElementById('bfl-name')?.value?.trim() || '';
+    var clientEmail = auth.email || document.getElementById('bfl-email')?.value?.trim() || '';
+    var notes = document.getElementById('bfl-notes')?.value?.trim() || '';
+    var headers = {'Content-Type':'application/json'};
+    if (auth.token) headers['Authorization'] = 'Bearer ' + auth.token;
+
+    return fetch(BASE + '/api/bookings', {
+      method: 'POST', headers: headers,
+      body: JSON.stringify({
+        expert_slug: slug, scheduled_date: _bflSelectedDate, scheduled_time: _bflSelectedTime,
+        client_name: clientName, client_email: clientEmail, channel: _bflChannel,
+        notes: notes
+      })
+    }).then(function(r){return r.json();});
+  }).then(function(d) {
     btn.disabled = false; btn.textContent = 'Confirm Booking \u2192';
-    if (d.success) {
+    if (d && d.success) {
       [1,2,3].forEach(function(s) { var el = document.getElementById('bfl-step-' + s); if (el) el.style.display = 'none'; });
       document.getElementById('bfl-step-success').style.display = 'block';
       [1,2,3].forEach(function(s) { var dot = document.getElementById('bfl-dot-' + s); if (dot) dot.style.background = 'var(--terra)'; });
-    } else {
-      status.style.display = 'block'; status.style.background = 'rgba(239,68,68,.1)'; status.style.color = '#dc2626';
-      status.textContent = d.error || 'Something went wrong.';
+    } else if (d) {
+      if(status){status.style.display='block';status.style.background='rgba(239,68,68,.1)';status.style.color='#dc2626';status.textContent=d.error||'Something went wrong.';}
     }
-  })
-  .catch(function() { btn.disabled = false; btn.textContent = 'Confirm Booking \u2192'; alert('Network error.'); });
+  }).catch(function(e) {
+    btn.disabled = false; btn.textContent = 'Confirm Booking \u2192';
+    if (e.message !== 'exists') {
+      if(authErr){authErr.textContent=e.message;authErr.style.display='block';}
+    }
+  });
 }
 
+
+// ══════════ EXPERT DASHBOARD BOOKINGS ══════════
+var _bookingsFilter = 'all';
+function filterBookings(btn, filter) {
+  document.querySelectorAll('.bk-filter').forEach(function(b){ b.classList.remove('active'); });
+  btn.classList.add('active');
+  _bookingsFilter = filter;
+  renderBookings(window._expertBookings || []);
+}
+
+function loadExpertBookings() {
+  var tok = sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t');
+  if (!tok) return;
+  fetch('https://ownlybiz-backend-production.up.railway.app/api/bookings/me', {
+    headers: { 'Authorization': 'Bearer ' + tok }
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(d) {
+    window._expertBookings = d.bookings || [];
+    renderBookings(window._expertBookings);
+  })
+  .catch(function() {
+    document.getElementById('bookings-list').innerHTML = '<div style="text-align:center;padding:20px;color:var(--gray-400);">Failed to load bookings.</div>';
+  });
+}
+
+function renderBookings(bookings) {
+  var list = document.getElementById('bookings-list');
+  var empty = document.getElementById('bookings-empty');
+  if (!list) return;
+
+  var filtered = bookings;
+  if (_bookingsFilter !== 'all') {
+    filtered = bookings.filter(function(b) { return b.status === _bookingsFilter; });
+  }
+
+  if (!filtered.length) {
+    list.innerHTML = '';
+    if (empty) empty.style.display = 'block';
+    return;
+  }
+  if (empty) empty.style.display = 'none';
+
+  var statusColors = { pending: '#f59e0b', confirmed: '#22c55e', declined: '#ef4444', cancelled: '#9ca3af' };
+  var statusLabels = { pending: 'Pending', confirmed: 'Confirmed', declined: 'Declined', cancelled: 'Cancelled' };
+
+  list.innerHTML = filtered.map(function(b) {
+    var d = new Date(b.scheduled_date + 'T12:00:00');
+    var dateStr = d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+    var h = parseInt(b.scheduled_time.split(':')[0]);
+    var m = b.scheduled_time.split(':')[1];
+    var ampm = h >= 12 ? 'PM' : 'AM';
+    var h12 = h > 12 ? h - 12 : (h === 0 ? 12 : h);
+    var timeStr = h12 + ':' + m + ' ' + ampm;
+    var color = statusColors[b.status] || '#9ca3af';
+    var label = statusLabels[b.status] || b.status;
+    var name = b.client_user_name || b.client_name || 'Unknown';
+    var channelIcon = b.channel === 'voice' ? '🎙' : b.channel === 'video' ? '🎥' : '💬';
+    var actions = '';
+    if (b.status === 'pending') {
+      actions = '<div style="display:flex;gap:6px;margin-top:10px;">' +
+        '<button class="btn btn-sm" style="background:var(--sage);color:white;font-size:11px;padding:6px 14px;" onclick="updateBookingStatus(\'' + b.id + '\',\'confirmed\')">✓ Confirm</button>' +
+        '<button class="btn btn-sm" style="background:rgba(239,68,68,.1);color:#dc2626;font-size:11px;padding:6px 14px;" onclick="updateBookingStatus(\'' + b.id + '\',\'declined\')">✗ Decline</button>' +
+        '</div>';
+    }
+    return '<div class="db-card" style="padding:16px;">' +
+      '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;">' +
+        '<div style="flex:1;">' +
+          '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">' +
+            '<span style="font-size:16px;">' + channelIcon + '</span>' +
+            '<span style="font-weight:700;font-size:14px;color:var(--brown);">' + name + '</span>' +
+            '<span style="font-size:11px;font-weight:600;color:' + color + ';background:' + color + '18;padding:2px 8px;border-radius:20px;">' + label + '</span>' +
+          '</div>' +
+          '<div style="font-size:13px;color:var(--gray-400);">📅 ' + dateStr + ' · 🕐 ' + timeStr + '</div>' +
+          (b.client_email ? '<div style="font-size:12px;color:var(--gray-400);margin-top:2px;">✉️ ' + b.client_email + '</div>' : '') +
+          (b.notes ? '<div style="font-size:12px;color:var(--gray-500);margin-top:6px;padding:8px;background:var(--cream);border-radius:8px;">' + b.notes + '</div>' : '') +
+          actions +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  }).join('');
+}
+
+function updateBookingStatus(id, status) {
+  var tok = sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t');
+  if (!tok) return;
+  fetch('https://ownlybiz-backend-production.up.railway.app/api/bookings/' + id + '/status', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + tok },
+    body: JSON.stringify({ status: status })
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(d) {
+    if (d.success) {
+      if (typeof _showToast === 'function') _showToast('Booking ' + status + '!', status === 'confirmed' ? 'green' : 'red');
+      loadExpertBookings();
+    } else {
+      alert(d.error || 'Failed to update');
+    }
+  })
+  .catch(function() { alert('Network error'); });
+}
 </script>
 <!-- ═══ BOOK FOR LATER MODAL ═══ -->
 <div id="bfl-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:99999;align-items:center;justify-content:center;padding:20px;" onclick="if(event.target===this)closeBookLaterModal()">
@@ -15694,14 +15773,40 @@ window.submitBookForLater = function() {
         <div style="display:flex;justify-content:space-between;font-size:14px;margin-bottom:6px;"><span style="color:var(--gray-400);">Time</span><span style="font-weight:600;color:var(--brown);" id="bfl-sum-time">—</span></div>
         <div style="display:flex;justify-content:space-between;font-size:14px;"><span style="color:var(--gray-400);">Type</span><span style="font-weight:600;color:var(--brown);" id="bfl-sum-type">Chat</span></div>
       </div>
-      <div style="margin-bottom:12px;">
-        <label style="font-size:12px;font-weight:700;color:var(--brown);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:8px;">Your Name</label>
-        <input type="text" id="bfl-name" style="width:100%;padding:12px 14px;border:1.5px solid var(--gray-200);border-radius:10px;font-size:14px;font-family:var(--font-body);background:var(--white);" placeholder="John Smith">
+      <!-- Auth mode toggle -->
+      <div id="bfl-auth-tabs" style="display:flex;border:1.5px solid var(--gray-200);border-radius:10px;overflow:hidden;margin-bottom:16px;">
+        <button class="bfl-auth-tab active" id="bfl-tab-signup" onclick="bflAuthMode('signup')" style="flex:1;padding:10px;font-size:13px;font-weight:600;border:none;cursor:pointer;background:var(--terra);color:#fff;font-family:var(--font-body);">New Client</button>
+        <button class="bfl-auth-tab" id="bfl-tab-login" onclick="bflAuthMode('login')" style="flex:1;padding:10px;font-size:13px;font-weight:600;border:none;cursor:pointer;background:var(--white);color:var(--gray-400);font-family:var(--font-body);">Returning Client</button>
       </div>
-      <div style="margin-bottom:20px;">
-        <label style="font-size:12px;font-weight:700;color:var(--brown);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:8px;">Your Email</label>
-        <input type="email" id="bfl-email" style="width:100%;padding:12px 14px;border:1.5px solid var(--gray-200);border-radius:10px;font-size:14px;font-family:var(--font-body);background:var(--white);" placeholder="john@example.com">
+      <!-- Logged in notice -->
+      <div id="bfl-logged-in" style="display:none;background:rgba(34,197,94,.08);border:1.5px solid rgba(34,197,94,.2);border-radius:10px;padding:12px 14px;margin-bottom:16px;font-size:13px;color:#15803d;font-weight:600;text-align:center;">✓ Logged in as <span id="bfl-logged-name"></span></div>
+      <!-- Signup fields -->
+      <div id="bfl-signup-fields">
+        <div style="margin-bottom:12px;">
+          <label style="font-size:12px;font-weight:700;color:var(--brown);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:8px;">Your Name</label>
+          <input type="text" id="bfl-name" style="width:100%;padding:12px 14px;border:1.5px solid var(--gray-200);border-radius:10px;font-size:14px;font-family:var(--font-body);background:var(--white);" placeholder="John Smith">
+        </div>
+        <div style="margin-bottom:12px;">
+          <label style="font-size:12px;font-weight:700;color:var(--brown);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:8px;">Your Email</label>
+          <input type="email" id="bfl-email" style="width:100%;padding:12px 14px;border:1.5px solid var(--gray-200);border-radius:10px;font-size:14px;font-family:var(--font-body);background:var(--white);" placeholder="john@example.com">
+        </div>
+        <div style="margin-bottom:16px;">
+          <label style="font-size:12px;font-weight:700;color:var(--brown);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:8px;">Create Password</label>
+          <input type="password" id="bfl-password" style="width:100%;padding:12px 14px;border:1.5px solid var(--gray-200);border-radius:10px;font-size:14px;font-family:var(--font-body);background:var(--white);" placeholder="Min 6 characters">
+        </div>
       </div>
+      <!-- Login fields -->
+      <div id="bfl-login-fields" style="display:none;">
+        <div style="margin-bottom:12px;">
+          <label style="font-size:12px;font-weight:700;color:var(--brown);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:8px;">Email</label>
+          <input type="email" id="bfl-login-email" style="width:100%;padding:12px 14px;border:1.5px solid var(--gray-200);border-radius:10px;font-size:14px;font-family:var(--font-body);background:var(--white);" placeholder="john@example.com">
+        </div>
+        <div style="margin-bottom:16px;">
+          <label style="font-size:12px;font-weight:700;color:var(--brown);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:8px;">Password</label>
+          <input type="password" id="bfl-login-pass" style="width:100%;padding:12px 14px;border:1.5px solid var(--gray-200);border-radius:10px;font-size:14px;font-family:var(--font-body);background:var(--white);" placeholder="Your password">
+        </div>
+      </div>
+      <div id="bfl-auth-error" style="display:none;background:rgba(239,68,68,.08);border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:12px;color:#dc2626;font-weight:600;"></div>
       <div style="display:flex;gap:10px;">
         <button class="btn" style="flex:1;padding:14px;color:var(--gray-400);" onclick="bflGoStep(2)">← Back</button>
         <button class="btn btn-primary" style="flex:2;padding:14px;font-size:15px;" id="bfl-submit-btn" onclick="submitBookForLater()">Confirm Booking →</button>

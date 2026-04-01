@@ -15479,16 +15479,22 @@ function openClientChat(sid){
 <!-- END STRIPE CONNECT RETURN HANDLER -->
 
 <script>
+
 // ══════════ BOOK FOR LATER — MODAL FLOW ══════════
 var _bflChannel = 'chat';
 var _bflSelectedTime = '';
 var _bflSelectedDate = '';
+var _bflAuthMode = 'signup';
+var _bflClientToken = null;
+var _bflStripe = null;
+var _bflCardElement = null;
+var _bflCardReady = false;
+var _bflStripeConfigured = null;
 
 window.openBookLaterModal = function() {
   var ov = document.getElementById('bfl-overlay');
   if (ov) { ov.style.display = 'flex'; document.body.style.overflow = 'hidden'; }
   bflGoStep(1);
-  // Check if already logged in as client
   var ct = sessionStorage.getItem('ob_client_t') || sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t');
   if (ct) {
     _bflClientToken = ct;
@@ -15508,20 +15514,19 @@ window.openBookLaterModal = function() {
     if (tabs) tabs.style.display = 'flex';
     bflAuthMode('signup');
   }
-  // Set min date
   var dp = document.getElementById('bfl-date');
   if (dp) { dp.min = new Date().toISOString().split('T')[0]; dp.value = ''; }
-  // Reset state
   _bflSelectedTime = ''; _bflSelectedDate = '';
-  document.getElementById('bfl-slots-grid').innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:20px;color:var(--gray-400);font-size:13px;">Select a date to see available times</div>';
-  document.getElementById('bfl-no-slots').style.display = 'none';
+  var grid = document.getElementById('bfl-slots-grid');
+  if (grid) grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:20px;color:var(--gray-400);font-size:13px;">Select a date to see available times</div>';
+  var ns = document.getElementById('bfl-no-slots'); if (ns) ns.style.display = 'none';
   var nb = document.getElementById('bfl-next-1'); if (nb) { nb.disabled = true; nb.style.opacity = '.5'; }
-}
+};
 
 window.closeBookLaterModal = function() {
   var ov = document.getElementById('bfl-overlay');
   if (ov) { ov.style.display = 'none'; document.body.style.overflow = ''; }
-}
+};
 
 window.bflGoStep = function(n) {
   [1,2,3].forEach(function(s) {
@@ -15531,7 +15536,6 @@ window.bflGoStep = function(n) {
     if (dot) dot.style.background = s <= n ? 'var(--terra)' : 'var(--gray-200)';
   });
   document.getElementById('bfl-step-success').style.display = 'none';
-  // Populate summary on step 3
   if (n === 3) {
     var d = new Date(_bflSelectedDate + 'T12:00:00');
     document.getElementById('bfl-sum-date').textContent = d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
@@ -15541,10 +15545,9 @@ window.bflGoStep = function(n) {
     var h12 = h > 12 ? h - 12 : (h === 0 ? 12 : h);
     document.getElementById('bfl-sum-time').textContent = h12 + ':' + m + ' ' + ampm;
     document.getElementById('bfl-sum-type').textContent = _bflChannel.charAt(0).toUpperCase() + _bflChannel.slice(1);
-    // Mount Stripe card element
     if (typeof mountBflCardElement === 'function') mountBflCardElement();
   }
-}
+};
 
 window.selectBflChannel = function(el) {
   document.querySelectorAll('.bfl-type-btn').forEach(function(b) {
@@ -15554,7 +15557,7 @@ window.selectBflChannel = function(el) {
   el.style.borderColor = 'var(--terra)'; el.style.background = 'rgba(196,98,45,.06)';
   el.classList.add('active');
   _bflChannel = el.getAttribute('data-ch');
-}
+};
 
 window.selectBflSlot = function(btn, time) {
   document.querySelectorAll('.bfl-slot-btn').forEach(function(b) {
@@ -15563,47 +15566,7 @@ window.selectBflSlot = function(btn, time) {
   btn.style.background = 'var(--terra)'; btn.style.borderColor = 'var(--terra)'; btn.style.color = '#fff';
   _bflSelectedTime = time;
   var nb = document.getElementById('bfl-next-1'); if (nb) { nb.disabled = false; nb.style.opacity = '1'; }
-}
-
-window.loadBookingSlots = function() {
-  var dp = document.getElementById('bfl-date');
-  var grid = document.getElementById('bfl-slots-grid');
-  var noSlots = document.getElementById('bfl-no-slots');
-  if (!dp || !dp.value) return;
-  _bflSelectedDate = dp.value;
-  _bflSelectedTime = '';
-  var nb = document.getElementById('bfl-next-1'); if (nb) { nb.disabled = true; nb.style.opacity = '.5'; }
-
-  var slug = window._currentExpert ? window._currentExpert.slug : '';
-  if (!slug) { var h = window.location.hostname; var parts = h.split('.'); if (parts.length >= 3 && parts[1] === 'ownlybiz') slug = parts[0]; }
-  if (!slug) return;
-
-  grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:16px;color:var(--gray-400);font-size:13px;">Loading...</div>';
-  noSlots.style.display = 'none';
-
-  fetch('https://ownlybiz-backend-production.up.railway.app/api/bookings/slots/' + slug + '?date=' + dp.value)
-    .then(function(r) { return r.json(); })
-    .then(function(d) {
-      if (!d.slots || d.slots.length === 0) {
-        grid.innerHTML = '';
-        noSlots.style.display = 'block';
-        return;
-      }
-      noSlots.style.display = 'none';
-      grid.innerHTML = d.slots.map(function(s) {
-        var h = parseInt(s.split(':')[0]);
-        var m = s.split(':')[1];
-        var ampm = h >= 12 ? 'PM' : 'AM';
-        var h12 = h > 12 ? h - 12 : (h === 0 ? 12 : h);
-        return '<button class="bfl-slot-btn" onclick="selectBflSlot(this,\'' + s + '\')" style="padding:10px 4px;border:1.5px solid var(--gray-200);border-radius:8px;background:var(--white);font-size:13px;font-weight:600;color:var(--brown);cursor:pointer;font-family:var(--font-body);transition:.15s;">' + h12 + ':' + m + ' ' + ampm + '</button>';
-      }).join('');
-    })
-    .catch(function() { grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:16px;color:#dc2626;">Error loading slots</div>'; });
-}
-
-
-var _bflAuthMode = 'signup';
-var _bflClientToken = null;
+};
 
 window.bflAuthMode = function(mode) {
   _bflAuthMode = mode;
@@ -15616,27 +15579,45 @@ window.bflAuthMode = function(mode) {
   var err = document.getElementById('bfl-auth-error'); if (err) err.style.display = 'none';
 };
 
-// Stripe Elements for booking card
-var _bflStripe = null;
-var _bflCardElement = null;
-var _bflCardReady = false;
 
-var _bflStripeConfigured = null; // null=unknown, true=yes, false=no
+window.loadBookingSlots = function() {
+  var dp = document.getElementById('bfl-date');
+  var grid = document.getElementById('bfl-slots-grid');
+  var noSlots = document.getElementById('bfl-no-slots');
+  if (!dp || !dp.value) return;
+  _bflSelectedDate = dp.value;
+  _bflSelectedTime = '';
+  var nb = document.getElementById('bfl-next-1'); if (nb) { nb.disabled = true; nb.style.opacity = '.5'; }
+  var slug = window._currentExpert ? window._currentExpert.slug : '';
+  if (!slug) { var h = window.location.hostname; var pts = h.split('.'); if (pts.length >= 3 && pts[1] === 'ownlybiz') slug = pts[0]; }
+  if (!slug) return;
+  grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:16px;color:var(--gray-400);font-size:13px;">Loading...</div>';
+  noSlots.style.display = 'none';
+  fetch('https://ownlybiz-backend-production.up.railway.app/api/bookings/slots/' + slug + '?date=' + dp.value)
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (!d.slots || d.slots.length === 0) { grid.innerHTML = ''; noSlots.style.display = 'block'; return; }
+      noSlots.style.display = 'none';
+      grid.innerHTML = d.slots.map(function(s) {
+        var hh = parseInt(s.split(':')[0]), mm = s.split(':')[1];
+        var ap = hh >= 12 ? 'PM' : 'AM', h12 = hh > 12 ? hh - 12 : (hh === 0 ? 12 : hh);
+        return '<button class="bfl-slot-btn" onclick="selectBflSlot(this,' + "'" + s + "'" + ')" style="padding:10px 4px;border:1.5px solid var(--gray-200);border-radius:8px;background:var(--white);font-size:13px;font-weight:600;color:var(--brown);cursor:pointer;font-family:var(--font-body);transition:.15s;">' + h12 + ':' + mm + ' ' + ap + '</button>';
+      }).join('');
+    })
+    .catch(function() { grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:16px;color:#dc2626;">Error loading slots</div>'; });
+};
+
 function mountBflCardElement() {
   var cardDiv = document.getElementById('bfl-card-element');
   var cardSection = document.getElementById('bfl-card-section');
   if (!cardDiv || !cardSection) return;
-  
-  if (_bflCardElement) return; // Already mounted
-  
-  // Initialize Stripe
+  if (_bflCardElement) return;
   try {
     var pk = window._stripePk || '';
     if (!pk) {
-      // Fetch publishable key
       fetch('https://ownlybiz-backend-production.up.railway.app/api/payments/config')
-        .then(function(r){ return r.json(); })
-        .then(function(d){
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
           if (d.publishable_key) {
             window._stripePk = d.publishable_key;
             _bflStripeConfigured = true;
@@ -15646,163 +15627,121 @@ function mountBflCardElement() {
               style: { base: { fontSize: '14px', fontFamily: 'var(--font-body), sans-serif', color: '#5a3a1a', '::placeholder': { color: '#b0a08e' } } }
             });
             _bflCardElement.mount('#bfl-card-element');
-            _bflCardElement.on('ready', function(){ _bflCardReady = true; });
-            _bflCardElement.on('change', function(e){
+            _bflCardElement.on('ready', function() { _bflCardReady = true; });
+            _bflCardElement.on('change', function(e) {
               var err = document.getElementById('bfl-card-error');
               if (e.error) { err.textContent = e.error.message; err.style.display = 'block'; }
               else { err.style.display = 'none'; }
             });
+          } else {
+            _bflStripeConfigured = false;
+            cardSection.style.display = 'none';
           }
-        } else { _bflStripeConfigured = false; var cs2 = document.getElementById('bfl-card-section'); if(cs2) cs2.style.display='none'; }
-        }).catch(function(){ _bflStripeConfigured = false; var cs = document.getElementById('bfl-card-section'); if(cs) cs.style.display='none'; });
+        })
+        .catch(function() { _bflStripeConfigured = false; cardSection.style.display = 'none'; });
     } else {
+      _bflStripeConfigured = true;
       _bflStripe = Stripe(pk);
       var elements = _bflStripe.elements();
       _bflCardElement = elements.create('card', {
         style: { base: { fontSize: '14px', fontFamily: 'var(--font-body), sans-serif', color: '#5a3a1a', '::placeholder': { color: '#b0a08e' } } }
       });
       _bflCardElement.mount('#bfl-card-element');
-      _bflCardElement.on('ready', function(){ _bflCardReady = true; });
+      _bflCardElement.on('ready', function() { _bflCardReady = true; });
     }
   } catch(e) { console.warn('Stripe init error:', e); }
 }
+
 
 window.submitBookForLater = function() {
   var btn = document.getElementById('bfl-submit-btn');
   var status = document.getElementById('bfl-status');
   var authErr = document.getElementById('bfl-auth-error');
   if (authErr) authErr.style.display = 'none';
-
   var BASE = 'https://ownlybiz-backend-production.up.railway.app';
   var slug = window._currentExpert ? window._currentExpert.slug : '';
   if (!slug) { var h = window.location.hostname; var pts = h.split('.'); if (pts.length >= 3 && pts[1] === 'ownlybiz') slug = pts[0]; }
   if (!_bflSelectedDate || !_bflSelectedTime) { alert('Please select a date and time.'); return; }
-
   btn.disabled = true; btn.textContent = 'Processing...';
 
-  // ── STEP A: Authenticate ──
+  // STEP A: Authenticate
   var authPromise;
   if (_bflClientToken) {
-    authPromise = Promise.resolve({token: _bflClientToken, name: '', email: ''});
+    authPromise = Promise.resolve({ token: _bflClientToken, name: '', email: '' });
   } else if (_bflAuthMode === 'signup') {
-    var name = document.getElementById('bfl-name')?.value?.trim();
-    var email = document.getElementById('bfl-email')?.value?.trim();
-    var pass = document.getElementById('bfl-password')?.value;
-    if (!name) { alert('Please enter your name.'); btn.disabled=false; btn.textContent='Confirm Booking \u2192'; return; }
-    if (!email) { alert('Please enter your email.'); btn.disabled=false; btn.textContent='Confirm Booking \u2192'; return; }
-    if (!pass || pass.length < 6) { if(authErr){authErr.textContent='Password must be at least 6 characters.';authErr.style.display='block';} btn.disabled=false; btn.textContent='Confirm Booking \u2192'; return; }
-    authPromise = fetch(BASE + '/api/auth/signup', {
-      method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({name:name, email:email, password:pass, role:'client'})
-    }).then(function(r){return r.json();}).then(function(d){
-      if (d.token) { _bflClientToken = d.token; return {token:d.token, name:name, email:email}; }
-      if (d.error && d.error.toLowerCase().indexOf('exist') >= 0) {
-        if(authErr){authErr.textContent='Email already registered. Switch to Returning Client to log in.';authErr.style.display='block';}
-        throw new Error('exists');
-      }
-      throw new Error(d.error || 'Signup failed');
-    });
+    var nm = document.getElementById('bfl-name'), em = document.getElementById('bfl-email'), pw = document.getElementById('bfl-password');
+    if (!nm || !nm.value.trim()) { alert('Please enter your name.'); btn.disabled = false; btn.textContent = 'Confirm Booking \u2192'; return; }
+    if (!em || !em.value.trim()) { alert('Please enter your email.'); btn.disabled = false; btn.textContent = 'Confirm Booking \u2192'; return; }
+    if (!pw || pw.value.length < 6) { if (authErr) { authErr.textContent = 'Password must be at least 6 characters.'; authErr.style.display = 'block'; } btn.disabled = false; btn.textContent = 'Confirm Booking \u2192'; return; }
+    authPromise = fetch(BASE + '/api/auth/signup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: nm.value.trim(), email: em.value.trim(), password: pw.value, role: 'client' }) })
+      .then(function(r) { return r.json(); }).then(function(d) {
+        if (d.token) { _bflClientToken = d.token; return { token: d.token, name: nm.value.trim(), email: em.value.trim() }; }
+        if (d.error && d.error.toLowerCase().indexOf('exist') >= 0) { if (authErr) { authErr.textContent = 'Email already registered. Switch to Returning Client.'; authErr.style.display = 'block'; } throw new Error('exists'); }
+        throw new Error(d.error || 'Signup failed');
+      });
   } else {
-    var loginEmail = document.getElementById('bfl-login-email')?.value?.trim();
-    var loginPass = document.getElementById('bfl-login-pass')?.value;
-    if (!loginEmail || !loginPass) { if(authErr){authErr.textContent='Enter your email and password.';authErr.style.display='block';} btn.disabled=false; btn.textContent='Confirm Booking \u2192'; return; }
-    authPromise = fetch(BASE + '/api/auth/login', {
-      method: 'POST', headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({email:loginEmail, password:loginPass})
-    }).then(function(r){return r.json();}).then(function(d){
-      if (d.token) { _bflClientToken = d.token; return {token:d.token, name:d.user?.name||'', email:loginEmail}; }
-      throw new Error(d.error || 'Login failed');
-    });
+    var le = document.getElementById('bfl-login-email'), lp = document.getElementById('bfl-login-pass');
+    if (!le || !le.value.trim() || !lp || !lp.value) { if (authErr) { authErr.textContent = 'Enter your email and password.'; authErr.style.display = 'block'; } btn.disabled = false; btn.textContent = 'Confirm Booking \u2192'; return; }
+    authPromise = fetch(BASE + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: le.value.trim(), password: lp.value }) })
+      .then(function(r) { return r.json(); }).then(function(d) {
+        if (d.token) { _bflClientToken = d.token; return { token: d.token, name: d.user ? d.user.name : '', email: le.value.trim() }; }
+        throw new Error(d.error || 'Login failed');
+      });
   }
 
-  // ── STEP B: Save card (if Stripe is available) ──
+  // STEP B: Save card
   authPromise.then(function(auth) {
     btn.textContent = 'Saving card...';
-    
-    // If Stripe is configured, card is REQUIRED
     if (_bflStripeConfigured === true && (!_bflStripe || !_bflCardElement)) {
-      // Stripe is configured but element not ready yet — wait
-      var cardErr = document.getElementById('bfl-card-error');
-      if (cardErr) { cardErr.textContent = 'Payment card is required. Please enter your card details.'; cardErr.style.display = 'block'; }
+      var ce = document.getElementById('bfl-card-error');
+      if (ce) { ce.textContent = 'Payment card is required.'; ce.style.display = 'block'; }
       btn.disabled = false; btn.textContent = 'Confirm Booking \u2192';
       throw new Error('card_required');
     }
-    if (!_bflStripe || !_bflCardElement) {
-      // Stripe genuinely not configured — skip card
-      return {auth: auth, cardSaved: false};
-    }
+    if (!_bflStripe || !_bflCardElement) { return { auth: auth, cardSaved: false }; }
+    return fetch(BASE + '/api/payments/methods/setup', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + auth.token } })
+      .then(function(r) { return r.json(); }).then(function(d) {
+        if (!d.client_secret) { return { auth: auth, cardSaved: false }; }
+        return _bflStripe.confirmCardSetup(d.client_secret, { payment_method: { card: _bflCardElement } }).then(function(result) {
+          if (result.error) { var ce = document.getElementById('bfl-card-error'); if (ce) { ce.textContent = result.error.message; ce.style.display = 'block'; } throw new Error('card_error'); }
+          var sv = document.getElementById('bfl-card-saved'); if (sv) sv.style.display = 'block';
+          return { auth: auth, cardSaved: true };
+        });
+      }).catch(function(e) { if (e.message === 'card_error') throw e; return { auth: auth, cardSaved: false }; });
 
-    return fetch(BASE + '/api/payments/methods/setup', {
-      method: 'POST',
-      headers: {'Content-Type':'application/json', 'Authorization':'Bearer '+auth.token}
-    })
-    .then(function(r){ return r.json(); })
-    .then(function(d) {
-      if (!d.client_secret) {
-        // Stripe not configured on backend — skip card
-        return {auth: auth, cardSaved: false};
-      }
-      return _bflStripe.confirmCardSetup(d.client_secret, {
-        payment_method: { card: _bflCardElement }
-      }).then(function(result) {
-        if (result.error) {
-          var cardErr = document.getElementById('bfl-card-error');
-          if (cardErr) { cardErr.textContent = result.error.message; cardErr.style.display = 'block'; }
-          throw new Error('card_error');
-        }
-        var savedEl = document.getElementById('bfl-card-saved');
-        if (savedEl) savedEl.style.display = 'block';
-        return {auth: auth, cardSaved: true};
-      });
-    })
-    .catch(function(e) {
-      if (e.message === 'card_error') throw e;
-      // Non-fatal: Stripe not configured, continue without card
-      console.warn('Card save skipped:', e.message);
-      return {auth: auth, cardSaved: false};
-    });
-
-  // ── STEP C: Create booking ──
+  // STEP C: Create booking
   }).then(function(data) {
     btn.textContent = 'Confirming booking...';
     var auth = data.auth;
-    var clientName = auth.name || document.getElementById('bfl-name')?.value?.trim() || '';
-    var clientEmail = auth.email || document.getElementById('bfl-email')?.value?.trim() || '';
-    var notes = document.getElementById('bfl-notes')?.value?.trim() || '';
-    var headers = {'Content-Type':'application/json'};
-    if (auth.token) headers['Authorization'] = 'Bearer ' + auth.token;
-
-    return fetch(BASE + '/api/bookings', {
-      method: 'POST', headers: headers,
-      body: JSON.stringify({
-        expert_slug: slug, scheduled_date: _bflSelectedDate, scheduled_time: _bflSelectedTime,
-        client_name: clientName, client_email: clientEmail, channel: _bflChannel,
-        notes: notes
-      })
-    }).then(function(r){return r.json();});
-
+    var cName = auth.name || (document.getElementById('bfl-name') ? document.getElementById('bfl-name').value.trim() : '');
+    var cEmail = auth.email || (document.getElementById('bfl-email') ? document.getElementById('bfl-email').value.trim() : '');
+    var notes = document.getElementById('bfl-notes') ? document.getElementById('bfl-notes').value.trim() : '';
+    var hdrs = { 'Content-Type': 'application/json' };
+    if (auth.token) hdrs['Authorization'] = 'Bearer ' + auth.token;
+    return fetch(BASE + '/api/bookings', { method: 'POST', headers: hdrs, body: JSON.stringify({ expert_slug: slug, scheduled_date: _bflSelectedDate, scheduled_time: _bflSelectedTime, client_name: cName, client_email: cEmail, channel: _bflChannel, notes: notes }) })
+      .then(function(r) { return r.json(); });
   }).then(function(d) {
     btn.disabled = false; btn.textContent = 'Confirm Booking \u2192';
     if (d && d.success) {
-      [1,2,3].forEach(function(s) { var el = document.getElementById('bfl-step-' + s); if (el) el.style.display = 'none'; });
+      [1, 2, 3].forEach(function(s) { var el = document.getElementById('bfl-step-' + s); if (el) el.style.display = 'none'; });
       document.getElementById('bfl-step-success').style.display = 'block';
-      [1,2,3].forEach(function(s) { var dot = document.getElementById('bfl-dot-' + s); if (dot) dot.style.background = 'var(--terra)'; });
+      [1, 2, 3].forEach(function(s) { var dot = document.getElementById('bfl-dot-' + s); if (dot) dot.style.background = 'var(--terra)'; });
     } else if (d) {
-      if(status){status.style.display='block';status.style.background='rgba(239,68,68,.1)';status.style.color='#dc2626';status.textContent=d.error||'Something went wrong.';}
+      if (status) { status.style.display = 'block'; status.style.background = 'rgba(239,68,68,.1)'; status.style.color = '#dc2626'; status.textContent = d.error || 'Something went wrong.'; }
     }
   }).catch(function(e) {
     btn.disabled = false; btn.textContent = 'Confirm Booking \u2192';
     if (e.message !== 'exists' && e.message !== 'card_error' && e.message !== 'card_required') {
-      if(authErr){authErr.textContent=e.message;authErr.style.display='block';}
+      if (authErr) { authErr.textContent = e.message; authErr.style.display = 'block'; }
     }
   });
-}
+};
 
 
 // ══════════ EXPERT DASHBOARD BOOKINGS ══════════
 var _bookingsFilter = 'all';
 function filterBookings(btn, filter) {
-  document.querySelectorAll('.bk-filter').forEach(function(b){ b.classList.remove('active'); });
+  document.querySelectorAll('.bk-filter').forEach(function(b) { b.classList.remove('active'); });
   btn.classList.add('active');
   _bookingsFilter = filter;
   renderBookings(window._expertBookings || []);
@@ -15820,7 +15759,8 @@ function loadExpertBookings() {
     renderBookings(window._expertBookings);
   })
   .catch(function() {
-    document.getElementById('bookings-list').innerHTML = '<div style="text-align:center;padding:20px;color:var(--gray-400);">Failed to load bookings.</div>';
+    var list = document.getElementById('bookings-list');
+    if (list) list.innerHTML = '<div style="text-align:center;padding:20px;color:var(--gray-400);">Failed to load bookings.</div>';
   });
 }
 
@@ -15828,45 +15768,33 @@ function renderBookings(bookings) {
   var list = document.getElementById('bookings-list');
   var empty = document.getElementById('bookings-empty');
   if (!list) return;
-
   var filtered = bookings;
-  if (_bookingsFilter !== 'all') {
-    filtered = bookings.filter(function(b) { return b.status === _bookingsFilter; });
-  }
-
-  if (!filtered.length) {
-    list.innerHTML = '';
-    if (empty) empty.style.display = 'block';
-    return;
-  }
+  if (_bookingsFilter !== 'all') filtered = bookings.filter(function(b) { return b.status === _bookingsFilter; });
+  if (!filtered.length) { list.innerHTML = ''; if (empty) empty.style.display = 'block'; return; }
   if (empty) empty.style.display = 'none';
-
-  var statusColors = { pending: '#f59e0b', confirmed: '#22c55e', declined: '#ef4444', cancelled: '#9ca3af' };
-  var statusLabels = { pending: 'Pending', confirmed: 'Confirmed', declined: 'Declined', cancelled: 'Cancelled' };
-
+  var statusColors = { pending: '#f59e0b', confirmed: '#22c55e', declined: '#ef4444', cancelled: '#9ca3af', started: '#3b82f6' };
+  var statusLabels = { pending: 'Pending', confirmed: 'Confirmed', declined: 'Declined', cancelled: 'Cancelled', started: 'In Session' };
   list.innerHTML = filtered.map(function(b) {
     var d = new Date(b.scheduled_date + 'T12:00:00');
     var dateStr = d.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
-    var h = parseInt(b.scheduled_time.split(':')[0]);
-    var m = b.scheduled_time.split(':')[1];
-    var ampm = h >= 12 ? 'PM' : 'AM';
-    var h12 = h > 12 ? h - 12 : (h === 0 ? 12 : h);
-    var timeStr = h12 + ':' + m + ' ' + ampm;
+    var hh = parseInt(b.scheduled_time.split(':')[0]), mm = b.scheduled_time.split(':')[1];
+    var ap = hh >= 12 ? 'PM' : 'AM', h12 = hh > 12 ? hh - 12 : (hh === 0 ? 12 : hh);
+    var timeStr = h12 + ':' + mm + ' ' + ap;
     var color = statusColors[b.status] || '#9ca3af';
     var label = statusLabels[b.status] || b.status;
     var name = b.client_user_name || b.client_name || 'Unknown';
-    var channelIcon = b.channel === 'voice' ? '🎙' : b.channel === 'video' ? '🎥' : '💬';
+    var channelIcon = b.channel === 'voice' ? '\ud83c\udf99' : b.channel === 'video' ? '\ud83c\udfa5' : '\ud83d\udcac';
     var actions = '';
     if (b.status === 'pending') {
       actions = '<div style="display:flex;gap:6px;margin-top:10px;">' +
-        '<button class="btn btn-sm" style="background:var(--sage);color:white;font-size:11px;padding:6px 14px;" onclick="updateBookingStatus(\'' + b.id + '\',\'confirmed\')">✓ Confirm</button>' +
-        '<button class="btn btn-sm" style="background:rgba(239,68,68,.1);color:#dc2626;font-size:11px;padding:6px 14px;" onclick="updateBookingStatus(\'' + b.id + '\',\'declined\')">✗ Decline</button>' +
+        '<button class="btn btn-sm" style="background:var(--sage);color:white;font-size:11px;padding:6px 14px;" onclick="updateBookingStatus(' + "'" + b.id + "'" + ',' + "'" + 'confirmed' + "'" + ')">\u2713 Confirm</button>' +
+        '<button class="btn btn-sm" style="background:rgba(239,68,68,.1);color:#dc2626;font-size:11px;padding:6px 14px;" onclick="updateBookingStatus(' + "'" + b.id + "'" + ',' + "'" + 'declined' + "'" + ')">\u2717 Decline</button>' +
         '</div>';
     }
     if (b.status === 'confirmed') {
       actions = '<div style="display:flex;gap:6px;margin-top:10px;">' +
-        '<button class="btn btn-sm" style="background:var(--terra);color:white;font-size:12px;padding:8px 18px;font-weight:600;" onclick="startBookingSession(\x27' + b.id + '\x27)">▶ Start Session</button>' +
-        '<button class="btn btn-sm" style="background:rgba(239,68,68,.08);color:#dc2626;font-size:11px;padding:6px 14px;" onclick="updateBookingStatus(\x27' + b.id + '\x27,\x27cancelled\x27)">Cancel</button>' +
+        '<button class="btn btn-sm" style="background:var(--terra);color:white;font-size:12px;padding:8px 18px;font-weight:600;" onclick="startBookingSession(' + "'" + b.id + "'" + ')">\u25b6 Start Session</button>' +
+        '<button class="btn btn-sm" style="background:rgba(239,68,68,.08);color:#dc2626;font-size:11px;padding:6px 14px;" onclick="updateBookingStatus(' + "'" + b.id + "'" + ',' + "'" + 'cancelled' + "'" + ')">Cancel</button>' +
         '</div>';
     }
     return '<div class="db-card" style="padding:16px;">' +
@@ -15877,8 +15805,8 @@ function renderBookings(bookings) {
             '<span style="font-weight:700;font-size:14px;color:var(--brown);">' + name + '</span>' +
             '<span style="font-size:11px;font-weight:600;color:' + color + ';background:' + color + '18;padding:2px 8px;border-radius:20px;">' + label + '</span>' +
           '</div>' +
-          '<div style="font-size:13px;color:var(--gray-400);">📅 ' + dateStr + ' · 🕐 ' + timeStr + '</div>' +
-          (b.client_email ? '<div style="font-size:12px;color:var(--gray-400);margin-top:2px;">✉️ ' + b.client_email + '</div>' : '') +
+          '<div style="font-size:13px;color:var(--gray-400);">\ud83d\udcc5 ' + dateStr + ' \u00b7 \ud83d\udd50 ' + timeStr + '</div>' +
+          (b.client_email ? '<div style="font-size:12px;color:var(--gray-400);margin-top:2px;">\u2709\ufe0f ' + b.client_email + '</div>' : '') +
           (b.notes ? '<div style="font-size:12px;color:var(--gray-500);margin-top:6px;padding:8px;background:var(--cream);border-radius:8px;">' + b.notes + '</div>' : '') +
           actions +
         '</div>' +
@@ -15897,194 +15825,160 @@ function updateBookingStatus(id, status) {
   })
   .then(function(r) { return r.json(); })
   .then(function(d) {
-    if (d.success) {
-      if (typeof _showToast === 'function') _showToast('Booking ' + status + '!', status === 'confirmed' ? 'green' : 'red');
-      loadExpertBookings();
-    } else {
-      alert(d.error || 'Failed to update');
-    }
+    if (d.success) { if (typeof toast === 'function') toast('Booking ' + status + '!'); loadExpertBookings(); }
+    else { alert(d.error || 'Failed to update'); }
   })
   .catch(function() { alert('Network error'); });
 }
 
-// ══════════ START BOOKING SESSION (EXPERT SIDE) ══════════
+
+// ══════════ START BOOKING SESSION (EXPERT) ══════════
 function startBookingSession(bookingId) {
   var BASE = 'https://ownlybiz-backend-production.up.railway.app';
   var tok = sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t');
   if (!tok) { alert('Not logged in'); return; }
-
-  // Disable button
   var btn = event && event.target;
   if (btn) { btn.disabled = true; btn.textContent = 'Starting...'; }
-
   fetch(BASE + '/api/bookings/' + bookingId + '/start', {
     method: 'POST',
-    headers: {'Content-Type':'application/json', 'Authorization':'Bearer '+tok}
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + tok }
   })
-  .then(function(r){ return r.json(); })
+  .then(function(r) { return r.json(); })
   .then(function(d) {
     if (d.success && d.session) {
-      if(typeof toast==='function') toast('Session started! Connecting...','green');
-      // Store session info
+      if (typeof toast === 'function') toast('Session started!');
       window._sid = d.session.id;
       window._obActiveSessId = d.session.id;
-      // Navigate to live session panel
       var nav = document.querySelector('[onclick*="live-session"]');
       if (nav) nav.click();
       else if (typeof dbNav === 'function') dbNav(null, 'live-session');
-      // Reload bookings
       if (typeof loadExpertBookings === 'function') loadExpertBookings();
     } else {
       alert(d.error || 'Failed to start session');
-      if (btn) { btn.disabled = false; btn.textContent = '▶ Start Session'; }
+      if (btn) { btn.disabled = false; btn.textContent = '\u25b6 Start Session'; }
     }
   })
   .catch(function(e) {
     alert('Network error: ' + e.message);
-    if (btn) { btn.disabled = false; btn.textContent = '▶ Start Session'; }
+    if (btn) { btn.disabled = false; btn.textContent = '\u25b6 Start Session'; }
   });
 }
 
 // ══════════ CLIENT BOOKING JOIN ══════════
-// Check URL for ?booking=ID parameter — client joining a scheduled session
-(function(){
+(function() {
   var params = new URLSearchParams(window.location.search);
   var bookingId = params.get('booking');
   if (!bookingId) return;
-
   var BASE = 'https://ownlybiz-backend-production.up.railway.app';
 
-  // Show a joining overlay
   function showBookingJoinScreen(data) {
-    // Remove existing overlay if any
     var old = document.getElementById('booking-join-overlay');
     if (old) old.remove();
-
     var expertName = data.expert ? data.expert.name : 'Expert';
     var date = data.booking ? data.booking.scheduled_date : '';
     var time = data.booking ? data.booking.scheduled_time : '';
     var channel = data.booking ? data.booking.channel : 'chat';
-    var status = data.status;
-
+    var st = data.status;
     var d = new Date(date + 'T12:00:00');
-    var dateStr = d.toLocaleDateString('en-US', { weekday:'long', month:'long', day:'numeric' });
-    var h = parseInt((time||'').split(':')[0]||0), m = (time||'').split(':')[1]||'00';
-    var ampm = h >= 12 ? 'PM' : 'AM';
-    var h12 = h > 12 ? h - 12 : (h === 0 ? 12 : h);
-    var timeStr = h12 + ':' + m + ' ' + ampm;
-
+    var dateStr = d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+    var hh = parseInt((time || '').split(':')[0] || 0), mm = (time || '').split(':')[1] || '00';
+    var ap = hh >= 12 ? 'PM' : 'AM', h12 = hh > 12 ? hh - 12 : (hh === 0 ? 12 : hh);
+    var timeStr = h12 + ':' + mm + ' ' + ap;
     var statusHTML = '';
-    if (status === 'active') {
+    if (st === 'active') {
       statusHTML = '<div style="background:rgba(34,197,94,.1);border-radius:12px;padding:16px;text-align:center;margin-bottom:20px;">' +
-        '<div style="font-size:28px;margin-bottom:6px;">🟢</div>' +
+        '<div style="font-size:28px;margin-bottom:6px;">\ud83d\udfe2</div>' +
         '<div style="font-weight:700;color:#15803d;font-size:16px;">Session is Live!</div>' +
-        '<div style="font-size:13px;color:#15803d;">Click below to join the ' + channel + ' session.</div>' +
-        '</div>' +
-        '<button class="btn btn-primary" style="width:100%;padding:14px;font-size:16px;" onclick="joinActiveBookingSession(\'' + data.session.id + '\',\'' + data.booking.expert_id + '\',\'' + channel + '\')">Join Session →</button>';
-    } else if (status === 'waiting') {
+        '<div style="font-size:13px;color:#15803d;">Click below to join the ' + channel + ' session.</div></div>' +
+        '<button class="btn btn-primary" style="width:100%;padding:14px;font-size:16px;" onclick="joinActiveBookingSession(' + "'" + data.session.id + "'" + ',' + "'" + data.booking.expert_id + "'" + ',' + "'" + channel + "'" + ')">Join Session \u2192</button>';
+    } else if (st === 'waiting') {
       statusHTML = '<div style="background:rgba(245,158,11,.08);border-radius:12px;padding:16px;text-align:center;margin-bottom:20px;">' +
-        '<div style="font-size:28px;margin-bottom:6px;">⏳</div>' +
+        '<div style="font-size:28px;margin-bottom:6px;">\u23f3</div>' +
         '<div style="font-weight:700;color:#b45309;font-size:16px;">Waiting for Expert</div>' +
-        '<div style="font-size:13px;color:#92400e;">Your session is confirmed. The expert will start it at the scheduled time.</div>' +
-        '</div>' +
+        '<div style="font-size:13px;color:#92400e;">Your session is confirmed. The expert will start it at the scheduled time.</div></div>' +
         '<div style="font-size:12px;color:var(--gray-400);text-align:center;">This page will auto-refresh when the session starts.</div>';
-      // Poll every 10s
-      window._bookingPollTimer = setInterval(function(){ checkBookingStatus(bookingId); }, 10000);
+      window._bookingPollTimer = setInterval(function() { checkBookingStatus(bookingId); }, 10000);
     } else {
-      statusHTML = '<div style="text-align:center;padding:16px;color:var(--gray-400);font-size:14px;">Booking status: ' + status + '</div>';
+      statusHTML = '<div style="text-align:center;padding:16px;color:var(--gray-400);font-size:14px;">Booking status: ' + st + '</div>';
     }
-
     var overlay = document.createElement('div');
     overlay.id = 'booking-join-overlay';
     overlay.style.cssText = 'position:fixed;inset:0;background:var(--cream);z-index:99998;display:flex;align-items:center;justify-content:center;padding:20px;';
     overlay.innerHTML = '<div style="background:var(--white);border-radius:20px;max-width:440px;width:100%;padding:32px;box-shadow:0 16px 60px rgba(0,0,0,.12);">' +
-      '<div style="text-align:center;margin-bottom:20px;">' +
-        '<div style="font-family:var(--font-head);font-size:24px;font-weight:700;color:var(--brown);margin-bottom:4px;">Scheduled Session</div>' +
-        '<div style="font-size:14px;color:var(--gray-400);">with ' + expertName + '</div>' +
-      '</div>' +
+      '<div style="text-align:center;margin-bottom:20px;"><div style="font-family:var(--font-head);font-size:24px;font-weight:700;color:var(--brown);margin-bottom:4px;">Scheduled Session</div>' +
+      '<div style="font-size:14px;color:var(--gray-400);">with ' + expertName + '</div></div>' +
       '<div style="background:var(--cream);border-radius:12px;padding:16px;margin-bottom:20px;">' +
         '<div style="display:flex;justify-content:space-between;font-size:14px;margin-bottom:8px;"><span style="color:var(--gray-400);">Date</span><span style="font-weight:600;color:var(--brown);">' + dateStr + '</span></div>' +
         '<div style="display:flex;justify-content:space-between;font-size:14px;margin-bottom:8px;"><span style="color:var(--gray-400);">Time</span><span style="font-weight:600;color:var(--brown);">' + timeStr + '</span></div>' +
-        '<div style="display:flex;justify-content:space-between;font-size:14px;"><span style="color:var(--gray-400);">Type</span><span style="font-weight:600;color:var(--brown);">' + channel.charAt(0).toUpperCase() + channel.slice(1) + '</span></div>' +
-      '</div>' +
-      statusHTML +
-    '</div>';
+        '<div style="display:flex;justify-content:space-between;font-size:14px;"><span style="color:var(--gray-400);">Type</span><span style="font-weight:600;color:var(--brown);">' + channel.charAt(0).toUpperCase() + channel.slice(1) + '</span></div></div>' +
+      statusHTML + '</div>';
     document.body.appendChild(overlay);
   }
 
   function checkBookingStatus(bid) {
     fetch(BASE + '/api/bookings/' + bid + '/join')
-      .then(function(r){ return r.json(); })
+      .then(function(r) { return r.json(); })
       .then(function(d) {
         if (d.status === 'active' && d.session) {
           if (window._bookingPollTimer) clearInterval(window._bookingPollTimer);
           showBookingJoinScreen(d);
         }
-      })
-      .catch(function(){});
+      }).catch(function() {});
   }
 
-  // Initial check
   fetch(BASE + '/api/bookings/' + bookingId + '/join')
-    .then(function(r){ return r.json(); })
+    .then(function(r) { return r.json(); })
     .then(function(d) { showBookingJoinScreen(d); })
     .catch(function(e) { console.error('Booking join error:', e); });
 })();
 
-// Client joins an active booking session — connects to the existing live chat
 function joinActiveBookingSession(sessionId, expertId, channel) {
-  // Store session info for the WS connection
   window._obActiveSessId = sessionId;
   window._pendingSid = sessionId;
-  // Remove the join overlay
   var ov = document.getElementById('booking-join-overlay');
   if (ov) ov.remove();
-  // Open the booking overlay / live session (reuse existing flow)
-  if (typeof openBookingOverlay === 'function') {
-    openBookingOverlay(channel);
-  }
+  if (typeof openBookingOverlay === 'function') openBookingOverlay(channel);
 }
 
 
-
-// ══════════ FIX: AVAILABILITY SAVE (GLOBAL SCOPE) ══════════
-(function(){
+// ══════════ AVAILABILITY SAVE (GLOBAL SCOPE) ══════════
+(function() {
   var _prevSSB = window.saveSettingsBlock;
   window.saveSettingsBlock = function(section) {
     if (section === 'availability') {
       var BASE = 'https://ownlybiz-backend-production.up.railway.app';
       var tok = sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t');
-      if (!tok) { if(typeof toast==='function') toast('Not logged in','err'); return; }
-      var hdr = {'Authorization':'Bearer '+tok,'Content-Type':'application/json'};
-      var dayMap = {Mon:1,Tue:2,Wed:3,Thu:4,Fri:5,Sat:6,Sun:0};
+      if (!tok) { if (typeof toast === 'function') toast('Not logged in', 'err'); return; }
+      var hdr = { 'Authorization': 'Bearer ' + tok, 'Content-Type': 'application/json' };
+      var dayMap = { Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6, Sun: 0 };
       var startEl = document.getElementById('avail-start-time');
       var endEl = document.getElementById('avail-end-time');
       var startTime = startEl ? startEl.value : '09:00';
       var endTime = endEl ? endEl.value : '17:00';
       var days = [];
-      document.querySelectorAll('.avail-day-btn').forEach(function(btn){
+      document.querySelectorAll('.avail-day-btn').forEach(function(btn) {
         var dn = btn.getAttribute('data-day') || btn.textContent.trim();
         var dow = dayMap[dn] != null ? dayMap[dn] : -1;
-        if (dow >= 0) days.push({day_of_week:dow, is_active:btn.classList.contains('active'), start_time:startTime, end_time:endTime});
+        if (dow >= 0) days.push({ day_of_week: dow, is_active: btn.classList.contains('active'), start_time: startTime, end_time: endTime });
       });
       fetch(BASE + '/api/experts/me/availability', {
-        method:'PUT', headers:hdr, body:JSON.stringify({schedule:days})
-      }).then(function(r){ return r.json(); }).then(function(d){
+        method: 'PUT', headers: hdr, body: JSON.stringify({ schedule: days })
+      }).then(function(r) { return r.json(); }).then(function(d) {
         if (d.success) {
           var acceptOffline = document.getElementById('avail-accept-offline');
           var autoAccept = document.getElementById('avail-auto-accept');
           return fetch(BASE + '/api/auth/me', {
-            method:'PUT', headers:hdr,
-            body:JSON.stringify({
+            method: 'PUT', headers: hdr,
+            body: JSON.stringify({
               accept_offline: acceptOffline ? (acceptOffline.checked ? 1 : 0) : 1,
               auto_accept_bookings: autoAccept ? (autoAccept.checked ? 1 : 0) : 0
             })
-          }).then(function(r){ return r.json(); });
+          }).then(function(r) { return r.json(); });
         }
-      }).then(function(){
-        if(typeof toast==='function') toast('Availability saved!');
-      }).catch(function(e){
-        if(typeof toast==='function') toast('Save failed: '+e.message,'err');
+      }).then(function() {
+        if (typeof toast === 'function') toast('Availability saved!');
+      }).catch(function(e) {
+        if (typeof toast === 'function') toast('Save failed: ' + e.message, 'err');
       });
       return;
     }
@@ -16098,62 +15992,55 @@ function toggleEmailFields() {
   var fields = document.getElementById('email-api-fields');
   var smtpHint = document.getElementById('email-smtp-hint');
   var keyLabel = document.getElementById('email-key-label');
-  var keyHint = document.getElementById('email-key-hint');
   if (!provider) return;
   var val = provider.value;
   if (val) {
-    fields.style.display = 'block';
-    smtpHint.style.display = val === 'smtp' ? 'block' : 'none';
-    if (val === 'sendgrid') { keyLabel.textContent = '(SendGrid API Key)'; keyHint.textContent = 'Get your API key from app.sendgrid.com > Settings > API Keys'; }
-    else if (val === 'mailgun') { keyLabel.textContent = '(Mailgun API Key)'; keyHint.textContent = 'Get your API key from app.mailgun.com > API Keys'; }
-    else if (val === 'smtp') { keyLabel.textContent = '(SMTP Connection String)'; keyHint.textContent = 'Format: host:port:username:password'; }
+    if (fields) fields.style.display = 'block';
+    if (smtpHint) smtpHint.style.display = val === 'smtp' ? 'block' : 'none';
+    if (keyLabel) {
+      if (val === 'sendgrid') keyLabel.textContent = '(SendGrid API Key)';
+      else if (val === 'mailgun') keyLabel.textContent = '(Mailgun API Key)';
+      else if (val === 'smtp') keyLabel.textContent = '(SMTP Connection String)';
+    }
   } else {
-    fields.style.display = 'none';
-    smtpHint.style.display = 'none';
+    if (fields) fields.style.display = 'none';
+    if (smtpHint) smtpHint.style.display = 'none';
   }
 }
 
 function saveEmailSettings() {
   var BASE = 'https://ownlybiz-backend-production.up.railway.app';
   var tok = sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t');
-  if (!tok) { if(typeof toast==='function') toast('Not logged in','err'); return; }
-  var provider = document.getElementById('email-provider')?.value || '';
-  var apiKey = document.getElementById('email-api-key')?.value || '';
-  var fromName = document.getElementById('email-from-name')?.value || '';
-  var fromAddress = document.getElementById('email-from-address')?.value || '';
-
+  if (!tok) { if (typeof toast === 'function') toast('Not logged in', 'err'); return; }
+  var provider = document.getElementById('email-provider');
+  var apiKey = document.getElementById('email-api-key');
+  var fromName = document.getElementById('email-from-name');
+  var fromAddr = document.getElementById('email-from-address');
   fetch(BASE + '/api/auth/me', {
     method: 'PUT',
-    headers: {'Content-Type':'application/json', 'Authorization':'Bearer '+tok},
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + tok },
     body: JSON.stringify({
-      email_provider: provider,
-      email_api_key: apiKey,
-      email_from_name: fromName,
-      email_from_address: fromAddress
+      email_provider: provider ? provider.value : '',
+      email_api_key: apiKey ? apiKey.value : '',
+      email_from_name: fromName ? fromName.value : '',
+      email_from_address: fromAddr ? fromAddr.value : ''
     })
   })
-  .then(function(r){ return r.json(); })
-  .then(function(d){
-    if (d.success) { if(typeof toast==='function') toast('Email settings saved!'); }
-    else { if(typeof toast==='function') toast(d.error || 'Save failed','err'); }
+  .then(function(r) { return r.json(); })
+  .then(function(d) {
+    if (d.success) { if (typeof toast === 'function') toast('Email settings saved!'); }
+    else { if (typeof toast === 'function') toast(d.error || 'Save failed', 'err'); }
   })
-  .catch(function(e){ if(typeof toast==='function') toast('Error: '+e.message,'err'); });
+  .catch(function(e) { if (typeof toast === 'function') toast('Error: ' + e.message, 'err'); });
 }
 
-// Load email settings into the form
 function loadEmailSettings(profile) {
   if (!profile) return;
-  var provEl = document.getElementById('email-provider');
-  if (provEl && profile.email_provider) {
-    provEl.value = profile.email_provider;
-    toggleEmailFields();
-  }
-  var keyEl = document.getElementById('email-api-key');
-  if (keyEl && profile.email_api_key) keyEl.value = profile.email_api_key;
-  var nameEl = document.getElementById('email-from-name');
-  if (nameEl && profile.email_from_name) nameEl.value = profile.email_from_name;
-  var addrEl = document.getElementById('email-from-address');
-  if (addrEl && profile.email_from_address) addrEl.value = profile.email_from_address;
+  var el;
+  el = document.getElementById('email-provider'); if (el && profile.email_provider) { el.value = profile.email_provider; toggleEmailFields(); }
+  el = document.getElementById('email-api-key'); if (el && profile.email_api_key) el.value = profile.email_api_key;
+  el = document.getElementById('email-from-name'); if (el && profile.email_from_name) el.value = profile.email_from_name;
+  el = document.getElementById('email-from-address'); if (el && profile.email_from_address) el.value = profile.email_from_address;
 }
 
 </script>

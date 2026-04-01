@@ -15749,6 +15749,52 @@ function updateBookingStatus(id, status) {
   })
   .catch(function() { alert('Network error'); });
 }
+
+
+// ══════════ FIX: AVAILABILITY SAVE (GLOBAL SCOPE) ══════════
+(function(){
+  var _prevSSB = window.saveSettingsBlock;
+  window.saveSettingsBlock = function(section) {
+    if (section === 'availability') {
+      var BASE = 'https://ownlybiz-backend-production.up.railway.app';
+      var tok = sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t');
+      if (!tok) { if(typeof toast==='function') toast('Not logged in','err'); return; }
+      var hdr = {'Authorization':'Bearer '+tok,'Content-Type':'application/json'};
+      var dayMap = {Mon:1,Tue:2,Wed:3,Thu:4,Fri:5,Sat:6,Sun:0};
+      var startEl = document.getElementById('avail-start-time');
+      var endEl = document.getElementById('avail-end-time');
+      var startTime = startEl ? startEl.value : '09:00';
+      var endTime = endEl ? endEl.value : '17:00';
+      var days = [];
+      document.querySelectorAll('.avail-day-btn').forEach(function(btn){
+        var dn = btn.getAttribute('data-day') || btn.textContent.trim();
+        var dow = dayMap[dn] != null ? dayMap[dn] : -1;
+        if (dow >= 0) days.push({day_of_week:dow, is_active:btn.classList.contains('active'), start_time:startTime, end_time:endTime});
+      });
+      fetch(BASE + '/api/experts/me/availability', {
+        method:'PUT', headers:hdr, body:JSON.stringify({schedule:days})
+      }).then(function(r){ return r.json(); }).then(function(d){
+        if (d.success) {
+          var acceptOffline = document.getElementById('avail-accept-offline');
+          var autoAccept = document.getElementById('avail-auto-accept');
+          return fetch(BASE + '/api/auth/me', {
+            method:'PUT', headers:hdr,
+            body:JSON.stringify({
+              accept_offline: acceptOffline ? (acceptOffline.checked ? 1 : 0) : 1,
+              auto_accept_bookings: autoAccept ? (autoAccept.checked ? 1 : 0) : 0
+            })
+          }).then(function(r){ return r.json(); });
+        }
+      }).then(function(){
+        if(typeof toast==='function') toast('Availability saved!');
+      }).catch(function(e){
+        if(typeof toast==='function') toast('Save failed: '+e.message,'err');
+      });
+      return;
+    }
+    if (typeof _prevSSB === 'function') _prevSSB.call(this, section);
+  };
+})();
 </script>
 <!-- ═══ BOOK FOR LATER MODAL ═══ -->
 <div id="bfl-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:99999;align-items:center;justify-content:center;padding:20px;" onclick="if(event.target===this)closeBookLaterModal()">

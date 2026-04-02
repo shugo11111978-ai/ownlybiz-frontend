@@ -16041,13 +16041,28 @@ function joinActiveBookingSession(sessionId, expertId, channel) {
   if (ov) ov.remove();
 
   // Connect client WebSocket and join the session room
-  if (typeof ensureClientWS === 'function') ensureClientWS();
-  setTimeout(function() {
-    var ws = window._obClientWs;
-    if (ws && ws.readyState === 1) {
-      ws.send(JSON.stringify({ type: 'join', session_id: sessionId }));
-    }
-  }, 800);
+  var _t = sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || localStorage.getItem('ob_client_token') || '';
+  if (_t && (!window._obClientWs || window._obClientWs.readyState > 1)) {
+    try {
+      var _wsUrl = 'https://ownlybiz-backend-production.up.railway.app'.replace('https://','wss://').replace('http://','ws://') + '/ws';
+      var _ws = new WebSocket(_wsUrl);
+      _ws.onopen = function() {
+        _ws.send(JSON.stringify({ type: 'auth', token: _t }));
+        setTimeout(function() { _ws.send(JSON.stringify({ type: 'join', session_id: sessionId })); }, 500);
+      };
+      _ws.onmessage = function(evt) {
+        try {
+          var d = JSON.parse(evt.data);
+          if (d.type === 'message' && (d.sessionId || d.session_id) === window._obActiveSessId) {
+            if (d.content && typeof appendMsg === 'function') appendMsg('paid-chat-messages', d.content, false, d.ts);
+          }
+        } catch(e) {}
+      };
+      window._obClientWs = _ws;
+    } catch(e) { console.warn('WS connect error:', e); }
+  } else if (window._obClientWs && window._obClientWs.readyState === 1) {
+    window._obClientWs.send(JSON.stringify({ type: 'join', session_id: sessionId }));
+  }
 
   // Go directly to the live chat — no pre-session, no signup, no payment
   if (typeof openClientChat === 'function') {

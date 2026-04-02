@@ -8123,6 +8123,21 @@ var expertOnline = true; var expertIsOnline = true;
 
 // ===== BOOKING OVERLAY (expert website) =====
 function openBookingOverlay(channelId) {
+  // Bridge unified client token → live session token
+  var _uniTok = localStorage.getItem('ob_client_token');
+  if (_uniTok && !sessionStorage.getItem('ob_t')) {
+    sessionStorage.setItem('ob_t', _uniTok);
+  }
+  // Pre-fill and flag logged-in if unified token exists
+  if (_uniTok || sessionStorage.getItem('ob_t')) {
+    clientLoggedIn = true;
+    // Pre-fill name/email from user data if available
+    var _cu = typeof _clientUser !== 'undefined' ? _clientUser : null;
+    if (_cu) {
+      var _bovN = document.getElementById('bov-name'); if (_bovN && _cu.name) _bovN.value = _cu.name;
+      var _bovE = document.getElementById('bov-email'); if (_bovE && _cu.email) _bovE.value = _cu.email;
+    }
+  }
   // Zero free minutes if client already used them with this expert
   var _eid = window._currentExpertId;
   if(_eid && localStorage.getItem('ob_free_used_'+_eid)==='1'){
@@ -8332,7 +8347,7 @@ async function bovAuthorize() {
     if (btn) { btn.disabled = false; btn.textContent = 'Authorize & Start Session →'; }
   }
 
-  var t = sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || '';
+  var t = sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || localStorage.getItem('ob_client_token') || '';
   if (!t) { showErr('Please log in first.'); return; }
 
   // Get Stripe publishable key from backend, then confirm card setup
@@ -9989,8 +10004,10 @@ async function savePaymentConfig() {
         console.log('[OB] Login response:', r.status, d);
         if (!r.ok) throw new Error(d.error || 'Invalid email or password');
 
-        // Save to sessionStorage
+        // Save to sessionStorage + unified client token
         sessionStorage.setItem('ob_t', d.token);
+        try { localStorage.setItem('ob_client_token', d.token); } catch(e) {}
+        if (typeof checkClientAuth === 'function') setTimeout(checkClientAuth, 500);
         sessionStorage.setItem('ob_u', JSON.stringify(d.user));
 
         // Backend is clearly alive since login worked - tell api.js it's READY
@@ -10079,7 +10096,7 @@ async function savePaymentConfig() {
   const Auth = {
     get tok()     { return sessionStorage.getItem('ob_t'); },
     get user()    { try{ return JSON.parse(sessionStorage.getItem('ob_u')||'null'); }catch{ return null; } },
-    save(t,u)     { sessionStorage.setItem('ob_t',t); sessionStorage.setItem('ob_u',JSON.stringify(u)); },
+    save(t,u)     { sessionStorage.setItem('ob_t',t); try{localStorage.setItem('ob_client_token',t);}catch(e){} sessionStorage.setItem('ob_u',JSON.stringify(u)); },
     clear()       { sessionStorage.removeItem('ob_t'); sessionStorage.removeItem('ob_u'); },
     get ok()      { return !!this.tok; },
     get isExpert(){ return this.user?.role==='expert'; },
@@ -11794,6 +11811,8 @@ async function savePaymentConfig() {
         } else throw new Error(d.error || 'Signup failed');
       }
       sessionStorage.setItem('ob_t', d.token);
+      try { localStorage.setItem('ob_client_token', d.token); } catch(e) {}
+      if (typeof checkClientAuth === 'function') setTimeout(checkClientAuth, 500);
       sessionStorage.setItem('ob_u', JSON.stringify(d.user));
       console.log('[OB] Logged in as:', d.user.name, d.user.role);
       if (btn) btn.textContent = '✓ Account created!';

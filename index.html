@@ -14891,11 +14891,12 @@ body.expert-page #mob-cta-bar{display:none!important;}
 (function(){
   var BASE='https://ownlybiz-backend-production.up.railway.app';
   var _sessId=null,_pollTimer=null,_statusPollTimer=null;
-  function tok(){return sessionStorage.getItem('ob_t')||localStorage.getItem('ob_t')||'';}
+  function tok(){return sessionStorage.getItem('ob_t')||localStorage.getItem('ob_t')||localStorage.getItem('ob_client_token')||'';}
   function hdr(){return {Authorization:'Bearer '+tok(),'Content-Type':'application/json'};}
   function myId(){try{return JSON.parse(atob(tok().split('.')[1])).id;}catch(e){return null;}}
   function myRole(){try{return JSON.parse(atob(tok().split('.')[1])).role;}catch(e){return null;}}
   function sendWsAuth(ws){var t=tok();if(!t)return;try{ws.send(JSON.stringify({type:'auth',token:t}));}catch(e){}}
+  window._obSendWsAuth = sendWsAuth;
   function sendWsMsg(obj){var ws=window._obWs||window._obClientWs;if(ws&&ws.readyState===1){try{ws.send(JSON.stringify(obj));}catch(e){}}}
   function ensureClientWS(){
     if(window._obWsConnecting)return;
@@ -15044,6 +15045,7 @@ function openClientChat(sid){
   // Load real message history
   loadHistory(sid,'paid-chat-messages');
 }
+window._obOpenClientChat = openClientChat;
   window.openClientChat=openClientChat;
   window.clientEndSession=function(){
   var sid=window._obActiveSessId||window._sid;
@@ -15284,6 +15286,7 @@ function openClientChat(sid){
     if(ts){var tEl=document.createElement('div');tEl.style.cssText='font-size:10px;opacity:.5;margin-top:2px';tEl.textContent=new Date(typeof ts==='number'?ts:ts).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});bub.appendChild(tEl);}
     row.appendChild(bub);box.appendChild(row);box.scrollTop=box.scrollHeight;
   }
+  window._obAppendMsg = appendMsg;
   window.obAppendToPanel=appendMsg;
   // === EXPERT DASHBOARD FIX: bypass READY gate in api-v2.js ===
   function fixExpertDashboard(){
@@ -16054,7 +16057,25 @@ function joinActiveBookingSession(sessionId, expertId, channel) {
         try {
           var d = JSON.parse(evt.data);
           if (d.type === 'message' && (d.sessionId || d.session_id) === window._obActiveSessId) {
-            if (d.content && typeof appendMsg === 'function') appendMsg('paid-chat-messages', d.content, false, d.ts);
+            // Skip own messages (already shown by sendPaidMsg)
+            var _myId = null; try { _myId = JSON.parse(atob(_t.split('.')[1])).id; } catch(e2) {}
+            if (d.sender_id !== _myId && d.content) {
+              var _fn = window._obAppendMsg || (typeof appendMsg === 'function' ? appendMsg : null);
+              if (_fn) _fn('paid-chat-messages', d.content, false, d.ts);
+              else {
+                // Direct DOM fallback
+                var _box = document.getElementById('paid-chat-messages');
+                if (_box) {
+                  var _r = document.createElement('div'); _r.style.cssText = 'display:flex;justify-content:flex-start;margin:3px 0';
+                  var _b = document.createElement('div'); _b.style.cssText = 'max-width:75%;padding:8px 12px;border-radius:12px;font-size:13px;line-height:1.4;word-break:break-word;background:#e8e0d5;color:#251810';
+                  _b.textContent = d.content; _r.appendChild(_b); _box.appendChild(_r); _box.scrollTop = _box.scrollHeight;
+                }
+              }
+            }
+          }
+          if (d.type === 'typing' && (d.sessionId || d.session_id) === window._obActiveSessId) {
+            var _ti = document.getElementById('ob-client-typing');
+            if (_ti) { _ti.textContent = 'typing...'; clearTimeout(_ti._t); _ti._t = setTimeout(function(){ _ti.textContent = ''; }, 2000); }
           }
         } catch(e) {}
       };

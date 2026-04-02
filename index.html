@@ -16025,11 +16025,44 @@ function startBookingSession(bookingId) {
 })();
 
 function joinActiveBookingSession(sessionId, expertId, channel) {
+  // Bridge unified client token so API calls work
+  var clientTok = localStorage.getItem('ob_client_token');
+  if (clientTok && !sessionStorage.getItem('ob_t')) {
+    sessionStorage.setItem('ob_t', clientTok);
+  }
+
+  // Set session globals
   window._obActiveSessId = sessionId;
+  window._sessId = sessionId;
   window._pendingSid = sessionId;
+
+  // Remove booking join overlay
   var ov = document.getElementById('booking-join-overlay');
   if (ov) ov.remove();
-  if (typeof openBookingOverlay === 'function') openBookingOverlay(channel);
+
+  // Connect client WebSocket and join the session room
+  if (typeof ensureClientWS === 'function') ensureClientWS();
+  setTimeout(function() {
+    var ws = window._obClientWs;
+    if (ws && ws.readyState === 1) {
+      ws.send(JSON.stringify({ type: 'join', session_id: sessionId }));
+    }
+  }, 800);
+
+  // Go directly to the live chat — no pre-session, no signup, no payment
+  if (typeof openClientChat === 'function') {
+    openClientChat(sessionId);
+  } else {
+    // Fallback: manually switch to chat view
+    if (typeof switchView === 'function') switchView(5);
+    if (typeof phoneGo === 'function') phoneGo('A4');
+    var expertName = (window._currentExpert && (window._currentExpert.name || window._currentExpert.display_name)) || 'Expert';
+    var rate = (window._currentExpert && window._currentExpert.rate_chat) || '1';
+    var t4 = document.getElementById('a4-session-title');
+    if (t4) t4.textContent = expertName + ' - Chat';
+    var r4 = document.getElementById('a4-session-rate');
+    if (r4) r4.textContent = 'Billing Active \u00b7 $' + parseFloat(rate).toFixed(2) + '/min';
+  }
 }
 
 

@@ -5837,9 +5837,9 @@ if (!window.toast) {
               </div>
               <div class="receipt-card">
                 <div class="receipt-row"><span>Session</span><span id="receipt-session-type">Chat with Expert</span></div>
-                <div class="receipt-row"><span>Duration</span><span id="receipt-duration">18 min (3 free + 15 billed)</span></div>
-                <div class="receipt-row"><span>Rate</span><span id="receipt-rate">$3.50/min</span></div>
-                <div class="receipt-row" style="border-top:1px solid var(--gray-200);padding-top:8px;margin-top:4px;font-weight:700;"><span>Total Charged</span><span id="receipt-total">$52.50</span></div>
+                <div class="receipt-row"><span>Duration</span><span id="receipt-duration">—</span></div>
+                <div class="receipt-row"><span>Rate</span><span id="receipt-rate">—</span></div>
+                <div class="receipt-row" style="border-top:1px solid var(--gray-200);padding-top:8px;margin-top:4px;font-weight:700;"><span>Total Charged</span><span id="receipt-total">—</span></div>
               </div>
               <div class="receipt-actions">
                 <button class="btn btn-primary" style="width:100%" onclick="if(typeof openBookingOverlay==='function'){openBookingOverlay();}else{switchView(4);showExpertPage('book');}">Book Another Session</button>
@@ -8118,6 +8118,9 @@ var expertOnline = true; var expertIsOnline = true;
 
 // ===== BOOKING OVERLAY (expert website) =====
 function openBookingOverlay(channelId) {
+  // Clear stale session state from previous sessions
+  window._obActiveSessId = null; window._obPendingSessId = null; window._pendingSid = null;
+  window._userClickedBegin = false;
   // Bridge unified client token → live session token
   var _uniTok = localStorage.getItem('ob_client_token');
   if (_uniTok && !sessionStorage.getItem('ob_t')) {
@@ -10180,6 +10183,8 @@ async function savePaymentConfig() {
         if(typeof sessionStartMode==='object'){sessionStartMode.chat='upfront';sessionStartMode.voice='upfront';sessionStartMode.video='upfront';}
         // Persist that free minutes were used with this expert
         try{var _eid=d.session&&d.session.expert_id||window._currentExpertId;if(_eid)localStorage.setItem('ob_free_used_'+_eid,'1');}catch(e){}
+        // Clear ob_hpm so next live session goes through full payment flow
+        try{localStorage.removeItem('ob_hpm');}catch(e){}
         if(window._expertTimerInterval){clearInterval(window._expertTimerInterval);window._expertTimerInterval=null;}
         if(window._expertSessInterval){clearInterval(window._expertSessInterval);window._expertSessInterval=null;}
         var _e=fmt$(d.session?.expert_earned||0);
@@ -16057,13 +16062,11 @@ function joinActiveBookingSession(sessionId, expertId, channel) {
         try {
           var d = JSON.parse(evt.data);
           if (d.type === 'message' && (d.sessionId || d.session_id) === window._obActiveSessId) {
-            // Skip own messages (already shown by sendPaidMsg)
             var _myId = null; try { _myId = JSON.parse(atob(_t.split('.')[1])).id; } catch(e2) {}
             if (d.sender_id !== _myId && d.content) {
               var _fn = window._obAppendMsg || (typeof appendMsg === 'function' ? appendMsg : null);
               if (_fn) _fn('paid-chat-messages', d.content, false, d.ts);
               else {
-                // Direct DOM fallback
                 var _box = document.getElementById('paid-chat-messages');
                 if (_box) {
                   var _r = document.createElement('div'); _r.style.cssText = 'display:flex;justify-content:flex-start;margin:3px 0';
@@ -16072,6 +16075,27 @@ function joinActiveBookingSession(sessionId, expertId, channel) {
                 }
               }
             }
+          }
+          if (d.type === 'session_ended') {
+            // Update receipt with real session data
+            var _s = d.session || {};
+            var _dur = Math.round((_s.duration_secs || 0) / 60);
+            var _rt = parseFloat(_s.rate_per_min || 0);
+            var _fm = _s.free_minutes || 0;
+            var _billed = Math.max(0, _dur - _fm);
+            var _total = _billed * _rt;
+            var _re = document.getElementById('receipt-total'); if (_re) _re.textContent = '$' + _total.toFixed(2);
+            var _rd = document.getElementById('receipt-duration'); if (_rd) _rd.textContent = _dur + ' min' + (_fm > 0 ? ' (' + _fm + ' free + ' + _billed + ' billed)' : '');
+            var _rr = document.getElementById('receipt-rate'); if (_rr) _rr.textContent = '$' + _rt.toFixed(2) + '/min';
+            var _rst = document.getElementById('receipt-session-type'); if (_rst) _rst.textContent = (_s.channel || 'Chat') + ' with ' + ((window._currentExpert && window._currentExpert.name) || 'Expert');
+            // Stop timers
+            if (window.paidTimerInterval) { clearInterval(window.paidTimerInterval); window.paidTimerInterval = null; }
+            // Show receipt screen
+            if (typeof phoneGo === 'function') phoneGo('A5');
+            // Clear session state
+            window._obActiveSessId = null; window._obPendingSessId = null;
+            // Clean up ob_hpm so next live session goes through full payment
+            try { localStorage.removeItem('ob_hpm'); } catch(e3) {}
           }
           if (d.type === 'typing' && (d.sessionId || d.session_id) === window._obActiveSessId) {
             var _ti = document.getElementById('ob-client-typing');

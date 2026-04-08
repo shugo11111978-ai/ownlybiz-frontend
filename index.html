@@ -3928,7 +3928,9 @@ if (!window.toast) {
                     <div style="font-size:13px;font-weight:700;color:var(--brown);margin-bottom:10px;">Step 1 — Enter your domain</div>
                     <div style="display:flex;gap:8px;flex-wrap:wrap;">
                       <input type="text" class="settings-field-input" value="" id="custom-domain-input" placeholder="yourdomain.com" style="flex:1;max-width:300px;">
-                      <button class="btn btn-primary btn-sm" onclick="verifyCustomDomain()">Verify ownership →</button>
+                      <button class="btn btn-primary btn-sm" onclick="verifyCustomDomain()">Connect domain →</button>
+              </div>
+              <div id="domain-dns-instructions" style="display:none;margin-top:16px;background:var(--cream);border-radius:12px;padding:16px 20px;"></div>
                     </div>
                   </div>
                   <div style="margin-bottom:20px;">
@@ -8781,14 +8783,68 @@ function selectDomainOption(el, type) {
 
 function verifyCustomDomain() {
   var input = document.getElementById('custom-domain-input');
-  if(!input) return;
-  var btn = event.target;
-  btn.textContent='Checking...';
-  btn.disabled = true;
-  setTimeout(function(){
-    btn.textContent='Verified ✓';
-    btn.style.background='var(--sage)';
-  }, 1500);
+  if(!input||!input.value.trim()){if(typeof _showToast==='function')_showToast('Please enter a domain','red');return;}
+  var domain=input.value.trim().toLowerCase().replace(/^https?:\/\//,'').replace(/\/$/,'');
+  var btn=event.target; btn.textContent='Connecting...';btn.disabled=true;
+  var BASE='https://ownlybiz-backend-production.up.railway.app';
+  var tok=sessionStorage.getItem('ob_t')||localStorage.getItem('ob_t')||'';
+  fetch(BASE+'/api/domains/me/custom',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+tok},body:JSON.stringify({domain:domain})})
+  .then(function(r){return r.json();})
+  .then(function(d){
+    btn.disabled=false;
+    if(d.success){
+      btn.textContent='Connected!';btn.style.background='var(--sage)';
+      if(typeof _showToast==='function')_showToast('Domain connected! Configure DNS below.','green');
+      var dnsBox=document.getElementById('domain-dns-instructions');
+      if(dnsBox){dnsBox.style.display='block';dnsBox.innerHTML=
+        '<div style="font-size:13px;font-weight:700;color:var(--brown);margin-bottom:10px;">Step 2 \u2014 Configure DNS at your registrar</div>'
+        +'<table style="width:100%;font-size:12px;border-collapse:collapse;background:var(--white);border:1px solid var(--gray-200);border-radius:10px;">'
+        +'<tr style="background:var(--cream);"><th style="padding:8px 12px;text-align:left;">Type</th><th style="padding:8px 12px;text-align:left;">Host</th><th style="padding:8px 12px;text-align:left;">Value</th></tr>'
+        +'<tr><td style="padding:8px 12px;font-weight:600;">A</td><td style="padding:8px 12px;">@</td><td style="padding:8px 12px;font-family:monospace;color:var(--terra);">76.76.21.21</td></tr>'
+        +'<tr style="border-top:1px solid var(--gray-200);"><td style="padding:8px 12px;font-weight:600;">CNAME</td><td style="padding:8px 12px;">www</td><td style="padding:8px 12px;font-family:monospace;color:var(--terra);">cname.vercel-dns.com</td></tr>'
+        +'</table>'
+        +'<div style="margin-top:10px;font-size:11px;color:var(--gray-400);">DNS propagation takes up to 48h. SSL auto-provisioned once verified.</div>'
+        +'<div style="margin-top:12px;display:flex;gap:8px;">'
+        +'<button class="btn btn-sm btn-secondary" onclick="checkDomainStatus()">Check Status</button>'
+        +'<button class="btn btn-sm" style="background:none;border:1px solid var(--gray-200);color:var(--gray-500);" onclick="removeCustomDomain()">Remove Domain</button>'
+        +'</div>';}
+    }else{
+      btn.textContent='Connect domain \u2192';
+      if(typeof _showToast==='function')_showToast(d.error||'Failed','red');
+    }
+  }).catch(function(){btn.textContent='Connect domain \u2192';btn.disabled=false;if(typeof _showToast==='function')_showToast('Network error','red');});
+}
+function checkDomainStatus() {
+  var BASE='https://ownlybiz-backend-production.up.railway.app';
+  var tok=sessionStorage.getItem('ob_t')||localStorage.getItem('ob_t')||'';
+  fetch(BASE+'/api/domains/me/status',{headers:{'Authorization':'Bearer '+tok}})
+  .then(function(r){return r.json();})
+  .then(function(d){
+    if(d.verified){
+      if(typeof _showToast==='function')_showToast('Domain verified and active!','green');
+    }else{
+      if(typeof _showToast==='function')_showToast(d.message||'DNS not yet propagated. Try again later.','orange');
+    }
+  }).catch(function(){if(typeof _showToast==='function')_showToast('Check failed','red');});
+}
+
+function removeCustomDomain() {
+  if(!confirm('Remove your custom domain? Your site will revert to the .ownlybiz.com subdomain.')) return;
+  var BASE='https://ownlybiz-backend-production.up.railway.app';
+  var tok=sessionStorage.getItem('ob_t')||localStorage.getItem('ob_t')||'';
+  fetch(BASE+'/api/domains/me/custom',{method:'DELETE',headers:{'Authorization':'Bearer '+tok}})
+  .then(function(r){return r.json();})
+  .then(function(d){
+    if(d.success){
+      if(typeof _showToast==='function')_showToast('Domain removed','green');
+      var dnsBox=document.getElementById('domain-dns-instructions');
+      if(dnsBox)dnsBox.style.display='none';
+      var input=document.getElementById('custom-domain-input');
+      if(input)input.value='';
+      var btn=document.querySelector('#custom-domain-input + button');
+      if(btn){btn.textContent='Connect domain \u2192';btn.style.background='';}
+    }
+  }).catch(function(){if(typeof _showToast==='function')_showToast('Failed to remove','red');});
 }
 
 // ===== PHONE FUNNEL =====
@@ -14003,6 +14059,17 @@ window.loadDashboard = function(slug) {
     window._browseExpert=_slug;
     window._isSubdomain=true;
     document.documentElement.setAttribute('data-subdomain','true');
+  } else if(!_slug && _host.indexOf('ownlybiz.com')<0 && _host!=='localhost' && _host.indexOf('vercel.app')<0) {
+    // Custom domain — look up expert by domain_custom via API
+    window._customDomainHost=_host;
+    window._isSubdomain=true;
+    document.documentElement.setAttribute('data-subdomain','true');
+    // Fetch expert slug from backend
+    fetch('https://ownlybiz-backend-production.up.railway.app/api/domains/lookup?domain='+encodeURIComponent(_host))
+      .then(function(r){return r.json();})
+      .then(function(d){
+        if(d.slug){ window._browseExpert=d.slug; if(typeof loadExpertWebsite==='function') loadExpertWebsite(d.slug); }
+      }).catch(function(){});
   }
 })();
 

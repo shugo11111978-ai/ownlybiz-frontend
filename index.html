@@ -3922,7 +3922,7 @@ if (!window.toast) {
                     <div style="font-size:13px;font-weight:700;color:var(--brown);margin-bottom:10px;">Step 1 — Enter your domain</div>
                     <div style="display:flex;gap:8px;flex-wrap:wrap;">
                       <input type="text" class="settings-field-input" value="" id="custom-domain-input" placeholder="yourdomain.com" style="flex:1;max-width:300px;">
-                      <button class="btn btn-primary btn-sm" onclick="verifyCustomDomain()">Verify ownership →</button>
+                      <button class="btn btn-primary btn-sm" onclick="verifyCustomDomain()">Connect Domain →</button>
                     </div>
                   </div>
                   <div style="margin-bottom:20px;">
@@ -8751,6 +8751,11 @@ function verifyCustomDomain() {
     if(btn){btn.disabled=false;btn.textContent='Connect Domain';}
     if(d.success){
       if(typeof _showToast==='function')_showToast('Domain '+domain+' connected! Configure DNS records below.','green');
+      // Update top-level domain display
+      var liveDom=document.getElementById('settings-live-domain');
+      if(liveDom) liveDom.textContent=domain;
+      // Update button to show connected state
+      if(btn){btn.textContent='✓ Connected';btn.style.background='var(--sage)';}
       checkDomainStatus();
     } else {
       if(typeof _showToast==='function')_showToast(d.error||'Failed to connect domain','red');
@@ -8769,14 +8774,38 @@ function checkDomainStatus() {
   .then(function(d){
     var card=document.getElementById('domain-status-card');
     if(!card){card=document.createElement('div');card.id='domain-status-card';card.style.cssText='margin-top:16px;padding:16px;border-radius:12px;border:1.5px solid var(--gray-200);';
-    var connectTab=document.getElementById('dtab-connect-panel');if(connectTab)connectTab.appendChild(card);}
-    if(d.dns_verified){
+    var connectTab=document.getElementById('dtab-content-connect');if(connectTab)connectTab.appendChild(card);}
+    if(d.verified){
       card.style.borderColor='#22c55e';card.style.background='rgba(34,197,94,.06)';
       card.innerHTML='<div style="display:flex;align-items:center;gap:10px;"><span style="font-size:20px;">✅</span><div><div style="font-weight:700;color:var(--brown);">Domain Active</div><div style="font-size:12px;color:var(--gray-400);">'+d.domain+' is connected and DNS is verified</div></div></div>';
     } else {
       card.style.borderColor='#f59e0b';card.style.background='rgba(245,158,11,.06)';
       card.innerHTML='<div style="display:flex;align-items:center;gap:10px;"><span style="font-size:20px;">⏳</span><div><div style="font-weight:700;color:var(--brown);">Waiting for DNS</div><div style="font-size:12px;color:var(--gray-400);">Point your A record to 76.76.21.21 and CNAME www to cname.vercel-dns.com</div></div></div>';
     }
+  }).catch(function(){});
+}
+
+function loadDomainSettings() {
+  var BASE='https://ownlybiz-backend-production.up.railway.app';
+  var tok=sessionStorage.getItem('ob_t')||localStorage.getItem('ob_t')||'';
+  if(!tok) return;
+  fetch(BASE+'/api/domains/me',{headers:{'Authorization':'Bearer '+tok}})
+  .then(function(r){return r.json();})
+  .then(function(d){
+    // Populate live domain display
+    var liveDom=document.getElementById('settings-live-domain');
+    if(liveDom){
+      if(d.custom_domain) liveDom.textContent=d.custom_domain;
+      else if(d.subdomain_url) liveDom.textContent=d.subdomain_url;
+    }
+    // Populate input with current domain
+    var inp=document.getElementById('custom-domain-input');
+    if(inp && d.custom_domain) inp.value=d.custom_domain;
+    // Populate slug input
+    var slugInp=document.getElementById('slug-input');
+    if(slugInp && d.subdomain) slugInp.value=d.subdomain;
+    // Show status if domain connected
+    if(d.custom_domain) checkDomainStatus();
   }).catch(function(){});
 }
 
@@ -9618,6 +9647,7 @@ function settingsNav(el, blockId) {
   document.querySelectorAll('#settings-form-area .settings-block').forEach(function(b){ b.style.display='none'; });
   var block = document.getElementById(blockId);
   if (block) { block.style.display='block'; block.scrollIntoView({behavior:'smooth',block:'start'}); }
+  if(blockId==='sblock-website' && typeof loadDomainSettings==='function') loadDomainSettings();
 }
 
 // ══════════════════════════════════════════

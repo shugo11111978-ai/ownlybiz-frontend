@@ -11703,7 +11703,7 @@ async function savePaymentConfig() {
       if(window._browseExpert && window._browseExpert !== 'expert-slug'){
         if(typeof switchView==='function') switchView(4);
       }
-      loadExpertWebsite(window._browseExpert||'expert-slug');
+      if(!window._customDomainPending) loadExpertWebsite(window._browseExpert||'expert-slug');
     }
     // Reveal page delayed — anti-flicker overrides handle ownly-ready after real data loads
     // Safety fallback: reveal after 2.5s if no other trigger fires
@@ -13920,15 +13920,18 @@ window.loadDashboard = function(slug) {
     window._isSubdomain=true;
     document.documentElement.setAttribute('data-subdomain','true');
   } else if(!_slug && _host.indexOf('ownlybiz.com')<0 && _host!=='localhost' && _host.indexOf('vercel.app')<0) {
-    // Custom domain — look up expert by domain_custom via API
+    // Custom domain — delay _isSubdomain until fetch returns to avoid race condition
     window._customDomainHost=_host;
-    window._isSubdomain=true;
-    document.documentElement.setAttribute('data-subdomain','true');
-    // Fetch expert slug from backend
+    window._customDomainPending=true;
     fetch('https://ownlybiz-backend-production.up.railway.app/api/domains/lookup?domain='+encodeURIComponent(_host))
       .then(function(r){return r.json();})
       .then(function(d){
-        if(d.slug){ window._browseExpert=d.slug; if(typeof loadExpertWebsite==='function') loadExpertWebsite(d.slug); }
+        if(d.slug){
+          window._browseExpert=d.slug;
+          window._isSubdomain=true;
+          document.documentElement.setAttribute('data-subdomain','true');
+          if(typeof loadExpertWebsite==='function') loadExpertWebsite(d.slug);
+        }
       }).catch(function(){});
   }
 })();

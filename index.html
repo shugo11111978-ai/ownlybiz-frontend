@@ -15180,6 +15180,20 @@ body.expert-page #mob-cta-bar{display:none!important;}
         window._obPendingSessId=null;if(typeof toast==='function')toast('Expert declined — try again','err');
       }
     }
+    if(d.type==='session_started'){
+      console.log('[OB] session_started received, started_at:', d.started_at);
+      // Start expert timer
+      if(typeof startExpertSessionTimer==='function'){
+        clearInterval(window._expertSessInterval);
+        window._expertSessInterval=null;
+        startExpertSessionTimer(d.started_at);
+      }
+      // Start client timer if exists
+      if(typeof window._clientTimerFn==='function') window._clientTimerFn(d.started_at);
+      // Update any "waiting" UI
+      var _wt2=document.getElementById('expert-sess-timer');
+      if(_wt2 && _wt2.textContent==='0:00') _wt2.textContent='0:01';
+    }
     // new_session_request handled by session-request-sheet only (ob-expert-incoming removed to avoid duplicate popup)
     if(d.type==='message'&&(d.sessionId||d.session_id)===window._obActiveSessId){
       // Only append here for client role — expert messages are handled by connectExpertWs (_expertWs)
@@ -15389,10 +15403,18 @@ window._obOpenClientChat = openClientChat;
       if(earnRateEl) earnRateEl.textContent='$'+((rate*(cut||0.8)).toFixed(2))+'/min';
       // Start timer from session's actual start time (catch-up if mid-session)
       window._expertSessSeconds=0;
-      if(typeof startExpertSessionTimer==='function'){
-        clearInterval(window._expertSessInterval);
-        window._expertSessInterval=null;
-        startExpertSessionTimer(sess.started_at||null);
+      if(sess.started_at){
+        // Session already started — catch up timer
+        if(typeof startExpertSessionTimer==='function'){
+          clearInterval(window._expertSessInterval);
+          window._expertSessInterval=null;
+          startExpertSessionTimer(sess.started_at);
+        }
+      } else {
+        // Waiting for client to join — show 0:00 but don't start counting
+        var _wt=document.getElementById('expert-sess-timer');
+        if(_wt) _wt.textContent='0:00';
+        console.log('[OB] Timer paused — waiting for client to connect');
       }
       // Load real messages (clears fake hardcoded ones)
       var box=document.getElementById('expert-chat-messages');

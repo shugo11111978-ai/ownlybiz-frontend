@@ -5731,7 +5731,7 @@ if (!window.toast) {
                 <div class="receipt-row" style="border-top:1px solid var(--gray-200);padding-top:8px;margin-top:4px;font-weight:700;"><span>Total Charged</span><span id="receipt-total">—</span></div>
               </div>
               <div class="receipt-actions">
-                <button class="btn btn-primary" style="width:100%" onclick="if(typeof openBookingOverlay==='function'){openBookingOverlay();}else{switchView(4);showExpertPage('book');}">Book Another Session</button>
+                <button class="btn btn-primary" style="width:100%" onclick="showExpertPage('book');window.scrollTo(0,0);">Book Another Session</button>
                 <button class="btn btn-secondary" style="width:100%" onclick="window.print();">View Receipt</button>
                 <button class="btn" style="width:100%;margin-top:8px;color:var(--gray-400);font-size:13px;background:none;border:none;cursor:pointer;" onclick="window.location.reload();">← Return to Expert Page</button>
               </div>
@@ -8205,15 +8205,50 @@ function selectCalDay(el) {
 
 
 function bovSignup() {
-  clientLoggedIn = true;
-  var ch = selectedChannel;
-  var mode = sessionStartMode[ch.id] || 'upfront';
-  var fm = freeMinutes[ch.id] || 0;
-  if (mode === 'upfront' || fm === 0) {
-    // Skip payment step if client already has payment authorized
-    // Always show payment overlay — no auto-skip
-      _bovGoStep(2);
+  var nameEl = document.getElementById('bov-name');
+  var emailEl = document.getElementById('bov-email');
+  var passEl = document.getElementById('bov-pass');
+  var btn = document.getElementById('bov-signup-btn');
+  var name = (nameEl||{value:''}).value.trim();
+  var email = (emailEl||{value:''}).value.trim();
+  var pass = (passEl||{value:''}).value;
+
+  // Validate
+  if(!name){ _showToast('Please enter your name','red'); return; }
+  if(!email || !email.includes('@')){ _showToast('Please enter a valid email','red'); return; }
+  if(pass.length < 8){ _showToast('Password must be 8+ characters','red'); return; }
+
+  if(btn){ btn.disabled=true; btn.textContent='Creating account...'; }
+  var BASE = window.OWNLYBIZ_API_URL || window._OB_BACKEND || 'https://victorious-wisdom-production-a6b0.up.railway.app';
+
+  fetch(BASE+'/api/auth/signup',{
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({name:name, email:email, password:pass, role:'client'})
+  }).then(function(r){ return r.json().then(function(d){ return {ok:r.ok, data:d}; }); })
+  .then(function(res){
+    if(!res.ok){
+      // If already exists, try login
+      if(res.data.error && res.data.error.toLowerCase().includes('already')){
+        return fetch(BASE+'/api/auth/login',{
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({email:email, password:pass})
+        }).then(function(r2){ return r2.json().then(function(d2){ return {ok:r2.ok, data:d2}; }); });
+      }
+      throw new Error(res.data.error||'Signup failed');
     }
+    return res;
+  }).then(function(res){
+    if(!res.ok) throw new Error(res.data.error||'Login failed');
+    var tok = res.data.token;
+    if(tok){ sessionStorage.setItem('ob_t',tok); localStorage.setItem('ob_t',tok); localStorage.setItem('ob_client_token',tok); }
+    if(res.data.user){ sessionStorage.setItem('ob_u',JSON.stringify(res.data.user)); }
+    clientLoggedIn = true;
+    if(btn){ btn.disabled=false; btn.textContent='Continue \u2192'; }
+    _bovGoStep(2);
+  }).catch(function(e){
+    _showToast(e.message||'Account error','red');
+    if(btn){ btn.disabled=false; btn.textContent='Continue \u2192'; }
+  });
 }
 
 async function bovAuthorize() {

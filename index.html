@@ -2855,8 +2855,8 @@ if (!window.toast) {
               
               <!-- Video box (hidden for voice) -->
               <div id="expert-rtc-video-box" style="display:none;margin-bottom:20px;position:relative;border-radius:12px;overflow:hidden;background:#111;aspect-ratio:16/9;max-width:640px;margin-left:auto;margin-right:auto;">
-                <video id="rtc-remote-video" autoplay playsinline style="width:100%;height:100%;object-fit:cover;"></video>
-                <video id="rtc-local-video" autoplay playsinline muted style="position:absolute;bottom:12px;right:12px;width:120px;height:90px;border-radius:8px;border:2px solid white;object-fit:cover;"></video>
+                <video id="expert-rtc-remote-video" autoplay playsinline style="width:100%;height:100%;object-fit:cover;"></video>
+                <video id="expert-rtc-local-video" autoplay playsinline muted style="position:absolute;bottom:12px;right:12px;width:120px;height:90px;border-radius:8px;border:2px solid white;object-fit:cover;"></video>
               </div>
               
               <!-- Voice visualization -->
@@ -17226,6 +17226,7 @@ function loadClientSessions() {
    ══════════════════════════════════════════════ */
 window.OB_RTC = (function(){
   var pc=null, localStream=null, sid=null, ch=null, _role=null, _muted=false, _camOff=false;
+  var _pendingOffer=null, _pendingIce=[], _pendingAnswer=null;
   var ICE={iceServers:[{urls:'stun:stun.l.google.com:19302'},{urls:'stun:stun1.l.google.com:19302'}]};
 
   function _ws(){
@@ -17236,74 +17237,107 @@ window.OB_RTC = (function(){
     w=window._expertWs;if(w&&w.readyState===1)return w;
     return null;
   }
-  function _send(d){var ws=_ws();if(ws&&ws.readyState===1)ws.send(JSON.stringify(d));else console.warn('[RTC] WS not ready, msg dropped:',d.type);}
+  function _send(d){var ws=_ws();if(ws)ws.send(JSON.stringify(d));else console.warn('[RTC] WS not ready, queued:',d.type);}
 
-  async function start(sessionId, channel, role){
-    sid=sessionId; ch=channel; _role=role; _muted=false; _camOff=false;
-    console.log('[RTC] Starting '+channel+' as '+role+' sid='+sessionId);
-    try{
-      localStream=await navigator.mediaDevices.getUserMedia(channel==='video'?{audio:true,video:{width:{ideal:640},height:{ideal:480}}}:{audio:true,video:false});
-    }catch(e){
-      console.error('[RTC] getUserMedia failed:',e);
-      if(typeof _showToast==='function')_showToast(channel==='video'?'Camera/mic access denied':'Mic access denied','red');
-      return false;
-    }
+  function _setupPC(){
     pc=new RTCPeerConnection(ICE);
-    localStream.getTracks().forEach(function(t){pc.addTrack(t,localStream);});
+    if(localStream) localStream.getTracks().forEach(function(t){pc.addTrack(t,localStream);});
 
     pc.ontrack=function(e){
       console.log('[RTC] Remote track: '+e.track.kind);
       if(e.track.kind==='audio'){
         var ra=document.getElementById('rtc-remote-audio');
-        if(!ra){ra=document.createElement('audio');ra.id='rtc-remote-audio';ra.autoplay=true;document.body.appendChild(ra);}
+        if(!ra){ra=document.createElement('audio');ra.id='rtc-remote-audio';ra.autoplay=true;ra.playsInline=true;document.body.appendChild(ra);}
         if(e.streams[0])ra.srcObject=e.streams[0];
+        ra.play().catch(function(err){console.log('[RTC] Audio play blocked:',err);});
       }
       if(e.track.kind==='video'){
-        var _vc=_role==='client'?document.getElementById('screen-VID'):document.getElementById('expert-rtc-area');
-        var rv=_vc?_vc.querySelector('video'):document.getElementById('rtc-remote-video');
-        if(rv&&e.streams[0]){rv.srcObject=e.streams[0];rv.play().catch(function(){});}
+        var rv=document.getElementById('rtc-remote-video');
+        var erv=document.getElementById('expert-rtc-remote-video');
+        var target=(_role==='expert'&&erv)?erv:rv;
+        if(target&&e.streams[0]){target.srcObject=e.streams[0];target.play().catch(function(){});}
+        var ph=document.getElementById('vid-placeholder');if(ph)ph.style.display='none';
       }
-      // Set local video preview
-      if(ch==='video'){var _lvc=_role==='client'?document.getElementById('screen-VID'):document.getElementById('expert-rtc-area');var lv=_lvc?_lvc.querySelectorAll('video')[1]:document.getElementById('rtc-local-video');if(lv&&localStream){lv.srcObject=localStream;lv.muted=true;lv.play().catch(function(){});}}
+      if(ch==='video'&&localStream){
+        var lv=document.getElementById('rtc-local-video');
+        var elv=document.getElementById('expert-rtc-local-video');
+        var lt=(_role==='expert'&&elv)?elv:lv;
+        if(lt){lt.srcObject=localStream;lt.muted=true;lt.play().catch(function(){});}
+      }
     };
 
     pc.onicecandidate=function(e){if(e.candidate)_send({type:'rtc_ice',session_id:sid,candidate:e.candidate});};
 
     pc.onconnectionstatechange=function(){
       console.log('[RTC] State: '+pc.connectionState);
-      var el=document.getElementById('rtc-status');
-      if(el){var m={new:'Initializing...',connecting:'Connecting...',connected:'Connected',disconnected:'Reconnecting...',failed:'Connection Failed',closed:'Ended'};el.textContent=m[pc.connectionState]||pc.connectionState;}
-      if(pc.connectionState==='failed'&&typeof _showToast==='function')_showToast('Call connection failed','red');
+      var el=document.getElementById('rtc-status');if(el){
+        var m={new:'Initializing...',connecting:'Connecting...',connected:'\u{2705} Connected',disconnected:'Reconnecting...',failed:'Connection Failed',closed:'Ended'};
+        el.textContent=m[pc.connectionState]||pc.connectionState;
+      }
+      var el2=document.getElementById('b3-rtc-status');if(el2){
+        var m2={new:'Initializing...',connecting:'Connecting...',connected:'\u{2705} Connected',disconnected:'Reconnecting...',failed:'Failed',closed:'Ended'};
+        el2.textContent=m2[pc.connectionState]||pc.connectionState;
+      }
     };
+  }
+
+  async function start(sessionId, channel, role){
+    sid=sessionId; ch=channel; _role=role; _muted=false; _camOff=false;
+    _pendingOffer=null; _pendingIce=[]; _pendingAnswer=null;
+    console.log('[RTC] Starting '+channel+' as '+role+' sid='+sessionId);
+    try{
+      localStream=await navigator.mediaDevices.getUserMedia(channel==='video'?{audio:true,video:{width:{ideal:640},height:{ideal:480}}}:{audio:true,video:false});
+    }catch(e){
+      console.error('[RTC] getUserMedia failed:',e);
+      return false;
+    }
+    _setupPC();
+    console.log('[RTC] PC created, processing '+_pendingIce.length+' buffered ICE + offer='+(!!_pendingOffer));
+    if(_pendingOffer){var po=_pendingOffer;_pendingOffer=null;await handleOffer(po);}
+    for(var i=0;i<_pendingIce.length;i++){try{await pc.addIceCandidate(_pendingIce[i]);}catch(e){}}
+    _pendingIce=[];
+    if(_pendingAnswer){var pa=_pendingAnswer;_pendingAnswer=null;await handleAnswer(pa);}
 
     _send({type:'rtc_ready',session_id:sid,channel:ch});
 
     if(_role==='client'){
       var _offerAttempt=function(n){
-        if(n>5){console.error('[RTC] Gave up sending offer after 5 attempts');return;}
-        var ws=_ws();
-        if(!ws){console.log('[RTC] WS not ready, retry offer in 2s (attempt '+n+')');setTimeout(function(){_offerAttempt(n+1);},2000);return;}
-        (async function(){
-          try{
-            var offer=await pc.createOffer();
-            await pc.setLocalDescription(offer);
-            _send({type:'rtc_offer',session_id:sid,sdp:offer.sdp});
-            console.log('[RTC] Offer sent (attempt '+n+')');
-          }catch(e){console.error('[RTC] Offer error:',e);}
-        })();
+        if(n>8){console.error('[RTC] Gave up sending offer');return;}
+        if(!_ws()){console.log('[RTC] WS not ready, retry '+n);setTimeout(function(){_offerAttempt(n+1);},2000);return;}
+        (async function(){try{
+          var offer=await pc.createOffer();
+          await pc.setLocalDescription(offer);
+          _send({type:'rtc_offer',session_id:sid,sdp:offer.sdp});
+          console.log('[RTC] Offer sent (attempt '+n+')');
+        }catch(e){console.error('[RTC] Offer error:',e);}})();
       };
-      setTimeout(function(){_offerAttempt(1);},3000);
+      setTimeout(function(){_offerAttempt(1);},2000);
     }
     return true;
   }
 
-  async function handleOffer(sdp){if(!pc)return;await pc.setRemoteDescription({type:'offer',sdp:sdp});var a=await pc.createAnswer();await pc.setLocalDescription(a);_send({type:'rtc_answer',session_id:sid,sdp:a.sdp});console.log('[RTC] Answer sent');}
-  async function handleAnswer(sdp){if(!pc)return;await pc.setRemoteDescription({type:'answer',sdp:sdp});console.log('[RTC] Remote desc set');}
-  async function handleIce(c){if(!pc||!c)return;try{await pc.addIceCandidate(c);}catch(e){}}
+  async function handleOffer(sdp){
+    if(!pc){console.log('[RTC] Buffering offer (PC not ready)');_pendingOffer=sdp;return;}
+    try{
+      await pc.setRemoteDescription({type:'offer',sdp:sdp});
+      var a=await pc.createAnswer();
+      await pc.setLocalDescription(a);
+      _send({type:'rtc_answer',session_id:sid,sdp:a.sdp});
+      console.log('[RTC] Answer sent');
+    }catch(e){console.error('[RTC] handleOffer error:',e);}
+  }
+  async function handleAnswer(sdp){
+    if(!pc){console.log('[RTC] Buffering answer');_pendingAnswer=sdp;return;}
+    try{await pc.setRemoteDescription({type:'answer',sdp:sdp});console.log('[RTC] Remote desc set');}catch(e){console.error('[RTC] handleAnswer error:',e);}
+  }
+  async function handleIce(c){
+    if(!c)return;
+    if(!pc){_pendingIce.push(c);return;}
+    try{await pc.addIceCandidate(c);}catch(e){}
+  }
 
   function toggleMute(){if(!localStream)return _muted;var t=localStream.getAudioTracks()[0];if(t){t.enabled=!t.enabled;_muted=!t.enabled;}
     var btn=document.getElementById('rtc-mute-btn');if(btn)btn.textContent=_muted?'Unmute':'Mute';
-    var icon=document.getElementById('rtc-mute-icon');if(icon)icon.textContent=_muted?'\u{1F507}':'\u{1F50A}';
     return _muted;}
   function toggleCamera(){if(!localStream)return _camOff;var t=localStream.getVideoTracks()[0];if(t){t.enabled=!t.enabled;_camOff=!t.enabled;}
     var btn=document.getElementById('rtc-cam-btn');if(btn)btn.textContent=_camOff?'Camera On':'Camera Off';
@@ -17313,9 +17347,8 @@ window.OB_RTC = (function(){
   function cleanup(){
     if(pc){try{pc.close();}catch(e){}pc=null;}
     if(localStream){localStream.getTracks().forEach(function(t){t.stop();});localStream=null;}
+    _pendingOffer=null;_pendingIce=[];_pendingAnswer=null;
     var ra=document.getElementById('rtc-remote-audio');if(ra){ra.srcObject=null;ra.remove();}
-    var rv=document.getElementById('rtc-remote-video');if(rv)rv.srcObject=null;
-    var lv=document.getElementById('rtc-local-video');if(lv)lv.srcObject=null;
     sid=null;ch=null;_role=null;_muted=false;_camOff=false;
   }
 

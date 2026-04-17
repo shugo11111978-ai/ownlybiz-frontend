@@ -6115,8 +6115,8 @@ if (!window.toast) {
                   <button onclick="window.clientEndSession&&window.clientEndSession();phoneGo('A5')" style="flex:1;padding:8px 10px;border-radius:10px;border:1px solid rgba(239,68,68,.4);background:rgba(239,68,68,.15);color:#fca5a5;font-size:12px;font-weight:600;cursor:pointer;">✕ End Session</button>
                 </div>
                 <div class="voice-controls">
-                  <div class="v-ctrl default" title="Mute">🎤</div>
-                  <div class="v-ctrl end" onclick="phoneGo('A5')" title="End">📵</div>
+                  <div class="v-ctrl default" title="Mute" onclick="if(window.OB_RTC){var m=window.OB_RTC.toggleMute();this.style.opacity=m?0.4:1;}">🎤</div>
+                  <div class="v-ctrl end" onclick="if(window.OB_RTC)window.OB_RTC.end();if(window.clientEndSession)window.clientEndSession();phoneGo('A5')" title="End">📵</div>
                   <div class="v-ctrl default" title="Speaker">🔊</div>
                 </div>
               </div>
@@ -6240,10 +6240,10 @@ if (!window.toast) {
                 <div style="font-size:14px;font-weight:700;color:var(--terra-light);" id="video-cost">$0.00</div>
               </div>
               <div class="video-controls">
-                <div class="vid-ctrl">🎤</div>
-                <div class="vid-ctrl">📹</div>
+                <div class="vid-ctrl" onclick="if(window.OB_RTC){var m=window.OB_RTC.toggleMute();this.style.opacity=m?0.4:1;}">🎤</div>
+                <div class="vid-ctrl" onclick="if(window.OB_RTC){var c=window.OB_RTC.toggleCamera();this.style.opacity=c?0.4:1;}">📹</div>
                 <div class="vid-ctrl">💬</div>
-                <div class="vid-ctrl end-vid" onclick="phoneGo('A5')">📵</div>
+                <div class="vid-ctrl end-vid" onclick="if(window.OB_RTC)window.OB_RTC.end();if(window.clientEndSession)window.clientEndSession();phoneGo('A5')">📵</div>
                 <div class="vid-ctrl">🔊</div>
                 <div class="vid-ctrl">⚙️</div>
               </div>
@@ -15581,6 +15581,8 @@ function openClientChat(sid){
     var _vn = document.querySelector('#screen-B3 .voice-name'); if(_vn)_vn.textContent=_en;
     var _vs = document.querySelector('#screen-B3 .voice-status'); if(_vs)_vs.textContent=_et||'Voice Session';
     // Start WebRTC voice
+    if(typeof ensureClientWS==='function')ensureClientWS();
+    setTimeout(function(){var ws=window._obClientWs||window._obWs;if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'join',session_id:sid}));},500);
     if(window.OB_RTC) window.OB_RTC.start(sid,'voice','client');
   } else if(_sessCh === 'video'){
     if(typeof phoneGo==='function') phoneGo('VID');
@@ -15588,6 +15590,8 @@ function openClientChat(sid){
     var _en2 = (window._currentExpert&&window._currentExpert.name)||window._obPendingExpertName||'Expert';
     var _vnt = document.querySelector('#screen-VID .video-nametag'); if(_vnt)_vnt.textContent=_en2;
     // Start WebRTC video
+    if(typeof ensureClientWS==='function')ensureClientWS();
+    setTimeout(function(){var ws=window._obClientWs||window._obWs;if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'join',session_id:sid}));},500);
     if(window.OB_RTC) window.OB_RTC.start(sid,'video','client');
   } else {
     // Chat — original flow
@@ -15698,6 +15702,7 @@ window._obOpenClientChat = openClientChat;
       var rawCh=(sess.channel||'chat').toLowerCase();
       if((rawCh==='voice'||rawCh==='video')&&window.OB_RTC){
         console.log('[EXPERT] Starting RTC: '+rawCh+' sid='+sid);
+        if(typeof connectExpertWs==='function')connectExpertWs(sid);
         window.OB_RTC.start(sid,rawCh,'expert');
         // Show voice/video controls in expert panel
         var chatArea=document.getElementById('expert-chat-area');
@@ -17224,8 +17229,12 @@ window.OB_RTC = (function(){
   var ICE={iceServers:[{urls:'stun:stun.l.google.com:19302'},{urls:'stun:stun1.l.google.com:19302'}]};
 
   function _ws(){
-    if(_role==='expert') return window._expertWs;
-    return window._obClientWs;
+    var w;
+    if(_role==='expert'){w=window._expertWs;if(w&&w.readyState===1)return w;}
+    w=window._obClientWs;if(w&&w.readyState===1)return w;
+    w=window._obWs;if(w&&w.readyState===1)return w;
+    w=window._expertWs;if(w&&w.readyState===1)return w;
+    return null;
   }
   function _send(d){var ws=_ws();if(ws&&ws.readyState===1)ws.send(JSON.stringify(d));else console.warn('[RTC] WS not ready, msg dropped:',d.type);}
 
@@ -17270,14 +17279,20 @@ window.OB_RTC = (function(){
     _send({type:'rtc_ready',session_id:sid,channel:ch});
 
     if(_role==='client'){
-      setTimeout(async function(){
-        try{
-          var offer=await pc.createOffer();
-          await pc.setLocalDescription(offer);
-          _send({type:'rtc_offer',session_id:sid,sdp:offer.sdp});
-          console.log('[RTC] Offer sent');
-        }catch(e){console.error('[RTC] Offer error:',e);}
-      },1500);
+      var _offerAttempt=function(n){
+        if(n>5){console.error('[RTC] Gave up sending offer after 5 attempts');return;}
+        var ws=_ws();
+        if(!ws){console.log('[RTC] WS not ready, retry offer in 2s (attempt '+n+')');setTimeout(function(){_offerAttempt(n+1);},2000);return;}
+        (async function(){
+          try{
+            var offer=await pc.createOffer();
+            await pc.setLocalDescription(offer);
+            _send({type:'rtc_offer',session_id:sid,sdp:offer.sdp});
+            console.log('[RTC] Offer sent (attempt '+n+')');
+          }catch(e){console.error('[RTC] Offer error:',e);}
+        })();
+      };
+      setTimeout(function(){_offerAttempt(1);},3000);
     }
     return true;
   }

@@ -9223,10 +9223,39 @@ function sendExpertMsg() {
   input.value = '';
 }
 
+window._obMarkMessageSeen = window._obMarkMessageSeen || function(d){
+  var id = d && (d.id || d.message_id);
+  if(!id) return false;
+  window._obSeenMessageIds = window._obSeenMessageIds || {};
+  if(window._obSeenMessageIds[id]) return true;
+  window._obSeenMessageIds[id] = 1;
+  return false;
+};
+
+window._obResetExpertLiveSessionUI = function(channel){
+  var ch = String(channel || 'chat').toLowerCase();
+  var isRtc = ch === 'voice' || ch === 'video';
+  var chatArea = document.getElementById('expert-chat-area');
+  if(chatArea) chatArea.style.display = isRtc ? 'none' : 'block';
+  var rtcArea = document.getElementById('expert-rtc-area');
+  if(rtcArea) rtcArea.style.display = isRtc ? 'block' : 'none';
+  var videoBox = document.getElementById('expert-rtc-video-box');
+  if(videoBox) videoBox.style.display = ch === 'video' ? 'block' : 'none';
+  var camBtn = document.getElementById('rtc-cam-btn');
+  if(camBtn) camBtn.style.display = ch === 'video' ? '' : 'none';
+  if(!isRtc){
+    ['expert-rtc-remote-video','expert-rtc-local-video','rtc-remote-video','rtc-local-video'].forEach(function(id){
+      var el = document.getElementById(id);
+      if(el) el.srcObject = null;
+    });
+    var status = document.getElementById('rtc-status');
+    if(status) status.textContent = 'Connecting...';
+  }
+};
+
 function expertEndSession() {
   if(window.OB_RTC&&window.OB_RTC.isActive())window.OB_RTC.end();
-  // Hide RTC area, show chat area
-  var _ra=document.getElementById("expert-rtc-area");if(_ra)_ra.style.display="none";
+  if(typeof window._obResetExpertLiveSessionUI === 'function') window._obResetExpertLiveSessionUI('chat');
   if(_expertSessInterval) { clearInterval(_expertSessInterval); _expertSessInterval = null; }
   _expertSessSeconds = 0;
   var earn = document.getElementById('expert-session-earnings');
@@ -10402,6 +10431,8 @@ async function savePaymentConfig() {
       case 'session_ended': {
         window._sid=null; window._expertSessActive=false;
         window._obActiveSessId=null;window._obPendingSessId=null;window._pendingSid=null;window._obIncomingSessId=null;
+        if(window.OB_RTC&&typeof window.OB_RTC.cleanup==='function')window.OB_RTC.cleanup();
+        if(typeof window._obResetExpertLiveSessionUI==='function')window._obResetExpertLiveSessionUI('chat');
         // Kill any running auto-decline timer from stale session_request
         clearInterval(window._sessionRequestTimer);window._sessionRequestTimer=null;window._lastSessionEndedAt=Date.now()/1000;try{localStorage.setItem('ob_lastSessionEnded',''+(Date.now()/1000));}catch(e){}
         // Zero free minutes so session 2 doesn't get free mins again
@@ -10439,7 +10470,7 @@ async function savePaymentConfig() {
         }
         else { try{if(window._obClientWs&&window._obClientWs.readyState<=1)window._obClientWs.close();}catch(e){}try{if(window._obWs&&window._obWs.readyState<=1)window._obWs.close();}catch(e){}window._obClientWs=null;window._obWs=null;window._obWsHooked=false;window._obWsConnecting=false;var _s=d.session||{};var _bm=Math.max(0,(_s.duration_secs||0)/60-(_s.free_minutes||0));var _tm=Math.round((_s.duration_secs||0)/60);var _fm=_s.free_minutes||0;var _rt=parseFloat(_s.rate_per_min||0);var _re=document.getElementById('receipt-total');if(_re)_re.textContent=fmt$(_bm*_rt);var _rd=document.getElementById('receipt-duration');if(_rd)_rd.textContent=(_tm===0&&(_s.duration_secs||0)>0?'< 1':_tm)+' min';var _rr=document.getElementById('receipt-rate');if(_rr)_rr.textContent=_rt.toFixed(2)+'/min';if(typeof phoneGo==='function') phoneGo('A5');}
         break; }
-      case 'message':    if(Auth.isExpert) _appendMsg(d); break;
+      case 'message':    if(Auth.isExpert&&!(window._obMarkMessageSeen&&window._obMarkMessageSeen(d))) _appendMsg(d); break;
       case 'typing':     _showTyping(d); break;
       case 'joined':     _loadHistory(d.history||[]); break;
       case 'expert_status': if(typeof setExpertOnlineStatus==='function') setExpertOnlineStatus(d.is_online); break;
@@ -11242,6 +11273,8 @@ async function savePaymentConfig() {
         if(_sub3)_sub3.textContent=_ch2.charAt(0).toUpperCase()+_ch2.slice(1)+' session with '+(_sess2.client_name||'Client');
         var _rEl2=document.getElementById('live-sess-rate');
         if(_rEl2)_rEl2.textContent='$'+parseFloat(_sess2.rate_per_min||3.5).toFixed(2)+'/min';
+        if(window.OB_RTC&&window.OB_RTC.isActive()){if(typeof window.OB_RTC.cleanup==='function')window.OB_RTC.cleanup();else window.OB_RTC.end();}
+        if(typeof window._obResetExpertLiveSessionUI==='function')window._obResetExpertLiveSessionUI(_ch2);
         if((_ch2==='voice'||_ch2==='video')&&window.OB_RTC){
           console.log('[V2] Starting RTC: '+_ch2);
           var _ca2=document.getElementById('expert-chat-area');if(_ca2)_ca2.style.display='none';
@@ -15712,13 +15745,16 @@ window._obOpenClientChat = openClientChat;
       var cn=sess.client_name||'Client';
       var sub=document.getElementById('live-sess-subtitle');
       if(sub) sub.textContent=ch+' session with '+cn;
-      // Reset expert panel — show chat, hide RTC from previous session
-      var _chatReset=document.getElementById('expert-chat-area');if(_chatReset)_chatReset.style.display='';
-      var _rtcReset=document.getElementById('expert-rtc-area');if(_rtcReset)_rtcReset.style.display='none';
-      if(window.OB_RTC&&window.OB_RTC.isActive())window.OB_RTC.end();
+      var rawCh=(sess.channel||'chat').toLowerCase();
+      if(window.OB_RTC&&window.OB_RTC.isActive()){console.log('[OEL] Cleaning up previous RTC');if(typeof window.OB_RTC.cleanup==='function')window.OB_RTC.cleanup();else window.OB_RTC.end();}
+      if(typeof window._obResetExpertLiveSessionUI==='function'){
+        window._obResetExpertLiveSessionUI(rawCh);
+      }else{
+        var _chatReset=document.getElementById('expert-chat-area');if(_chatReset)_chatReset.style.display='';
+        var _rtcReset=document.getElementById('expert-rtc-area');if(_rtcReset)_rtcReset.style.display='none';
+      }
 
       // Start WebRTC for voice/video sessions
-      var rawCh=(sess.channel||'chat').toLowerCase();
       if((rawCh==='voice'||rawCh==='video')&&window.OB_RTC){
         console.log('[EXPERT] Starting RTC: '+rawCh+' sid='+sid);
         // Wait for expertWs to connect before starting RTC
@@ -15937,6 +15973,12 @@ window._obOpenClientChat = openClientChat;
             var me2=myId();var box2=document.getElementById("expert-chat-messages");
             if(box2){box2.innerHTML="";d.history.forEach(function(m){var row=document.createElement("div");row.className="chat-msg "+(m.sender_id===me2?"mine":"theirs");row.innerHTML="<div class=\"msg-bubble\">"+esc(m.content||"")+"</div>";box2.appendChild(row);});box2.scrollTop=box2.scrollHeight;}
           }
+          if(d.type==="message"&&d.content&&(d.session_id||d.sessionId)===window._obActiveSessId){
+            var meMsg=myId();
+            if(d.sender_id!==meMsg&&!(window._obMarkMessageSeen&&window._obMarkMessageSeen(d))){
+              appendMsg("expert-chat-messages",d.content,false,d.ts||d.sent_at||Date.now());
+            }
+          }
           // session_request handled by main WS _wsMsg -> showSessionRequest (removed duplicate showIncomingRequest)
         }catch(e){}
       };
@@ -15970,12 +16012,16 @@ window._obOpenClientChat = openClientChat;
             var _sPKey=_sPlan2==='free'?'starter':_sPlan2;
             window._expertSessFreeMins=parseFloat(sess.free_minutes||0);
             window._expertSessCut=0.8; // default until fetch resolves
-            // === Reset expert panel for every new session ===
-            var _rChat=document.getElementById('expert-chat-area');if(_rChat)_rChat.style.display='';
-            var _rRtc=document.getElementById('expert-rtc-area');if(_rRtc)_rRtc.style.display='none';
-            if(window.OB_RTC&&window.OB_RTC.isActive()){console.log('[ACCEPT] Cleaning up previous RTC');window.OB_RTC.end();}
-            // === Voice/Video RTC detection ===
             var _rtcCh=(sess.channel||'chat').toLowerCase();
+            // === Reset expert panel for every new session ===
+            if(window.OB_RTC&&window.OB_RTC.isActive()){console.log('[ACCEPT] Cleaning up previous RTC');if(typeof window.OB_RTC.cleanup==='function')window.OB_RTC.cleanup();else window.OB_RTC.end();}
+            if(typeof window._obResetExpertLiveSessionUI==='function'){
+              window._obResetExpertLiveSessionUI(_rtcCh);
+            }else{
+              var _rChat=document.getElementById('expert-chat-area');if(_rChat)_rChat.style.display='';
+              var _rRtc=document.getElementById('expert-rtc-area');if(_rRtc)_rRtc.style.display='none';
+            }
+            // === Voice/Video RTC detection ===
             if((_rtcCh==='voice'||_rtcCh==='video')&&window.OB_RTC){
               console.log('[ACCEPT] Starting RTC: '+_rtcCh+' sid='+sid);
               
@@ -17504,7 +17550,7 @@ window._handleRTCMessage=function(d){
   if(d.type==='rtc_offer')window.OB_RTC.handleOffer(d.sdp);
   else if(d.type==='rtc_answer')window.OB_RTC.handleAnswer(d.sdp);
   else if(d.type==='rtc_ice')window.OB_RTC.handleIce(d.candidate);
-  else if(d.type==='rtc_end'){window.OB_RTC.cleanup();if(typeof _showToast==='function')_showToast('Call ended by other party');}
+  else if(d.type==='rtc_end'){window.OB_RTC.cleanup();if(typeof window._obResetExpertLiveSessionUI==='function')window._obResetExpertLiveSessionUI('chat');if(typeof _showToast==='function')_showToast('Call ended by other party');}
   else if(d.type==='rtc_ready')console.log('[RTC] Peer ready');
 };
 </script>

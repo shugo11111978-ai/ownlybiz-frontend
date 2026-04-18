@@ -6109,6 +6109,7 @@ if (!window.toast) {
                 <div class="voice-name">Expert</div>
                 <div class="voice-status" id="b3-voice-status">Voice Session</div>
                 <div id="b3-rtc-status" style="font-size:12px;color:rgba(246,241,233,.5);margin-top:6px;">Connecting...</div>
+                <div id="client-rtc-debug" style="font-size:10px;color:rgba(246,241,233,.4);text-align:left;max-height:80px;overflow-y:auto;background:rgba(0,0,0,.2);border-radius:6px;padding:6px;margin:8px 16px;font-family:monospace;"></div>
                 <div class="waveform" id="waveform-b3"></div>
                 <div class="voice-timer" id="voice-timer-B">0:00</div>
                 <div class="voice-cost" id="b3-voice-cost"></div>
@@ -17322,7 +17323,8 @@ window.OB_RTC = (function(){
     sid=sessionId; ch=channel; _role=role; _muted=false; _camOff=false;
     // Don't clear buffers — offers may have arrived before start() was called
     console.log('[RTC] Starting '+channel+' as '+role+' sid='+sessionId+' (buffered offer='+(!!_pendingOffer)+', ice='+_pendingIce.length+')');
-    function _dbg(msg){console.log('[RTC-DBG] '+msg);var el=document.getElementById('rtc-debug');if(el)el.innerHTML+='<div>'+msg+'</div>';}
+    window._rtcDbg=function(msg){console.log('[RTC-DBG] '+msg);var el=document.getElementById('rtc-debug');if(el)el.innerHTML+='<div>'+msg+'</div>';var el2=document.getElementById('client-rtc-debug');if(el2)el2.innerHTML+='<div>'+msg+'</div>';}
+    var _dbg=window._rtcDbg;
     _dbg('start() called: '+channel+' '+role);
     try{
       _dbg('Requesting mic/camera...');
@@ -17369,15 +17371,17 @@ window.OB_RTC = (function(){
   }
 
   async function handleOffer(sdp){
-    if(!pc){console.log('[RTC] Buffering offer (PC not ready)');_pendingOffer=sdp;_pendingIce=[];return;}
+    if(window._rtcDbg)window._rtcDbg('handleOffer called, pc='+(!!pc));
+    if(!pc){console.log('[RTC] Buffering offer (PC not ready)');_pendingOffer=sdp;_pendingIce=[];if(window._rtcDbg)window._rtcDbg('Offer buffered');return;}
     try{
+      if(window._rtcDbg)window._rtcDbg('Processing offer directly...');
       await pc.setRemoteDescription({type:'offer',sdp:sdp});
       var a=await pc.createAnswer();
       await pc.setLocalDescription(a);
       _send({type:'rtc_answer',session_id:sid,sdp:a.sdp});
       console.log('[RTC] Answer sent');
     if(typeof _dbg==='function')_dbg('Answer sent to client');
-    }catch(e){console.error('[RTC] handleOffer error:',e);}
+    }catch(e){console.error('[RTC] handleOffer error:',e);if(window._rtcDbg)window._rtcDbg('ERROR in handleOffer: '+e.message);}
   }
   async function handleAnswer(sdp){
     if(!pc){console.log('[RTC] Buffering answer');_pendingAnswer=sdp;return;}
@@ -17409,6 +17413,7 @@ window.OB_RTC = (function(){
 })();
 
 window._handleRTCMessage=function(d){
+  if(window._rtcDbg)window._rtcDbg('WS msg: '+d.type);
   if(!window.OB_RTC)return;
   if(d.type==='rtc_offer')window.OB_RTC.handleOffer(d.sdp);
   else if(d.type==='rtc_answer')window.OB_RTC.handleAnswer(d.sdp);

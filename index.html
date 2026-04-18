@@ -15927,7 +15927,7 @@ window._obOpenClientChat = openClientChat;
         try{
           var d=JSON.parse(evt.data);
           // Forward RTC messages
-          if(d.type&&d.type.indexOf('rtc_')===0&&typeof window._handleRTCMessage==='function'){window._handleRTCMessage(d);if(d.type!=='rtc_ice')return;}
+          if(d.type&&d.type.indexOf('rtc_')===0){if(window._rtcDbg)window._rtcDbg('[expertWs] got '+d.type);if(typeof window._handleRTCMessage==='function'){window._handleRTCMessage(d);}if(d.type!=='rtc_ice')return;}
           // messages handled by H1 (_appendMsg)
           if(d.type==="joined"&&d.history){
             var me2=myId();var box2=document.getElementById("expert-chat-messages");
@@ -17276,7 +17276,18 @@ window.OB_RTC = (function(){
     w=window._expertWs;if(w&&w.readyState===1)return w;
     return null;
   }
-  function _send(d){var ws=_ws();if(ws)ws.send(JSON.stringify(d));else console.warn('[RTC] WS not ready, queued:',d.type);}
+  function _send(d){
+    var ws=_ws();
+    if(ws){
+      ws.send(JSON.stringify(d));
+      if(d.type!=='rtc_ice'&&window._rtcDbg){
+        var wsName=ws===window._expertWs?'expertWs':ws===window._obClientWs?'clientWs':ws===window._obWs?'obWs':'unknown';
+        window._rtcDbg('_send '+d.type+' via '+wsName+' (state='+ws.readyState+')');
+      }
+    }else{
+      console.warn('[RTC] WS not ready');if(window._rtcDbg)window._rtcDbg('_send FAILED: no WS available');
+    }
+  }
 
   function _setupPC(){
     pc=new RTCPeerConnection(ICE);
@@ -17347,6 +17358,7 @@ window.OB_RTC = (function(){
     if(_pendingAnswer){var pa=_pendingAnswer;_pendingAnswer=null;await handleAnswer(pa);}
 
     _send({type:'rtc_ready',session_id:sid,channel:ch});
+    if(window._rtcDbg)window._rtcDbg('rtc_ready sent for session '+sid);
 
     if(_role==='client'){
       var _savedOffer=null;

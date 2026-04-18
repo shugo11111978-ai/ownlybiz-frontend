@@ -2851,7 +2851,8 @@ if (!window.toast) {
           <div id="expert-rtc-area" style="display:none;">
             <div style="background:var(--white);border-radius:16px;border:1px solid var(--gray-200);padding:32px;text-align:center;">
               <div id="expert-rtc-channel" style="font-size:18px;font-weight:700;color:var(--brown);margin-bottom:8px;">🎙️ Voice Call</div>
-              <div id="rtc-status" style="font-size:13px;color:var(--gray-400);margin-bottom:24px;">Connecting...</div>
+              <div id="rtc-status" style="font-size:13px;color:var(--gray-400);margin-bottom:12px;">Connecting...</div>
+              <div id="rtc-debug" style="font-size:11px;color:#888;text-align:left;max-height:120px;overflow-y:auto;background:rgba(0,0,0,.03);border-radius:8px;padding:8px;margin-bottom:16px;font-family:monospace;"></div>
               
               <!-- Video box (hidden for voice) -->
               <div id="expert-rtc-video-box" style="display:none;margin-bottom:20px;position:relative;border-radius:12px;overflow:hidden;background:#111;aspect-ratio:16/9;max-width:640px;margin-left:auto;margin-right:auto;">
@@ -15966,6 +15967,7 @@ window._obOpenClientChat = openClientChat;
             var _rtcCh=(sess.channel||'chat').toLowerCase();
             if((_rtcCh==='voice'||_rtcCh==='video')&&window.OB_RTC){
               console.log('[ACCEPT] Starting RTC: '+_rtcCh+' sid='+sid);
+              var _dEl=document.getElementById('rtc-debug');if(_dEl)_dEl.innerHTML+='<div>[ACCEPT] channel='+_rtcCh+'</div>';
               var _chatEl=document.getElementById('expert-chat-area');if(_chatEl)_chatEl.style.display='none';
               var _rtcEl=document.getElementById('expert-rtc-area');if(_rtcEl)_rtcEl.style.display='block';
               var _rtcLabel=document.getElementById('expert-rtc-channel');
@@ -17304,6 +17306,7 @@ window.OB_RTC = (function(){
 
     pc.onconnectionstatechange=function(){
       console.log('[RTC] State: '+pc.connectionState);
+      if(typeof _dbg==='function')_dbg('State: '+pc.connectionState);
       var el=document.getElementById('rtc-status');if(el){
         var m={new:'Initializing...',connecting:'Connecting...',connected:'\u{2705} Connected',disconnected:'Reconnecting...',failed:'Connection Failed',closed:'Ended'};
         el.textContent=m[pc.connectionState]||pc.connectionState;
@@ -17319,15 +17322,21 @@ window.OB_RTC = (function(){
     sid=sessionId; ch=channel; _role=role; _muted=false; _camOff=false;
     // Don't clear buffers — offers may have arrived before start() was called
     console.log('[RTC] Starting '+channel+' as '+role+' sid='+sessionId+' (buffered offer='+(!!_pendingOffer)+', ice='+_pendingIce.length+')');
+    function _dbg(msg){console.log('[RTC-DBG] '+msg);var el=document.getElementById('rtc-debug');if(el)el.innerHTML+='<div>'+msg+'</div>';}
+    _dbg('start() called: '+channel+' '+role);
     try{
+      _dbg('Requesting mic/camera...');
       localStream=await navigator.mediaDevices.getUserMedia(channel==='video'?{audio:true,video:{width:{ideal:640},height:{ideal:480}}}:{audio:true,video:false});
+      _dbg('Media granted: '+localStream.getTracks().map(function(t){return t.kind;}).join(', '));
     }catch(e){
       console.error('[RTC] getUserMedia failed:',e);
+      if(typeof _dbg==='function')_dbg('ERROR: mic/camera denied: '+e.message);
       return false;
     }
     _setupPC();
+    _dbg('PC created. Buffered: offer='+(!!_pendingOffer)+' ice='+_pendingIce.length);
     console.log('[RTC] PC created, processing '+_pendingIce.length+' buffered ICE + offer='+(!!_pendingOffer));
-    if(_pendingOffer){var po=_pendingOffer;_pendingOffer=null;await handleOffer(po);}
+    if(_pendingOffer){_dbg('Processing buffered offer...');var po=_pendingOffer;_pendingOffer=null;await handleOffer(po);_dbg('Buffered offer processed, answer sent');}else{_dbg('No buffered offer to process');}
     for(var i=0;i<_pendingIce.length;i++){try{await pc.addIceCandidate(_pendingIce[i]);}catch(e){}}
     _pendingIce=[];
     if(_pendingAnswer){var pa=_pendingAnswer;_pendingAnswer=null;await handleAnswer(pa);}
@@ -17343,6 +17352,7 @@ window.OB_RTC = (function(){
           await pc.setLocalDescription(offer);
           _send({type:'rtc_offer',session_id:sid,sdp:offer.sdp});
           console.log('[RTC] Offer sent (attempt '+n+')');
+          if(typeof _dbg==='function')_dbg('Offer sent #'+n);
         }catch(e){console.error('[RTC] Offer error:',e);}})();
       };
       setTimeout(function(){_offerAttempt(1);},2000);
@@ -17358,6 +17368,7 @@ window.OB_RTC = (function(){
       await pc.setLocalDescription(a);
       _send({type:'rtc_answer',session_id:sid,sdp:a.sdp});
       console.log('[RTC] Answer sent');
+    if(typeof _dbg==='function')_dbg('Answer sent to client');
     }catch(e){console.error('[RTC] handleOffer error:',e);}
   }
   async function handleAnswer(sdp){

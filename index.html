@@ -17312,16 +17312,52 @@ window.OB_RTC = (function(){
     w=window._expertWs;if(w&&w.readyState===1)return w;
     return null;
   }
+  var _rtcWs=null;
+  function _ensureRtcWs(cb){
+    if(_rtcWs&&_rtcWs.readyState===1){cb(_rtcWs);return;}
+    var w=_ws();if(w){cb(w);return;}
+    // Create dedicated RTC WebSocket
+    var base=document.querySelector('script[src]')||null;
+    var apiBase='';
+    try{var scripts=document.querySelectorAll('script');scripts.forEach(function(s){var m=s.textContent.match(/var BASE='([^']+)'/);if(m)apiBase=m[1];});}catch(e){}
+    if(!apiBase)apiBase='https://victorious-wisdom-production-a6b0.up.railway.app';
+    var wsUrl=apiBase.replace('https://','wss://').replace('http://','ws://')+'/ws';
+    var tok=sessionStorage.getItem('ob_t')||localStorage.getItem('ob_t')||sessionStorage.getItem('ob_token')||localStorage.getItem('ob_token')||'';
+    if(window._rtcDbg)window._rtcDbg('Creating RTC WS...');
+    _rtcWs=new WebSocket(wsUrl);
+    _rtcWs.onopen=function(){
+      if(window._rtcDbg)window._rtcDbg('RTC WS connected');
+      _rtcWs.send(JSON.stringify({type:'auth',token:tok}));
+      setTimeout(function(){
+        if(sid)_rtcWs.send(JSON.stringify({type:'join',session_id:sid}));
+        if(window._rtcDbg)window._rtcDbg('RTC WS joined room');
+        setTimeout(function(){cb(_rtcWs);},300);
+      },300);
+    };
+    _rtcWs.onmessage=function(evt){
+      try{
+        var d=JSON.parse(evt.data);
+        if(d.type&&d.type.indexOf('rtc_')===0){
+          if(window._rtcDbg)window._rtcDbg('[rtcWs] '+d.type);
+          if(typeof window._handleRTCMessage==='function')window._handleRTCMessage(d);
+        }
+      }catch(e){}
+    };
+    _rtcWs.onerror=function(){if(window._rtcDbg)window._rtcDbg('RTC WS error');};
+    _rtcWs.onclose=function(){_rtcWs=null;if(window._rtcDbg)window._rtcDbg('RTC WS closed');};
+    window._expertWs=_rtcWs;
+  }
   function _send(d){
     var ws=_ws();
     if(ws){
       ws.send(JSON.stringify(d));
       if(d.type!=='rtc_ice'&&window._rtcDbg){
-        var wsName=ws===window._expertWs?'expertWs':ws===window._obClientWs?'clientWs':ws===window._obWs?'obWs':'unknown';
-        window._rtcDbg('_send '+d.type+' via '+wsName+' (state='+ws.readyState+')');
+        var wsName=ws===_rtcWs?'rtcWs':ws===window._expertWs?'expertWs':ws===window._obClientWs?'clientWs':'other';
+        window._rtcDbg('_send '+d.type+' via '+wsName);
       }
     }else{
-      console.warn('[RTC] WS not ready');if(window._rtcDbg)window._rtcDbg('_send FAILED: no WS available');
+      if(window._rtcDbg)window._rtcDbg('_send queued '+d.type+', creating WS...');
+      _ensureRtcWs(function(w){w.send(JSON.stringify(d));if(d.type!=='rtc_ice'&&window._rtcDbg)window._rtcDbg('_send '+d.type+' via rtcWs (delayed)');});
     }
   }
 
@@ -17393,8 +17429,10 @@ window.OB_RTC = (function(){
     _pendingIce=[];
     if(_pendingAnswer){var pa=_pendingAnswer;_pendingAnswer=null;await handleAnswer(pa);}
 
-    _send({type:'rtc_ready',session_id:sid,channel:ch});
-    if(window._rtcDbg)window._rtcDbg('rtc_ready sent for session '+sid);
+    _ensureRtcWs(function(){
+      _send({type:'rtc_ready',session_id:sid,channel:ch});
+      if(window._rtcDbg)window._rtcDbg('rtc_ready sent for session '+sid);
+    });
 
     if(_role==='client'){
       var _savedOffer=null;

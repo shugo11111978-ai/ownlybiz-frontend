@@ -17693,8 +17693,45 @@ window._handleRTCMessage=function(d){
   }
   window.obApplyAccentColor = applyAccentColor;
 
+  function positiveNumber(){
+    for(var i=0;i<arguments.length;i++){
+      var n=parseFloat(arguments[i]);
+      if(isFinite(n) && n>0) return n;
+    }
+    return 0;
+  }
+  function nonNegativeInt(){
+    for(var i=0;i<arguments.length;i++){
+      if(arguments[i]===undefined || arguments[i]===null || arguments[i]==='') continue;
+      var n=parseInt(arguments[i],10);
+      if(isFinite(n) && n>=0) return n;
+    }
+    return 0;
+  }
+  function normalizeExpertRates(data){
+    if(!data) return data;
+    var chat = positiveNumber(data.rate_chat, data.chat_pm, 3.5);
+    var voice = positiveNumber(data.rate_voice, data.voice_pm, 4);
+    var video = positiveNumber(data.rate_video, data.video_pm, 5);
+    var chatFree = nonNegativeInt(data.chat_free_min, data.free_minutes, 0);
+    data.rate_chat = data.chat_pm = chat;
+    data.rate_voice = data.voice_pm = voice;
+    data.rate_video = data.video_pm = video;
+    data.free_minutes = data.chat_free_min = chatFree;
+    data.voice_free_min = nonNegativeInt(data.voice_free_min, 0);
+    data.video_free_min = nonNegativeInt(data.video_free_min, 0);
+    if(typeof freeMinutes === 'object'){
+      freeMinutes.chat = chatFree;
+      freeMinutes.voice = data.voice_free_min;
+      freeMinutes.video = data.video_free_min;
+    }
+    return data;
+  }
+  window.obNormalizeExpertRates = normalizeExpertRates;
+
   var _origApplyWebsite = window._applyExpertWebsite;
   window._applyExpertWebsite = function(data){
+    data = normalizeExpertRates(data);
     if(data && data.slug) window._currentExpertSlug = data.slug;
     if(_origApplyWebsite) _origApplyWebsite.call(this, data);
     if(data && data.theme_color) applyAccentColor(data.theme_color);
@@ -17705,11 +17742,27 @@ window._handleRTCMessage=function(d){
     if(e.target && e.target.id === 'we-accent-color') applyAccentColor(e.target.value);
   });
   document.addEventListener('click', function(e){
+    var preset = e.target.closest && e.target.closest('#we-color-presets button');
+    if(preset){
+      setTimeout(function(){
+        var c=document.getElementById('we-accent-color');
+        if(c) applyAccentColor(c.value);
+      }, 0);
+    }
     var btn=e.target.closest && e.target.closest('button[title]');
     if(btn && btn.style && btn.style.background){
       setTimeout(function(){ var c=document.getElementById('we-accent-color'); if(c) applyAccentColor(c.value); }, 0);
     }
   });
+
+  var _origSelectTheme = window.selectTheme;
+  window.selectTheme = function(el){
+    if(_origSelectTheme) _origSelectTheme.call(this, el);
+    setTimeout(function(){
+      var c=document.getElementById('we-accent-color');
+      if(c) applyAccentColor(c.value);
+    }, 0);
+  };
 
   function ensureMarketingContact(){
     if(document.getElementById('mkt-page-contact')) return;
@@ -17883,12 +17936,167 @@ window._handleRTCMessage=function(d){
     setTimeout(function(){ enableBookLaterChannels(); if(channel){ var b=document.querySelector('.bfl-type-btn[data-ch="'+channel+'"]'); if(b&&typeof selectBflChannel==='function') selectBflChannel(b); } }, 0);
   };
 
+  function setControlValue(id, val){
+    var el=document.getElementById(id);
+    if(!el || val===undefined || val===null) return;
+    if('value' in el) el.value = val;
+    else el.textContent = val;
+  }
+  function setControlText(id, val){
+    var el=document.getElementById(id);
+    if(el && val!==undefined && val!==null) el.textContent = val;
+  }
+  function syncRateControls(rawRates){
+    var rates = normalizeExpertRates(Object.assign({}, rawRates || {}));
+    if(!rates) return;
+    setControlValue('rate-chat', rates.chat_pm);
+    setControlValue('rate-voice', rates.voice_pm);
+    setControlValue('rate-video', rates.video_pm);
+    setControlValue('sfield-chat-rate', rates.chat_pm);
+    setControlValue('sfield-voice-rate', rates.voice_pm);
+    setControlValue('sfield-video-rate', rates.video_pm);
+    setControlValue('rate-slider', rates.chat_pm);
+    setControlValue('sfield-free-min', rates.chat_free_min);
+    setControlValue('free-min-chat', rates.chat_free_min);
+    setControlValue('free-min-voice', rates.voice_free_min);
+    setControlValue('free-min-video', rates.video_free_min);
+    setControlText('fm-chat', rates.chat_free_min);
+    setControlText('fm-voice', rates.voice_free_min);
+    setControlText('fm-video', rates.video_free_min);
+    setControlText('rp-chat', '$' + Number(rates.chat_pm).toFixed(2) + '/min');
+    setControlText('rp-voice', '$' + Number(rates.voice_pm).toFixed(2) + '/min');
+    setControlText('rp-video', '$' + Number(rates.video_pm).toFixed(2) + '/min');
+    setControlText('db-rate-val', '$' + Number(rates.chat_pm).toFixed(2));
+    setControlText('db-rate-display', '$' + Number(rates.chat_pm).toFixed(2));
+    if(window._currentExpert) Object.assign(window._currentExpert, rates);
+  }
+  window.obSyncRateControls = syncRateControls;
+
+  function fetchCanonicalRates(){
+    if(!tok()) return Promise.resolve(null);
+    var url = (window._adminViewingExpertId ? '/api/admin/experts/'+encodeURIComponent(window._adminViewingExpertId)+'/rates' : '/api/experts/rates');
+    return api(url).then(function(d){
+      var rates = d.rates || d || {};
+      syncRateControls(rates);
+      return rates;
+    }).catch(function(){ return null; });
+  }
+  var _origLoadPricingFinal=window.loadExpertPricing;
+  window.loadExpertPricing=function(){
+    if(_origLoadPricingFinal) _origLoadPricingFinal.apply(this, arguments);
+    setTimeout(fetchCanonicalRates, 120);
+  };
+  var _origLoadWebsiteEditorFinal=window.loadWebsiteEditor;
+  window.loadWebsiteEditor=function(){
+    if(_origLoadWebsiteEditorFinal) _origLoadWebsiteEditorFinal.apply(this, arguments);
+    setTimeout(function(){
+      var c=document.getElementById('we-accent-color');
+      if(c) applyAccentColor(c.value);
+    }, 450);
+  };
+
+  function adminContent(panelName){
+    var panel=document.getElementById('admin-panel-'+panelName);
+    if(!panel) return null;
+    var c=panel.querySelector('.admin-content');
+    if(!c){ c=document.createElement('div'); c.className='admin-content'; panel.appendChild(c); }
+    return c;
+  }
+  function adminLoading(panelName, label){
+    var c=adminContent(panelName);
+    if(!c) return;
+    c.innerHTML='<div style="background:#fff;border:1px solid rgba(196,98,45,.18);border-radius:8px;padding:32px;color:#3a2a1f;text-align:center;">Loading '+esc(label||'data')+'...</div>';
+  }
+
+  window.loadAdminSupport = function(){
+    var c=adminContent('support');
+    if(!c) return;
+    c.innerHTML='<div style="background:#fff;border:1px solid rgba(196,98,45,.18);border-radius:8px;padding:32px;color:#3a2a1f;text-align:center;">Loading support inbox...</div>';
+    api('/api/admin/support').then(function(d){
+      var tickets=d.tickets||[];
+      var open=tickets.filter(function(t){return (t.status||'open')==='open';}).length;
+      var resolved=tickets.filter(function(t){return (t.status||'')==='resolved';}).length;
+      var rows=tickets.map(function(t){
+        var status=t.status||'open';
+        var created=t.created_at ? new Date(t.created_at*1000).toLocaleString() : '';
+        var from=(t.user_name||'Visitor')+(t.user_email?' · '+t.user_email:'');
+        return '<div style="background:#fff;border:1px solid #eadfd5;border-radius:8px;padding:18px;display:grid;grid-template-columns:1fr auto;gap:16px;align-items:start;">'+
+          '<div><div style="font-size:16px;font-weight:800;color:#2b2119;margin-bottom:4px;">'+esc(t.subject||'Contact request')+'</div>'+
+          '<div style="font-size:12px;color:#7b6f66;margin-bottom:10px;">'+esc(from)+' · '+esc(created)+'</div>'+
+          '<div style="font-size:14px;line-height:1.6;color:#3d332b;white-space:pre-wrap;background:#fbf7f1;border-radius:8px;padding:12px;">'+esc(t.message||'No message body')+'</div></div>'+
+          '<div style="display:flex;flex-direction:column;gap:8px;align-items:flex-end;"><span style="font-size:11px;text-transform:uppercase;letter-spacing:.04em;border-radius:999px;padding:5px 9px;background:'+(status==='open'?'#fff7ed':'#ecfdf5')+';color:'+(status==='open'?'#c4622d':'#166534')+';font-weight:800;">'+esc(status)+'</span>'+
+          '<button class="admin-action-btn" onclick="OwnlyAPI.openTicket(\''+esc(t.id)+'\')" style="background:#c4622d;color:white;border-radius:8px;border:none;padding:8px 12px;">Reply</button>'+
+          '<button class="admin-action-btn" onclick="obSetSupportStatus(\''+esc(t.id)+'\',\''+(status==='open'?'resolved':'open')+'\')" style="background:#fff;border:1px solid #e5d8cc;color:#3a2a1f;border-radius:8px;padding:8px 12px;">'+(status==='open'?'Resolve':'Reopen')+'</button></div></div>';
+      }).join('');
+      c.innerHTML='<div style="display:flex;gap:16px;margin-bottom:20px;flex-wrap:wrap;">'+
+        '<div style="background:#fff;border:1px solid #eadfd5;border-radius:8px;padding:18px 22px;min-width:150px;"><div style="font-size:28px;font-weight:900;color:#2b2119;">'+tickets.length+'</div><div style="font-size:12px;color:#7b6f66;text-transform:uppercase;letter-spacing:.06em;">Total Threads</div></div>'+
+        '<div style="background:#fff;border:1px solid #eadfd5;border-radius:8px;padding:18px 22px;min-width:150px;"><div style="font-size:28px;font-weight:900;color:#c4622d;">'+open+'</div><div style="font-size:12px;color:#7b6f66;text-transform:uppercase;letter-spacing:.06em;">Open</div></div>'+
+        '<div style="background:#fff;border:1px solid #eadfd5;border-radius:8px;padding:18px 22px;min-width:150px;"><div style="font-size:28px;font-weight:900;color:#166534;">'+resolved+'</div><div style="font-size:12px;color:#7b6f66;text-transform:uppercase;letter-spacing:.06em;">Resolved</div></div></div>'+
+        '<div style="background:#fff;border:1px solid #eadfd5;border-radius:8px;padding:20px;"><div style="display:flex;justify-content:space-between;gap:16px;align-items:center;margin-bottom:16px;"><div><div style="font-size:22px;font-weight:900;color:#2b2119;">Support Inbox</div><div style="font-size:13px;color:#7b6f66;">Platform contact form and support messages</div></div><button class="admin-action-btn" onclick="loadAdminSupport()" style="background:#fbf7f1;border:1px solid #eadfd5;color:#3a2a1f;border-radius:8px;padding:9px 14px;">Refresh</button></div>'+
+        (tickets.length?'<div style="display:flex;flex-direction:column;gap:12px;">'+rows+'</div>':'<div style="text-align:center;padding:44px;color:#7b6f66;background:#fbf7f1;border-radius:8px;">No support or contact messages yet.</div>')+
+        '</div>';
+    }).catch(function(e){
+      c.innerHTML='<div style="background:#fff;border:1px solid #fecaca;border-radius:8px;padding:28px;color:#b91c1c;">Support failed: '+esc(e.message)+'</div>';
+    });
+  };
+  if(window.OwnlyAPI) window.OwnlyAPI.loadAdminSupport = window.loadAdminSupport;
+
+  function loadExpertMessagesPanel(){
+    var panel=document.getElementById('db-panel-messages');
+    if(!panel) return;
+    function sessionDate(v){
+      if(!v) return '';
+      var d = String(v).indexOf('-') >= 0 ? new Date(v) : new Date((String(v).length>12?Number(v):Number(v)*1000));
+      return isNaN(d.getTime()) ? '' : d.toLocaleString();
+    }
+    panel.innerHTML='<div class="db-content"><div style="background:var(--white);border:1px solid var(--gray-200);border-radius:8px;padding:28px;color:var(--brown);">Loading real message threads...</div></div>';
+    api('/api/sessions?limit=30').then(function(d){
+      var sessions=d.sessions||[];
+      var cards=sessions.map(function(s){
+        var name=s.client_name||s.client_email||'Client';
+        var channel=s.channel||'chat';
+        var when=s.started_at||s.created_at||s.ended_at;
+        var date=sessionDate(when);
+        var active=['accepted','active','in_progress'].indexOf(s.status)>=0;
+        return '<div style="background:var(--white);border:1px solid var(--gray-200);border-radius:8px;padding:16px;display:flex;align-items:center;justify-content:space-between;gap:14px;">'+
+          '<div><div style="font-weight:800;color:var(--brown);">'+esc(name)+'</div><div style="font-size:12px;color:var(--gray-400);margin-top:3px;">'+esc(channel)+' session · '+esc(s.status||'')+(date?' · '+esc(date):'')+'</div></div>'+
+          (active?'<button class="btn btn-sm" style="background:var(--terra);color:white;border-radius:8px;" onclick="openExpertLivePanel(\''+esc(s.id)+'\')">Open Session</button>':'<span style="font-size:12px;color:var(--gray-400);">Archived</span>')+
+          '</div>';
+      }).join('');
+      panel.innerHTML='<div class="db-content"><div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:18px;"><div><h2 style="font-family:var(--font-head);font-size:28px;color:var(--brown);margin:0 0 6px;">Messages</h2><div style="font-size:14px;color:var(--gray-400);">Real session threads only. Website inquiries live in Contact Inbox.</div></div><button class="btn btn-sm" style="background:var(--cream);border:1px solid var(--gray-200);color:var(--brown);border-radius:8px;" onclick="loadExpertMessagesPanel()">Refresh</button></div>'+
+        (sessions.length?'<div style="display:flex;flex-direction:column;gap:12px;">'+cards+'</div>':'<div style="background:var(--white);border:1px solid var(--gray-200);border-radius:8px;padding:40px;text-align:center;color:var(--gray-400);">No session message threads yet. Live chat messages appear in the active Live Session screen.</div>')+
+        '</div>';
+    }).catch(function(e){
+      panel.innerHTML='<div class="db-content"><div style="background:var(--white);border:1px solid #fecaca;border-radius:8px;padding:28px;color:#b91c1c;">Could not load messages: '+esc(e.message)+'</div></div>';
+    });
+  }
+  window.loadExpertMessagesPanel = loadExpertMessagesPanel;
+
+  var _origDbNavFinal=window.dbNav;
+  window.dbNav=function(el,panel){
+    if(_origDbNavFinal) _origDbNavFinal.apply(this, arguments);
+    if(panel==='messages') setTimeout(loadExpertMessagesPanel, 0);
+    if(panel==='packages' || panel==='payments') setTimeout(function(){ if(typeof window.loadExpertPricing==='function') window.loadExpertPricing(); }, 180);
+    if(panel==='contact-inbox') setTimeout(function(){ if(typeof window.loadContactInbox==='function') window.loadContactInbox(); }, 0);
+  };
+  var _origAdminNavFinal=window.adminNav;
+  window.adminNav=function(el,panel){
+    if(_origAdminNavFinal) _origAdminNavFinal.apply(this, arguments);
+    var labels={dashboard:'dashboard',experts:'experts',revenue:'revenue',moderation:'moderation queue',support:'support inbox',payouts:'payouts',promotions:'promotions','fee-config':'fee configuration','platform-settings':'platform settings'};
+    if(labels[panel]) adminLoading(panel, labels[panel]);
+    setTimeout(function(){
+      var loaders={dashboard:window.loadAdminDashboard,experts:window.loadAdminExperts,revenue:window.loadAdminRevenue,moderation:window.loadAdminModeration,support:window.loadAdminSupport,payouts:window.loadAdminPayouts,promotions:window.loadAdminPromotions,'fee-config':window.loadAdminFeeConfig,'platform-settings':window.loadAdminSettings};
+      if(loaders[panel]) loaders[panel]();
+    }, 40);
+  };
+
   function init(){
     ensureMarketingContact();
     ensureContactInboxPanel();
     ensurePlanSettings();
     enableBookLaterChannels();
     var c=document.getElementById('we-accent-color'); if(c) applyAccentColor(c.value);
+    if(typeof window.loadExpertPricing==='function') setTimeout(fetchCanonicalRates, 500);
   }
   if(document.readyState==='loading') document.addEventListener('DOMContentLoaded', init); else init();
 })();

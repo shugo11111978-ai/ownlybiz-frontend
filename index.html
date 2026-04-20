@@ -11966,7 +11966,7 @@ async function savePaymentConfig() {
   async function init() {
     var path = (window.location.pathname||'').replace(/^\/+/,'').replace(/\/+$/,'');
     var reserved = ['','index.html','admin','signup','dashboard','login','expert','session','connectors','settings','messages','analytics','payments','packages','reviews','clients','sessions'];
-    if (path && reserved.indexOf(path) === -1) window._browseExpert = path;
+    if (path && path.indexOf('dash/') !== 0 && reserved.indexOf(path) === -1) window._browseExpert = path;
     try {
     // --- Routing: immediate, no blocking ---
     _wireLoginForm();
@@ -11998,7 +11998,9 @@ async function savePaymentConfig() {
       if(window._browseExpert && window._browseExpert !== 'expert-slug'){
         if(typeof switchView==='function') switchView(4);
       }
-      if(!window._customDomainPending) loadExpertWebsite(window._browseExpert||'expert-slug');
+      if(!window._customDomainPending && window._browseExpert && window._browseExpert !== 'expert-slug' && String(window._browseExpert).indexOf('/') < 0) {
+        loadExpertWebsite(window._browseExpert);
+      }
     }
     // Reveal page delayed — anti-flicker overrides handle ownly-ready after real data loads
     // Safety fallback: reveal after 2.5s if no other trigger fires
@@ -17598,17 +17600,25 @@ window._handleRTCMessage=function(d){
   }
 
   function resolveExpertSlug(){
-    if(window._currentExpertSlug) return window._currentExpertSlug;
-    if(window._currentExpert && window._currentExpert.slug) return window._currentExpert.slug;
-    if(window._browseExpert && window._browseExpert !== 'expert-slug') return window._browseExpert;
+    var reservedSlugs = ['','index.html','admin','signup','dashboard','login','expert','session','connectors','settings','messages','analytics','payments','packages','reviews','clients','sessions','pricing'];
+    function cleanSlug(s){
+      s = (s == null ? '' : String(s)).trim();
+      if(!s || s === 'expert-slug') return '';
+      if(s.indexOf('/') >= 0) return '';
+      if(reservedSlugs.indexOf(s) >= 0) return '';
+      return s;
+    }
+    if(cleanSlug(window._currentExpertSlug)) return cleanSlug(window._currentExpertSlug);
+    if(window._currentExpert && cleanSlug(window._currentExpert.slug)) return cleanSlug(window._currentExpert.slug);
+    if(cleanSlug(window._browseExpert)) return cleanSlug(window._browseExpert);
     var q = new URLSearchParams(location.search).get('expert');
-    if(q) return q;
+    if(cleanSlug(q)) return cleanSlug(q);
     var path = location.pathname.replace(/^\/+|\/+$/g,'');
-    if(path && path.indexOf('dash/') !== 0 && ['admin','login','signup','pricing','dashboard'].indexOf(path) === -1) return path;
+    if(path && path.indexOf('dash/') !== 0 && cleanSlug(path)) return cleanSlug(path);
     var host = location.hostname || '';
     if(host.indexOf('.ownlybiz.com') > 0) {
       var sub = host.split('.')[0];
-      if(['www','app','admin'].indexOf(sub) === -1) return sub;
+      if(cleanSlug(sub) && ['www','app','admin'].indexOf(sub) === -1) return cleanSlug(sub);
     }
     return '';
   }
@@ -17616,7 +17626,12 @@ window._handleRTCMessage=function(d){
 
   var _origLEWStaging = window.loadExpertWebsite;
   window.loadExpertWebsite = function(slug){
-    slug = slug || resolveExpertSlug() || 'expert-slug';
+    var resolved = resolveExpertSlug();
+    slug = (slug && slug !== 'expert-slug') ? String(slug).trim() : resolved;
+    if(!slug || slug === 'expert-slug' || slug.indexOf('/') >= 0){
+      routeReady();
+      return;
+    }
     window._browseExpert = slug;
     window._currentExpertSlug = slug;
     if(_origLEWStaging) _origLEWStaging.call(this, slug);

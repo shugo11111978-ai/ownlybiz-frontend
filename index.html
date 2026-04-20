@@ -11930,7 +11930,10 @@ async function savePaymentConfig() {
       // Always try data loads - individual functions check READY/auth internally
       if(n===1){ if(READY) loadMarketing(); }
       if(n===3){ if(READY && (Auth.isExpert || (Auth.isAdmin && window._adminViewingExpertId))) loadExpertDashboard(); }
-      if(n===4){ if(READY) loadExpertWebsite(window._browseExpert); }
+      if(n===4){
+        var expertSlug = window._browseExpert ? String(window._browseExpert).trim() : '';
+        if(READY && expertSlug && expertSlug !== 'expert-slug' && expertSlug.indexOf('/') < 0) loadExpertWebsite(expertSlug);
+      }
       if(n===6){ if(READY && Auth.isAdmin) { loadAdminDashboard(); loadAdminExperts(); } }
     },160);
   };
@@ -12268,7 +12271,7 @@ async function savePaymentConfig() {
   document.addEventListener('DOMContentLoaded', function() {
     var path = window.location.pathname.replace(/^\/+/,'').replace(/\/+$/,'');
     var reserved = ['','index.html','admin','signup','dashboard','login','expert','session','connectors','settings','messages','analytics','payments','packages','reviews','clients','sessions'];
-    if (path && reserved.indexOf(path) === -1) {
+    if (path && path.indexOf('dash/') !== 0 && reserved.indexOf(path) === -1) {
       window._browseExpert = path;
       setTimeout(function() {
         if (typeof switchView === 'function') switchView(4);
@@ -13829,6 +13832,11 @@ function _adminPath(suffix) {
 // --- Clean single loadExpertWebsite (replaces all previous wrappers) ---
 window.loadExpertWebsite = function(slug) {
   slug = slug || window._browseExpert || 'expert-slug';
+  slug = (slug == null ? '' : String(slug).trim());
+  if(!slug || slug === 'expert-slug' || slug.indexOf('/') >= 0) {
+    if(typeof window._markRouteReady === 'function') window._markRouteReady();
+    return;
+  }
   window._browseExpert = slug;
 
   // Call the ORIGINAL Cursor function (buried in s3) via OwnlyAPI if available
@@ -13884,15 +13892,24 @@ window.loadExpertWebsite = function(slug) {
   function _stopPoll(){ if(_pollTimer){ clearInterval(_pollTimer); _pollTimer=null; } }
   // Hook switchView
   var _origSVfinal = window.switchView;
+  function _validPublicSlug(s){
+    s = (s == null ? '' : String(s)).trim();
+    if(!s || s === 'expert-slug' || s.indexOf('/') >= 0) return '';
+    return s;
+  }
   window.switchView = function(n){
     if(_origSVfinal) _origSVfinal.call(this,n);
-    if(n===4){ _lastOnlineState=null; _startPoll(); loadExpertWebsite(window._browseExpert||_getMySlug()||'expert-slug'); }
+    if(n===4){
+      var slug = _validPublicSlug(window._browseExpert || _getMySlug());
+      if(slug){ _lastOnlineState=null; _startPoll(); loadExpertWebsite(slug); }
+      else { _stopPoll(); }
+    }
     else _stopPoll();
   };
   // Auto-start on slug URLs
   setTimeout(function(){
     var path = window.location.pathname;
-    if(path.length>1 && path.indexOf('dashboard')===-1 && path.indexOf('admin')===-1){
+    if(path.length>1 && path.indexOf('/dash/')!==0 && path.indexOf('dashboard')===-1 && path.indexOf('admin')===-1){
       _startPoll();
     }
   }, 2000);

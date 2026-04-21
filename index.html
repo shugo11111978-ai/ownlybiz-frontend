@@ -8193,16 +8193,9 @@ function openBookingOverlay(channelId) {
       var _bovE = document.getElementById('bov-email'); if (_bovE && _cu.email) _bovE.value = _cu.email;
     }
   }
-  // Zero free minutes if client already used them with this expert
-  var _eid = window._currentExpertId;
-  var _freeUsedForChannel = !!(_eid && obIsFreeUsed(_eid, channelId));
-  if(_freeUsedForChannel){
-    if(typeof freeMinutes==='object'){freeMinutes[channelId]=0;}
-    // Force upfront mode so HPM path is used (no free minutes)
-    if(typeof sessionStartMode==='object'){sessionStartMode[channelId]='upfront';}
-    // Update visible booking page card text to remove '· 1 free'
-    document.querySelectorAll('.stype-btn-price,.ep-chat-rate,[data-rate="'+channelId+'"]').forEach(function(el){var t=el.textContent;if(t.indexOf('free')>=0)el.textContent=t.replace(/\s*·\s*\d+\s*free/,'');});
-  }
+  // Keep configured free minutes visible in booking/pre-session UI.
+  // The backend session record decides whether this specific client is billable.
+  var _freeUsedForChannel = false;
   var expert = window._currentExpert || {};
   var _freeNum = function(v){ var n=parseInt(v,10); return Number.isFinite(n)&&n>0?n:0; };
   var configuredFreeMap = {
@@ -8548,14 +8541,14 @@ function _launchSession(isPaid) {
   el = document.getElementById('presess-channel-name'); if(el) el.textContent = ch.name;
   el = document.getElementById('presess-type'); if(el) el.textContent = ch.name + ' · Per-minute';
   el = document.getElementById('presess-rate'); if(el) el.textContent = ch.price;
-  el = document.getElementById('presess-payment'); if(el) el.textContent = isPaid ? 'Card authorized' : (window.OWNLYBIZ_IS_STAGING ? 'Staging — no charge' : 'Free — card on file');
+  el = document.getElementById('presess-payment'); if(el) el.textContent = isPaid ? (fm > 0 ? 'Card authorized · billing after free minutes' : 'Card authorized') : (window.OWNLYBIZ_IS_STAGING ? 'Staging — no charge' : 'Free — card on file');
   var freeRow = document.getElementById('presess-free-row');
   var freeNote = document.getElementById('presess-free-note');
   var paidNote = document.getElementById('presess-paid-note');
   var freeMinEl = document.getElementById('presess-free-mins');
   el = document.getElementById('presess-free'); if(el) el.textContent = fm + ' minutes free';
   if(freeMinEl) freeMinEl.textContent = fm + ' minutes';
-  if(!isPaid && fm > 0) {
+  if(fm > 0) {
     if(freeRow) freeRow.style.display='flex';
     if(freeNote) freeNote.style.display='block';
     if(paidNote) paidNote.style.display='none';
@@ -9352,6 +9345,20 @@ function startExpertSessionTimer(startedAt) {
     var freeMins = window._expertSessFreeMins||0;
     var cut = window._expertSessCut||0.8;
     var billableMins = Math.max(0, (_expertSessSeconds/60) - freeMins);
+    var remainingFree = Math.max(0, Math.ceil((freeMins * 60) - _expertSessSeconds));
+    var fpEl = document.getElementById('live-free-period');
+    if(fpEl){
+      if(freeMins > 0 && remainingFree > 0){
+        var rfMin = Math.floor(remainingFree / 60), rfSec = remainingFree % 60;
+        fpEl.textContent = 'Free intro active: ' + rfMin + ':' + (rfSec < 10 ? '0' : '') + rfSec + ' remaining';
+        fpEl.style.display = 'block';
+      } else if(freeMins > 0) {
+        fpEl.textContent = 'Free intro complete · billing active';
+        fpEl.style.display = 'block';
+      }
+    }
+    var billStatus = document.getElementById('live-billing-status');
+    if(billStatus && freeMins > 0) billStatus.textContent = remainingFree > 0 ? 'Client is in free intro time' : 'Billing active after free intro';
     var gross = billableMins * rate;
     var net = gross * cut;
     var earnEl = document.getElementById('expert-session-earnings');
@@ -13227,9 +13234,8 @@ function _refreshPublicPage(e) {
   var voicePm = e.voice_pm || e.rate_voice || 0;
   var videoPm = e.video_pm || e.rate_video || 0;
   var freeMins = e.chat_free_min || e.free_minutes || 0;
-  // Zero if client already used free minutes
-  var _ceid = e.user_id || e.id;
-  if(_ceid && obIsFreeUsed(_ceid,'chat')) freeMins = 0;
+  // Public website copy should show the expert's configured offer.
+  // Client-specific eligibility is controlled by the session returned by the backend.
 
   // service-mini-price items (3 of them: chat, voice, video in order)
   var miniPrices = document.querySelectorAll('.service-mini-price');
@@ -14111,9 +14117,8 @@ setTimeout(function(){
     var voicePm  = e.voice_pm || e.rate_voice || 0;
     var videoPm  = e.video_pm || e.rate_video || 0;
     var freeMins = e.chat_free_min || e.free_minutes || 0;
-  // Zero if client already used free minutes
-  var _ceid = e.user_id || e.id;
-  if(_ceid && obIsFreeUsed(_ceid,'chat')) freeMins = 0;
+  // Public website copy should show the configured offer.
+  // Client-specific billing eligibility is controlled by the backend session.
     var name     = e.name || '';
 
     // stype-btn-price: 3 per-min chips in session type selector
@@ -15924,7 +15929,7 @@ window._obOpenClientChat = openClientChat;
       var lblEl=document.getElementById('live-client-sess-label');
       if(lblEl) lblEl.textContent=(sess.client_session_count>1)?'Returning client':'First session';
       var billEl=document.getElementById('live-billing-status');
-      if(billEl) billEl.textContent=sess.payment_method?'Card on file · Authorized':'Pending payment';
+      if(billEl) billEl.textContent=freeMins>0?'Client is in free intro time':(sess.payment_method?'Card on file · Authorized':'Pending payment');
       var earnRateEl=document.getElementById('live-earn-rate');
       if(earnRateEl) earnRateEl.textContent='$'+((rate*(cut||0.8)).toFixed(2))+'/min';
       // Start timer from session's actual start time (catch-up if mid-session)

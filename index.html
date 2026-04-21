@@ -17837,41 +17837,66 @@ window._handleRTCMessage=function(d){
 
   function refreshPublicFreeMinuteCopy(data){
     data = data || window._currentExpert || {};
-    var chatRate = positiveNumber(data.rate_chat, data.chat_pm, 3.5);
-    var configuredFree = nonNegativeInt(data.chat_free_min, data.free_minutes, 0);
-    var availableFree = configuredFree;
-    var expertId = data.user_id || data.id || window._currentExpertId;
-    if(expertId && typeof obIsFreeUsed === 'function' && obIsFreeUsed(expertId, 'chat')) availableFree = 0;
-    var rateText = '$' + chatRate.toFixed(2) + '/min';
-    var freeText = configuredFree > 0 ? rateText + ' · ' + configuredFree + ' min free' : rateText;
+    var rates = {
+      chat: positiveNumber(data.rate_chat, data.chat_pm, 3.5),
+      voice: positiveNumber(data.rate_voice, data.voice_pm, 4),
+      video: positiveNumber(data.rate_video, data.video_pm, 5)
+    };
+    var configuredFree = {
+      chat: nonNegativeInt(data.chat_free_min, data.free_minutes, 0),
+      voice: nonNegativeInt(data.voice_free_min, data.free_minutes_voice, 0),
+      video: nonNegativeInt(data.video_free_min, data.free_minutes_video, 0)
+    };
+    function rateText(ch){ return '$' + rates[ch].toFixed(2) + '/min'; }
+    function rateWithFree(ch){ return rateText(ch) + (configuredFree[ch] > 0 ? ' · ' + configuredFree[ch] + ' min free' : ''); }
+    function channelFromCard(el){
+      var txt = ((el && el.textContent) || '').toLowerCase();
+      if(txt.indexOf('voice') >= 0) return 'voice';
+      if(txt.indexOf('video') >= 0) return 'video';
+      if(txt.indexOf('chat') >= 0) return 'chat';
+      return null;
+    }
     document.querySelectorAll('.stype-btn').forEach(function(btn){
-      if((btn.textContent || '').indexOf('Chat') === -1) return;
+      var ch = channelFromCard(btn);
+      if(!ch) return;
       var price = btn.querySelector('.stype-btn-price');
-      if(price) price.textContent = freeText;
+      if(price) price.textContent = rateWithFree(ch);
     });
-    document.querySelectorAll('[data-rate="chat"],.ep-chat-rate').forEach(function(el){ el.textContent = freeText; });
+    document.querySelectorAll('[data-rate="chat"],.ep-chat-rate').forEach(function(el){ el.textContent = rateWithFree('chat'); });
+    document.querySelectorAll('[data-rate="voice"],.ep-voice-rate').forEach(function(el){ el.textContent = rateWithFree('voice'); });
+    document.querySelectorAll('[data-rate="video"],.ep-video-rate').forEach(function(el){ el.textContent = rateWithFree('video'); });
     var total = document.getElementById('bk-total');
-    if(total && (!window.currentBookChannel || window.currentBookChannel === 'chat')) total.textContent = freeText;
+    var activeChannel = (window.currentBookChannel || (window.selectedChannel && window.selectedChannel.id) || 'chat');
+    if(total && ['chat','voice','video'].includes(activeChannel)) total.textContent = rateWithFree(activeChannel);
     var freeRow = document.getElementById('bk-free-row');
     if(freeRow){
-      freeRow.style.display = configuredFree > 0 ? 'flex' : 'none';
-      if(configuredFree > 0) freeRow.innerHTML = '<span class="booking-detail-label">Free Minutes</span><span class="booking-detail-val" style="color:var(--sage)">' + configuredFree + ' minutes included</span>';
+      var summaryFree = configuredFree[activeChannel] || 0;
+      freeRow.style.display = summaryFree > 0 ? 'flex' : 'none';
+      if(summaryFree > 0) freeRow.innerHTML = '<span class="booking-detail-label">Free Minutes</span><span class="booking-detail-val" style="color:var(--sage)">' + summaryFree + ' minutes included</span>';
     }
     var freeNote = document.getElementById('bk-free-note');
-    if(freeNote) freeNote.style.display = configuredFree > 0 ? 'inline' : 'none';
+    if(freeNote) freeNote.style.display = (configuredFree[activeChannel] || 0) > 0 ? 'inline' : 'none';
     var detail = document.getElementById('bov-channel-detail');
-    if(detail && (!window.selectedChannel || window.selectedChannel.id === 'chat')) detail.textContent = rateText + (configuredFree > 0 ? ' · first ' + configuredFree + ' minutes free' : '');
+    if(detail && ['chat','voice','video'].includes(activeChannel)) detail.textContent = rateText(activeChannel) + (configuredFree[activeChannel] > 0 ? ' · first ' + configuredFree[activeChannel] + ' minutes free' : '');
     document.querySelectorAll('.service-mini-price').forEach(function(el, i){
-      if(i === 0) el.textContent = freeText;
+      if(i === 0) el.textContent = rateWithFree('chat');
+      if(i === 1) el.textContent = rateWithFree('voice');
+      if(i === 2) el.textContent = rateWithFree('video');
     });
     document.querySelectorAll('.tag-free').forEach(function(el){
-      if(configuredFree > 0){ el.style.display = ''; el.textContent = configuredFree + ' Free Minutes'; }
+      if(configuredFree.chat > 0){ el.style.display = ''; el.textContent = configuredFree.chat + ' Free Minutes'; }
     });
     document.querySelectorAll('.ew-free-desc').forEach(function(el){
-      if(configuredFree > 0) el.textContent = 'First ' + configuredFree + ' minutes are always free.';
+      if(configuredFree.chat > 0) el.textContent = 'First ' + configuredFree.chat + ' minutes are always free.';
     });
   }
   window.obRefreshPublicFreeMinuteCopy = refreshPublicFreeMinuteCopy;
+
+  var _origRefreshPublicPageFinal = window._refreshPublicPage;
+  window._refreshPublicPage = function(data){
+    if(_origRefreshPublicPageFinal) _origRefreshPublicPageFinal.apply(this, arguments);
+    refreshPublicFreeMinuteCopy(data);
+  };
 
   var _origApplyWebsite = window._applyExpertWebsite;
   window._applyExpertWebsite = function(data){

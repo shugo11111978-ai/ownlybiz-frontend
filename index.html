@@ -5869,7 +5869,7 @@ window._OB_BACKEND='https://victorious-wisdom-production-a6b0.up.railway.app';
               <div class="receipt-actions">
                 <button class="btn btn-primary" style="width:100%" onclick="showExpertPage('book');window.scrollTo(0,0);">Book Another Session</button>
                 <button class="btn btn-secondary" style="width:100%" onclick="window.print();">View Receipt</button>
-                <button class="btn" style="width:100%;margin-top:8px;color:var(--gray-400);font-size:13px;background:none;border:none;cursor:pointer;" onclick="window.location.reload();">← Return to Expert Page</button>
+              <button class="btn" style="width:100%;margin-top:8px;color:var(--gray-400);font-size:13px;background:none;border:none;cursor:pointer;" onclick="returnToExpertPage()">← Return to Expert Page</button>
               </div>
             </div>
           </div>
@@ -16194,14 +16194,18 @@ window._obOpenClientChat = openClientChat;
     connectExpertWs(null);
   }
 
-  function init(){
-    window.openClientChat=openClientChat;
-    window.sendPaidMsg=window.sendPaidMsg;
-    window._v5HandleWsMsg=handleWsMsg;
+	  function init(){
+	    window.openClientChat=openClientChat;
+	    window.openExpertLivePanel=openExpertLivePanel;
+	    window.connectExpertWs=connectExpertWs;
+	    window.sendPaidMsg=window.sendPaidMsg;
+	    window._v5HandleWsMsg=handleWsMsg;
 
-    // Expose functions to window ALWAYS - even before login
-    window.openClientChat=openClientChat;
-    window.sendPaidMsg=window.sendPaidMsg; // already set below
+	    // Expose functions to window ALWAYS - even before login
+	    window.openClientChat=openClientChat;
+	    window.openExpertLivePanel=openExpertLivePanel;
+	    window.connectExpertWs=connectExpertWs;
+	    window.sendPaidMsg=window.sendPaidMsg; // already set below
     window._v5AppendMsg=appendMsg;
     window._v5HandleWsMsg=handleWsMsg;
     window._obPendingSessId=null;window._obActiveSessId=null;
@@ -16771,9 +16775,9 @@ function startBookingSession(bookingId) {
 	      window._obPendingChannel = startedChannel;
 	      window.currentBookChannel = startedChannel;
 	      window._obPendingRate = parseFloat(startedSession.rate_per_min || window._obPendingRate || 0) || window._obPendingRate;
-	      if (typeof connectExpertWs === 'function') connectExpertWs(startedSession.id);
-	      if (typeof openExpertLivePanel === 'function') {
-	        openExpertLivePanel(startedSession.id);
+	      if (typeof window.connectExpertWs === 'function') window.connectExpertWs(startedSession.id);
+	      if (typeof window.openExpertLivePanel === 'function') {
+	        window.openExpertLivePanel(startedSession.id);
 	      } else {
 	        var nav = document.querySelector('[onclick*="live-session"]');
 	        if (nav) nav.click();
@@ -16799,10 +16803,20 @@ function startBookingSession(bookingId) {
   if (!bookingId) return;
   var BASE = 'https://victorious-wisdom-production-a6b0.up.railway.app';
 
-  function showBookingJoinScreen(data) {
-    var old = document.getElementById('booking-join-overlay');
-    if (old) old.remove();
-    var expertName = data.expert ? data.expert.name : 'Expert';
+	  function showBookingJoinScreen(data) {
+	    var old = document.getElementById('booking-join-overlay');
+	    if (old) old.remove();
+	    var expertName = data.expert ? data.expert.name : 'Expert';
+	    if(data.expert){
+	      window._currentExpert = Object.assign(window._currentExpert || {}, data.expert);
+	      if(data.expert.slug){
+	        window._currentExpertSlug = data.expert.slug;
+	        window._browseExpert = data.expert.slug;
+	        if(typeof window.returnToExpertPage === 'function'){
+	          window._obReturnExpertUrl = (location.hostname.indexOf('vercel.app') >= 0 ? location.origin + '/?expert=' + encodeURIComponent(data.expert.slug) : location.origin + '/');
+	        }
+	      }
+	    }
     var date = data.booking ? data.booking.scheduled_date : '';
     var time = data.booking ? data.booking.scheduled_time : '';
     var channel = data.booking ? data.booking.channel : 'chat';
@@ -17802,12 +17816,68 @@ window._handleRTCMessage=function(d){
   }
   window.obNormalizeExpertRates = normalizeExpertRates;
 
+  function expertReturnUrl(slug){
+    slug = (slug || resolveExpertSlug() || '').trim();
+    var host = location.hostname || '';
+    if(slug && (host.indexOf('vercel.app') >= 0 || host === 'localhost' || host === '127.0.0.1')){
+      return location.origin + '/?expert=' + encodeURIComponent(slug);
+    }
+    if(slug && host === 'ownlybiz.com') return location.origin + '/?expert=' + encodeURIComponent(slug);
+    return location.origin + (location.pathname && location.pathname !== '/' ? location.pathname : '/');
+  }
+  window.returnToExpertPage = function(){
+    var slug = (window._currentExpert && window._currentExpert.slug) || window._currentExpertSlug || window._browseExpert || resolveExpertSlug();
+    window.location.href = window._obReturnExpertUrl || expertReturnUrl(slug);
+  };
+
+  function refreshPublicFreeMinuteCopy(data){
+    data = data || window._currentExpert || {};
+    var chatRate = positiveNumber(data.rate_chat, data.chat_pm, 3.5);
+    var configuredFree = nonNegativeInt(data.chat_free_min, data.free_minutes, 0);
+    var availableFree = configuredFree;
+    var expertId = data.user_id || data.id || window._currentExpertId;
+    if(expertId && typeof obIsFreeUsed === 'function' && obIsFreeUsed(expertId, 'chat')) availableFree = 0;
+    var rateText = '$' + chatRate.toFixed(2) + '/min';
+    var freeText = configuredFree > 0 ? rateText + ' · ' + configuredFree + ' min free' : rateText;
+    document.querySelectorAll('.stype-btn').forEach(function(btn){
+      if((btn.textContent || '').indexOf('Chat') === -1) return;
+      var price = btn.querySelector('.stype-btn-price');
+      if(price) price.textContent = freeText;
+    });
+    document.querySelectorAll('[data-rate="chat"],.ep-chat-rate').forEach(function(el){ el.textContent = freeText; });
+    var total = document.getElementById('bk-total');
+    if(total && (!window.currentBookChannel || window.currentBookChannel === 'chat')) total.textContent = freeText;
+    var freeRow = document.getElementById('bk-free-row');
+    if(freeRow){
+      freeRow.style.display = configuredFree > 0 ? 'flex' : 'none';
+      if(configuredFree > 0) freeRow.innerHTML = '<span class="booking-detail-label">Free Minutes</span><span class="booking-detail-val" style="color:var(--sage)">' + configuredFree + ' minutes included</span>';
+    }
+    var freeNote = document.getElementById('bk-free-note');
+    if(freeNote) freeNote.style.display = configuredFree > 0 ? 'inline' : 'none';
+    var detail = document.getElementById('bov-channel-detail');
+    if(detail && (!window.selectedChannel || window.selectedChannel.id === 'chat')) detail.textContent = rateText + (configuredFree > 0 ? ' · first ' + configuredFree + ' minutes free' : '');
+    document.querySelectorAll('.service-mini-price').forEach(function(el, i){
+      if(i === 0) el.textContent = freeText;
+    });
+    document.querySelectorAll('.tag-free').forEach(function(el){
+      if(configuredFree > 0){ el.style.display = ''; el.textContent = configuredFree + ' Free Minutes'; }
+    });
+    document.querySelectorAll('.ew-free-desc').forEach(function(el){
+      if(configuredFree > 0) el.textContent = 'First ' + configuredFree + ' minutes are always free.';
+    });
+  }
+  window.obRefreshPublicFreeMinuteCopy = refreshPublicFreeMinuteCopy;
+
   var _origApplyWebsite = window._applyExpertWebsite;
   window._applyExpertWebsite = function(data){
     data = normalizeExpertRates(data);
-    if(data && data.slug) window._currentExpertSlug = data.slug;
+    if(data && data.slug) {
+      window._currentExpertSlug = data.slug;
+      window._obReturnExpertUrl = expertReturnUrl(data.slug);
+    }
     if(_origApplyWebsite) _origApplyWebsite.call(this, data);
     if(data && data.theme_color) applyAccentColor(data.theme_color);
+    refreshPublicFreeMinuteCopy(data);
     routeReady();
   };
 

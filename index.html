@@ -5,10 +5,19 @@
   <script src="https://js.stripe.com/v3/"></script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>[STAGING] Ownlybiz — Own your expertise. Own your income.</title>
+<script>
+(function(){
+  if(/[?&](booking|session|session_id)=/.test(location.search)){
+    document.documentElement.classList.add('ob-session-boot');
+    setTimeout(function(){ document.documentElement.classList.remove('ob-session-boot'); }, 4500);
+  }
+})();
+</script>
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;0,900;1,400;1,600&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,300;1,9..40,400&display=swap" rel="stylesheet">
 <style>
 /* ===== RESET & BASE ===== */
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}@media(max-width:767px){#ob-admin-nav{display:none!important;}}
+html.ob-session-boot body{opacity:0!important;}
 :root{
   --terra:#C4622D;--terra-dark:#a04d22;--terra-light:#d4845a;
   --cream:#F6F1E9;--cream-dark:#ede5d6;
@@ -18739,7 +18748,7 @@ window._handleRTCMessage=function(d){
 })();
 </script>
 <script>
-/* STAGING FLOW STABILIZER V2.1: authoritative timers, scheduled RTC, admin view, messaging */
+/* STAGING FLOW STABILIZER V2.2: authoritative timers, scheduled RTC, admin view, messaging */
 (function(){
   if(window._obStagingFlowStabilizerV2) return;
   window._obStagingFlowStabilizerV2 = true;
@@ -18883,12 +18892,28 @@ window._handleRTCMessage=function(d){
   }
   window.phoneGo = guardedPhoneGo;
 
+  function dedupePanelMessages(panelId){
+    var box = document.getElementById(panelId);
+    if(!box) return;
+    var seen = {};
+    Array.prototype.slice.call(box.children).forEach(function(row){
+      var txt = (row.textContent || '').replace(/\s+/g, ' ').trim();
+      if(!txt) return;
+      var side = /mine/.test(row.className || '') || /flex-end/.test(row.getAttribute('style') || '') ? 'mine' : 'theirs';
+      var key = side + ':' + txt;
+      if(seen[key]) row.remove();
+      else seen[key] = true;
+    });
+  }
+  function scheduleDedupe(panelId){
+    [30,160,420,900].forEach(function(ms){ setTimeout(function(){ dedupePanelMessages(panelId); }, ms); });
+  }
   function appendPanelMessage(panelId, msg, mine){
     var box = document.getElementById(panelId);
     if(!box || !msg || !msg.content) return;
     var key = msg.id || msg.messageId || [msg.sender_id, msg.sent_at || msg.ts || msg.created_at, msg.content].join(':');
     box._obSeen = box._obSeen || {};
-    if(box._obSeen[key]) return;
+    if(box._obSeen[key]) { scheduleDedupe(panelId); return; }
     box._obSeen[key] = true;
     if(window._obAppendMsg) window._obAppendMsg(panelId, msg.content, mine, msg.sent_at || msg.ts || msg.created_at);
     else if(typeof appendMsg === 'function') appendMsg(panelId, msg.content, mine, msg.sent_at || msg.ts || msg.created_at);
@@ -18899,6 +18924,7 @@ window._handleRTCMessage=function(d){
       box.appendChild(row);
       box.scrollTop = box.scrollHeight;
     }
+    scheduleDedupe(panelId);
   }
   function applyClientReceipt(sess){
     sess = sess || {};
@@ -19025,6 +19051,7 @@ window._handleRTCMessage=function(d){
   }
   function applyClientSessionUi(sess){
     if(!sess) return;
+    document.documentElement.classList.remove('ob-session-boot');
     var ch = (sess.channel || window._obPendingChannel || window.currentBookChannel || 'chat').toLowerCase();
     var rate = channelRate(ch, sess);
     var free = channelFree(ch, sess);
@@ -19083,6 +19110,7 @@ window._handleRTCMessage=function(d){
   }
   window.openClientChat = function(sid){
     if(!sid) return;
+    document.documentElement.classList.remove('ob-session-boot');
     syncTokenStorage();
     window._obActiveSessId = sid;
     window._sessId = sid;
@@ -19099,6 +19127,7 @@ window._handleRTCMessage=function(d){
 
   window.joinActiveBookingSession = function(sessionId, expertId, channel){
     syncTokenStorage();
+    document.documentElement.classList.remove('ob-session-boot');
     channel = (channel || 'chat').toLowerCase();
     window._obActiveSessId = sessionId;
     window._sessId = sessionId;
@@ -19243,8 +19272,70 @@ window._handleRTCMessage=function(d){
     document.querySelectorAll('#expert-chat-area button').forEach(function(btn){ btn.onclick = window.sendExpertMsg; });
   }
 
+  function requestSidFromDom(){
+    var sheet = document.getElementById('session-request-sheet');
+    var overlay = document.getElementById('session-request-overlay');
+    var btn = sheet && sheet.querySelector('[data-session-id]');
+    return (btn && btn.getAttribute('data-session-id')) || (sheet && sheet.dataset && sheet.dataset.sessionId) || (overlay && overlay.dataset && overlay.dataset.sessionId) || '';
+  }
+  function rememberPendingSession(sess, opts){
+    sess = sess || {};
+    opts = opts || {};
+    var sid = sess.id || sess.session_id || sess.sessionId || opts.id || opts.session_id || opts.sessionId || opts.sid || window._pendingSid || window._obIncomingSessId || '';
+    if(!sid) return '';
+    window._pendingSid = sid;
+    window._obIncomingSessId = sid;
+    var sheet = document.getElementById('session-request-sheet');
+    var overlay = document.getElementById('session-request-overlay');
+    if(sheet) sheet.dataset.sessionId = sid;
+    if(overlay) overlay.dataset.sessionId = sid;
+    if(sheet){
+      Array.prototype.slice.call(sheet.querySelectorAll('button')).forEach(function(btn){
+        if((btn.textContent || '').toLowerCase().indexOf('accept') >= 0) btn.setAttribute('data-session-id', sid);
+      });
+    }
+    return sid;
+  }
+  function applyRequestFreeText(sess, opts){
+    sess = sess || {};
+    opts = opts || {};
+    var ch = ((sess.channel || opts.channel || opts.session_type || opts.sessionType || '').toString().toLowerCase().match(/voice|video|chat/) || ['chat'])[0];
+    var free = int(sess.free_minutes != null ? sess.free_minutes : (opts.free_minutes != null ? opts.free_minutes : opts.freeMin), channelFree(ch, sess));
+    var rate = channelRate(ch, sess);
+    setText('req-rate', money(rate) + '/min');
+    setText('req-free', free > 0 ? free + ' min free' : 'No free minutes');
+    return {channel:ch, free:free, rate:rate};
+  }
+  var prevShowSessionRequestV22 = window.showSessionRequest;
+  window.showSessionRequest = function(opts){
+    opts = opts || {};
+    var sess = opts.session || opts.sess || {};
+    rememberPendingSession(sess, opts);
+    var freeInfo = applyRequestFreeText(sess, opts);
+    if(freeInfo.free > 0) opts.freeMin = freeInfo.free + ' min free';
+    var ret = prevShowSessionRequestV22 ? prevShowSessionRequestV22.call(this, opts) : undefined;
+    rememberPendingSession(sess, opts);
+    applyRequestFreeText(sess, opts);
+    var sid = requestSidFromDom();
+    if(sid){
+      api('/api/sessions/' + encodeURIComponent(sid)).then(function(d){ applyRequestFreeText(d.session || {}, opts); }).catch(function(){});
+    }
+    return ret;
+  };
+  async function resolvePendingSessionForAccept(){
+    var sid = window._pendingSid || requestSidFromDom() || window._obIncomingSessId;
+    if(sid) return sid;
+    var d = await api('/api/sessions/pending');
+    var list = d.sessions || [];
+    if(list[0] && list[0].id){
+      rememberPendingSession(list[0], {});
+      applyRequestFreeText(list[0], {});
+      return list[0].id;
+    }
+    return '';
+  }
   window.acceptSessionRequest = async function(){
-    var sid = window._pendingSid || window._obIncomingSessId || window._obActiveSessId;
+    var sid = await resolvePendingSessionForAccept();
     if(!sid){ toastMsg('No pending session found','err'); return; }
     try {
       var d = await api('/api/sessions/' + encodeURIComponent(sid) + '/accept', {method:'POST', body:'{}'});
@@ -19255,8 +19346,23 @@ window._handleRTCMessage=function(d){
       window._obActiveSessId = sess.id || sid;
       var sheet = document.getElementById('session-request-sheet'); if(sheet) sheet.classList.remove('show');
       var inc = document.getElementById('ob-expert-incoming'); if(inc) inc.classList.remove('show');
+      var overlay = document.getElementById('session-request-overlay'); if(overlay) overlay.style.display = 'none';
       window.openExpertLivePanel(sess.id || sid);
     } catch(e) {
+      if(String(e.message || '').toLowerCase().indexOf('not pending') >= 0){
+        try {
+          var current = await api('/api/sessions/' + encodeURIComponent(sid));
+          if(current && current.session && current.session.status === 'active'){
+            window._pendingSid = null;
+            window._obIncomingSessId = null;
+            window._sid = current.session.id;
+            window._obActiveSessId = current.session.id;
+            var ov2 = document.getElementById('session-request-overlay'); if(ov2) ov2.style.display = 'none';
+            window.openExpertLivePanel(current.session.id);
+            return;
+          }
+        } catch(_e) {}
+      }
       toastMsg(e.message || 'Accept failed','err');
     }
   };
@@ -19371,15 +19477,18 @@ window._handleRTCMessage=function(d){
     openExpertLivePanel: window.openExpertLivePanel,
     sendExpertMsg: window.sendExpertMsg,
     acceptSessionRequest: window.acceptSessionRequest,
-    startBookingSession: window.startBookingSession,
-    adminViewExpertDashboard: window.adminViewExpertDashboard,
-    adminNav: window.adminNav
-  };
+	    startBookingSession: window.startBookingSession,
+	    adminViewExpertDashboard: window.adminViewExpertDashboard,
+	    adminNav: window.adminNav,
+	    showSessionRequest: window.showSessionRequest
+	  };
   function reinstall(){
     syncTokenStorage();
+    if(document.getElementById('booking-join-overlay')) document.documentElement.classList.remove('ob-session-boot');
     Object.keys(installed).forEach(function(k){ if(window[k] !== installed[k]) window[k] = installed[k]; });
     bindExpertChatControls();
     bindClientChatControls();
+    ['expert-chat-messages','paid-chat-messages'].forEach(dedupePanelMessages);
     if(window._obClientWs) wireWs(window._obClientWs, 'client');
     if(window._obWs) wireWs(window._obWs, 'client');
     if(window._expertWs) wireWs(window._expertWs, 'expert');

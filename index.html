@@ -17496,7 +17496,7 @@ function loadClientSessions() {
 window.OB_RTC = (function(){
   var pc=null, localStream=null, sid=null, ch=null, _role=null, _muted=false, _camOff=false;
   var _pendingOffer=null, _pendingIce=[], _pendingAnswer=null;
-  var _lastOfferSdp=null, _lastAnswerSdp=null, _remoteAnswerSet=false, _offerRetryTimer=null;
+  var _lastOfferSdp=null, _lastAnswerSdp=null, _remoteAnswerSet=false, _answerApplying=false, _offerRetryTimer=null;
   var ICE={iceServers:[{urls:'stun:stun.l.google.com:19302'},{urls:'stun:stun1.l.google.com:19302'},{urls:'turn:a.relay.metered.ca:80',username:'83eebabf8b4cce9d5dbcb649',credential:'2D7JvfkOQtBdYW3R'},{urls:'turn:a.relay.metered.ca:443',username:'83eebabf8b4cce9d5dbcb649',credential:'2D7JvfkOQtBdYW3R'},{urls:'turn:a.relay.metered.ca:443?transport=tcp',username:'83eebabf8b4cce9d5dbcb649',credential:'2D7JvfkOQtBdYW3R'}]};
 
   function _ws(){
@@ -17599,7 +17599,7 @@ window.OB_RTC = (function(){
   async function start(sessionId, channel, role){
     if(pc!==null){console.log('[RTC] Already active, skipping duplicate start()');if(window._rtcDbg)window._rtcDbg('SKIP: already active');return true;}
     sid=sessionId; ch=channel; _role=role; _muted=false; _camOff=false;
-    _lastOfferSdp=null; _lastAnswerSdp=null; _remoteAnswerSet=false;
+    _lastOfferSdp=null; _lastAnswerSdp=null; _remoteAnswerSet=false; _answerApplying=false;
     if(_offerRetryTimer){clearTimeout(_offerRetryTimer);_offerRetryTimer=null;}
     // Don't clear buffers — offers may have arrived before start() was called
     console.log('[RTC] Starting '+channel+' as '+role+' sid='+sessionId+' (buffered offer='+(!!_pendingOffer)+', ice='+_pendingIce.length+')');
@@ -17682,7 +17682,7 @@ window.OB_RTC = (function(){
   }
 	  async function handleAnswer(sdp){
 	    if(!pc){console.log('[RTC] Buffering answer');_pendingAnswer=sdp;return;}
-    if(_remoteAnswerSet||(pc.remoteDescription&&pc.remoteDescription.type==='answer')){
+    if(_remoteAnswerSet||_answerApplying||(pc.remoteDescription&&pc.remoteDescription.type==='answer')){
       if(window._rtcDbg)window._rtcDbg('Duplicate answer ignored');
       return;
     }
@@ -17691,11 +17691,13 @@ window.OB_RTC = (function(){
       return;
     }
     try{
+      _answerApplying=true;
       await pc.setRemoteDescription({type:'answer',sdp:sdp});
       _remoteAnswerSet=true;
       if(_offerRetryTimer){clearTimeout(_offerRetryTimer);_offerRetryTimer=null;}
       console.log('[RTC] Remote desc set');
-    }catch(e){console.error('[RTC] handleAnswer error:',e);}
+    }catch(e){_answerApplying=false;console.error('[RTC] handleAnswer error:',e);return;}
+    _answerApplying=false;
 	  }
   async function handleIce(c){
     if(!c)return;
@@ -17715,7 +17717,7 @@ window.OB_RTC = (function(){
     if(pc){try{pc.close();}catch(e){}pc=null;}
     if(localStream){localStream.getTracks().forEach(function(t){t.stop();});localStream=null;}
 	    _pendingOffer=null;_pendingIce=[];_pendingAnswer=null;
-    _lastOfferSdp=null;_lastAnswerSdp=null;_remoteAnswerSet=false;
+    _lastOfferSdp=null;_lastAnswerSdp=null;_remoteAnswerSet=false;_answerApplying=false;
     if(_offerRetryTimer){clearTimeout(_offerRetryTimer);_offerRetryTimer=null;}
     var ra=document.getElementById('rtc-remote-audio');if(ra){ra.srcObject=null;ra.remove();}
     sid=null;ch=null;_role=null;_muted=false;_camOff=false;

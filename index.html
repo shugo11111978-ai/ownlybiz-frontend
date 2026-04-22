@@ -17496,6 +17496,7 @@ function loadClientSessions() {
 window.OB_RTC = (function(){
   var pc=null, localStream=null, sid=null, ch=null, _role=null, _muted=false, _camOff=false;
   var _pendingOffer=null, _pendingIce=[], _pendingAnswer=null;
+  var _lastOfferSdp=null, _lastAnswerSdp=null, _remoteAnswerSet=false, _offerRetryTimer=null;
   var ICE={iceServers:[{urls:'stun:stun.l.google.com:19302'},{urls:'stun:stun1.l.google.com:19302'},{urls:'turn:a.relay.metered.ca:80',username:'83eebabf8b4cce9d5dbcb649',credential:'2D7JvfkOQtBdYW3R'},{urls:'turn:a.relay.metered.ca:443',username:'83eebabf8b4cce9d5dbcb649',credential:'2D7JvfkOQtBdYW3R'},{urls:'turn:a.relay.metered.ca:443?transport=tcp',username:'83eebabf8b4cce9d5dbcb649',credential:'2D7JvfkOQtBdYW3R'}]};
 
   function _ws(){
@@ -17598,6 +17599,8 @@ window.OB_RTC = (function(){
   async function start(sessionId, channel, role){
     if(pc!==null){console.log('[RTC] Already active, skipping duplicate start()');if(window._rtcDbg)window._rtcDbg('SKIP: already active');return true;}
     sid=sessionId; ch=channel; _role=role; _muted=false; _camOff=false;
+    _lastOfferSdp=null; _lastAnswerSdp=null; _remoteAnswerSet=false;
+    if(_offerRetryTimer){clearTimeout(_offerRetryTimer);_offerRetryTimer=null;}
     // Don't clear buffers — offers may have arrived before start() was called
     console.log('[RTC] Starting '+channel+' as '+role+' sid='+sessionId+' (buffered offer='+(!!_pendingOffer)+', ice='+_pendingIce.length+')');
     window._rtcDbg=function(msg){console.log('[RTC-DBG] '+msg);}
@@ -17636,13 +17639,16 @@ window.OB_RTC = (function(){
         }catch(e){console.error('[RTC] createOffer error:',e);return;}
         // Send offer immediately, then resend every 3s until connected
         var _sendOffer=function(){
-          if(!pc||pc.connectionState==='connected'||pc.connectionState==='closed')return;
+          if(!pc||pc.connectionState==='connected'||pc.connectionState==='closed'||_remoteAnswerSet||(pc.remoteDescription&&pc.remoteDescription.type==='answer')){
+            if(typeof _dbg==='function')_dbg('Offer retry stopped');
+            return;
+          }
           var ws=_ws();
           if(!ws){if(typeof _dbg==='function')_dbg('WS not ready, retrying...');setTimeout(_sendOffer,2000);return;}
           _send({type:'rtc_offer',session_id:sid,sdp:_savedOffer});
           if(typeof _dbg==='function')_dbg('Offer sent');
           console.log('[RTC] Offer sent');
-          setTimeout(_sendOffer,3000);
+          _offerRetryTimer=setTimeout(_sendOffer,3000);
         };
         _sendOffer();
       })();
@@ -17650,23 +17656,47 @@ window.OB_RTC = (function(){
     return true;
   }
 
-  async function handleOffer(sdp){
-    if(window._rtcDbg)window._rtcDbg('handleOffer called, pc='+(!!pc));
-    if(!pc){console.log('[RTC] Buffering offer (PC not ready)');_pendingOffer=sdp;_pendingIce=[];if(window._rtcDbg)window._rtcDbg('Offer buffered');return;}
-    try{
-      if(window._rtcDbg)window._rtcDbg('Processing offer directly...');
-      await pc.setRemoteDescription({type:'offer',sdp:sdp});
-      var a=await pc.createAnswer();
-      await pc.setLocalDescription(a);
-      _send({type:'rtc_answer',session_id:sid,sdp:a.sdp});
-      console.log('[RTC] Answer sent');
+	  async function handleOffer(sdp){
+	    if(window._rtcDbg)window._rtcDbg('handleOffer called, pc='+(!!pc));
+	    if(!pc){console.log('[RTC] Buffering offer (PC not ready)');_pendingOffer=sdp;_pendingIce=[];if(window._rtcDbg)window._rtcDbg('Offer buffered');return;}
+    if(_lastOfferSdp===sdp&&_lastAnswerSdp){
+      if(window._rtcDbg)window._rtcDbg('Duplicate offer; resending cached answer');
+      _send({type:'rtc_answer',session_id:sid,sdp:_lastAnswerSdp});
+      return;
+    }
+    if(pc.signalingState&&pc.signalingState!=='stable'){
+      if(window._rtcDbg)window._rtcDbg('Ignoring offer while signalingState='+pc.signalingState);
+      return;
+    }
+	    try{
+	      if(window._rtcDbg)window._rtcDbg('Processing offer directly...');
+	      await pc.setRemoteDescription({type:'offer',sdp:sdp});
+	      var a=await pc.createAnswer();
+	      await pc.setLocalDescription(a);
+      _lastOfferSdp=sdp;
+      _lastAnswerSdp=a.sdp;
+	      _send({type:'rtc_answer',session_id:sid,sdp:a.sdp});
+	      console.log('[RTC] Answer sent');
     if(typeof _dbg==='function')_dbg('Answer sent to client');
     }catch(e){console.error('[RTC] handleOffer error:',e);if(window._rtcDbg)window._rtcDbg('ERROR in handleOffer: '+e.message);}
   }
-  async function handleAnswer(sdp){
-    if(!pc){console.log('[RTC] Buffering answer');_pendingAnswer=sdp;return;}
-    try{await pc.setRemoteDescription({type:'answer',sdp:sdp});console.log('[RTC] Remote desc set');}catch(e){console.error('[RTC] handleAnswer error:',e);}
-  }
+	  async function handleAnswer(sdp){
+	    if(!pc){console.log('[RTC] Buffering answer');_pendingAnswer=sdp;return;}
+    if(_remoteAnswerSet||(pc.remoteDescription&&pc.remoteDescription.type==='answer')){
+      if(window._rtcDbg)window._rtcDbg('Duplicate answer ignored');
+      return;
+    }
+    if(pc.signalingState&&pc.signalingState!=='have-local-offer'){
+      if(window._rtcDbg)window._rtcDbg('Answer ignored while signalingState='+pc.signalingState);
+      return;
+    }
+    try{
+      await pc.setRemoteDescription({type:'answer',sdp:sdp});
+      _remoteAnswerSet=true;
+      if(_offerRetryTimer){clearTimeout(_offerRetryTimer);_offerRetryTimer=null;}
+      console.log('[RTC] Remote desc set');
+    }catch(e){console.error('[RTC] handleAnswer error:',e);}
+	  }
   async function handleIce(c){
     if(!c)return;
     if(!pc){_pendingIce.push(c);return;}
@@ -17684,7 +17714,9 @@ window.OB_RTC = (function(){
   function cleanup(){
     if(pc){try{pc.close();}catch(e){}pc=null;}
     if(localStream){localStream.getTracks().forEach(function(t){t.stop();});localStream=null;}
-    _pendingOffer=null;_pendingIce=[];_pendingAnswer=null;
+	    _pendingOffer=null;_pendingIce=[];_pendingAnswer=null;
+    _lastOfferSdp=null;_lastAnswerSdp=null;_remoteAnswerSet=false;
+    if(_offerRetryTimer){clearTimeout(_offerRetryTimer);_offerRetryTimer=null;}
     var ra=document.getElementById('rtc-remote-audio');if(ra){ra.srcObject=null;ra.remove();}
     sid=null;ch=null;_role=null;_muted=false;_camOff=false;
   }

@@ -19430,6 +19430,8 @@ window._handleRTCMessage=function(d){
     var ch = ((sess.channel || opts.channel || opts.session_type || opts.sessionType || '').toString().toLowerCase().match(/voice|video|chat/) || ['chat'])[0];
     var free = int(sess.free_minutes != null ? sess.free_minutes : (opts.free_minutes != null ? opts.free_minutes : opts.freeMin), channelFree(ch, sess));
     var rate = channelRate(ch, sess);
+    setText('req-session-type', ch);
+    setText('req-client-sub', ch + ' session');
     setText('req-rate', money(rate) + '/min');
     setText('req-free', free > 0 ? free + ' min free' : 'No free minutes');
     return {channel:ch, free:free, rate:rate};
@@ -19444,12 +19446,36 @@ window._handleRTCMessage=function(d){
     var ret = prevShowSessionRequestV22 ? prevShowSessionRequestV22.call(this, opts) : undefined;
     rememberPendingSession(sess, opts);
     applyRequestFreeText(sess, opts);
+    var overlay = document.getElementById('session-request-overlay');
+    var sheet = document.getElementById('session-request-sheet');
+    if(overlay) overlay.style.display = 'flex';
+    if(sheet){
+      sheet.style.display = 'block';
+      sheet.style.transform = 'translateY(0)';
+      sheet.classList.add('show');
+    }
     var sid = requestSidFromDom();
     if(sid){
       api('/api/sessions/' + encodeURIComponent(sid)).then(function(d){ applyRequestFreeText(d.session || {}, opts); }).catch(function(){});
     }
     return ret;
   };
+  function pollPendingLiveRequestsFallback(){
+    if(role() !== 'expert') return;
+    if(window._obActiveSessId || window._sid || window._expertSessActive) return;
+    var overlay = document.getElementById('session-request-overlay');
+    if(overlay && getComputedStyle(overlay).display === 'flex') return;
+    api('/api/sessions/pending').then(function(d){
+      var list = d.sessions || [];
+      var sess = list[0];
+      if(!sess || !sess.id) return;
+      var age = (Date.now()/1000) - int(sess.created_at, 0);
+      if(age > 90) return;
+      showLiveSessionRequestFromWs({type:'session_request', session:sess, client:{name:sess.client_name || 'Client'}, channel:sess.channel || 'chat'});
+    }).catch(function(){});
+  }
+  setInterval(pollPendingLiveRequestsFallback, 2500);
+  setTimeout(pollPendingLiveRequestsFallback, 1200);
   async function resolvePendingSessionForAccept(){
     var sid = window._pendingSid || requestSidFromDom() || window._obIncomingSessId;
     if(sid) return sid;

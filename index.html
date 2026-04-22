@@ -19060,6 +19060,7 @@ window._handleRTCMessage=function(d){
       sheet.style.display = '';
       sheet.style.transform = 'translateY(0)';
     }
+    if(typeof schedulePendingRequestVisible === 'function') schedulePendingRequestVisible();
     return true;
   }
 
@@ -19436,6 +19437,28 @@ window._handleRTCMessage=function(d){
     setText('req-free', free > 0 ? free + ' min free' : 'No free minutes');
     return {channel:ch, free:free, rate:rate};
   }
+  function forcePendingRequestVisible(){
+    if(role() !== 'expert') return;
+    if(window._obActiveSessId || window._sid || window._expertSessActive) return;
+    var sid = window._pendingSid || requestSidFromDom() || window._obIncomingSessId;
+    if(!sid) return;
+    var overlay = document.getElementById('session-request-overlay');
+    var sheet = document.getElementById('session-request-sheet');
+    if(overlay){
+      overlay.dataset.sessionId = sid;
+      overlay.style.setProperty('display', 'flex', 'important');
+      overlay.classList.add('show');
+    }
+    if(sheet){
+      sheet.dataset.sessionId = sid;
+      sheet.style.setProperty('display', 'block', 'important');
+      sheet.style.transform = 'translateY(0)';
+      sheet.classList.add('show');
+    }
+  }
+  function schedulePendingRequestVisible(){
+    [0, 80, 220, 600, 1300].forEach(function(ms){ setTimeout(forcePendingRequestVisible, ms); });
+  }
   var prevShowSessionRequestV22 = window.showSessionRequest;
   window.showSessionRequest = function(opts){
     opts = opts || {};
@@ -19454,6 +19477,7 @@ window._handleRTCMessage=function(d){
       sheet.style.transform = 'translateY(0)';
       sheet.classList.add('show');
     }
+    schedulePendingRequestVisible();
     var sid = requestSidFromDom();
     if(sid){
       api('/api/sessions/' + encodeURIComponent(sid)).then(function(d){ applyRequestFreeText(d.session || {}, opts); }).catch(function(){});
@@ -19472,10 +19496,12 @@ window._handleRTCMessage=function(d){
       var age = (Date.now()/1000) - int(sess.created_at, 0);
       if(age > 90) return;
       showLiveSessionRequestFromWs({type:'session_request', session:sess, client:{name:sess.client_name || 'Client'}, channel:sess.channel || 'chat'});
+      schedulePendingRequestVisible();
     }).catch(function(){});
   }
   setInterval(pollPendingLiveRequestsFallback, 2500);
   setTimeout(pollPendingLiveRequestsFallback, 1200);
+  setInterval(forcePendingRequestVisible, 700);
   async function resolvePendingSessionForAccept(){
     var sid = window._pendingSid || requestSidFromDom() || window._obIncomingSessId;
     if(sid) return sid;

@@ -19950,5 +19950,220 @@ window._handleRTCMessage=function(d){
   }, 800);
 })();
 </script>
+<script>
+/* STAGING SCALE GUARD V1: collapse duplicate boot/load work and dedupe hot GETs */
+(function(){
+  if(!window.OWNLYBIZ_IS_STAGING || window._obStagingScaleGuardV1) return;
+  window._obStagingScaleGuardV1 = true;
+
+  var nativeFetch = window.fetch && window.fetch.bind(window);
+  if(!nativeFetch) return;
+
+  var stats = window._obScaleGuardStats = {
+    fetch_hits: 0,
+    fetch_misses: 0,
+    inflight_hits: 0,
+    loader_skips: {},
+    view_skips: 0,
+    ws_connect_skips: 0
+  };
+
+  var hotGetCache = new Map();
+  var hotGetInflight = new Map();
+  var loaderStates = {};
+
+  function safeText(v){ return v == null ? '' : String(v); }
+  function activeView(){
+    var node = document.querySelector('.view-panel.active');
+    return node ? (node.id || '') : '';
+  }
+  function authKey(init){
+    init = init || {};
+    var headers = init.headers || {};
+    if(headers instanceof Headers) return headers.get('Authorization') || '';
+    if(Array.isArray(headers)){
+      for(var i=0;i<headers.length;i++){
+        if(String(headers[i][0] || '').toLowerCase() === 'authorization') return headers[i][1] || '';
+      }
+      return '';
+    }
+    return headers.Authorization || headers.authorization || '';
+  }
+  function readUrl(input){
+    if(typeof input === 'string') return input;
+    if(input && typeof input.url === 'string') return input.url;
+    return '';
+  }
+  function readMethod(input, init){
+    var method = init && init.method;
+    if(!method && input && typeof input.method === 'string') method = input.method;
+    return (method || 'GET').toUpperCase();
+  }
+  function ttlFor(url){
+    if(/\/api\/config(?:$|\?)/.test(url)) return 15000;
+    if(/\/api\/health(?:$|\?)/.test(url)) return 4000;
+    if(/\/api\/payments\/config(?:$|\?)/.test(url)) return 10000;
+    if(/\/api\/experts\/platform-fees(?:$|\?)/.test(url)) return 15000;
+    if(/\/api\/marketing\//.test(url)) return 12000;
+    if(/\/api\/auth\/me(?:$|\?)/.test(url)) return 1200;
+    if(/\/api\/experts\/me\/dashboard(?:$|\?)/.test(url)) return 1200;
+    if(/\/api\/experts\/me\/clients(?:$|\?)/.test(url)) return 2500;
+    if(/\/api\/admin\/dashboard(?:$|\?)/.test(url)) return 1500;
+    if(/\/api\/admin\/experts(?:$|\?)/.test(url)) return 1500;
+    if(/\/api\/experts\/[^/?#]+(?:$|\?)/.test(url) && url.indexOf('/api/experts/me/') === -1) return 5000;
+    return 0;
+  }
+  function shouldDedupe(url, method, init){
+    if(method !== 'GET') return false;
+    if(!url || url.indexOf('/api/') === -1) return false;
+    if(init && init.cache === 'no-store') return false;
+    return ttlFor(url) > 0;
+  }
+  function cacheKey(url, init){
+    return [url, authKey(init)].join('::');
+  }
+  function pruneHotGetCache(){
+    var now = Date.now();
+    hotGetCache.forEach(function(entry, key){
+      if(!entry || entry.expires <= now) hotGetCache.delete(key);
+    });
+  }
+  function installFetchGuard(){
+    if(window.fetch && window.fetch._obScaleGuardWrapped) return;
+    window.fetch = function(input, init){
+      var url = readUrl(input);
+      var method = readMethod(input, init);
+      if(!shouldDedupe(url, method, init)) return nativeFetch(input, init);
+      var ttl = ttlFor(url);
+      var key = cacheKey(url, init);
+      var now = Date.now();
+      var cached = hotGetCache.get(key);
+      if(cached && cached.expires > now){
+        stats.fetch_hits++;
+        return Promise.resolve(cached.response.clone());
+      }
+      var inflight = hotGetInflight.get(key);
+      if(inflight){
+        stats.inflight_hits++;
+        return inflight.then(function(res){ return res.clone(); });
+      }
+      stats.fetch_misses++;
+      var req = nativeFetch(input, init).then(function(res){
+        if(res && res.ok && ttl > 0){
+          hotGetCache.set(key, { response: res.clone(), expires: Date.now() + ttl });
+        }
+        return res;
+      }).finally(function(){
+        hotGetInflight.delete(key);
+      });
+      hotGetInflight.set(key, req);
+      return req.then(function(res){ return res.clone(); });
+    };
+    window.fetch._obScaleGuardWrapped = true;
+    setInterval(pruneHotGetCache, 20000);
+  }
+
+  function wrapSwitchView(){
+    var current = window.switchView;
+    if(typeof current !== 'function' || current._obScaleGuardWrapped) return;
+    var source = current._obScaleGuardSource || current;
+    var lastTarget = null;
+    var lastAt = 0;
+    function wrapped(n){
+      var target = safeText(n);
+      var now = Date.now();
+      if(activeView() === ('view-' + target) && lastTarget === target && now - lastAt < 180){
+        stats.view_skips++;
+        return;
+      }
+      lastTarget = target;
+      lastAt = now;
+      return source.apply(this, arguments);
+    }
+    wrapped._obScaleGuardWrapped = true;
+    wrapped._obScaleGuardSource = source;
+    window.switchView = wrapped;
+  }
+
+  function trackLoaderSkip(name){
+    stats.loader_skips[name] = (stats.loader_skips[name] || 0) + 1;
+  }
+  function wrapLoader(name, keyFn, cooldown){
+    var current = window[name];
+    if(typeof current !== 'function') return;
+    var source = current._obScaleGuardSource || current;
+    if(current._obScaleGuardWrapped) return;
+    loaderStates[name] = loaderStates[name] || { key: '', ts: 0 };
+    var state = loaderStates[name];
+    function wrapped(){
+      var key = 'default';
+      try { key = keyFn ? keyFn.apply(this, arguments) : key; } catch(e) {}
+      key = safeText(key || 'default');
+      var now = Date.now();
+      if(state.key === key && now - state.ts < cooldown){
+        trackLoaderSkip(name);
+        return state.last;
+      }
+      state.key = key;
+      state.ts = now;
+      state.last = source.apply(this, arguments);
+      return state.last;
+    }
+    wrapped._obScaleGuardWrapped = true;
+    wrapped._obScaleGuardSource = source;
+    window[name] = wrapped;
+    if(window.OwnlyAPI && window.OwnlyAPI[name]) window.OwnlyAPI[name] = wrapped;
+  }
+
+  function currentAdminViewKey(){
+    return safeText(window._adminViewingExpertId || window._adminViewingExpertSlug || 'self');
+  }
+  function currentExpertSlug(){
+    return safeText(
+      arguments[0] ||
+      window._currentExpertSlug ||
+      (window._currentExpert && window._currentExpert.slug) ||
+      window._browseExpert ||
+      ''
+    );
+  }
+  function wrapWsConnect(){
+    if(!window.WS || typeof window.WS.connect !== 'function') return;
+    var current = window.WS.connect;
+    if(current._obScaleGuardWrapped) return;
+    var source = current._obScaleGuardSource || current;
+    var lastAt = 0;
+    function wrapped(){
+      var now = Date.now();
+      var readyState = window.WS && window.WS.ws ? window.WS.ws.readyState : -1;
+      if(readyState === 0 || readyState === 1 || now - lastAt < 900){
+        stats.ws_connect_skips++;
+        return;
+      }
+      lastAt = now;
+      return source.apply(this, arguments);
+    }
+    wrapped._obScaleGuardWrapped = true;
+    wrapped._obScaleGuardSource = source;
+    window.WS.connect = wrapped;
+  }
+
+  function installGuards(){
+    installFetchGuard();
+    wrapSwitchView();
+    wrapWsConnect();
+    wrapLoader('loadMarketing', function(){ return 'marketing'; }, 900);
+    wrapLoader('loadBlog', function(){ return 'blog'; }, 1200);
+    wrapLoader('loadAdminDashboard', function(){ return 'admin-dashboard'; }, 900);
+    wrapLoader('loadAdminExperts', function(){ return 'admin-experts'; }, 900);
+    wrapLoader('loadExpertDashboard', function(){ return currentAdminViewKey(); }, 900);
+    wrapLoader('loadExpertWebsite', function(slug){ return currentExpertSlug(slug); }, 1200);
+    wrapLoader('loadContactInbox', function(){ return currentAdminViewKey(); }, 900);
+  }
+
+  installGuards();
+  [250, 900, 1800, 3200, 5200].forEach(function(ms){ setTimeout(installGuards, ms); });
+})();
+</script>
 </body>
 </html>

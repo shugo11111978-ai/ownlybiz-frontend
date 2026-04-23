@@ -19563,46 +19563,7 @@ window._handleRTCMessage=function(d){
     } catch(_e) {}
     return '';
   }
-  window.acceptSessionRequest = async function(){
-    var sid = await resolvePendingSessionForAccept();
-    if(!sid){ toastMsg('No pending session found','err'); return; }
-    try {
-      var d = await api('/api/sessions/' + encodeURIComponent(sid) + '/accept', {method:'POST', body:'{}'});
-      var sess = d.session || {};
-      window._pendingSid = null;
-      window._obIncomingSessId = null;
-      window._obRequestVisibleSid = null;
-      window._obDismissedPendingSid = sid;
-      clearInterval(window._obRequestVisibilityGuard);
-      window._obRequestVisibilityGuard = null;
-      try { clearInterval(window._sessionRequestTimer); } catch(_timerE) {}
-      window._sid = sess.id || sid;
-      window._obActiveSessId = sess.id || sid;
-      var sheet = document.getElementById('session-request-sheet'); if(sheet) sheet.classList.remove('show');
-      var inc = document.getElementById('ob-expert-incoming'); if(inc) inc.classList.remove('show');
-      var overlay = document.getElementById('session-request-overlay'); if(overlay) overlay.style.display = 'none';
-      window.openExpertLivePanel(sess.id || sid);
-    } catch(e) {
-      if(String(e.message || '').toLowerCase().indexOf('not pending') >= 0){
-        try {
-          var current = await api('/api/sessions/' + encodeURIComponent(sid));
-          if(current && current.session && current.session.status === 'active'){
-            window._pendingSid = null;
-            window._obIncomingSessId = null;
-            window._sid = current.session.id;
-            window._obActiveSessId = current.session.id;
-            var ov2 = document.getElementById('session-request-overlay'); if(ov2) ov2.style.display = 'none';
-            window.openExpertLivePanel(current.session.id);
-            return;
-          }
-        } catch(_e) {}
-      }
-      toastMsg(e.message || 'Accept failed','err');
-    }
-  };
-  var prevDeclineSessionRequestV22 = window.declineSessionRequest;
-  window.declineSessionRequest = async function(){
-    var sid = window._pendingSid || requestSidFromDom() || window._obIncomingSessId;
+  function hideRequestOverlay(sid){
     window._pendingSid = null;
     window._obIncomingSessId = null;
     window._obRequestVisibleSid = null;
@@ -19613,9 +19574,49 @@ window._handleRTCMessage=function(d){
     var overlay = document.getElementById('session-request-overlay');
     var sheet = document.getElementById('session-request-sheet');
     var inc = document.getElementById('ob-expert-incoming');
-    if(overlay) overlay.style.setProperty('display', 'none', 'important');
-    if(sheet){ sheet.style.setProperty('display', 'none', 'important'); sheet.classList.remove('show'); }
+    if(overlay){
+      overlay.dataset.sessionId = '';
+      overlay.style.setProperty('display', 'none', 'important');
+      overlay.classList.remove('show');
+    }
+    if(sheet){
+      sheet.dataset.sessionId = '';
+      sheet.style.setProperty('display', 'none', 'important');
+      sheet.classList.remove('show');
+    }
     if(inc) inc.classList.remove('show');
+  }
+  window._obAcceptPendingRequest = async function(){
+    var sid = await resolvePendingSessionForAccept();
+    if(!sid){ toastMsg('No pending session found','err'); return; }
+    try {
+      var d = await api('/api/sessions/' + encodeURIComponent(sid) + '/accept', {method:'POST', body:'{}'});
+      var sess = d.session || {};
+      window._sid = sess.id || sid;
+      window._obActiveSessId = sess.id || sid;
+      hideRequestOverlay(sid);
+      window.openExpertLivePanel(sess.id || sid);
+    } catch(e) {
+      if(String(e.message || '').toLowerCase().indexOf('not pending') >= 0){
+        try {
+          var current = await api('/api/sessions/' + encodeURIComponent(sid));
+          if(current && current.session && current.session.status === 'active'){
+            window._sid = current.session.id;
+            window._obActiveSessId = current.session.id;
+            hideRequestOverlay(sid);
+            window.openExpertLivePanel(current.session.id);
+            return;
+          }
+        } catch(_e) {}
+      }
+      toastMsg(e.message || 'Accept failed','err');
+    }
+  };
+  window.acceptSessionRequest = window._obAcceptPendingRequest;
+  var prevDeclineSessionRequestV22 = window.declineSessionRequest;
+  window.declineSessionRequest = async function(){
+    var sid = window._pendingSid || requestSidFromDom() || window._obIncomingSessId;
+    hideRequestOverlay(sid);
     if(sid){
       try { await api('/api/sessions/' + encodeURIComponent(sid) + '/decline', {method:'POST', body:'{}'}); } catch(e) {}
     } else if(prevDeclineSessionRequestV22) {
@@ -19724,6 +19725,20 @@ window._handleRTCMessage=function(d){
     if(e.key === 'Enter' && !e.shiftKey && e.target && e.target.id === 'expert-chat-input'){ e.preventDefault(); window.sendExpertMsg(); }
     if(e.key === 'Enter' && !e.shiftKey && e.target && e.target.id === 'paid-chat-input'){ e.preventDefault(); window.sendPaidMsg(); }
   }, true);
+  document.addEventListener('click', function(e){
+    var btn = e.target && e.target.closest && e.target.closest('#session-request-sheet button,#session-request-overlay button');
+    if(!btn) return;
+    var text = (btn.textContent || '').toLowerCase();
+    if(text.indexOf('accept') >= 0){
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      window._obAcceptPendingRequest();
+    } else if(text.indexOf('decline') >= 0){
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      window.declineSessionRequest();
+    }
+  }, true);
 
   var installed = {
     phoneGo: guardedPhoneGo,
@@ -19732,7 +19747,7 @@ window._handleRTCMessage=function(d){
     joinActiveBookingSession: window.joinActiveBookingSession,
     openExpertLivePanel: window.openExpertLivePanel,
     sendExpertMsg: window.sendExpertMsg,
-    acceptSessionRequest: window.acceptSessionRequest,
+    acceptSessionRequest: window._obAcceptPendingRequest,
     declineSessionRequest: window.declineSessionRequest,
 	    startBookingSession: window.startBookingSession,
 	    adminViewExpertDashboard: window.adminViewExpertDashboard,

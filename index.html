@@ -19017,6 +19017,7 @@ window._handleRTCMessage=function(d){
     var sess = d.session || {};
     var sid = sess.id || d.session_id || d.sessionId;
     if(!sid) return false;
+    if(window._obDismissedPendingSid === sid) return true;
 
     var current = window._obActiveSessId || window._sid || '';
     if(current && current !== sid){
@@ -19037,6 +19038,8 @@ window._handleRTCMessage=function(d){
     }
 
     rememberPendingSession(sess, {sessionId:sid, channel:sess.channel || d.channel});
+    var legacy = document.getElementById('ob-expert-incoming');
+    if(legacy) legacy.classList.remove('show');
     var clientName = (d.client && (d.client.name || d.client.client_name)) || d.clientName || sess.client_name || 'Client';
     var initials = ((clientName.match(/\b\w/g) || ['C']).slice(0,2).join('').toUpperCase());
     var ch = ((sess.channel || d.channel || 'chat') + '').toLowerCase();
@@ -19458,6 +19461,7 @@ window._handleRTCMessage=function(d){
     if(window._obActiveSessId || window._sid || window._expertSessActive) return;
     var sid = window._pendingSid || requestSidFromDom() || window._obIncomingSessId;
     if(!sid) return;
+    if(window._obDismissedPendingSid === sid) return;
     var overlay = document.getElementById('session-request-overlay');
     var sheet = document.getElementById('session-request-sheet');
     if(overlay){
@@ -19479,9 +19483,16 @@ window._handleRTCMessage=function(d){
   window.showSessionRequest = function(opts){
     opts = opts || {};
     var sess = opts.session || opts.sess || {};
-    rememberPendingSession(sess, opts);
+    var sid = rememberPendingSession(sess, opts);
     var freeInfo = applyRequestFreeText(sess, opts);
     if(freeInfo.free > 0) opts.freeMin = freeInfo.free + ' min free';
+    var overlayNow = document.getElementById('session-request-overlay');
+    if(sid && window._obRequestVisibleSid === sid && overlayNow && getComputedStyle(overlayNow).display === 'flex'){
+      schedulePendingRequestVisible();
+      return;
+    }
+    window._obRequestVisibleSid = sid || window._obRequestVisibleSid || '';
+    try { clearInterval(window._sessionRequestTimer); } catch(e) {}
     var ret = prevShowSessionRequestV22 ? prevShowSessionRequestV22.call(this, opts) : undefined;
     rememberPendingSession(sess, opts);
     applyRequestFreeText(sess, opts);
@@ -19515,9 +19526,7 @@ window._handleRTCMessage=function(d){
       schedulePendingRequestVisible();
     }).catch(function(){});
   }
-  setInterval(pollPendingLiveRequestsFallback, 2500);
-  setTimeout(pollPendingLiveRequestsFallback, 1200);
-  setInterval(forcePendingRequestVisible, 700);
+  [1200, 5000, 10000].forEach(function(ms){ setTimeout(pollPendingLiveRequestsFallback, ms); });
   async function resolvePendingSessionForAccept(){
     var sid = window._pendingSid || requestSidFromDom() || window._obIncomingSessId;
     if(sid) return sid;
@@ -19548,6 +19557,9 @@ window._handleRTCMessage=function(d){
       var sess = d.session || {};
       window._pendingSid = null;
       window._obIncomingSessId = null;
+      window._obRequestVisibleSid = null;
+      window._obDismissedPendingSid = sid;
+      try { clearInterval(window._sessionRequestTimer); } catch(_timerE) {}
       window._sid = sess.id || sid;
       window._obActiveSessId = sess.id || sid;
       var sheet = document.getElementById('session-request-sheet'); if(sheet) sheet.classList.remove('show');
@@ -19570,6 +19582,26 @@ window._handleRTCMessage=function(d){
         } catch(_e) {}
       }
       toastMsg(e.message || 'Accept failed','err');
+    }
+  };
+  var prevDeclineSessionRequestV22 = window.declineSessionRequest;
+  window.declineSessionRequest = async function(){
+    var sid = window._pendingSid || requestSidFromDom() || window._obIncomingSessId;
+    window._pendingSid = null;
+    window._obIncomingSessId = null;
+    window._obRequestVisibleSid = null;
+    if(sid) window._obDismissedPendingSid = sid;
+    try { clearInterval(window._sessionRequestTimer); } catch(_timerE) {}
+    var overlay = document.getElementById('session-request-overlay');
+    var sheet = document.getElementById('session-request-sheet');
+    var inc = document.getElementById('ob-expert-incoming');
+    if(overlay) overlay.style.setProperty('display', 'none', 'important');
+    if(sheet){ sheet.style.setProperty('display', 'none', 'important'); sheet.classList.remove('show'); }
+    if(inc) inc.classList.remove('show');
+    if(sid){
+      try { await api('/api/sessions/' + encodeURIComponent(sid) + '/decline', {method:'POST', body:'{}'}); } catch(e) {}
+    } else if(prevDeclineSessionRequestV22) {
+      try { return prevDeclineSessionRequestV22.apply(this, arguments); } catch(e) {}
     }
   };
 
@@ -19683,6 +19715,7 @@ window._handleRTCMessage=function(d){
     openExpertLivePanel: window.openExpertLivePanel,
     sendExpertMsg: window.sendExpertMsg,
     acceptSessionRequest: window.acceptSessionRequest,
+    declineSessionRequest: window.declineSessionRequest,
 	    startBookingSession: window.startBookingSession,
 	    adminViewExpertDashboard: window.adminViewExpertDashboard,
 	    adminNav: window.adminNav,
@@ -19700,7 +19733,6 @@ window._handleRTCMessage=function(d){
     if(window._expertWs) wireWs(window._expertWs, 'expert');
   }
   [50,300,900,1800,3200,5200,8000,12000].forEach(function(ms){ setTimeout(reinstall, ms); });
-  setInterval(reinstall, 3000);
 })();
 </script>
 </body>

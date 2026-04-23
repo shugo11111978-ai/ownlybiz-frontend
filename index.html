@@ -19112,7 +19112,7 @@ window._handleRTCMessage=function(d){
     }
     if(d.type === 'session_ended' && (!sid || sid === window._obActiveSessId || sid === window._sid || sid === window._sessId)){
       var sess = d.session || {};
-      if(roleName === 'expert') applyExpertEnded(sess);
+      if(roleName === 'expert') applyExpertEnded(sess, 'client');
       else applyClientReceipt(sess);
       handled = true;
     }
@@ -19315,12 +19315,54 @@ window._handleRTCMessage=function(d){
     }).catch(function(e){ toastMsg(e.message || 'Could not end session','err'); });
   };
 
-  function applyExpertEnded(sess){
-    startExpertTimer(null);
+  function stopExpertTimerKeepDisplay(){
+    try { if(window._expertSessInterval) clearInterval(window._expertSessInterval); } catch(e) {}
+    window._expertSessInterval = null;
+  }
+  function showExpertEndedNotice(sess, reason){
+    sess = sess || {};
+    var earned = money(sess.expert_earned || 0);
+    var msg = reason === 'client' ? 'Client ended the session' : 'Session ended';
+    toastMsg(msg + ' - final payout: ' + earned, 'ok');
+    var status = document.getElementById('live-client-status');
+    if(status){
+      status.textContent = 'Session ended by client';
+      status.style.color = '#dc2626';
+      status.style.fontWeight = '700';
+    }
+    setTimeout(function(){
+      try {
+        if(typeof dbNav === 'function') dbNav(document.querySelector('.db-nav-item[onclick*="sessions"]'), 'sessions');
+      } catch(e) {}
+      setTimeout(function(){
+        try {
+          if(typeof window.loadExpertDashboard === 'function') window.loadExpertDashboard();
+        } catch(e) {}
+        var panel = document.getElementById('db-panel-sessions');
+        var target = panel && (panel.querySelector('.db-content') || panel);
+        if(!target) return;
+        var banner = document.getElementById('ob-client-ended-session-banner') || document.createElement('div');
+        banner.id = 'ob-client-ended-session-banner';
+        banner.style.cssText = 'margin:0 0 16px;padding:14px 16px;border:1px solid rgba(34,197,94,.28);background:rgba(34,197,94,.09);border-radius:10px;color:#166534;font-weight:700;';
+        banner.textContent = msg + '. Final payout: ' + earned;
+        target.insertBefore(banner, target.firstChild);
+        setTimeout(function(){ if(banner && banner.parentNode) banner.parentNode.removeChild(banner); }, 14000);
+      }, 650);
+    }, 900);
+  }
+  function applyExpertEnded(sess, reason){
+    sess = sess || {};
+    stopExpertTimerKeepDisplay();
+    try { if(window._obExpertSessionPoller) clearInterval(window._obExpertSessionPoller); } catch(e) {}
+    window._obExpertSessionPoller = null;
+    if(window.OB_RTC && window.OB_RTC.isActive && window.OB_RTC.isActive()){
+      try { if(typeof window.OB_RTC.cleanup === 'function') window.OB_RTC.cleanup(); else if(typeof window.OB_RTC.end === 'function') window.OB_RTC.end(); } catch(e) {}
+    }
     setText('expert-session-earnings', money(sess.expert_earned || 0));
     setText('expert-net-earnings', money(sess.expert_earned || 0));
     window._obActiveSessId = null;
     window._sid = null;
+    showExpertEndedNotice(sess, reason);
   }
   function applyExpertSessionUi(sess){
     if(!sess || !sess.id) return;
@@ -19364,6 +19406,10 @@ window._handleRTCMessage=function(d){
     if(!sid) return Promise.resolve();
     return api('/api/sessions/' + encodeURIComponent(sid)).then(function(d){
       var sess = d.session || d || {};
+      if(sess.status === 'ended'){
+        applyExpertEnded(sess, 'client');
+        return sess;
+      }
       applyExpertSessionUi(sess);
       (d.messages || []).forEach(function(m){ appendPanelMessage('expert-chat-messages', m, m.sender_id === myId()); });
       return sess;
@@ -19647,6 +19693,79 @@ window._handleRTCMessage=function(d){
       if(u) localStorage.setItem('ob_u', u);
     } catch(e) {}
   }
+  function queryParam(name){
+    try { return new URLSearchParams(location.search || '').get(name) || ''; } catch(e) { return ''; }
+  }
+  function dashPathSlug(){
+    var m = (location.pathname || '').match(/\/dash\/([^/?#]+)/);
+    return m ? decodeURIComponent(m[1]) : '';
+  }
+  function readAdminViewCtx(){
+    var stored = {};
+    try { stored = JSON.parse(localStorage.getItem('ob_admin_view_expert') || '{}') || {}; } catch(e) {}
+    var slug = queryParam('slug') || dashPathSlug() || stored.slug || '';
+    var id = queryParam('expertId') || queryParam('expert_id') || ((stored.slug && stored.slug === slug) ? stored.id : '') || '';
+    var name = queryParam('expertName') || ((stored.slug && stored.slug === slug) ? stored.name : '') || '';
+    return {id:id, slug:slug, name:name};
+  }
+  function writeAdminViewCtx(ctx){
+    ctx = ctx || {};
+    if(ctx.id) window._adminViewingExpertId = ctx.id;
+    if(ctx.slug) window._adminViewingExpertSlug = ctx.slug;
+    if(ctx.name) window._adminViewingExpertName = ctx.name;
+    try { localStorage.setItem('ob_admin_view_expert', JSON.stringify({id:window._adminViewingExpertId || ctx.id || '', slug:window._adminViewingExpertSlug || ctx.slug || '', name:window._adminViewingExpertName || ctx.name || ''})); } catch(e) {}
+  }
+  function resolveAdminViewCtx(ctx){
+    ctx = ctx || readAdminViewCtx();
+    if(ctx.id && ctx.slug){ writeAdminViewCtx(ctx); return Promise.resolve(ctx); }
+    return api('/api/admin/experts?limit=200').then(function(d){
+      var list = d.experts || [];
+      var found = list.find(function(e){ return (ctx.id && e.id === ctx.id) || (ctx.slug && e.slug === ctx.slug); });
+      if(!found) throw new Error('Expert not found');
+      ctx = {id:found.id || ctx.id, slug:found.slug || ctx.slug, name:found.name || ctx.name || ''};
+      writeAdminViewCtx(ctx);
+      return ctx;
+    });
+  }
+  function applyAdminViewedShell(ctx){
+    ctx = ctx || {};
+    if(ctx.name){
+      document.querySelectorAll('.db-expert-name,.expert-name-display,[data-bind="expert-name"]').forEach(function(el){ el.textContent = ctx.name; });
+      var av = document.querySelector('.db-avatar,.db-expert-avatar,.db-expert-photo');
+      if(av && !av.tagName.match(/img/i)) av.textContent = (ctx.name || 'E').trim().charAt(0).toUpperCase();
+    }
+    try { if(typeof _showAdminViewBanner === 'function') _showAdminViewBanner(ctx.name || 'Expert'); } catch(e) {}
+  }
+  function loadAdminViewedExpertDashboard(){
+    if(role() !== 'admin' && !(JSON.parse(sessionStorage.getItem('ob_u') || localStorage.getItem('ob_u') || '{}').role === 'admin')) return Promise.resolve(false);
+    return resolveAdminViewCtx().then(function(ctx){
+      applyAdminViewedShell(ctx);
+      if(typeof switchView === 'function' && !document.getElementById('view-3')?.classList.contains('active')) switchView(3);
+      if(typeof loadExpertDashboardForAdmin === 'function'){
+        try { loadExpertDashboardForAdmin(ctx.id); } catch(e) {}
+      } else if(window.OwnlyAPI && typeof window.OwnlyAPI.loadExpertDashboardForAdmin === 'function'){
+        try { window.OwnlyAPI.loadExpertDashboardForAdmin(ctx.id); } catch(e) {}
+      }
+      setTimeout(function(){
+        applyAdminViewedShell(ctx);
+        try { if(typeof loadSettings === 'function') loadSettings(); } catch(e) {}
+        try { if(typeof loadExpertPricing === 'function') loadExpertPricing(); } catch(e) {}
+        try { if(typeof loadClients === 'function') loadClients(); } catch(e) {}
+      }, 450);
+      setTimeout(function(){ try { if(typeof loadClients === 'function') loadClients(); } catch(e) {} }, 1300);
+      return true;
+    }).catch(function(e){ toastMsg(e.message || 'Could not load expert dashboard','err'); return false; });
+  }
+  window._obLoadAdminViewedExpertDashboard = loadAdminViewedExpertDashboard;
+  var previousLoadExpertDashboardV2 = window.loadExpertDashboard;
+  window.loadExpertDashboard = function(){
+    var ctx = readAdminViewCtx();
+    if((role() === 'admin' || queryParam('admin') === '1') && (ctx.id || ctx.slug || window._adminViewingExpertId)){
+      return loadAdminViewedExpertDashboard();
+    }
+    if(previousLoadExpertDashboardV2) return previousLoadExpertDashboardV2.apply(this, arguments);
+  };
+  if(window.OwnlyAPI) window.OwnlyAPI.loadExpertDashboard = window.loadExpertDashboard;
   window.adminViewExpertDashboard = function(expertId, slug, name){
     copyAdminAuthForNewTab();
     slug = slug || '';
@@ -19658,8 +19777,8 @@ window._handleRTCMessage=function(d){
       }).catch(function(e){ toastMsg(e.message || 'Could not open expert','err'); });
       return;
     }
-    try { localStorage.setItem('ob_admin_view_expert', JSON.stringify({id:expertId, slug:slug, name:name || ''})); } catch(e) {}
-    window.open(location.origin + '/dash/' + encodeURIComponent(slug) + '?admin=1', '_blank', 'noopener');
+    writeAdminViewCtx({id:expertId, slug:slug, name:name || ''});
+    window.open(location.origin + '/dash/' + encodeURIComponent(slug) + '?admin=1&expertId=' + encodeURIComponent(expertId || '') + '&expertName=' + encodeURIComponent(name || ''), '_blank', 'noopener');
   };
   function setAdminPanelContent(panel, html){
     var root = document.getElementById('admin-panel-' + panel);
@@ -19671,7 +19790,10 @@ window._handleRTCMessage=function(d){
   function renderAdminExperts(){
     api('/api/admin/experts?limit=100').then(function(d){
       var rows = (d.experts || []).map(function(e){
-        return '<tr><td style="padding:12px;">' + esc(e.name || 'Expert') + '<div style="font-size:11px;color:#888;">' + esc(e.slug || '') + '</div></td><td>' + esc(e.email || '') + '</td><td style="text-align:center;">' + int(e.session_count,0) + '</td><td style="text-align:center;">' + money(e.total_revenue || 0) + '</td><td style="text-align:center;">' + esc(e.avg_rating || '-') + '</td><td style="text-align:center;">' + (e.is_active ? 'Live' : 'Pending') + '</td><td style="text-align:center;"><button class="admin-action-btn ob-admin-view-expert" data-id="' + esc(e.id || '') + '" data-slug="' + esc(e.slug || '') + '" data-name="' + esc(e.name || '') + '">View</button></td></tr>';
+        var status = e.is_active ? '<span style="color:#22c55e;font-weight:700;">✓ Live</span>' : '<span style="color:#f59e0b;font-weight:700;">⏳ Pending</span>';
+        var approve = !e.is_active && typeof window.adminApproveExpert === 'function' ? '<button class="admin-action-btn" onclick="adminApproveExpert(\'' + esc(e.id || '') + '\')">✓ Approve</button> ' : '';
+        var suspend = e.is_active && window.OwnlyAPI && typeof window.OwnlyAPI.adminToggleExpert === 'function' ? '<button class="admin-action-btn" onclick="OwnlyAPI.adminToggleExpert(\'' + esc(e.id || '') + '\',false)">Suspend</button> ' : '';
+        return '<tr><td style="padding:12px;">' + esc(e.name || 'Expert') + '<div style="font-size:11px;color:#888;">' + esc(e.slug || '') + '</div></td><td>' + esc(e.email || '') + '</td><td style="text-align:center;">' + int(e.session_count,0) + '</td><td style="text-align:center;">' + money(e.total_revenue || 0) + '</td><td style="text-align:center;">' + esc(e.avg_rating || '-') + '</td><td style="text-align:center;">' + status + '</td><td style="text-align:center;">' + approve + '<button class="admin-action-btn ob-admin-view-expert" data-id="' + esc(e.id || '') + '" data-slug="' + esc(e.slug || '') + '" data-name="' + esc(e.name || '') + '">View</button> ' + suspend + '</td></tr>';
       }).join('');
       setAdminPanelContent('experts','<div class="admin-card"><table class="experts-table" style="width:100%;"><thead><tr><th>Expert</th><th>Email</th><th>Sessions</th><th>Revenue</th><th>Rating</th><th>Status</th><th>Actions</th></tr></thead><tbody>' + (rows || '<tr><td colspan="7" style="padding:32px;text-align:center;color:#888;">No experts yet</td></tr>') + '</tbody></table></div>');
     }).catch(function(e){ setAdminPanelContent('experts','<div class="admin-card" style="padding:28px;color:#f87171;">Experts failed: '+esc(e.message)+'</div>'); });
@@ -19703,9 +19825,12 @@ window._handleRTCMessage=function(d){
     };
     var title = document.getElementById('admin-page-title');
     if(title && titles[panel]) title.textContent = titles[panel];
+    if(panel === 'experts'){
+      renderAdminExperts();
+      return;
+    }
     if(window.OwnlyAPI){
       setTimeout(function(){
-        if(panel === 'experts')          window.OwnlyAPI.loadAdminExperts?.();
         if(panel === 'dashboard')        window.OwnlyAPI.loadAdminDashboard?.();
         if(panel === 'revenue')          window.OwnlyAPI.loadAdminRevenue?.();
         if(panel === 'payouts')          window.OwnlyAPI.loadAdminPayouts?.();
@@ -19715,7 +19840,6 @@ window._handleRTCMessage=function(d){
         if(panel === 'domain-registry')  window.OwnlyAPI.loadAdminDomains?.();
       }, 50);
     }
-    if(panel === 'experts') setTimeout(renderAdminExperts, 500);
   };
   document.addEventListener('click', function(e){
     var btn = e.target && e.target.closest && e.target.closest('.ob-admin-view-expert');
@@ -19752,6 +19876,7 @@ window._handleRTCMessage=function(d){
 	    startBookingSession: window.startBookingSession,
 	    adminViewExpertDashboard: window.adminViewExpertDashboard,
 	    adminNav: window.adminNav,
+	    loadExpertDashboard: window.loadExpertDashboard,
 	    showSessionRequest: window.showSessionRequest
 	  };
   function reinstall(){
@@ -19766,6 +19891,9 @@ window._handleRTCMessage=function(d){
     if(window._expertWs) wireWs(window._expertWs, 'expert');
   }
   [50,300,900,1800,3200,5200,8000,12000].forEach(function(ms){ setTimeout(reinstall, ms); });
+  setTimeout(function(){
+    if(queryParam('admin') === '1' && dashPathSlug()) loadAdminViewedExpertDashboard();
+  }, 800);
 })();
 </script>
 </body>

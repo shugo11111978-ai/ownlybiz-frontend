@@ -5907,7 +5907,6 @@ window._OB_BACKEND='https://ownlybiz-backend-production.up.railway.app';
                 <div class="receipt-row" style="border-top:1px solid var(--gray-200);padding-top:8px;margin-top:4px;font-weight:700;"><span>Total Charged</span><span id="receipt-total">—</span></div>
               </div>
               <div class="receipt-actions">
-                <button class="btn btn-primary" style="width:100%" onclick="showExpertPage('book');window.scrollTo(0,0);">Book Another Session</button>
                 <button class="btn btn-secondary" style="width:100%" onclick="window.print();">View Receipt</button>
               <button class="btn" style="width:100%;margin-top:8px;color:var(--gray-400);font-size:13px;background:none;border:none;cursor:pointer;" onclick="returnToExpertPage()">← Return to Expert Page</button>
               </div>
@@ -19194,6 +19193,11 @@ window._handleRTCMessage=function(d){
     var started = d.started_at || (d.session && d.session.started_at);
     if(!sid || sid === window._obActiveSessId || sid === window._sid || sid === window._sessId){
       if(started){
+        if(d.session){
+          if(d.session.free_minutes != null) window._expertSessFreeMins = int(d.session.free_minutes, 0);
+          if(d.session.rate_per_min != null) window._expertSessRate = num(d.session.rate_per_min, window._expertSessRate || 3.5);
+          if(d.session.channel) window._expertSessChannel = d.session.channel;
+        }
         if(role() === 'expert' || document.getElementById('expert-sess-timer')) startExpertTimer(started);
         startClientTimer(started, window._obClientSessionSnapshot || d.session || {});
       }
@@ -20781,6 +20785,388 @@ window._handleRTCMessage=function(d){
       applyChannelAvailabilityUi();
     }, ms);
   });
+})();
+</script>
+<style>
+#session-request-sheet.ob-floating-request-sheet{
+  width:min(348px,calc(100vw - 28px))!important;
+  max-width:348px!important;
+  padding:16px!important;
+  border-radius:18px!important;
+}
+#session-request-sheet.ob-floating-request-sheet .request-card,
+#session-request-sheet.ob-floating-request-sheet [class*="request"]{
+  font-size:12px;
+}
+#session-request-sheet .ob-request-drag-handle{
+  width:42px;
+  height:4px;
+  border-radius:999px;
+  background:rgba(37,24,16,.16);
+  margin:0 auto 12px;
+  cursor:grab;
+  touch-action:none;
+}
+#session-request-sheet.is-dragging .ob-request-drag-handle{cursor:grabbing;}
+.ob-channel-toggle{
+  cursor:pointer;
+  pointer-events:auto!important;
+  position:relative;
+  z-index:4;
+  user-select:none;
+}
+.ob-channel-toggle input{
+  pointer-events:auto!important;
+  position:relative;
+  z-index:5;
+}
+@media(max-width:680px){
+  #session-request-sheet.ob-floating-request-sheet{
+    width:100%!important;
+    max-width:100%!important;
+    padding:18px!important;
+  }
+  #session-request-sheet .ob-request-drag-handle{display:none;}
+}
+</style>
+<script>
+/* PRODUCTION CORRECTNESS PATCH 2026-04-26: Stripe modes, free-minute display, toggles, draggable request popup */
+(function(){
+  if(window._obPaymentSessionPatch20260426) return;
+  window._obPaymentSessionPatch20260426 = true;
+  var API = (window.OWNLYBIZ_API_URL || window._OB_BACKEND || 'https://ownlybiz-backend-production.up.railway.app') + '/api';
+  var CHANNELS = ['chat','voice','video'];
+  function token(){ return sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || localStorage.getItem('ob_client_token') || ''; }
+  function toastSafe(msg, type){
+    try {
+      if(typeof _showToast === 'function') _showToast(msg, type === 'err' ? 'red' : 'green');
+      else if(typeof toast === 'function') toast(msg, type === 'err' ? 'err' : 'ok');
+    } catch(e) {}
+  }
+  function prefix(mode, kind){ return (kind === 'secret' ? 'sk_' : 'pk_') + mode + '_'; }
+  function normalizeMode(value){ value = String(value || '').toLowerCase(); return value.indexOf('test') >= 0 ? 'test' : 'live'; }
+  function stripeSelect(){
+    var sel = document.getElementById('stripe-environment') || document.querySelector('#stripe-config-panel select');
+    if(sel && sel.id !== 'stripe-environment') sel.id = 'stripe-environment';
+    if(sel && !sel._obModesReady){
+      sel.innerHTML = '<option value="test">Test (sandbox)</option><option value="live">Production (live)</option>';
+      sel._obModesReady = true;
+      sel.addEventListener('change', function(){ fillStripeModeFields(window._obStripeSettings || {}, sel.value); });
+    }
+    return sel;
+  }
+  function setStripeLabel(inputId, text){
+    var input = document.getElementById(inputId);
+    if(!input) return;
+    var label = null;
+    var box = input.parentElement;
+    for(var i = 0; box && i < 4 && !label; i++, box = box.parentElement){
+      var children = Array.prototype.slice.call(box.children || []);
+      label = children.find(function(child){
+        return child !== input && /Key|Secret/i.test(child.textContent || '') && !child.querySelector('input,select,button');
+      }) || (box.previousElementSibling && /Key|Secret/i.test(box.previousElementSibling.textContent || '') ? box.previousElementSibling : null);
+    }
+    if(label) label.textContent = text;
+  }
+  function existingSetting(settings, mode, key){
+    return settings['stripe_' + mode + '_' + key] || '';
+  }
+  function fillStripeModeFields(settings, mode){
+    mode = normalizeMode(mode || (settings && settings.stripe_mode) || 'test');
+    var sel = stripeSelect();
+    if(sel) sel.value = mode;
+    setStripeLabel('stripe-secret-key', 'Secret Key (' + prefix(mode, 'secret') + '...)');
+    setStripeLabel('stripe-pub-key', 'Publishable Key (' + prefix(mode, 'publishable') + '...)');
+    var sk = document.getElementById('stripe-secret-key');
+    var pk = document.getElementById('stripe-pub-key');
+    var wh = document.getElementById('stripe-webhook-secret');
+    if(sk){
+      sk.value = '';
+      sk.placeholder = existingSetting(settings, mode, 'secret_key') || (prefix(mode, 'secret') + '...');
+    }
+    if(pk){
+      var savedPk = existingSetting(settings, mode, 'publishable_key');
+      pk.value = savedPk && savedPk.indexOf('pk_') === 0 ? savedPk : '';
+      pk.placeholder = savedPk || (prefix(mode, 'publishable') + '...');
+    }
+    if(wh){
+      wh.value = '';
+      wh.placeholder = existingSetting(settings, mode, 'webhook_secret') || 'whsec_... (optional)';
+    }
+    var result = document.getElementById('stripe-test-result');
+    if(result){
+      result.style.display = 'block';
+      result.style.color = settings['stripe_' + mode + '_configured'] ? '#22c55e' : 'rgba(246,241,233,.55)';
+      result.textContent = settings['stripe_' + mode + '_configured'] ? ('Connected (' + mode + ' mode)') : ('No saved ' + mode + ' keys yet');
+    }
+  }
+  function updateStripeBadge(settings){
+    var mode = normalizeMode(settings.stripe_mode || 'test');
+    var connected = !!settings.stripe_active_configured;
+    var badge = document.getElementById('stripe-status-badge');
+    var info = document.getElementById('stripe-account-info');
+    if(badge){
+      badge.innerHTML = '<span style="width:6px;height:6px;background:' + (connected ? '#22c55e' : '#ef4444') + ';border-radius:50%;"></span> ' + (connected ? 'Connected' : 'Not Connected') + ' (' + mode + ')';
+      badge.style.color = connected ? '#4ade80' : '#f87171';
+    }
+    if(info){
+      var pk = existingSetting(settings, mode, 'publishable_key');
+      info.textContent = connected ? ((pk ? pk.slice(0, 18) + '… · ' : '') + 'Stripe ' + mode + ' mode active') : 'Add Stripe ' + mode + ' keys';
+    }
+  }
+  function loadStripeSettings(){
+    if(!token()) return Promise.resolve();
+    stripeSelect();
+    return fetch(API + '/admin/settings', {headers:{Authorization:'Bearer ' + token()}})
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        var settings = d.settings || {};
+        window._obStripeSettings = settings;
+        updateStripeBadge(settings);
+        fillStripeModeFields(settings, settings.stripe_mode || 'test');
+      }).catch(function(){});
+  }
+  window.loadAdminPaymentSettings = loadStripeSettings;
+  window.testPaymentGateway = function(provider){
+    if(provider !== 'stripe'){ toastSafe((provider || 'Provider') + ' is not supported yet','err'); return; }
+    var sel = stripeSelect();
+    var mode = normalizeMode(sel && sel.value || 'test');
+    var el = document.getElementById('stripe-test-result');
+    if(el){ el.style.display = 'block'; el.textContent = 'Testing ' + mode + ' connection...'; el.style.color = 'rgba(246,241,233,.55)'; }
+    fetch(API + '/admin/settings/test-stripe?mode=' + encodeURIComponent(mode), {headers:{Authorization:'Bearer ' + token()}})
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if(d.ok){
+          if(el){ el.textContent = 'Connected (' + d.mode + ' mode)'; el.style.color = '#22c55e'; }
+          toastSafe('Stripe ' + d.mode + ' connection works','ok');
+        } else {
+          if(el){ el.textContent = 'Failed: ' + (d.error || 'Check keys'); el.style.color = '#ef4444'; }
+          toastSafe(d.error || 'Stripe connection failed','err');
+        }
+      }).catch(function(e){
+        if(el){ el.textContent = 'Network error'; el.style.color = '#ef4444'; }
+        toastSafe(e.message || 'Network error','err');
+      });
+  };
+  window.savePaymentGateway = function(provider){
+    if(provider !== 'stripe'){ toastSafe((provider || 'Provider') + ' is not supported yet','err'); return; }
+    var mode = normalizeMode((stripeSelect() || {}).value || 'test');
+    var settings = window._obStripeSettings || {};
+    var skEl = document.getElementById('stripe-secret-key');
+    var pkEl = document.getElementById('stripe-pub-key');
+    var whEl = document.getElementById('stripe-webhook-secret');
+    var sk = skEl ? String(skEl.value || '').trim() : '';
+    var pk = pkEl ? String(pkEl.value || '').trim() : '';
+    var wh = whEl ? String(whEl.value || '').trim() : '';
+    var hasSavedSecret = !!existingSetting(settings, mode, 'secret_key');
+    var hasSavedPublishable = !!existingSetting(settings, mode, 'publishable_key');
+    if(sk && sk.indexOf(prefix(mode, 'secret')) !== 0) return toastSafe('Secret key must start with ' + prefix(mode, 'secret'), 'err');
+    if(pk && pk.indexOf(prefix(mode, 'publishable')) !== 0) return toastSafe('Publishable key must start with ' + prefix(mode, 'publishable'), 'err');
+    if(!sk && !hasSavedSecret) return toastSafe('Enter a ' + mode + ' secret key first', 'err');
+    if(!pk && !hasSavedPublishable) return toastSafe('Enter a ' + mode + ' publishable key first', 'err');
+    var body = { stripe_mode: mode };
+    if(sk) body['stripe_' + mode + '_secret_key'] = sk;
+    if(pk) body['stripe_' + mode + '_publishable_key'] = pk;
+    if(wh) body['stripe_' + mode + '_webhook_secret'] = wh;
+    var btn = Array.prototype.find.call(document.querySelectorAll('button'), function(b){ return /Save Stripe Config/i.test(b.textContent || ''); });
+    if(btn){ btn.disabled = true; btn.textContent = 'Saving...'; }
+    fetch(API + '/admin/settings', {
+      method:'POST',
+      headers:{'Content-Type':'application/json', Authorization:'Bearer ' + token()},
+      body:JSON.stringify(body)
+    }).then(function(r){ return r.json().then(function(d){ if(!r.ok || d.success === false) throw new Error(d.error || 'Save failed'); return d; }); })
+      .then(function(){
+        toastSafe('Stripe ' + mode + ' configuration saved','ok');
+        return loadStripeSettings();
+      }).catch(function(e){
+        toastSafe(e.message || 'Stripe save failed','err');
+      }).finally(function(){
+        if(btn){ btn.disabled = false; btn.textContent = 'Save Stripe Config'; }
+      });
+  };
+  window.savePaymentConfig = function(){ return window.savePaymentGateway('stripe'); };
+
+  function intValue(v, fallback){ var n = parseInt(v, 10); return isFinite(n) ? n : (fallback || 0); }
+  function availableFree(data, ch){
+    data = data || {};
+    var key = ch + '_free_min_available';
+    if(data[key] !== undefined && data[key] !== null) return intValue(data[key], 0);
+    if(ch === 'chat' && data.free_minutes_available !== undefined && data.free_minutes_available !== null) return intValue(data.free_minutes_available, 0);
+    if(ch === 'chat') return intValue(data.chat_free_min != null ? data.chat_free_min : data.free_minutes, 0);
+    if(ch === 'voice') return intValue(data.voice_free_min != null ? data.voice_free_min : data.free_minutes_voice, 0);
+    return intValue(data.video_free_min != null ? data.video_free_min : data.free_minutes_video, 0);
+  }
+  function applyAvailableFree(data){
+    if(!data) return data;
+    if(data.chat_free_min_available != null || data.free_minutes_available != null){
+      data.chat_free_min = data.free_minutes = availableFree(data, 'chat');
+    }
+    if(data.voice_free_min_available != null) data.voice_free_min = data.free_minutes_voice = availableFree(data, 'voice');
+    if(data.video_free_min_available != null) data.video_free_min = data.free_minutes_video = availableFree(data, 'video');
+    return data;
+  }
+  function patchExpertData(data){
+    applyAvailableFree(data);
+    if(window._currentExpert) applyAvailableFree(window._currentExpert);
+    return data;
+  }
+  function refreshPublicFreeLabels(){
+    var data = patchExpertData(window._currentExpert || {});
+    var selected = (window._obPendingChannel || 'chat').toLowerCase();
+    var free = availableFree(data, selected);
+    var rateEls = document.querySelectorAll('#stype-grid .stype-price, #booking-summary-rate, .session-rate');
+    rateEls.forEach(function(el){
+      if(!el || !/\bfree\b/i.test(el.textContent || '')) return;
+      if(free <= 0) el.textContent = (el.textContent || '').replace(/\s*[·•]\s*\d+\s*(?:min(?:ute)?s?)?\s*free/ig, '').replace(/\s*\d+\s*(?:min(?:ute)?s?)?\s*free/ig, '');
+    });
+    var freeRows = Array.prototype.slice.call(document.querySelectorAll('*')).filter(function(el){
+      var text = el.childElementCount === 0 ? (el.textContent || '') : '';
+      return /free minutes|minute included|first .*free|free intro/i.test(text);
+    });
+    freeRows.forEach(function(el){
+      if(free <= 0) el.textContent = el.textContent.replace(/your first .*? free,? then billed per minute\.?/i, 'You will be billed per minute once the session starts.').replace(/\d+\s*minute included/i, 'No free minutes').replace(/first\s+\d+\s*minute.*?free/i, 'No free minutes available');
+    });
+  }
+  var currentApply = window._applyExpertWebsite;
+  if(currentApply && !currentApply._obFreeAvailabilityWrapped){
+    window._applyExpertWebsite = function(data){
+      patchExpertData(data);
+      var ret = currentApply.apply(this, arguments);
+      [30,180,600,1200].forEach(function(ms){ setTimeout(refreshPublicFreeLabels, ms); });
+      return ret;
+    };
+    window._applyExpertWebsite._obFreeAvailabilityWrapped = true;
+  }
+  var currentFreeCopy = window.obRefreshPublicFreeMinuteCopy;
+  if(currentFreeCopy && !currentFreeCopy._obFreeAvailabilityWrapped){
+    window.obRefreshPublicFreeMinuteCopy = function(data){
+      patchExpertData(data);
+      var ret = currentFreeCopy.apply(this, arguments);
+      refreshPublicFreeLabels();
+      return ret;
+    };
+    window.obRefreshPublicFreeMinuteCopy._obFreeAvailabilityWrapped = true;
+  }
+
+  function enabledVal(value, fallback){
+    if(value === undefined || value === null || value === '') return fallback === 0 ? 0 : 1;
+    if(value === false) return 0;
+    return ['0','false','off','no','disabled'].indexOf(String(value).toLowerCase()) >= 0 ? 0 : 1;
+  }
+  function channelFromToggleId(id){ return String(id || '').replace(/-enabled$/, ''); }
+  function updateToggleRow(input){
+    if(!input) return;
+    var ch = channelFromToggleId(input.id);
+    if(CHANNELS.indexOf(ch) < 0) return;
+    window._currentExpert = window._currentExpert || {};
+    window._currentExpert[ch + '_enabled'] = input.checked ? 1 : 0;
+    var row = input.closest('.ob-channel-toggle');
+    if(row){
+      row.classList.toggle('is-off', !input.checked);
+      var state = row.querySelector('.ob-channel-state');
+      if(state) state.textContent = input.checked ? 'Available' : 'Off';
+    }
+    if(typeof window.obApplyChannelAvailabilityUi === 'function') window.obApplyChannelAvailabilityUi(window._currentExpert);
+  }
+  document.addEventListener('click', function(e){
+    var row = e.target && e.target.closest ? e.target.closest('.ob-channel-toggle') : null;
+    if(!row || e.target.tagName === 'INPUT') return;
+    var input = row.querySelector('input[type="checkbox"]');
+    if(!input) return;
+    e.preventDefault();
+    input.checked = !input.checked;
+    input.dispatchEvent(new Event('change', {bubbles:true}));
+  }, true);
+  document.addEventListener('change', function(e){
+    if(e.target && /^(chat|voice|video)-enabled$/.test(e.target.id || '')) updateToggleRow(e.target);
+  }, true);
+  function keepTogglesInteractive(){
+    CHANNELS.forEach(function(ch){
+      var input = document.getElementById(ch + '-enabled');
+      if(input){
+        input.disabled = false;
+        input.style.pointerEvents = 'auto';
+        updateToggleRow(input);
+      }
+    });
+  }
+
+  function requestBrowserNotifications(btn){
+    if(!('Notification' in window)){ toastSafe('This browser does not support notifications','err'); return; }
+    if(!window.isSecureContext){ toastSafe('Browser notifications require HTTPS','err'); return; }
+    try {
+      var done = function(permission){
+        if(btn){
+          btn.disabled = permission === 'denied';
+          btn.textContent = permission === 'granted' ? 'Browser notifications enabled' : (permission === 'denied' ? 'Browser notifications blocked in this browser' : 'Enable browser notifications');
+          if(permission === 'granted') setTimeout(function(){ btn.remove(); }, 400);
+        }
+        toastSafe(permission === 'granted' ? 'Browser notifications enabled' : 'Notifications were not enabled', permission === 'granted' ? 'ok' : 'err');
+      };
+      var result = Notification.requestPermission(done);
+      if(result && typeof result.then === 'function') result.then(done).catch(function(e){ toastSafe(e.message || 'Notification permission failed','err'); });
+    } catch(e) {
+      toastSafe(e.message || 'Notification permission failed','err');
+    }
+  }
+  document.addEventListener('click', function(e){
+    var btn = e.target && e.target.closest ? e.target.closest('#ob-enable-browser-notifications') : null;
+    if(!btn) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if(e.stopImmediatePropagation) e.stopImmediatePropagation();
+    requestBrowserNotifications(btn);
+  }, true);
+
+  function enableRequestDrag(){
+    var sheet = document.getElementById('session-request-sheet');
+    if(!sheet || sheet._obDragReady) return;
+    sheet._obDragReady = true;
+    var handle = sheet.querySelector('.ob-request-drag-handle');
+    if(!handle){
+      handle = document.createElement('div');
+      handle.className = 'ob-request-drag-handle';
+      sheet.insertBefore(handle, sheet.firstChild);
+    }
+    var drag = null;
+    handle.addEventListener('pointerdown', function(e){
+      if(window.matchMedia && window.matchMedia('(max-width:680px)').matches) return;
+      var rect = sheet.getBoundingClientRect();
+      drag = {dx:e.clientX - rect.left, dy:e.clientY - rect.top};
+      sheet.classList.add('is-dragging');
+      sheet.style.setProperty('position','fixed','important');
+      sheet.style.setProperty('left', rect.left + 'px', 'important');
+      sheet.style.setProperty('top', rect.top + 'px', 'important');
+      sheet.style.setProperty('right','auto','important');
+      sheet.style.setProperty('bottom','auto','important');
+      handle.setPointerCapture && handle.setPointerCapture(e.pointerId);
+    });
+    handle.addEventListener('pointermove', function(e){
+      if(!drag) return;
+      var width = sheet.offsetWidth || 348;
+      var height = sheet.offsetHeight || 420;
+      var x = Math.max(8, Math.min(window.innerWidth - width - 8, e.clientX - drag.dx));
+      var y = Math.max(8, Math.min(window.innerHeight - height - 8, e.clientY - drag.dy));
+      sheet.style.setProperty('left', x + 'px', 'important');
+      sheet.style.setProperty('top', y + 'px', 'important');
+    });
+    ['pointerup','pointercancel'].forEach(function(type){
+      handle.addEventListener(type, function(e){
+        drag = null;
+        sheet.classList.remove('is-dragging');
+        try { handle.releasePointerCapture && handle.releasePointerCapture(e.pointerId); } catch(_) {}
+      });
+    });
+  }
+  function init(){
+    stripeSelect();
+    keepTogglesInteractive();
+    enableRequestDrag();
+    refreshPublicFreeLabels();
+    if(document.getElementById('admin-panel-platform-payments')) loadStripeSettings();
+  }
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
+  [80,220,600,1200,2400,4200,7600,12000,18000].forEach(function(ms){ setTimeout(init, ms); });
 })();
 </script>
 </body>

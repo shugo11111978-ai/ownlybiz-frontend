@@ -17576,11 +17576,60 @@ function loadClientSessions() {
 window.OB_RTC = (function(){
   var pc=null, localStream=null, sid=null, ch=null, _role=null, _muted=false, _camOff=false;
   var _pendingOffer=null, _pendingIce=[], _pendingAnswer=null;
-  var _lastOfferSdp=null, _lastAnswerSdp=null, _remoteAnswerSet=false, _answerApplying=false, _offerRetryTimer=null;
+  var _lastOfferSdp=null, _lastAnswerSdp=null, _lastLocalOfferSdp=null, _remoteAnswerSet=false, _answerApplying=false, _offerRetryTimer=null;
   var _connectDeadlineTimer=null, _connectionIssueTimer=null, _connectedOnce=false, _endingForIssue=false, _iceRestartAttempted=false;
-  var ICE={iceServers:[{urls:'stun:stun.l.google.com:19302'},{urls:'stun:stun1.l.google.com:19302'},{urls:'turn:a.relay.metered.ca:80',username:'83eebabf8b4cce9d5dbcb649',credential:'2D7JvfkOQtBdYW3R'},{urls:'turn:a.relay.metered.ca:443',username:'83eebabf8b4cce9d5dbcb649',credential:'2D7JvfkOQtBdYW3R'},{urls:'turn:a.relay.metered.ca:443?transport=tcp',username:'83eebabf8b4cce9d5dbcb649',credential:'2D7JvfkOQtBdYW3R'}],iceCandidatePoolSize:10,bundlePolicy:'max-bundle',rtcpMuxPolicy:'require'};
+  var _localIce=[], _peerReady=false, _rtcConfigLoaded=false, _rtcConfigPromise=null;
+  var RTC_TIMEOUTS={initialMs:35000,reconnectMs:15000,failureMs:7000};
+  var DEFAULT_ICE={iceServers:[{urls:'stun:stun.l.google.com:19302'},{urls:'stun:stun1.l.google.com:19302'},{urls:'turn:a.relay.metered.ca:80',username:'83eebabf8b4cce9d5dbcb649',credential:'2D7JvfkOQtBdYW3R'},{urls:'turn:a.relay.metered.ca:443',username:'83eebabf8b4cce9d5dbcb649',credential:'2D7JvfkOQtBdYW3R'},{urls:'turn:a.relay.metered.ca:443?transport=tcp',username:'83eebabf8b4cce9d5dbcb649',credential:'2D7JvfkOQtBdYW3R'}],iceCandidatePoolSize:10,bundlePolicy:'max-bundle',rtcpMuxPolicy:'require'};
+  var ICE=DEFAULT_ICE;
   function _apiBase(){return window.OWNLYBIZ_API_URL||window._OB_BACKEND||'https://ownlybiz-backend-production.up.railway.app';}
   function _authToken(){return sessionStorage.getItem('ob_t')||localStorage.getItem('ob_t')||localStorage.getItem('ob_client_token')||sessionStorage.getItem('ob_client_token')||sessionStorage.getItem('ob_token')||localStorage.getItem('ob_token')||'';}
+  function _hasTurn(servers){
+    return (servers||[]).some(function(server){
+      var urls=Array.isArray(server.urls)?server.urls:[server.urls];
+      return urls.some(function(url){url=String(url||'').toLowerCase();return url.indexOf('turn:')===0||url.indexOf('turns:')===0;});
+    });
+  }
+  function _validIceServer(server){
+    if(!server||!server.urls)return null;
+    var normalized={urls:server.urls};
+    if(server.username)normalized.username=String(server.username);
+    if(server.credential)normalized.credential=String(server.credential);
+    return normalized;
+  }
+  function _applyRtcConfig(config){
+    var rtc=config&&config.rtc;
+    var servers=(rtc&&Array.isArray(rtc.ice_servers)?rtc.ice_servers:[]).map(_validIceServer).filter(Boolean);
+    if(servers.length&&_hasTurn(servers)){
+      ICE={iceServers:servers,iceCandidatePoolSize:parseInt(rtc.ice_candidate_pool_size||10,10)||10,bundlePolicy:'max-bundle',rtcpMuxPolicy:'require'};
+      if(window._rtcDbg)window._rtcDbg('Loaded RTC ICE config from backend');
+    }
+    if(rtc){
+      RTC_TIMEOUTS.initialMs=parseInt(rtc.connection_timeout_ms||RTC_TIMEOUTS.initialMs,10)||RTC_TIMEOUTS.initialMs;
+      RTC_TIMEOUTS.reconnectMs=parseInt(rtc.reconnect_grace_ms||RTC_TIMEOUTS.reconnectMs,10)||RTC_TIMEOUTS.reconnectMs;
+      RTC_TIMEOUTS.failureMs=parseInt(rtc.failure_grace_ms||RTC_TIMEOUTS.failureMs,10)||RTC_TIMEOUTS.failureMs;
+    }
+  }
+  function _loadRtcConfig(){
+    if(_rtcConfigLoaded)return Promise.resolve(ICE);
+    if(_rtcConfigPromise)return _rtcConfigPromise;
+    if(window.OWNLY_CONFIG){_applyRtcConfig(window.OWNLY_CONFIG);_rtcConfigLoaded=true;return Promise.resolve(ICE);}
+    _rtcConfigPromise=fetch(_apiBase()+'/api/config').then(function(r){return r.json();}).then(function(config){
+      window.OWNLY_CONFIG=window.OWNLY_CONFIG||config;
+      _applyRtcConfig(config);
+      _rtcConfigLoaded=true;
+      return ICE;
+    }).catch(function(){
+      _rtcConfigLoaded=true;
+      return ICE;
+    }).then(function(value){_rtcConfigPromise=null;return value;});
+    return _rtcConfigPromise;
+  }
+  function _mediaConstraints(channel){
+    var audio={echoCancellation:true,noiseSuppression:true,autoGainControl:true};
+    if(channel==='video')return {audio:audio,video:{width:{ideal:640,max:1280},height:{ideal:480,max:720},frameRate:{ideal:24,max:30}}};
+    return {audio:audio,video:false};
+  }
 
   function _ws(){
     var w;
@@ -17688,7 +17737,9 @@ window.OB_RTC = (function(){
         _remoteAnswerSet=false;
         var offer=await pc.createOffer({iceRestart:true});
         await pc.setLocalDescription(offer);
+        _lastLocalOfferSdp=offer.sdp;
         _send({type:'rtc_offer',session_id:sid,sdp:offer.sdp});
+        _sendLocalIceCandidates();
         if(typeof window._rtcDbg==='function')window._rtcDbg('ICE restart offer sent');
       }catch(e){
         if(typeof window._rtcDbg==='function')window._rtcDbg('ICE restart failed: '+e.message);
@@ -17703,6 +17754,13 @@ window.OB_RTC = (function(){
     _clearConnectionTimers();
     try{_send({type:'rtc_connected',session_id:sid,channel:ch});}catch(e){}
     try{if(typeof window._obRtcConnected==='function')window._obRtcConnected(sid,ch,_role);}catch(e){}
+  }
+  function _sendLocalIceCandidates(){
+    if(!sid||!_localIce.length)return;
+    for(var i=0;i<_localIce.length;i++){
+      try{_send({type:'rtc_ice',session_id:sid,candidate:_localIce[i]});}catch(e){}
+    }
+    if(window._rtcDbg)window._rtcDbg('Replayed '+_localIce.length+' ICE candidates');
   }
 
   function _setupPC(){
@@ -17732,7 +17790,13 @@ window.OB_RTC = (function(){
       }
     };
 
-    pc.onicecandidate=function(e){if(e.candidate)_send({type:'rtc_ice',session_id:sid,candidate:e.candidate});};
+    pc.onicecandidate=function(e){
+      if(e.candidate){
+        _localIce.push(e.candidate);
+        if(_localIce.length>80)_localIce.shift();
+        _send({type:'rtc_ice',session_id:sid,candidate:e.candidate});
+      }
+    };
 
     function _renderConnectionState(label,state){
       console.log('[RTC] '+label+': '+state);
@@ -17749,14 +17813,14 @@ window.OB_RTC = (function(){
     pc.onconnectionstatechange=function(){
       _renderConnectionState('State',pc.connectionState);
       if(pc.connectionState==='connected')_markRtcConnected();
-      else if(pc.connectionState==='disconnected'){_tryIceRestart('rtc_disconnected');_scheduleConnectionIssue('rtc_disconnected_timeout',15000);}
-      else if(pc.connectionState==='failed'){_tryIceRestart('rtc_connection_failed');_scheduleConnectionIssue('rtc_connection_failed',7000);}
+      else if(pc.connectionState==='disconnected'){_tryIceRestart('rtc_disconnected');_scheduleConnectionIssue('rtc_disconnected_timeout',RTC_TIMEOUTS.reconnectMs);}
+      else if(pc.connectionState==='failed'){_tryIceRestart('rtc_connection_failed');_scheduleConnectionIssue('rtc_connection_failed',RTC_TIMEOUTS.failureMs);}
     };
     pc.oniceconnectionstatechange=function(){
       _renderConnectionState('ICE',pc.iceConnectionState);
       if(pc.iceConnectionState==='connected'||pc.iceConnectionState==='completed')_markRtcConnected();
-      else if(pc.iceConnectionState==='disconnected'){_tryIceRestart('ice_disconnected');_scheduleConnectionIssue('rtc_ice_disconnected_timeout',15000);}
-      else if(pc.iceConnectionState==='failed'){_tryIceRestart('ice_failed');_scheduleConnectionIssue('rtc_ice_failed',7000);}
+      else if(pc.iceConnectionState==='disconnected'){_tryIceRestart('ice_disconnected');_scheduleConnectionIssue('rtc_ice_disconnected_timeout',RTC_TIMEOUTS.reconnectMs);}
+      else if(pc.iceConnectionState==='failed'){_tryIceRestart('ice_failed');_scheduleConnectionIssue('rtc_ice_failed',RTC_TIMEOUTS.failureMs);}
     };
   }
 
@@ -17764,8 +17828,9 @@ window.OB_RTC = (function(){
     if(pc!==null){console.log('[RTC] Already active, skipping duplicate start()');if(window._rtcDbg)window._rtcDbg('SKIP: already active');return true;}
     sid=sessionId; ch=channel; _role=role; _muted=false; _camOff=false;
     _connectedOnce=false; _endingForIssue=false;
+    _peerReady=false; _localIce=[];
     _iceRestartAttempted=false;
-    _lastOfferSdp=null; _lastAnswerSdp=null; _remoteAnswerSet=false; _answerApplying=false;
+    _lastOfferSdp=null; _lastAnswerSdp=null; _lastLocalOfferSdp=null; _remoteAnswerSet=false; _answerApplying=false;
     if(_offerRetryTimer){clearTimeout(_offerRetryTimer);_offerRetryTimer=null;}
     _clearConnectionTimers();
     // Don't clear buffers — offers may have arrived before start() was called
@@ -17775,7 +17840,8 @@ window.OB_RTC = (function(){
     _dbg('start() called: '+channel+' '+role);
     try{
       _dbg('Requesting mic/camera...');
-      localStream=await navigator.mediaDevices.getUserMedia(channel==='video'?{audio:true,video:{width:{ideal:640},height:{ideal:480}}}:{audio:true,video:false});
+      await _loadRtcConfig();
+      localStream=await navigator.mediaDevices.getUserMedia(_mediaConstraints(channel));
       _dbg('Media granted: '+localStream.getTracks().map(function(t){return t.kind;}).join(', '));
     }catch(e){
       console.error('[RTC] getUserMedia failed:',e);
@@ -17786,7 +17852,7 @@ window.OB_RTC = (function(){
     _setupPC();
     _connectDeadlineTimer=setTimeout(function(){
       if(pc&&pc.connectionState!=='connected')_endForConnectionIssue('rtc_initial_connection_timeout');
-    },35000);
+    },RTC_TIMEOUTS.initialMs);
     _dbg('PC created. Buffered: offer='+(!!_pendingOffer)+' ice='+_pendingIce.length);
     console.log('[RTC] PC created, processing '+_pendingIce.length+' buffered ICE + offer='+(!!_pendingOffer));
     if(_pendingOffer){_dbg('Processing buffered offer...');var po=_pendingOffer;_pendingOffer=null;await handleOffer(po);_dbg('Buffered offer processed, answer sent');}else{_dbg('No buffered offer to process');}
@@ -17806,6 +17872,7 @@ window.OB_RTC = (function(){
           var offer=await pc.createOffer();
           await pc.setLocalDescription(offer);
           _savedOffer=offer.sdp;
+          _lastLocalOfferSdp=offer.sdp;
           if(typeof _dbg==='function')_dbg('Offer created');
         }catch(e){console.error('[RTC] createOffer error:',e);return;}
         // Send offer immediately, then resend every 3s until connected
@@ -17817,6 +17884,7 @@ window.OB_RTC = (function(){
           var ws=_ws();
           if(!ws){if(typeof _dbg==='function')_dbg('WS not ready, retrying...');setTimeout(_sendOffer,2000);return;}
           _send({type:'rtc_offer',session_id:sid,sdp:_savedOffer});
+          _sendLocalIceCandidates();
           if(typeof _dbg==='function')_dbg('Offer sent');
           console.log('[RTC] Offer sent');
           _offerRetryTimer=setTimeout(_sendOffer,3000);
@@ -17829,10 +17897,11 @@ window.OB_RTC = (function(){
 
 	  async function handleOffer(sdp){
 	    if(window._rtcDbg)window._rtcDbg('handleOffer called, pc='+(!!pc));
-	    if(!pc){console.log('[RTC] Buffering offer (PC not ready)');_pendingOffer=sdp;_pendingIce=[];if(window._rtcDbg)window._rtcDbg('Offer buffered');return;}
+	    if(!pc){console.log('[RTC] Buffering offer (PC not ready)');_pendingOffer=sdp;if(window._rtcDbg)window._rtcDbg('Offer buffered');return;}
     if(_lastOfferSdp===sdp&&_lastAnswerSdp){
       if(window._rtcDbg)window._rtcDbg('Duplicate offer; resending cached answer');
       _send({type:'rtc_answer',session_id:sid,sdp:_lastAnswerSdp});
+      _sendLocalIceCandidates();
       return;
     }
     if(pc.signalingState&&pc.signalingState!=='stable'){
@@ -17847,6 +17916,7 @@ window.OB_RTC = (function(){
       _lastOfferSdp=sdp;
       _lastAnswerSdp=a.sdp;
 	      _send({type:'rtc_answer',session_id:sid,sdp:a.sdp});
+      _sendLocalIceCandidates();
 	      console.log('[RTC] Answer sent');
     if(typeof _dbg==='function')_dbg('Answer sent to client');
     }catch(e){console.error('[RTC] handleOffer error:',e);if(window._rtcDbg)window._rtcDbg('ERROR in handleOffer: '+e.message);}
@@ -17866,6 +17936,7 @@ window.OB_RTC = (function(){
       await pc.setRemoteDescription({type:'answer',sdp:sdp});
       _remoteAnswerSet=true;
       if(_offerRetryTimer){clearTimeout(_offerRetryTimer);_offerRetryTimer=null;}
+      _sendLocalIceCandidates();
       console.log('[RTC] Remote desc set');
     }catch(e){_answerApplying=false;console.error('[RTC] handleAnswer error:',e);return;}
     _answerApplying=false;
@@ -17874,6 +17945,17 @@ window.OB_RTC = (function(){
     if(!c)return;
     if(!pc){_pendingIce.push(c);return;}
     try{await pc.addIceCandidate(c);}catch(e){}
+  }
+  function handleReady(){
+    _peerReady=true;
+    if(window._rtcDbg)window._rtcDbg('Peer ready');
+    if(_role==='client'&&_lastLocalOfferSdp&&pc&&pc.signalingState!=='closed'){
+      try{_send({type:'rtc_offer',session_id:sid,sdp:_lastLocalOfferSdp});}catch(e){}
+    }
+    if(_lastAnswerSdp){
+      try{_send({type:'rtc_answer',session_id:sid,sdp:_lastAnswerSdp});}catch(e){}
+    }
+    _sendLocalIceCandidates();
   }
 
   function toggleMute(){if(!localStream)return _muted;var t=localStream.getAudioTracks()[0];if(t){t.enabled=!t.enabled;_muted=!t.enabled;}
@@ -17889,13 +17971,14 @@ window.OB_RTC = (function(){
     if(pc){try{pc.close();}catch(e){}pc=null;}
     if(localStream){localStream.getTracks().forEach(function(t){t.stop();});localStream=null;}
 	    _pendingOffer=null;_pendingIce=[];_pendingAnswer=null;
-    _lastOfferSdp=null;_lastAnswerSdp=null;_remoteAnswerSet=false;_answerApplying=false;
+    _lastOfferSdp=null;_lastAnswerSdp=null;_lastLocalOfferSdp=null;_remoteAnswerSet=false;_answerApplying=false;
+    _localIce=[];_peerReady=false;
     if(_offerRetryTimer){clearTimeout(_offerRetryTimer);_offerRetryTimer=null;}
     var ra=document.getElementById('rtc-remote-audio');if(ra){ra.srcObject=null;ra.remove();}
     sid=null;ch=null;_role=null;_muted=false;_camOff=false;_connectedOnce=false;_endingForIssue=false;_iceRestartAttempted=false;
   }
 
-  return{start:start,handleOffer:handleOffer,handleAnswer:handleAnswer,handleIce:handleIce,toggleMute:toggleMute,toggleCamera:toggleCamera,end:end,cleanup:cleanup,isActive:function(){return pc!==null;},getChannel:function(){return ch;},getSid:function(){return sid;}};
+  return{start:start,handleOffer:handleOffer,handleAnswer:handleAnswer,handleIce:handleIce,handleReady:handleReady,toggleMute:toggleMute,toggleCamera:toggleCamera,end:end,cleanup:cleanup,isActive:function(){return pc!==null;},getChannel:function(){return ch;},getSid:function(){return sid;}};
 })();
 
 window._handleRTCMessage=function(d){
@@ -17905,7 +17988,7 @@ window._handleRTCMessage=function(d){
   else if(d.type==='rtc_answer')window.OB_RTC.handleAnswer(d.sdp);
   else if(d.type==='rtc_ice')window.OB_RTC.handleIce(d.candidate);
   else if(d.type==='rtc_end'){window.OB_RTC.cleanup();if(typeof window._obResetExpertLiveSessionUI==='function')window._obResetExpertLiveSessionUI('chat');if(typeof _showToast==='function')_showToast('Call ended by other party');}
-  else if(d.type==='rtc_ready')console.log('[RTC] Peer ready');
+  else if(d.type==='rtc_ready'){console.log('[RTC] Peer ready');if(window.OB_RTC.handleReady)window.OB_RTC.handleReady();}
 };
 </script>
 <script>

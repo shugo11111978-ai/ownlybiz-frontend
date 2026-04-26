@@ -22646,13 +22646,142 @@ window._handleRTCMessage=function(d){
     if(!el){ el = document.createElement('meta'); el.setAttribute('property', prop); document.head.appendChild(el); }
     el.setAttribute('content', content);
   }
-  function setCanonical(url){
-    url = clean(url);
-    if(!url) return;
-    var el = document.head.querySelector('link[rel="canonical"]');
-    if(!el){ el = document.createElement('link'); el.setAttribute('rel', 'canonical'); document.head.appendChild(el); }
-    el.setAttribute('href', url);
-  }
+	  function setCanonical(url){
+	    url = clean(url);
+	    if(!url) return;
+	    var el = document.head.querySelector('link[rel="canonical"]');
+	    if(!el){ el = document.createElement('link'); el.setAttribute('rel', 'canonical'); document.head.appendChild(el); }
+	    el.setAttribute('href', url);
+	  }
+	  function setVerification(name, value){
+	    value = escapeText(value);
+	    if(!value) return;
+	    var el = document.head.querySelector('meta[name="' + name + '"]');
+	    if(!el){ el = document.createElement('meta'); el.setAttribute('name', name); document.head.appendChild(el); }
+	    el.setAttribute('content', value);
+	  }
+	  function setJsonLd(id, data){
+	    var el = document.getElementById(id);
+	    if(!data){
+	      if(el && el.parentNode) el.parentNode.removeChild(el);
+	      return;
+	    }
+	    if(!el){ el = document.createElement('script'); el.id = id; el.type = 'application/ld+json'; document.head.appendChild(el); }
+	    el.textContent = JSON.stringify(data);
+	  }
+	  function listFromSetting(value){
+	    return String(value || '').split(/\n|,/).map(function(item){ return clean(item); }).filter(Boolean);
+	  }
+	  function absoluteUrl(url, fallback){
+	    url = clean(url || fallback || '');
+	    if(!url) return '';
+	    try { return new URL(url, location.origin).toString(); } catch(e) { return ''; }
+	  }
+	  function isPlatformSeoRoute(){
+	    var path = (location.pathname || '/').replace(/^\/+|\/+$/g, '');
+	    if(path === 'terms' || path.indexOf('legal/') === 0) return false;
+	    if(path === 'admin' || path.indexOf('dash/') === 0 || path.indexOf('session') === 0 || path === 'signup') return false;
+	    if(isExpertRoute()) return false;
+	    return true;
+	  }
+	  function seoEnabled(value){
+	    return !['0','false','off','no','disabled'].includes(String(value || '').trim().toLowerCase());
+	  }
+	  function platformSeoDefaults(seo){
+	    seo = seo || {};
+	    var title = clean(seo.platform_seo_title, 'Ownlybiz - Own your expertise. Own your income.');
+	    var desc = clean(seo.platform_seo_description, 'Ownlybiz helps independent experts launch paid chat, voice, and video sessions on their own branded website.');
+	    return {
+	      title: title,
+	      description: desc,
+	      canonical: absoluteUrl(seo.platform_seo_canonical_url, location.origin + '/'),
+	      robots: clean(seo.platform_seo_robots, 'index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1'),
+	      keywords: clean(seo.platform_seo_keywords || seo.platform_ai_topics),
+	      ogTitle: clean(seo.platform_og_title, title),
+	      ogDescription: clean(seo.platform_og_description, desc),
+	      ogImage: absoluteUrl(seo.platform_og_image_url),
+	      twitterCard: clean(seo.platform_twitter_card, 'summary_large_image'),
+	      schemaName: clean(seo.platform_schema_name, 'Ownlybiz'),
+	      schemaUrl: absoluteUrl(seo.platform_schema_url, location.origin + '/'),
+	      schemaLogo: absoluteUrl(seo.platform_schema_logo_url, location.origin + '/favicon.svg'),
+	      schemaDescription: clean(seo.platform_schema_description || seo.platform_ai_summary, desc),
+	      schemaType: clean(seo.platform_schema_type, 'SoftwareApplication'),
+	      sameAs: listFromSetting(seo.platform_schema_same_as),
+	      contactEmail: clean(seo.platform_schema_contact_email),
+	      aiSummary: clean(seo.platform_ai_summary),
+	      aiTopics: listFromSetting(seo.platform_ai_topics),
+	      googleVerify: clean(seo.platform_google_site_verification),
+	      bingVerify: clean(seo.platform_bing_site_verification),
+	      yandexVerify: clean(seo.platform_yandex_verification),
+	      schemaEnabled: seoEnabled(seo.platform_schema_enabled)
+	    };
+	  }
+	  function buildPlatformSchema(settings){
+	    if(!settings.schemaEnabled) return null;
+	    var org = {
+	      '@type': 'Organization',
+	      '@id': settings.schemaUrl + '#organization',
+	      name: settings.schemaName,
+	      url: settings.schemaUrl,
+	      description: settings.schemaDescription
+	    };
+	    if(settings.schemaLogo) org.logo = settings.schemaLogo;
+	    if(settings.sameAs.length) org.sameAs = settings.sameAs;
+	    if(settings.contactEmail) {
+	      org.contactPoint = [{ '@type': 'ContactPoint', email: settings.contactEmail, contactType: 'customer support' }];
+	    }
+	    var website = {
+	      '@type': 'WebSite',
+	      '@id': settings.schemaUrl + '#website',
+	      name: settings.schemaName,
+	      url: settings.schemaUrl,
+	      publisher: { '@id': settings.schemaUrl + '#organization' },
+	      description: settings.description
+	    };
+	    var app = null;
+	    if(settings.schemaType === 'SoftwareApplication'){
+	      app = {
+	        '@type': 'SoftwareApplication',
+	        '@id': settings.schemaUrl + '#software',
+	        name: settings.schemaName,
+	        url: settings.schemaUrl,
+	        applicationCategory: 'BusinessApplication',
+	        operatingSystem: 'Web',
+	        description: settings.schemaDescription,
+	        publisher: { '@id': settings.schemaUrl + '#organization' }
+	      };
+	      if(settings.aiTopics.length) app.keywords = settings.aiTopics.join(', ');
+	    }
+	    return {
+	      '@context': 'https://schema.org',
+	      '@graph': app ? [org, website, app] : [org, website]
+	    };
+	  }
+	  function applyPlatformSeo(seo){
+	    if(!isPlatformSeoRoute()) return;
+	    var settings = platformSeoDefaults(seo);
+	    document.title = settings.title;
+	    setMeta('description', settings.description);
+	    setMeta('robots', settings.robots);
+	    if(settings.keywords) setMeta('keywords', settings.keywords);
+	    setMeta('application-name', settings.schemaName);
+	    if(settings.aiSummary) setMeta('abstract', settings.aiSummary);
+	    setProp('og:title', settings.ogTitle);
+	    setProp('og:description', settings.ogDescription);
+	    setProp('og:type', 'website');
+	    setProp('og:url', settings.canonical);
+	    if(settings.ogImage) setProp('og:image', settings.ogImage);
+	    setMeta('twitter:card', settings.twitterCard);
+	    setMeta('twitter:title', settings.ogTitle);
+	    setMeta('twitter:description', settings.ogDescription);
+	    if(settings.ogImage) setMeta('twitter:image', settings.ogImage);
+	    setCanonical(settings.canonical);
+	    setVerification('google-site-verification', settings.googleVerify);
+	    setVerification('msvalidate.01', settings.bingVerify);
+	    setVerification('yandex-verification', settings.yandexVerify);
+	    setJsonLd('ob-platform-schema', buildPlatformSchema(settings));
+	  }
+	  window.obApplyPlatformSeo = applyPlatformSeo;
 	  function publicSlug(){
     var q = new URLSearchParams(location.search || '').get('expert');
     if(q) return q;
@@ -22794,11 +22923,12 @@ window._handleRTCMessage=function(d){
   }
   window.obTrackPageview = trackPageview;
 
-  function loadPlatformConfig(){
-    fetch(API + '/config').then(function(r){ return r.json(); }).then(function(cfg){
-      if(cfg && cfg.analytics) loadGa4(cfg.analytics.platform_ga4_id, 'platform');
-    }).catch(function(){});
-  }
+	  function loadPlatformConfig(){
+	    fetch(API + '/config').then(function(r){ return r.json(); }).then(function(cfg){
+	      if(cfg && cfg.analytics) loadGa4(cfg.analytics.platform_ga4_id, 'platform');
+	      if(cfg && cfg.seo) applyPlatformSeo(cfg.seo);
+	    }).catch(function(){});
+	  }
 
   var previousApply = window._applyExpertWebsite;
   if(previousApply && !previousApply._obSeoAnalyticsWrapped){
@@ -22845,6 +22975,270 @@ window._handleRTCMessage=function(d){
     applyExpertSeo(window._currentExpert);
     trackPageview();
   }
+})();
+</script>
+<script>
+/* Admin SEO configuration patch 2026-04-26 */
+(function(){
+  if(window._obAdminSeoConfig20260426) return;
+  window._obAdminSeoConfig20260426 = true;
+
+  var BASE = (window.OWNLYBIZ_API_URL || window._OB_BACKEND || 'https://ownlybiz-backend-production.up.railway.app').replace(/\/$/, '');
+  var API = BASE + '/api';
+  var SEO_FIELDS = [
+    'platform_seo_title','platform_seo_description','platform_seo_canonical_url','platform_seo_robots','platform_seo_keywords',
+    'platform_og_title','platform_og_description','platform_og_image_url','platform_twitter_card',
+    'platform_schema_enabled','platform_schema_type','platform_schema_name','platform_schema_url','platform_schema_logo_url',
+    'platform_schema_description','platform_schema_same_as','platform_schema_contact_email',
+    'platform_ai_summary','platform_ai_topics',
+    'platform_google_site_verification','platform_bing_site_verification','platform_yandex_verification'
+  ];
+  var DEFAULTS = {
+    platform_seo_title: 'Ownlybiz - Own your expertise. Own your income.',
+    platform_seo_description: 'Ownlybiz helps independent experts launch paid chat, voice, and video sessions on their own branded website.',
+    platform_seo_canonical_url: 'https://ownlybiz.com/',
+    platform_seo_robots: 'index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1',
+    platform_seo_keywords: 'independent experts, expert website, paid chat, paid video sessions, paid voice calls, creator business platform',
+    platform_og_title: 'Ownlybiz - Own your expertise. Own your income.',
+    platform_og_description: 'Launch your independent expert website with paid live sessions, bookings, analytics, and client tools.',
+    platform_og_image_url: '',
+    platform_twitter_card: 'summary_large_image',
+    platform_schema_enabled: '1',
+    platform_schema_type: 'SoftwareApplication',
+    platform_schema_name: 'Ownlybiz',
+    platform_schema_url: 'https://ownlybiz.com/',
+    platform_schema_logo_url: 'https://ownlybiz.com/favicon.svg',
+    platform_schema_description: 'Ownlybiz is software infrastructure for independent professionals to run paid chat, voice, video, and booking-based expert sessions.',
+    platform_schema_same_as: '',
+    platform_schema_contact_email: '',
+    platform_ai_summary: 'Ownlybiz is a software platform for independent experts who want to operate their own branded expert website, accept paid live sessions, manage bookings, and keep control of their client practice.',
+    platform_ai_topics: 'expert monetization, paid advice sessions, independent professional websites, client booking software, creator business infrastructure',
+    platform_google_site_verification: '',
+    platform_bing_site_verification: '',
+    platform_yandex_verification: ''
+  };
+
+  function token(){ return sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || ''; }
+  function esc(value){ var d = document.createElement('div'); d.textContent = value == null ? '' : String(value); return d.innerHTML; }
+  function $(id){ return document.getElementById(id); }
+  function toastMsg(message, type){
+    try {
+      if(typeof toast === 'function') toast(message, type === 'err' ? 'err' : 'ok');
+      else if(typeof _showToast === 'function') _showToast(message, type === 'err' ? 'red' : 'green');
+    } catch(e) {}
+  }
+  function request(method, path, body){
+    var headers = {'Content-Type':'application/json'};
+    if(token()) headers.Authorization = 'Bearer ' + token();
+    return fetch(API + path, {method:method, headers:headers, body:body ? JSON.stringify(body) : undefined})
+      .then(function(r){ return r.json().catch(function(){ return {}; }).then(function(d){ if(!r.ok) throw new Error(d.error || 'Request failed'); return d; }); });
+  }
+  function textarea(id, label, hint, rows){
+    return '<div style="margin-bottom:14px;"><label class="ps-label" for="' + id + '" style="display:block;margin-bottom:6px;">' + label + '</label>' +
+      '<textarea class="admin-input ob-seo-input" id="' + id + '" rows="' + (rows || 3) + '" style="width:100%;min-height:' + ((rows || 3) * 34) + 'px;resize:vertical;line-height:1.45;"></textarea>' +
+      '<div style="font-size:11px;color:rgba(246,241,233,.38);line-height:1.45;margin-top:6px;">' + hint + '</div></div>';
+  }
+  function input(id, label, hint, placeholder){
+    return '<div style="margin-bottom:14px;"><label class="ps-label" for="' + id + '" style="display:block;margin-bottom:6px;">' + label + '</label>' +
+      '<input class="admin-input ob-seo-input" id="' + id + '" placeholder="' + esc(placeholder || '') + '" style="width:100%;">' +
+      '<div style="font-size:11px;color:rgba(246,241,233,.38);line-height:1.45;margin-top:6px;">' + hint + '</div></div>';
+  }
+  function renderSeoPanel(){
+    return '<div class="admin-content">' +
+      '<div class="admin-card" style="border-color:rgba(196,98,45,.28);background:linear-gradient(135deg,rgba(196,98,45,.13),rgba(31,26,21,.96));">' +
+        '<div class="admin-card-title">SEO & AI Visibility <span class="admin-card-title-sub">Platform-wide Ownlybiz metadata</span></div>' +
+        '<div style="color:rgba(246,241,233,.66);font-size:13px;line-height:1.65;max-width:960px;">Configure the metadata used on the Ownlybiz public marketing pages: search title, description, canonical URL, social previews, crawler directives, site verification tags, and JSON-LD structured data. Expert websites keep their own expert-level SEO configuration separately.</div>' +
+      '</div>' +
+      '<div style="display:grid;grid-template-columns:minmax(0,1.35fr) minmax(320px,.65fr);gap:20px;align-items:start;">' +
+        '<div>' +
+          '<div class="admin-card"><div class="admin-card-title">Search Appearance <span class="admin-card-title-sub">Google/Bing basics</span></div>' +
+            input('platform_seo_title','Meta Title','Best range: roughly 35-65 characters. Keep the brand and the main value proposition clear.','Ownlybiz - Own your expertise. Own your income.') +
+            textarea('platform_seo_description','Meta Description','Best range: roughly 120-160 characters. Write a human snippet that describes the product accurately.',3) +
+            input('platform_seo_canonical_url','Canonical URL','Use the stable canonical homepage URL, normally https://ownlybiz.com/.','https://ownlybiz.com/') +
+            '<div style="margin-bottom:14px;"><label class="ps-label" for="platform_seo_robots" style="display:block;margin-bottom:6px;">Robots Directive</label><select class="admin-input ob-seo-input" id="platform_seo_robots" style="width:100%;"><option value="index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1">Index + rich previews</option><option value="index,follow">Index + follow</option><option value="noindex,follow">Noindex + follow links</option><option value="noindex,nofollow">Noindex + nofollow</option></select><div style="font-size:11px;color:rgba(246,241,233,.38);line-height:1.45;margin-top:6px;">Keep index enabled for the public Ownlybiz marketing site unless you intentionally want to hide it from search.</div></div>' +
+            input('platform_seo_keywords','Entity Keywords / Topics','Not a ranking shortcut, but useful as a consistent internal entity map and fallback metadata.','independent experts, paid video sessions, expert website') +
+          '</div>' +
+          '<div class="admin-card"><div class="admin-card-title">Social Preview <span class="admin-card-title-sub">Open Graph + Twitter/X</span></div>' +
+            input('platform_og_title','Open Graph Title','Usually same as meta title, or a slightly punchier social headline.','Ownlybiz - Own your expertise. Own your income.') +
+            textarea('platform_og_description','Open Graph Description','Shown by link unfurlers when Ownlybiz is shared. Keep it accurate and benefit-led.',3) +
+            input('platform_og_image_url','Open Graph Image URL','Use an absolute HTTPS image URL. Recommended social preview size is 1200x630.','https://ownlybiz.com/og-image.png') +
+            '<div style="margin-bottom:14px;"><label class="ps-label" for="platform_twitter_card" style="display:block;margin-bottom:6px;">Twitter/X Card</label><select class="admin-input ob-seo-input" id="platform_twitter_card" style="width:100%;"><option value="summary_large_image">Large image summary</option><option value="summary">Compact summary</option></select></div>' +
+          '</div>' +
+          '<div class="admin-card"><div class="admin-card-title">Structured Data <span class="admin-card-title-sub">JSON-LD knowledge graph</span></div>' +
+            '<div class="ps-row" style="margin-bottom:14px;"><div><div class="ps-label">Enable JSON-LD</div><div style="font-size:11px;color:rgba(246,241,233,.38);">Adds Organization, WebSite, and optional SoftwareApplication schema that matches the public page.</div></div><label class="toggle-sm"><input type="checkbox" id="platform_schema_enabled" class="ob-seo-input"><div class="toggle-sm-track"></div><div class="toggle-sm-thumb"></div></label></div>' +
+            '<div style="margin-bottom:14px;"><label class="ps-label" for="platform_schema_type" style="display:block;margin-bottom:6px;">Primary Schema Type</label><select class="admin-input ob-seo-input" id="platform_schema_type" style="width:100%;"><option value="SoftwareApplication">SoftwareApplication</option><option value="Organization">Organization</option><option value="WebSite">WebSite</option></select></div>' +
+            input('platform_schema_name','Schema Name','The entity name search engines and AI systems should associate with this website.','Ownlybiz') +
+            input('platform_schema_url','Schema URL','Absolute URL for the main entity.','https://ownlybiz.com/') +
+            input('platform_schema_logo_url','Logo / Favicon URL','Stable, crawlable square logo or favicon URL.','https://ownlybiz.com/favicon.svg') +
+            textarea('platform_schema_description','Schema Description','Plain-language description of the business. Must match what the public page actually says.',3) +
+            textarea('platform_schema_same_as','SameAs Profiles','One URL per line for official social profiles, Crunchbase, LinkedIn, etc. Leave blank until real profiles exist.',4) +
+            input('platform_schema_contact_email','Public Contact Email','Optional support/contact email for structured data.','support@ownlybiz.com') +
+          '</div>' +
+          '<div class="admin-card"><div class="admin-card-title">AI Visibility <span class="admin-card-title-sub">Answer-engine clarity</span></div>' +
+            textarea('platform_ai_summary','AI / Entity Summary','A concise, factual summary that is reused in metadata and structured data. Avoid hype, unsupported claims, and hidden content that contradicts the page.',4) +
+            textarea('platform_ai_topics','AI Topic Map','Comma-separated topics you want Ownlybiz associated with. Use terms visible on the website and supported by the product.',3) +
+          '</div>' +
+          '<div class="admin-card"><div class="admin-card-title">Search Console Verification <span class="admin-card-title-sub">Optional</span></div>' +
+            input('platform_google_site_verification','Google Site Verification','Paste only the verification token from Google Search Console.','google-token') +
+            input('platform_bing_site_verification','Bing Site Verification','Paste only the msvalidate.01 token from Bing Webmaster Tools.','bing-token') +
+            input('platform_yandex_verification','Yandex Verification','Optional Yandex verification token.','yandex-token') +
+          '</div>' +
+          '<div style="display:flex;gap:10px;flex-wrap:wrap;margin:18px 0 28px;"><button class="btn btn-sm" onclick="obSaveAdminSeoSettings()" style="background:var(--terra);color:white;">Save SEO Configuration</button><button class="btn btn-sm" onclick="obGenerateSeoDefaults()" style="background:rgba(246,241,233,.06);color:rgba(246,241,233,.78);border:1px solid rgba(246,241,233,.14);">Restore Strong Defaults</button><button class="btn btn-sm" onclick="obPreviewAdminSeo()" style="background:rgba(196,98,45,.12);color:var(--terra-light);border:1px solid rgba(196,98,45,.28);">Refresh Preview</button></div>' +
+        '</div>' +
+        '<div style="position:sticky;top:118px;">' +
+          '<div class="admin-card"><div class="admin-card-title">SERP Preview</div><div id="ob-seo-preview" style="background:#f8fafc;border-radius:12px;padding:16px;color:#111827;font-family:Arial,sans-serif;"></div></div>' +
+          '<div class="admin-card"><div class="admin-card-title">Quality Checks</div><div id="ob-seo-checks" style="display:flex;flex-direction:column;gap:10px;"></div></div>' +
+          '<div class="admin-card"><div class="admin-card-title">What This Updates</div><div style="font-size:12px;color:rgba(246,241,233,.58);line-height:1.6;">Document title, meta description, robots, canonical, Open Graph, Twitter card, verification tags, platform GA4 compatibility, and JSON-LD. Expert site SEO remains controlled from each expert dashboard.</div></div>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  }
+  function ensureAdminSeoUi(){
+    var settingsPanel = $('admin-panel-platform-settings');
+    if(!settingsPanel) return;
+    if(!$('admin-panel-seo-config')){
+      var panel = document.createElement('div');
+      panel.className = 'admin-tab-panel';
+      panel.id = 'admin-panel-seo-config';
+      panel.innerHTML = renderSeoPanel();
+      settingsPanel.parentNode.insertBefore(panel, settingsPanel);
+      panel.querySelectorAll('.ob-seo-input').forEach(function(el){
+        el.addEventListener('input', window.obPreviewAdminSeo);
+        el.addEventListener('change', window.obPreviewAdminSeo);
+      });
+    }
+    if(!document.querySelector('.admin-nav-item[data-panel="seo-config"]')){
+      var ref = document.querySelector('.admin-nav-item[onclick*="platform-settings"]');
+      if(ref && ref.parentNode){
+        var item = document.createElement('div');
+        item.className = 'admin-nav-item';
+        item.dataset.panel = 'seo-config';
+        item.innerHTML = '<span>🔎</span> SEO Visibility';
+        item.onclick = function(){ window.adminNav ? window.adminNav(item, 'seo-config') : window.adminTabSwitch(null, 'seo-config'); };
+        ref.parentNode.insertBefore(item, ref);
+      }
+    }
+    if(!document.querySelector('.admin-tab[data-panel="seo-config"]')){
+      var tabBar = $('admin-tab-bar');
+      var settingsTab = tabBar && tabBar.querySelector('.admin-tab[onclick*="platform-settings"]');
+      if(tabBar){
+        var tab = document.createElement('div');
+        tab.className = 'admin-tab';
+        tab.dataset.panel = 'seo-config';
+        tab.textContent = 'SEO';
+        tab.onclick = function(){ window.adminTabSwitch(tab, 'seo-config'); };
+        tabBar.insertBefore(tab, settingsTab || null);
+      }
+    }
+  }
+  function applyTitle(panel){
+    if(panel !== 'seo-config') return;
+    var title = $('admin-page-title');
+    if(title) title.textContent = 'SEO Visibility';
+    document.querySelectorAll('.admin-tab').forEach(function(tab){
+      if(tab.dataset && tab.dataset.panel === 'seo-config') tab.classList.add('active');
+    });
+    setTimeout(window.loadAdminSeoSettings, 60);
+  }
+  function wrapAdminNavigation(){
+    if(window.adminTabSwitch && !window.adminTabSwitch._obSeoConfigWrapped){
+      var previousTab = window.adminTabSwitch;
+      window.adminTabSwitch = function(tabEl, panel){
+        var ret = previousTab.apply(this, arguments);
+        applyTitle(panel);
+        return ret;
+      };
+      window.adminTabSwitch._obSeoConfigWrapped = true;
+    }
+    if(window.adminNav && !window.adminNav._obSeoConfigWrapped){
+      var previousNav = window.adminNav;
+      window.adminNav = function(el, panel){
+        var ret = previousNav.apply(this, arguments);
+        applyTitle(panel);
+        return ret;
+      };
+      window.adminNav._obSeoConfigWrapped = true;
+    }
+  }
+  function fieldValue(id){
+    var el = $(id);
+    if(!el) return '';
+    if(el.type === 'checkbox') return el.checked ? '1' : '0';
+    return el.value || '';
+  }
+  function setField(id, value){
+    var el = $(id);
+    if(!el) return;
+    if(el.type === 'checkbox') el.checked = !['0','false','off','no'].includes(String(value || '').toLowerCase());
+    else el.value = value == null ? '' : String(value);
+  }
+  function readPayload(){
+    var payload = {};
+    SEO_FIELDS.forEach(function(key){ payload[key] = fieldValue(key); });
+    return payload;
+  }
+  function validUrl(value){
+    if(!value) return true;
+    try { var u = new URL(value); return u.protocol === 'http:' || u.protocol === 'https:'; } catch(e) { return false; }
+  }
+  function check(label, ok, warn){
+    return '<div style="display:flex;gap:9px;align-items:flex-start;font-size:12px;color:' + (ok ? '#86efac' : (warn ? '#fbbf24' : '#f87171')) + ';line-height:1.45;"><span>' + (ok ? '✓' : (warn ? '!' : 'x')) + '</span><span>' + label + '</span></div>';
+  }
+  window.obPreviewAdminSeo = function(){
+    var p = readPayload();
+    var title = p.platform_seo_title || DEFAULTS.platform_seo_title;
+    var desc = p.platform_seo_description || DEFAULTS.platform_seo_description;
+    var canonical = p.platform_seo_canonical_url || DEFAULTS.platform_seo_canonical_url;
+    var preview = $('ob-seo-preview');
+    if(preview){
+      preview.innerHTML = '<div style="font-size:13px;color:#047857;margin-bottom:5px;">' + esc(canonical) + '</div>' +
+        '<div style="font-size:20px;color:#1a0dab;line-height:1.25;margin-bottom:5px;">' + esc(title) + '</div>' +
+        '<div style="font-size:14px;color:#4b5563;line-height:1.45;">' + esc(desc) + '</div>';
+    }
+    var checks = $('ob-seo-checks');
+    if(checks){
+      var tLen = title.length;
+      var dLen = desc.length;
+      var noindex = String(p.platform_seo_robots || '').indexOf('noindex') >= 0;
+      checks.innerHTML =
+        check('Title length: ' + tLen + ' characters', tLen >= 35 && tLen <= 70, tLen > 0) +
+        check('Description length: ' + dLen + ' characters', dLen >= 110 && dLen <= 170, dLen > 0) +
+        check('Canonical URL is valid', validUrl(canonical), false) +
+        check(noindex ? 'Robots currently hides the platform from search' : 'Robots allow indexing and following', !noindex, noindex) +
+        check(p.platform_schema_enabled === '1' ? 'Structured data enabled' : 'Structured data disabled', p.platform_schema_enabled === '1', p.platform_schema_enabled !== '1') +
+        check(p.platform_og_image_url ? 'Social image configured' : 'Social image not configured yet', !!p.platform_og_image_url, true);
+    }
+  };
+  window.loadAdminSeoSettings = function(){
+    ensureAdminSeoUi();
+    request('GET', '/admin/settings').then(function(data){
+      var settings = Object.assign({}, DEFAULTS, data.settings || {});
+      SEO_FIELDS.forEach(function(key){ setField(key, settings[key]); });
+      window.obPreviewAdminSeo();
+    }).catch(function(err){ toastMsg(err.message || 'Could not load SEO settings', 'err'); });
+  };
+  window.obSaveAdminSeoSettings = function(){
+    var payload = readPayload();
+    if(!validUrl(payload.platform_seo_canonical_url)) return toastMsg('Canonical URL must be a valid http/https URL.', 'err');
+    if(payload.platform_og_image_url && !validUrl(payload.platform_og_image_url)) return toastMsg('Open Graph image must be a valid http/https URL.', 'err');
+    request('PUT', '/admin/settings', payload).then(function(){
+      toastMsg('SEO configuration saved.', 'ok');
+      if(typeof window.obApplyPlatformSeo === 'function') window.obApplyPlatformSeo(payload);
+      window.obPreviewAdminSeo();
+    }).catch(function(err){ toastMsg(err.message || 'Could not save SEO settings', 'err'); });
+  };
+  window.obGenerateSeoDefaults = function(){
+    SEO_FIELDS.forEach(function(key){ setField(key, DEFAULTS[key]); });
+    window.obPreviewAdminSeo();
+  };
+
+  function boot(){
+    ensureAdminSeoUi();
+    wrapAdminNavigation();
+    if($('admin-panel-seo-config') && $('admin-panel-seo-config').classList.contains('active')) window.loadAdminSeoSettings();
+  }
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+  [300, 900, 1800, 3500].forEach(function(ms){ setTimeout(boot, ms); });
 })();
 </script>
 </body>

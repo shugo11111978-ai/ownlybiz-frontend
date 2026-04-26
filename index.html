@@ -4374,13 +4374,20 @@ window._OB_BACKEND='https://ownlybiz-backend-production.up.railway.app';
 	                  <div><div class="settings-field-label">Privacy contact email</div><div class="settings-field-sub">Shown in your privacy notice for client requests</div></div>
 	                  <input class="settings-field-input" id="privacy-contact-email" type="email" placeholder="privacy@yourdomain.com">
 	                </div>
-	                <div class="settings-field-row" style="align-items:flex-start;">
-	                  <div><div class="settings-field-label">Expert privacy note</div><div class="settings-field-sub">Optional notice for your public expert site</div></div>
-	                  <textarea class="settings-field-input" id="privacy-notice" rows="4" style="resize:vertical;max-width:420px;" placeholder="Example: I use Ownlybiz to manage sessions and payments. Contact me here for access, correction, deletion, or portability requests."></textarea>
-	                </div>
-	                <div class="settings-field-row">
-	                  <div><div class="settings-field-label">Controller acknowledgement</div><div class="settings-field-sub">Required if you handle client personal data as an independent expert</div></div>
-	                  <label style="display:flex;align-items:center;gap:10px;font-size:13px;color:var(--brown);font-weight:700;">
+		                <div class="settings-field-row" style="align-items:flex-start;">
+		                  <div><div class="settings-field-label">Expert privacy note</div><div class="settings-field-sub">Optional notice for your public expert site</div></div>
+		                  <textarea class="settings-field-input" id="privacy-notice" rows="4" style="resize:vertical;max-width:420px;" placeholder="Example: I use Ownlybiz to manage sessions and payments. Contact me here for access, correction, deletion, or portability requests."></textarea>
+		                </div>
+		                <div class="settings-field-row">
+		                  <div><div class="settings-field-label">Cookie consent banner</div><div class="settings-field-sub">Show privacy choices before optional analytics or marketing on your expert site</div></div>
+		                  <label class="toggle-sm" title="Toggle expert-site cookie banner">
+		                    <input type="checkbox" id="expert-cookie-banner-enabled" checked>
+		                    <div class="toggle-sm-track"></div><div class="toggle-sm-thumb"></div>
+		                  </label>
+		                </div>
+		                <div class="settings-field-row">
+		                  <div><div class="settings-field-label">Controller acknowledgement</div><div class="settings-field-sub">Required if you handle client personal data as an independent expert</div></div>
+		                  <label style="display:flex;align-items:center;gap:10px;font-size:13px;color:var(--brown);font-weight:700;">
 	                    <input type="checkbox" id="gdpr-dpa-ack" style="width:18px;height:18px;accent-color:var(--terra);"> I understand my independent privacy and compliance responsibilities.
 	                  </label>
 	                </div>
@@ -22351,10 +22358,42 @@ window._handleRTCMessage=function(d){
     try { localStorage.setItem(CONSENT_KEY, JSON.stringify(payload)); } catch(e) {}
     return payload;
   }
-  function hasConsentChoice(){ return !!getConsent().updated_at; }
-  function hasAnalyticsConsent(){ return getConsent().analytics === true; }
-  window.obHasAnalyticsConsent = hasAnalyticsConsent;
-  function closeConsent(){ var el = document.getElementById('privacy-consent'); if(el) el.classList.remove('active'); }
+	  function hasConsentChoice(){ return !!getConsent().updated_at; }
+	  function hasAnalyticsConsent(){ return getConsent().analytics === true; }
+	  window.obHasAnalyticsConsent = hasAnalyticsConsent;
+	  function flagEnabled(value, fallback){
+	    if(value === undefined || value === null || value === '') return fallback !== false;
+	    return ['0','false','off','no','disabled'].indexOf(String(value).trim().toLowerCase()) < 0;
+	  }
+	  function readPlatformConsentBanner(){
+	    return fetch(API + '/config').then(function(r){ return r.json(); }).then(function(cfg){
+	      var privacy = cfg && cfg.privacy ? cfg.privacy : {};
+	      return flagEnabled(privacy.cookie_banner_enabled, true);
+	    }).catch(function(){ return true; });
+	  }
+	  function readExpertConsentBanner(){
+	    var data = window._currentExpert || {};
+	    return flagEnabled(data.privacy_cookie_banner_enabled, true);
+	  }
+	  function waitForExpertConsentBanner(){
+	    return new Promise(function(resolve){
+	      var tries = 0;
+	      function check(){
+	        tries += 1;
+	        var data = window._currentExpert || {};
+	        if(data.privacy_cookie_banner_enabled !== undefined || data.slug || data.id || data.user_id || tries >= 25){
+	          resolve(readExpertConsentBanner());
+	          return;
+	        }
+	        setTimeout(check, 200);
+	      }
+	      check();
+	    });
+	  }
+	  function shouldAutoShowConsentBanner(){
+	    return expertSiteContext() ? waitForExpertConsentBanner() : readPlatformConsentBanner();
+	  }
+	  function closeConsent(){ var el = document.getElementById('privacy-consent'); if(el) el.classList.remove('active'); }
   function openConsent(){
     var el = document.getElementById('privacy-consent');
     if(!el){
@@ -22425,15 +22464,16 @@ window._handleRTCMessage=function(d){
       '</div>' +
       '<div class="gdpr-table-wrap"><table class="gdpr-table"><thead><tr><th>Type</th><th>Requester</th><th>Status</th><th>Due</th><th>Details</th><th></th></tr></thead><tbody>' + requestRows(requests, 'expert') + '</tbody></table></div>';
   }
-  function renderAdminPrivacy(root, requestsData, settingsData){
-    var s = settingsData.settings || {};
-    var stats = requestsData.stats || {};
-    root.innerHTML =
+	  function renderAdminPrivacy(root, requestsData, settingsData){
+	    var s = settingsData.settings || {};
+	    var stats = requestsData.stats || {};
+	    var consentEnabled = flagEnabled(s.cookie_banner_enabled, true);
+	    root.innerHTML =
       '<div class="admin-kpi-row" style="grid-template-columns:repeat(4,1fr);">' +
         '<div class="admin-kpi"><div class="admin-kpi-label">Privacy Requests</div><div class="admin-kpi-val">' + (stats.total || 0) + '</div><div class="admin-kpi-change">Tracked workflow</div></div>' +
         '<div class="admin-kpi"><div class="admin-kpi-label">Open</div><div class="admin-kpi-val">' + (stats.pending || 0) + '</div><div class="admin-kpi-change warning">Needs handling</div></div>' +
         '<div class="admin-kpi"><div class="admin-kpi-label">Overdue</div><div class="admin-kpi-val">' + (stats.overdue || 0) + '</div><div class="admin-kpi-change warning">Past due date</div></div>' +
-        '<div class="admin-kpi"><div class="admin-kpi-label">Cookie Consent</div><div class="admin-kpi-val">On</div><div class="admin-kpi-change">Analytics gated</div></div>' +
+	        '<div class="admin-kpi"><div class="admin-kpi-label">Cookie Consent</div><div class="admin-kpi-val">' + (consentEnabled ? 'On' : 'Off') + '</div><div class="admin-kpi-change">Analytics gated</div></div>' +
       '</div>' +
       '<div class="admin-card">' +
         '<div class="admin-card-title">GDPR / Privacy Controls <span class="admin-card-title-sub">Platform defaults</span></div>' +
@@ -22456,9 +22496,9 @@ window._handleRTCMessage=function(d){
       '<div class="admin-card"><div class="admin-card-title">Data Subject Request Queue</div>' +
         '<div style="overflow:auto;"><table class="experts-table" style="width:100%;"><thead><tr><th>Type</th><th>Requester</th><th>Status</th><th>Due</th><th>Details</th><th></th></tr></thead><tbody>' + requestRows(requestsData.requests || [], 'platform') + '</tbody></table></div>' +
       '</div>';
-    var cb = document.getElementById('cookie_banner_enabled');
-    if(cb) cb.checked = String(s.cookie_banner_enabled || '1') !== '0';
-  }
+	    var cb = document.getElementById('cookie_banner_enabled');
+	    if(cb) cb.checked = consentEnabled;
+	  }
 
   window.loadExpertGdpr = function(){
     var c = document.getElementById('expert-gdpr-manager');
@@ -22469,13 +22509,15 @@ window._handleRTCMessage=function(d){
       privacyApi('/auth/me').catch(function(){ return {}; })
     ]).then(function(results){
       var profile = (results[1] && results[1].profile) || {};
-      var email = document.getElementById('privacy-contact-email');
-      var notice = document.getElementById('privacy-notice');
-      var ack = document.getElementById('gdpr-dpa-ack');
-      if(email && !email.value) email.value = profile.privacy_contact_email || '';
-      if(notice && !notice.value) notice.value = profile.privacy_notice || '';
-      if(ack) ack.checked = !!profile.gdpr_dpa_accepted_at;
-      renderExpertPrivacy(c, results[0] || {});
+	      var email = document.getElementById('privacy-contact-email');
+	      var notice = document.getElementById('privacy-notice');
+	      var ack = document.getElementById('gdpr-dpa-ack');
+	      var banner = document.getElementById('expert-cookie-banner-enabled');
+	      if(email && !email.value) email.value = profile.privacy_contact_email || '';
+	      if(notice && !notice.value) notice.value = profile.privacy_notice || '';
+	      if(ack) ack.checked = !!profile.gdpr_dpa_accepted_at;
+	      if(banner) banner.checked = flagEnabled(profile.privacy_cookie_banner_enabled, true);
+	      renderExpertPrivacy(c, results[0] || {});
     }).catch(function(err){
       c.innerHTML = '<div style="padding:18px;color:#ef4444;">Privacy manager failed: ' + esc(err.message || '') + '</div>';
     });
@@ -22491,17 +22533,21 @@ window._handleRTCMessage=function(d){
       .catch(function(err){ root.innerHTML = '<div class="admin-card" style="padding:28px;color:#f87171;">Privacy manager failed: ' + esc(err.message || '') + '</div>'; });
   };
   window.obSaveExpertPrivacySettings = function(){
-    var body = {
-      privacy_contact_email: (document.getElementById('privacy-contact-email') || {}).value || '',
-      privacy_notice: (document.getElementById('privacy-notice') || {}).value || ''
-    };
-    var ack = document.getElementById('gdpr-dpa-ack');
-    if(ack && ack.checked) body.gdpr_dpa_accepted_at = Math.floor(Date.now()/1000);
-    var status = document.getElementById('save-status-privacy');
-    if(status) status.textContent = 'Saving...';
-    privacyApi('/auth/me', {method:'PUT', body:JSON.stringify(body)}).then(function(){
-      if(status){ status.textContent = 'Saved'; status.style.color = 'var(--green,#22c55e)'; }
-      toastLegal('Privacy settings saved');
+	    var body = {
+	      privacy_contact_email: (document.getElementById('privacy-contact-email') || {}).value || '',
+	      privacy_notice: (document.getElementById('privacy-notice') || {}).value || ''
+	    };
+	    var ack = document.getElementById('gdpr-dpa-ack');
+	    var banner = document.getElementById('expert-cookie-banner-enabled');
+	    if(ack && ack.checked) body.gdpr_dpa_accepted_at = Math.floor(Date.now()/1000);
+	    if(banner) body.privacy_cookie_banner_enabled = banner.checked ? 1 : 0;
+	    var status = document.getElementById('save-status-privacy');
+	    if(status) status.textContent = 'Saving...';
+	    privacyApi('/auth/me', {method:'PUT', body:JSON.stringify(body)}).then(function(){
+	      window._currentExpert = Object.assign(window._currentExpert || {}, body);
+	      if(banner && !banner.checked) closeConsent();
+	      if(status){ status.textContent = 'Saved'; status.style.color = 'var(--green,#22c55e)'; }
+	      toastLegal('Privacy settings saved');
     }).catch(function(err){
       if(status) status.textContent = 'Error';
       toastLegal(err.message || 'Save failed', 'err');
@@ -22513,10 +22559,14 @@ window._handleRTCMessage=function(d){
       var el = document.getElementById(id);
       if(el) payload[id] = el.value || '';
     });
-    var cb = document.getElementById('cookie_banner_enabled');
-    if(cb) payload.cookie_banner_enabled = cb.checked ? '1' : '0';
-    privacyApi('/admin/settings', {method:'PUT', body:JSON.stringify(payload)}).then(function(){ toastLegal('Privacy controls saved'); })
-      .catch(function(err){ toastLegal(err.message || 'Save failed', 'err'); });
+	    var cb = document.getElementById('cookie_banner_enabled');
+	    if(cb) payload.cookie_banner_enabled = cb.checked ? '1' : '0';
+	    privacyApi('/admin/settings', {method:'PUT', body:JSON.stringify(payload)}).then(function(){
+	      if(cb && !cb.checked) closeConsent();
+	      toastLegal('Privacy controls saved');
+	      setTimeout(window.loadAdminGdpr, 150);
+	    })
+	      .catch(function(err){ toastLegal(err.message || 'Save failed', 'err'); });
 	  };
 	  window.obExportPrivacyCsv = function(){
 	    fetch(API + '/privacy/requests/export.csv', {headers: token() ? {Authorization:'Bearer ' + token()} : {}}).then(function(r){
@@ -22602,10 +22652,14 @@ window._handleRTCMessage=function(d){
     window.adminNav._obPrivacyWrapped = true;
   }
 
-  function boot(){
-    renderLegalPage();
-    if(!hasConsentChoice()) setTimeout(openConsent, 1000);
-  }
+	  function boot(){
+	    renderLegalPage();
+	    if(!hasConsentChoice()){
+	      shouldAutoShowConsentBanner().then(function(enabled){
+	        if(enabled && !hasConsentChoice()) setTimeout(openConsent, 1000);
+	      });
+	    }
+	  }
   if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
 </script>

@@ -1818,13 +1818,13 @@ window._OB_BACKEND='https://ownlybiz-backend-production.up.railway.app';
   <nav class="mkt-nav" id="mkt-nav">
     <div class="mkt-logo" onclick="showMktPage('home')" style="cursor:pointer;">Own<span>lybiz</span></div>
     <ul class="mkt-links" id="mkt-links">
-      <li><a class="mkt-nav-link active" onclick="showMktPage('home')">Home</a></li>
-      <li><a class="mkt-nav-link" onclick="showMktPage('how')">How It Works</a></li>
-      <li><a class="mkt-nav-link" onclick="showMktPage('features')">Features</a></li>
-      <li><a class="mkt-nav-link" onclick="showMktPage('pricing')">Pricing</a></li>
-      <li><a class="mkt-nav-link" onclick="showMktPage('experts')">Expert Types</a></li>
-      <li><a class="mkt-nav-link" onclick="showMktPage('blog')">Blog</a></li>
-      <li><a class="mkt-nav-link" onclick="showMktPage('login')" style="color:var(--terra);font-weight:700;">Expert Login →</a></li>
+      <li><a class="mkt-nav-link active" href="/" onclick="showMktPage('home')">Home</a></li>
+      <li><a class="mkt-nav-link" href="/how" onclick="showMktPage('how')">How It Works</a></li>
+      <li><a class="mkt-nav-link" href="/features" onclick="showMktPage('features')">Features</a></li>
+      <li><a class="mkt-nav-link" href="/pricing" onclick="showMktPage('pricing')">Pricing</a></li>
+      <li><a class="mkt-nav-link" href="/experts" onclick="showMktPage('experts')">Expert Types</a></li>
+      <li><a class="mkt-nav-link" href="/blog" onclick="showMktPage('blog')">Blog</a></li>
+      <li><a class="mkt-nav-link" href="/login" onclick="showMktPage('login')" style="color:var(--terra);font-weight:700;">Expert Login →</a></li>
     </ul>
     <div class="nav-actions" id="mkt-nav-actions">
       <a class="nav-login" href="#" onclick="showMktPage('login');return false;">Log in</a>
@@ -18463,7 +18463,7 @@ window._handleRTCMessage=function(d){
     if(links){
       var loginLink=Array.from(links.children).find(function(li){return (li.textContent||'').indexOf('Expert Login')>=0;});
       var li=document.createElement('li');
-      li.innerHTML='<a class="mkt-nav-link" onclick="showMktPage(\'contact\')">Contact</a>';
+      li.innerHTML='<a class="mkt-nav-link" href="/contact" onclick="showMktPage(\'contact\')">Contact</a>';
       links.insertBefore(li, loginLink || null);
     }
     var view=document.getElementById('view-1');
@@ -23329,8 +23329,8 @@ window._handleRTCMessage=function(d){
 <script>
 /* URL routing infrastructure 2026-04-26 */
 (function(){
-  if(window._obUrlRouting20260426) return;
-  window._obUrlRouting20260426 = true;
+  if(window._obUrlRouting20260426Lean) return;
+  window._obUrlRouting20260426Lean = true;
 
   var EXPERT_PAGES = {home:'', about:'about', services:'services', reviews:'reviews', book:'book', contact:'contact'};
   var EXPERT_SEGMENTS = {about:'about', services:'services', reviews:'reviews', book:'book', contact:'contact'};
@@ -23363,7 +23363,8 @@ window._handleRTCMessage=function(d){
     experts:1, blog:1, contact:1, terms:1, legal:1
   };
   var applyingRoute = false;
-  var suppressUntil = 0;
+  var lastExpertLoadSlug = '';
+  var lastExpertLoadAt = 0;
 
   function clean(value){ return String(value == null ? '' : value).trim(); }
   function pathParts(){
@@ -23409,9 +23410,6 @@ window._handleRTCMessage=function(d){
   function dashboardSlug(){
     return cleanSlug(window._dashSlug || (typeof window._getMySlug === 'function' ? window._getMySlug() : '') || window._myExpertSlug || window._adminViewingExpertSlug || window._currentExpertSlug || (window._currentExpert && window._currentExpert.slug));
   }
-  function shouldPush(){
-    return !applyingRoute && Date.now() > suppressUntil;
-  }
   function track(path){
     setTimeout(function(){
       try { if(typeof window.obTrackPageview === 'function') window.obTrackPageview({path:path}); } catch(e) {}
@@ -23427,7 +23425,7 @@ window._handleRTCMessage=function(d){
     }
   }
   function writeUrl(path, replace){
-    if(!shouldPush() || !path) return;
+    if(applyingRoute || !path) return;
     var current = (location.pathname || '/') + (location.search || '');
     if(current === path) return;
     history[replace ? 'replaceState' : 'pushState']({obRoute:true}, '', path);
@@ -23467,6 +23465,12 @@ window._handleRTCMessage=function(d){
     var active = document.querySelector('.db-tab-panel.active[id^="db-panel-"]');
     return active ? active.id.replace('db-panel-', '') : '';
   }
+  function userRole(){
+    try {
+      var raw = sessionStorage.getItem('ob_u') || localStorage.getItem('ob_u') || '{}';
+      return (JSON.parse(raw).role || '').toLowerCase();
+    } catch(e) { return ''; }
+  }
   function parseRoute(){
     var parts = pathParts();
     var first = clean(parts[0]);
@@ -23484,77 +23488,86 @@ window._handleRTCMessage=function(d){
     if(platformHost()) return {type:'marketing', page:PATH_TO_MKT[first] || 'home'};
     return {type:'unknown'};
   }
+  function safeShowExpertPage(page){
+    page = EXPERT_PAGES.hasOwnProperty(page) ? page : 'home';
+    window._pendingExpertPage = page;
+    if(typeof window.showExpertPage === 'function') window.showExpertPage(page);
+  }
+  function loadExpertOnce(slug){
+    slug = cleanSlug(slug);
+    if(!slug || typeof window.loadExpertWebsite !== 'function') return;
+    var currentSlug = cleanSlug(window._currentExpertSlug || (window._currentExpert && window._currentExpert.slug));
+    var now = Date.now();
+    if(currentSlug === slug) return;
+    if(lastExpertLoadSlug === slug && now - lastExpertLoadAt < 2500) return;
+    lastExpertLoadSlug = slug;
+    lastExpertLoadAt = now;
+    window.loadExpertWebsite(slug);
+  }
   function applyExpertRoute(route){
     if(route.slug){
       window._browseExpert = route.slug;
       window._currentExpertSlug = route.slug;
     }
-    window._pendingExpertPage = route.page || 'home';
-    if(typeof window.switchView === 'function') window.switchView(4);
-    if(route.slug && typeof window.loadExpertWebsite === 'function') window.loadExpertWebsite(route.slug);
-    [80, 350, 900, 1600].forEach(function(ms){
-      setTimeout(function(){
-        if(typeof window.showExpertPage === 'function') window.showExpertPage(window._pendingExpertPage || 'home');
-      }, ms);
-    });
+    if(typeof window.switchView === 'function' && !document.querySelector('#view-4.active')) window.switchView(4);
+    safeShowExpertPage(route.page || 'home');
+    loadExpertOnce(route.slug);
   }
   function applyDashRoute(route){
     if(route.slug) window._dashSlug = route.slug;
-    if(typeof window.switchView === 'function') window.switchView(3);
-    if(route.slug && typeof window.loadDashboard === 'function') setTimeout(function(){ window.loadDashboard(route.slug); }, 80);
-    [220, 800, 1500].forEach(function(ms){
-      setTimeout(function(){
-        var panel = route.panel || 'overview';
-        if(typeof window.dbNav === 'function') window.dbNav(findByOnclick('.db-nav-item', panel), panel);
-        if(panel === 'settings' && route.settings && typeof window.settingsNav === 'function'){
-          var el = findByOnclick('.settings-nav-item', route.settings);
-          if(el) window.settingsNav(el, route.settings);
-        }
-      }, ms);
-    });
-  }
-  function applyAdminRoute(route){
-    var user = {};
-    try { user = JSON.parse(sessionStorage.getItem('ob_u') || localStorage.getItem('ob_u') || '{}'); } catch(e) {}
-    if(user.role !== 'admin'){
+    if(userRole() !== 'expert' && userRole() !== 'admin'){
       try { sessionStorage.setItem('ob_next', location.pathname + location.search); } catch(e) {}
       if(typeof window.switchView === 'function') window.switchView(1);
       if(typeof window.showMktPage === 'function') window.showMktPage('login');
       applyPlatformFallbackSeo();
-      [250, 900, 1700].forEach(function(ms){ setTimeout(applyPlatformFallbackSeo, ms); });
+      if(typeof window._markRouteReady === 'function') window._markRouteReady('dashboard');
+      return;
+    }
+    if(typeof window.switchView === 'function' && !document.querySelector('#view-3.active')) window.switchView(3);
+    if(route.slug && typeof window.loadDashboard === 'function') window.loadDashboard(route.slug);
+    setTimeout(function(){
+      var panel = route.panel || 'overview';
+      if(typeof window.dbNav === 'function') window.dbNav(findByOnclick('.db-nav-item', panel), panel);
+      if(panel === 'settings' && route.settings && typeof window.settingsNav === 'function'){
+        var el = findByOnclick('.settings-nav-item', route.settings);
+        if(el) window.settingsNav(el, route.settings);
+      }
+    }, 80);
+  }
+  function applyAdminRoute(route){
+    if(userRole() !== 'admin'){
+      try { sessionStorage.setItem('ob_next', location.pathname + location.search); } catch(e) {}
+      if(typeof window.switchView === 'function') window.switchView(1);
+      if(typeof window.showMktPage === 'function') window.showMktPage('login');
+      applyPlatformFallbackSeo();
       if(typeof window._markRouteReady === 'function') window._markRouteReady('admin');
       return;
     }
     applyPlatformFallbackSeo();
-    [250, 900, 1700].forEach(function(ms){ setTimeout(applyPlatformFallbackSeo, ms); });
-    if(typeof window.switchView === 'function') window.switchView(6);
-    [160, 650, 1400].forEach(function(ms){
-      setTimeout(function(){
-        var panel = route.panel || 'dashboard';
-        var nav = findByOnclick('.admin-nav-item', panel);
-        if(nav && typeof window.adminNav === 'function') window.adminNav(nav, panel);
-        else if(typeof window.adminTabSwitch === 'function') window.adminTabSwitch(findByOnclick('.admin-tab', panel), panel);
-      }, ms);
-    });
-    setTimeout(function(){ if(typeof window._markRouteReady === 'function') window._markRouteReady('admin'); }, 1800);
+    if(typeof window.switchView === 'function' && !document.querySelector('#view-6.active')) window.switchView(6);
+    var panel = route.panel || 'dashboard';
+    var nav = findByOnclick('.admin-nav-item', panel);
+    if(nav && typeof window.adminNav === 'function') window.adminNav(nav, panel);
+    else if(typeof window.adminTabSwitch === 'function') window.adminTabSwitch(findByOnclick('.admin-tab', panel), panel);
+    if(typeof window._markRouteReady === 'function') window._markRouteReady('admin');
   }
   function applyMarketingRoute(route){
-    if(typeof window.switchView === 'function') window.switchView(1);
+    if(typeof window.switchView === 'function' && !document.querySelector('#view-1.active')) window.switchView(1);
     if(typeof window.showMktPage === 'function') window.showMktPage(route.page || 'home');
     applyPlatformFallbackSeo();
+    if(typeof window._markRouteReady === 'function') window._markRouteReady();
   }
   function applyRoute(){
     var route = parseRoute();
     if(!route || route.type === 'legal') return;
     applyingRoute = true;
-    suppressUntil = Date.now() + 1800;
     try {
       if(route.type === 'admin') applyAdminRoute(route);
       else if(route.type === 'dash') applyDashRoute(route);
       else if(route.type === 'expert') applyExpertRoute(route);
       else if(route.type === 'marketing') applyMarketingRoute(route);
     } finally {
-      setTimeout(function(){ applyingRoute = false; }, 500);
+      applyingRoute = false;
       syncNavHrefs();
     }
   }
@@ -23575,13 +23588,38 @@ window._handleRTCMessage=function(d){
       });
     });
   }
+  function routeForHref(href){
+    if(!href || href.charAt(0) !== '/') return null;
+    if(href.indexOf('/legal/') === 0 || href === '/terms') return null;
+    try { return parseRouteFromPath(href); } catch(e) { return null; }
+  }
+  function parseRouteFromPath(path){
+    var fake = new URL(path, location.origin);
+    var parts = fake.pathname.replace(/^\/+|\/+$/g, '').split('/').filter(Boolean).map(function(part){ return decodeURIComponent(part); });
+    var first = clean(parts[0]);
+    if(first === 'admin') return {type:'admin', panel:ADMIN_PANELS[parts[1]] ? parts[1] : 'dashboard'};
+    if(first === 'dash') return {type:'dash', slug:clean(parts[1]), panel:DASH_PANELS[parts[2]] ? parts[2] : 'overview', settings:SEG_TO_SETTINGS[parts[3]] || ''};
+    if(platformHost() && (PATH_TO_MKT[first] || first === '')) return {type:'marketing', page:PATH_TO_MKT[first] || 'home'};
+    if(expertHost()) return {type:'expert', slug:currentExpertSlug(), page:EXPERT_SEGMENTS[first] || 'home'};
+    if(cleanSlug(first)) return {type:'expert', slug:cleanSlug(first), page:EXPERT_SEGMENTS[parts[1]] || 'home'};
+    return null;
+  }
+  function pushAndApply(path){
+    var route = routeForHref(path);
+    if(!route) return false;
+    var current = (location.pathname || '/') + (location.search || '');
+    if(current !== path) history.pushState({obRoute:true}, '', path);
+    track(path);
+    applyRoute();
+    return true;
+  }
   function installWrappers(){
     if(typeof window.showMktPage === 'function' && !window.showMktPage._obUrlRoutingWrapped){
       var oldShowMkt = window.showMktPage;
       window.showMktPage = function(page){
         var ret = oldShowMkt.apply(this, arguments);
         if(platformHost() && !routeIsPublicExpert()) applyPlatformFallbackSeo();
-        if(shouldPush() && platformHost() && !routeIsPublicExpert()) writeUrl(MKT_TO_PATH[page] || '/', false);
+        if(!applyingRoute && platformHost() && !routeIsPublicExpert()) writeUrl(MKT_TO_PATH[page] || '/', false);
         return ret;
       };
       window.showMktPage._obUrlRoutingWrapped = true;
@@ -23591,7 +23629,7 @@ window._handleRTCMessage=function(d){
       window.showExpertPage = function(page){
         var ret = oldShowExpert.apply(this, arguments);
         var url = expertUrl(page);
-        if(url) writeUrl(url, false);
+        if(!applyingRoute && url) writeUrl(url, false);
         return ret;
       };
       window.showExpertPage._obUrlRoutingWrapped = true;
@@ -23601,7 +23639,7 @@ window._handleRTCMessage=function(d){
       window.dbNav = function(el, panel){
         var ret = oldDbNav.apply(this, arguments);
         var active = document.getElementById('view-3');
-        if(active && active.classList.contains('active')) writeUrl(dashboardUrl(panel || activeDashboardPanel() || 'overview'), false);
+        if(!applyingRoute && active && active.classList.contains('active')) writeUrl(dashboardUrl(panel || activeDashboardPanel() || 'overview'), false);
         return ret;
       };
       window.dbNav._obUrlRoutingWrapped = true;
@@ -23610,7 +23648,7 @@ window._handleRTCMessage=function(d){
       var oldSettingsNav = window.settingsNav;
       window.settingsNav = function(el, blockId){
         var ret = oldSettingsNav.apply(this, arguments);
-        if(activeDashboardPanel() === 'settings') writeUrl(dashboardUrl('settings', blockId), false);
+        if(!applyingRoute && activeDashboardPanel() === 'settings') writeUrl(dashboardUrl('settings', blockId), false);
         return ret;
       };
       window.settingsNav._obUrlRoutingWrapped = true;
@@ -23619,7 +23657,7 @@ window._handleRTCMessage=function(d){
       var oldAdminNav = window.adminNav;
       window.adminNav = function(el, panel){
         var ret = oldAdminNav.apply(this, arguments);
-        writeUrl(adminUrl(panel), false);
+        if(!applyingRoute) writeUrl(adminUrl(panel), false);
         return ret;
       };
       window.adminNav._obUrlRoutingWrapped = true;
@@ -23628,7 +23666,7 @@ window._handleRTCMessage=function(d){
       var oldAdminTab = window.adminTabSwitch;
       window.adminTabSwitch = function(tabEl, panel){
         var ret = oldAdminTab.apply(this, arguments);
-        if(panel) writeUrl(adminUrl(panel), false);
+        if(!applyingRoute && panel) writeUrl(adminUrl(panel), false);
         return ret;
       };
       window.adminTabSwitch._obUrlRoutingWrapped = true;
@@ -23640,9 +23678,19 @@ window._handleRTCMessage=function(d){
     installWrappers();
     applyRoute();
   }
+  document.addEventListener('click', function(event){
+    if(event.defaultPrevented || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    var a = event.target && event.target.closest ? event.target.closest('a[href]') : null;
+    if(!a || a.target || a.hasAttribute('download')) return;
+    var rawHref = a.getAttribute('href') || '';
+    if(rawHref.charAt(0) !== '/') return;
+    if(!routeForHref(rawHref)) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    pushAndApply(rawHref);
+  }, true);
   if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else setTimeout(boot, 0);
-  [250, 900, 1800, 3500].forEach(function(ms){ setTimeout(function(){ installWrappers(); syncNavHrefs(); }, ms); });
-  window.addEventListener('popstate', function(){ suppressUntil = Date.now() + 1200; applyRoute(); });
+  window.addEventListener('popstate', applyRoute);
 })();
 </script>
 </body>

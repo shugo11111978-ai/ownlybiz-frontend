@@ -4393,7 +4393,7 @@ window._OB_BACKEND='https://ownlybiz-backend-production.up.railway.app';
 	                </div>
 
 	                <div class="settings-save-row">
-	                  <button class="btn btn-primary" onclick="saveSettingsBlock('privacy')">Save Privacy Settings</button>
+		                  <button class="btn btn-primary" onclick="obSaveExpertPrivacySettings();return false;">Save Privacy Settings</button>
 	                  <button class="btn" style="background:var(--cream);border:1.5px solid var(--gray-200);color:var(--brown);" onclick="obOpenConsentManager();return false;">Preview Cookie Manager</button>
 	                  <span class="save-status" id="save-status-privacy"></span>
 	                </div>
@@ -22532,7 +22532,7 @@ window._handleRTCMessage=function(d){
     ]).then(function(results){ renderAdminPrivacy(root, results[0] || {}, results[1] || {}); })
       .catch(function(err){ root.innerHTML = '<div class="admin-card" style="padding:28px;color:#f87171;">Privacy manager failed: ' + esc(err.message || '') + '</div>'; });
   };
-  window.obSaveExpertPrivacySettings = function(){
+	  window.obSaveExpertPrivacySettings = function(){
 	    var body = {
 	      privacy_contact_email: (document.getElementById('privacy-contact-email') || {}).value || '',
 	      privacy_notice: (document.getElementById('privacy-notice') || {}).value || ''
@@ -22543,16 +22543,21 @@ window._handleRTCMessage=function(d){
 	    if(banner) body.privacy_cookie_banner_enabled = banner.checked ? 1 : 0;
 	    var status = document.getElementById('save-status-privacy');
 	    if(status) status.textContent = 'Saving...';
-	    privacyApi('/auth/me', {method:'PUT', body:JSON.stringify(body)}).then(function(){
-	      window._currentExpert = Object.assign(window._currentExpert || {}, body);
-	      if(banner && !banner.checked) closeConsent();
+	    privacyApi('/experts/me/profile', {method:'PUT', body:JSON.stringify(body)}).then(function(){
+	      return privacyApi('/auth/me?_=' + Date.now()).catch(function(){ return null; });
+	    }).then(function(fresh){
+	      var profile = fresh && fresh.profile ? fresh.profile : body;
+	      var savedEnabled = flagEnabled(profile.privacy_cookie_banner_enabled, body.privacy_cookie_banner_enabled !== 0);
+	      window._currentExpert = Object.assign(window._currentExpert || {}, profile, { privacy_cookie_banner_enabled: savedEnabled ? 1 : 0 });
+	      if(banner) banner.checked = savedEnabled;
+	      if(banner && !savedEnabled) closeConsent();
 	      if(status){ status.textContent = 'Saved'; status.style.color = 'var(--green,#22c55e)'; }
 	      toastLegal('Privacy settings saved');
-    }).catch(function(err){
-      if(status) status.textContent = 'Error';
-      toastLegal(err.message || 'Save failed', 'err');
-    });
-  };
+	    }).catch(function(err){
+	      if(status) status.textContent = 'Error';
+	      toastLegal(err.message || 'Save failed', 'err');
+	    });
+	  };
 	  window.obSaveAdminPrivacySettings = function(){
     var payload = {};
     ['privacy_contact_email','privacy_dpo_email','privacy_sla_days','privacy_retention_days'].forEach(function(id){

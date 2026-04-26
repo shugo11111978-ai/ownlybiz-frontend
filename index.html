@@ -1678,15 +1678,16 @@ input[type=range]{width:100%;accent-color:var(--terra);}
 </style>
 <script>
 (function(){
-  var path=(location.pathname||'').replace(/^\/+|\/+$/g,'');
-  var host=(location.hostname||'').toLowerCase();
-  var q=new URLSearchParams(location.search);
-  var reserved=['','index.html','admin','signup','dashboard','login','expert','session','connectors','settings','messages','analytics','payments','packages','reviews','clients','sessions','pricing'];
-  var isDashboardRoute=path.indexOf('dash/')===0;
-  var isAdminRoute=path==='admin';
-  var isCustomDomain=!!host && host !== 'ownlybiz.com' && host !== 'www.ownlybiz.com';
-  var isExpertSubdomain=/^[^.]+\.ownlybiz\.com$/i.test(host) && !/^www\.ownlybiz\.com$/i.test(host);
-  var isPublicExpertRoute=q.has('expert') || (path && reserved.indexOf(path)===-1) || isCustomDomain || isExpertSubdomain;
+	  var path=(location.pathname||'').replace(/^\/+|\/+$/g,'');
+	  var host=(location.hostname||'').toLowerCase();
+	  var q=new URLSearchParams(location.search);
+	  var reserved=['','index.html','admin','signup','dashboard','login','expert','session','connectors','settings','messages','analytics','payments','packages','reviews','clients','sessions','pricing'];
+	  var isLegalRoute=path==='terms'||path.indexOf('legal/')===0;
+	  var isDashboardRoute=path.indexOf('dash/')===0;
+	  var isAdminRoute=path==='admin';
+	  var isCustomDomain=!!host && host !== 'ownlybiz.com' && host !== 'www.ownlybiz.com';
+	  var isExpertSubdomain=/^[^.]+\.ownlybiz\.com$/i.test(host) && !/^www\.ownlybiz\.com$/i.test(host);
+	  var isPublicExpertRoute=!isLegalRoute && (q.has('expert') || (path && reserved.indexOf(path)===-1) || isCustomDomain || isExpertSubdomain);
   var routeKind=isDashboardRoute?'dashboard':(isAdminRoute?'admin':(isPublicExpertRoute?'public':''));
   if(routeKind){
     document.documentElement.classList.add('ob-route-loading');
@@ -12256,11 +12257,12 @@ async function savePaymentConfig() {
   /* ══════════════════════════════════════════════════════
      INIT
   ══════════════════════════════════════════════════════ */
-  async function init() {
-    var path = (window.location.pathname||'').replace(/^\/+/,'').replace(/\/+$/,'');
-    var reserved = ['','index.html','admin','signup','dashboard','login','expert','session','connectors','settings','messages','analytics','payments','packages','reviews','clients','sessions'];
-    if (path && path.indexOf('dash/') !== 0 && reserved.indexOf(path) === -1) window._browseExpert = path;
-    try {
+	  async function init() {
+	    var path = (window.location.pathname||'').replace(/^\/+/,'').replace(/\/+$/,'');
+	    var isLegalRoute = path === 'terms' || path.indexOf('legal/') === 0;
+	    var reserved = ['','index.html','admin','signup','dashboard','login','expert','session','connectors','settings','messages','analytics','payments','packages','reviews','clients','sessions'];
+	    if(!isLegalRoute && path && path.indexOf('dash/') !== 0 && reserved.indexOf(path) === -1) window._browseExpert = path;
+	    try {
     // --- Routing: immediate, no blocking ---
     _wireLoginForm();
     // Populate pricing cards from live backend config
@@ -12276,7 +12278,16 @@ async function savePaymentConfig() {
           s('pricing-scale-price',p.price_scale_monthly);
         }).catch(function(){});
     })();
-    if(Auth.ok){
+	    if(isLegalRoute){
+	      window._browseExpert = '';
+	      loadMarketing();
+	      if(typeof switchView === 'function') switchView(1);
+	      if(typeof showMktPage === 'function') showMktPage('home');
+	      if(typeof window.obRenderLegalPage === 'function') window.obRenderLegalPage();
+	      if(typeof window._markRouteReady === 'function') window._markRouteReady();
+	      return;
+	    }
+	    if(Auth.ok){
       if(Auth.isExpert && !window._isSubdomain) loadExpertDashboard();
       if(Auth.isAdmin && !window._isSubdomain) loadAdminDashboard();
     }
@@ -12576,10 +12587,11 @@ async function savePaymentConfig() {
   };
 
   // ── Slug routing (ownlybiz.com/username) ─────────────
-  document.addEventListener('DOMContentLoaded', function() {
-    var path = window.location.pathname.replace(/^\/+/,'').replace(/\/+$/,'');
-    var reserved = ['','index.html','admin','signup','dashboard','login','expert','session','connectors','settings','messages','analytics','payments','packages','reviews','clients','sessions'];
-    if (path && path.indexOf('dash/') !== 0 && reserved.indexOf(path) === -1) {
+	  document.addEventListener('DOMContentLoaded', function() {
+	    var path = window.location.pathname.replace(/^\/+/,'').replace(/\/+$/,'');
+	    var isLegalRoute = path === 'terms' || path.indexOf('legal/') === 0;
+	    var reserved = ['','index.html','admin','signup','dashboard','login','expert','session','connectors','settings','messages','analytics','payments','packages','reviews','clients','sessions'];
+	    if (!isLegalRoute && path && path.indexOf('dash/') !== 0 && reserved.indexOf(path) === -1) {
       window._browseExpert = path;
       setTimeout(function() {
         if (typeof switchView === 'function') switchView(4);
@@ -18188,12 +18200,13 @@ window._handleRTCMessage=function(d){
     return fetch(BASE + path, opts).then(function(r){ return r.json().then(function(d){ if(!r.ok) throw new Error(d.error || 'Request failed'); return d; }); });
   }
 
-  function resolveExpertSlug(){
-    var reservedSlugs = ['','index.html','admin','signup','dashboard','login','expert','session','connectors','settings','messages','analytics','payments','packages','reviews','clients','sessions','pricing'];
-    function cleanSlug(s){
-      s = (s == null ? '' : String(s)).trim();
-      if(!s || s === 'expert-slug') return '';
-      if(s.indexOf('/') >= 0) return '';
+	  function resolveExpertSlug(){
+	    var reservedSlugs = ['','index.html','admin','signup','dashboard','login','expert','session','connectors','settings','messages','analytics','payments','packages','reviews','clients','sessions','pricing'];
+	    function cleanSlug(s){
+	      s = (s == null ? '' : String(s)).trim();
+	      if(!s || s === 'expert-slug') return '';
+	      if(s === 'terms' || s.indexOf('legal/') === 0) return '';
+	      if(s.indexOf('/') >= 0) return '';
       if(reservedSlugs.indexOf(s) >= 0) return '';
       return s;
     }
@@ -21876,21 +21889,23 @@ window._handleRTCMessage=function(d){
     });
   }
 
-  function currentPublicSlug(){
+	  function currentPublicSlug(){
     var q = new URLSearchParams(location.search || '');
     if(q.get('expert')) return q.get('expert');
     var host = (location.hostname || '').toLowerCase();
     var sub = host.match(/^([^.]+)\.ownlybiz\.com$/);
     if(sub && sub[1] !== 'www') return sub[1];
-    var path = (location.pathname || '').replace(/^\/+|\/+$/g, '');
-    if(path && path.indexOf('dash/') !== 0 && path !== 'admin') return path;
+	    var path = (location.pathname || '').replace(/^\/+|\/+$/g, '');
+	    if(path === 'terms' || path.indexOf('legal/') === 0) return '';
+	    if(path && path.indexOf('dash/') !== 0 && path !== 'admin') return path;
     return (window._currentExpert && window._currentExpert.slug) || window._currentExpertSlug || window._browseExpert || '';
   }
-  function isPublicExpertRoute(){
-    var q = new URLSearchParams(location.search || '');
-    var path = (location.pathname || '').replace(/^\/+|\/+$/g, '');
-    var host = (location.hostname || '').toLowerCase();
-    var reserved = {'':1,'index.html':1,'admin':1,'signup':1,'dashboard':1,'login':1,'expert':1,'session':1,'connectors':1,'settings':1,'messages':1,'analytics':1,'payments':1,'packages':1,'reviews':1,'clients':1,'sessions':1,'pricing':1};
+	  function isPublicExpertRoute(){
+	    var q = new URLSearchParams(location.search || '');
+	    var path = (location.pathname || '').replace(/^\/+|\/+$/g, '');
+	    var host = (location.hostname || '').toLowerCase();
+	    if(path === 'terms' || path.indexOf('legal/') === 0) return false;
+	    var reserved = {'':1,'index.html':1,'admin':1,'signup':1,'dashboard':1,'login':1,'expert':1,'session':1,'connectors':1,'settings':1,'messages':1,'analytics':1,'payments':1,'packages':1,'reviews':1,'clients':1,'sessions':1,'pricing':1};
     return q.has('expert') || !!document.querySelector('#view-4.active') || (/^[^.]+\.ownlybiz\.com$/i.test(host) && host !== 'www.ownlybiz.com') || (host && host !== 'ownlybiz.com' && host !== 'www.ownlybiz.com') || (!!path && path.indexOf('dash/') !== 0 && !reserved[path]);
   }
   function storeExpertPayload(data){
@@ -22127,6 +22142,45 @@ window._handleRTCMessage=function(d){
     try { return new Date(Number(ts) * 1000).toLocaleDateString('en-US', {month:'short', day:'numeric', year:'numeric'}); }
     catch(e){ return '-'; }
   }
+  function pathIsLegal(path){
+    path = String(path || '').replace(/^\/+|\/+$/g, '');
+    return path === 'terms' || path.indexOf('legal/') === 0;
+  }
+  function expertSiteContext(){
+    var path = (location.pathname || '').replace(/^\/+|\/+$/g, '');
+    var host = (location.hostname || '').toLowerCase();
+    if(path.indexOf('dash/') === 0 || path === 'admin') return false;
+    if(new URLSearchParams(location.search || '').has('expert')) return true;
+    if(/^[^.]+\.ownlybiz\.com$/i.test(host) && host !== 'www.ownlybiz.com') return true;
+    if(host && host !== 'ownlybiz.com' && host !== 'www.ownlybiz.com' && host !== 'localhost' && host !== '127.0.0.1' && host.indexOf('vercel.app') < 0) return true;
+    return !!document.querySelector('#view-4.active');
+  }
+	  function currentExpertName(){
+	    var data = window._currentExpert || {};
+	    return data.name || data.footer_text || 'Independent expert';
+	  }
+  function expertPrivacyDoc(){
+    var data = window._currentExpert || {};
+    var contact = data.privacy_contact_email || 'Use the contact options on this expert site.';
+    var notice = data.privacy_notice || 'This independent expert has not added a custom privacy note yet.';
+    return {
+      kicker: 'Expert Privacy Notice',
+      title: currentExpertName() + ' Privacy Notice',
+      updated: 'Last updated: April 26, 2026',
+      body: [
+        ['h2','1. Independent expert responsibility'],
+        ['p','This privacy notice belongs to the independent expert operating this website. The expert is responsible for the services they provide, their client relationship, and their privacy configuration for this expert site.'],
+        ['h2','2. Data used for sessions and bookings'],
+        ['p','The expert may receive or use account details, contact details, booking information, messages, session metadata, payment status, and support or privacy request details to provide services, manage appointments, communicate with clients, and handle disputes or compliance requests.'],
+        ['h2','3. Expert privacy configuration'],
+        ['p',notice],
+        ['h2','4. Data rights requests'],
+        ['p','Clients may request access, correction, deletion, portability, restriction, objection, or consent withdrawal where applicable. Some records may need to be retained for payment, tax, fraud prevention, chargeback, dispute, security, or legal reasons.'],
+        ['h2','5. Contact'],
+        ['p','Privacy contact: ' + contact]
+      ]
+    };
+  }
 
   var legalDocs = {
     terms: {
@@ -22144,9 +22198,7 @@ window._handleRTCMessage=function(d){
         ['h2','4. Account responsibility'],
         ['p','Users are responsible for maintaining accurate account information, keeping credentials secure, and complying with all laws that apply to their use of Ownlybiz. Ownlybiz may suspend or remove accounts, content, domains, sessions, or payments when needed for safety, legal, processor, security, fraud, or policy reasons.'],
         ['h2','5. Limitation of liability'],
-        ['p','To the fullest extent permitted by law, Ownlybiz is not liable for expert advice, client decisions, service outcomes, lost revenue, reputational harm, indirect damages, or disputes between experts and clients. The platform is provided on an as-is and as-available basis. Some jurisdictions do not allow certain exclusions, so some limitations may not apply.'],
-        ['h2','6. Required legal review'],
-        ['p','These terms are operational platform terms and should be reviewed by qualified counsel before relying on them as final legal documents in any jurisdiction.']
+        ['p','To the fullest extent permitted by law, Ownlybiz is not liable for expert advice, client decisions, service outcomes, lost revenue, reputational harm, indirect damages, or disputes between experts and clients. The platform is provided on an as-is and as-available basis. Some jurisdictions do not allow certain exclusions, so some limitations may not apply.']
       ]
     },
     privacy: {
@@ -22208,28 +22260,35 @@ window._handleRTCMessage=function(d){
     }
   };
 
-  function legalHtml(key){
-    var doc = legalDocs[key] || legalDocs.terms;
-    var body = doc.body.map(function(row){
-      if(row[0] === 'h2') return '<h2>' + esc(row[1]) + '</h2>';
-      if(row[0] === 'p') return '<p>' + esc(row[1]) + '</p>';
-      return '';
-    }).join('');
-    return '<div class="legal-shell">' +
-      '<div class="legal-kicker">' + esc(doc.kicker) + '</div>' +
-      '<h1>' + esc(doc.title) + '</h1>' +
-      '<div class="legal-updated">' + esc(doc.updated) + '</div>' +
-      '<div class="legal-callout"><strong>Important:</strong> These pages strengthen the platform posture, but they are not a substitute for review by a qualified attorney in the countries where Ownlybiz, experts, and clients operate.</div>' +
-      body +
-      '<div class="legal-link-row">' +
-        '<a class="legal-pill" href="/legal/terms" data-legal-link="terms">Terms</a>' +
-        '<a class="legal-pill" href="/legal/privacy" data-legal-link="privacy">Privacy</a>' +
-        '<a class="legal-pill" href="/legal/independent-professional-terms" data-legal-link="independent">Independent Pro Terms</a>' +
-        '<a class="legal-pill" href="/legal/platform-policy" data-legal-link="platform">Platform Policy</a>' +
-        '<button class="legal-pill" style="cursor:pointer;" onclick="obOpenConsentManager();return false;">Cookie Preferences</button>' +
-      '</div>' +
-    '</div>';
-  }
+	  function legalDocForKey(key){
+	    return (key === 'privacy' && expertSiteContext()) ? expertPrivacyDoc() : (legalDocs[key] || legalDocs.terms);
+	  }
+	  function legalHtml(key){
+	    var doc = legalDocForKey(key);
+	    var body = doc.body.map(function(row){
+	      if(row[0] === 'h2') return '<h2>' + esc(row[1]) + '</h2>';
+	      if(row[0] === 'p') return '<p>' + esc(row[1]) + '</p>';
+	      return '';
+	    }).join('');
+	    var expertPrivacy = key === 'privacy' && expertSiteContext();
+	    var links = expertPrivacy
+	      ? '<a class="legal-pill" href="/legal/privacy" data-legal-link="privacy">Privacy Notice</a>' +
+	        '<button class="legal-pill" style="cursor:pointer;" onclick="obOpenConsentManager();return false;">Cookie Preferences</button>'
+	      : '<a class="legal-pill" href="/legal/terms" data-legal-link="terms">Terms</a>' +
+	        '<a class="legal-pill" href="/legal/privacy" data-legal-link="privacy">Privacy</a>' +
+	        '<a class="legal-pill" href="/legal/independent-professional-terms" data-legal-link="independent">Independent Pro Terms</a>' +
+	        '<a class="legal-pill" href="/legal/platform-policy" data-legal-link="platform">Platform Policy</a>' +
+	        '<button class="legal-pill" style="cursor:pointer;" onclick="obOpenConsentManager();return false;">Cookie Preferences</button>';
+	    return '<div class="legal-shell">' +
+	      '<div class="legal-kicker">' + esc(doc.kicker) + '</div>' +
+	      '<h1>' + esc(doc.title) + '</h1>' +
+	      '<div class="legal-updated">' + esc(doc.updated) + '</div>' +
+	      body +
+	      '<div class="legal-link-row">' +
+	        links +
+	      '</div>' +
+	    '</div>';
+	  }
 
   function legalKeyFromPath(){
     var path = (location.pathname || '').replace(/\/+$/, '');
@@ -22247,18 +22306,31 @@ window._handleRTCMessage=function(d){
     if(!key){
       legal.classList.remove('active');
       legal.innerHTML = '';
+      var navReset = document.getElementById('mkt-nav');
+      if(navReset) navReset.style.display = '';
+      var footerReset = home.querySelector('.mkt-footer');
+      if(footerReset) footerReset.style.display = '';
       home.querySelectorAll(':scope > section').forEach(function(section){ section.style.display = ''; });
       return false;
     }
     if(typeof showMktPage === 'function') showMktPage('home');
     home.querySelectorAll(':scope > section').forEach(function(section){ section.style.display = section.id === 'legal-page' ? '' : 'none'; });
-    legal.innerHTML = legalHtml(key);
-    document.title = (legalDocs[key].title || 'Legal') + ' - Ownlybiz';
-    var meta = document.head.querySelector('meta[name="description"]');
-    if(!meta){ meta = document.createElement('meta'); meta.setAttribute('name','description'); document.head.appendChild(meta); }
-    meta.setAttribute('content', 'Ownlybiz ' + (legalDocs[key].title || 'legal') + ' for platform users, independent experts, clients, privacy, payments, and acceptable use.');
+    var expertLegal = expertSiteContext();
+    var nav = document.getElementById('mkt-nav');
+    if(nav) nav.style.display = expertLegal ? 'none' : '';
+    var footer = home.querySelector('.mkt-footer');
+	    if(footer) footer.style.display = expertLegal ? 'none' : '';
+	    legal.innerHTML = legalHtml(key);
+	    var doc = legalDocForKey(key);
+	    document.title = (doc.title || 'Legal') + (expertLegal && key === 'privacy' ? '' : ' - Ownlybiz');
+	    var meta = document.head.querySelector('meta[name="description"]');
+	    if(!meta){ meta = document.createElement('meta'); meta.setAttribute('name','description'); document.head.appendChild(meta); }
+	    meta.setAttribute('content', expertLegal && key === 'privacy'
+	      ? 'Privacy notice for this independent expert website, including client data rights and contact details.'
+	      : 'Ownlybiz ' + (doc.title || 'legal') + ' for platform users, independent experts, clients, privacy, payments, and acceptable use.');
     legal.classList.add('active');
     window.scrollTo(0, 0);
+    if(typeof window._markRouteReady === 'function') window._markRouteReady();
     return true;
   }
   window.obRenderLegalPage = renderLegalPage;
@@ -22289,9 +22361,16 @@ window._handleRTCMessage=function(d){
       el = document.createElement('div');
       el.id = 'privacy-consent';
       el.className = 'privacy-consent';
+      document.body.appendChild(el);
+    }
+    var expert = expertSiteContext();
+    var title = expert ? 'Privacy choices for this expert site' : 'Privacy choices';
+    var copy = expert
+      ? 'This independent expert site uses necessary storage for login, security, booking, and session reliability. Optional analytics configured by the expert only load when you allow them.'
+      : 'Ownlybiz uses necessary storage for login, security, and session reliability. Analytics and marketing tools are optional and help measure traffic only when you allow them.';
       el.innerHTML =
-        '<h3>Privacy choices</h3>' +
-        '<p>Ownlybiz uses necessary storage for login, security, and session reliability. Analytics and marketing tools are optional and help measure traffic only when you allow them.</p>' +
+        '<h3>' + title + '</h3>' +
+        '<p>' + copy + '</p>' +
         '<label style="display:flex;gap:10px;align-items:flex-start;margin:12px 0;font-size:13px;color:var(--brown);"><input type="checkbox" checked disabled style="margin-top:2px;"> Necessary cookies and storage</label>' +
         '<label style="display:flex;gap:10px;align-items:flex-start;margin:12px 0;font-size:13px;color:var(--brown);"><input type="checkbox" id="consent-analytics" style="margin-top:2px;"> Analytics cookies and pageview measurement</label>' +
         '<label style="display:flex;gap:10px;align-items:flex-start;margin:12px 0 16px;font-size:13px;color:var(--brown);"><input type="checkbox" id="consent-marketing" style="margin-top:2px;"> Marketing pixels and retargeting</label>' +
@@ -22300,7 +22379,6 @@ window._handleRTCMessage=function(d){
           '<button class="necessary" id="consent-necessary">Necessary only</button>' +
           '<a class="manage" href="/legal/privacy" data-legal-link="privacy" style="align-self:center;font-weight:800;">Read Privacy Policy</a>' +
         '</div>';
-      document.body.appendChild(el);
       document.getElementById('consent-accept').onclick = function(){
         setConsent({analytics:document.getElementById('consent-analytics').checked, marketing:document.getElementById('consent-marketing').checked});
         closeConsent();
@@ -22310,7 +22388,6 @@ window._handleRTCMessage=function(d){
         setConsent({analytics:false, marketing:false});
         closeConsent();
       };
-    }
     var current = getConsent();
     var analytics = document.getElementById('consent-analytics');
     var marketing = document.getElementById('consent-marketing');
@@ -22576,20 +22653,23 @@ window._handleRTCMessage=function(d){
     if(!el){ el = document.createElement('link'); el.setAttribute('rel', 'canonical'); document.head.appendChild(el); }
     el.setAttribute('href', url);
   }
-  function publicSlug(){
+	  function publicSlug(){
     var q = new URLSearchParams(location.search || '').get('expert');
     if(q) return q;
     var host = (location.hostname || '').toLowerCase();
     var sub = host.match(/^([^.]+)\.ownlybiz\.com$/);
     if(sub && sub[1] !== 'www') return sub[1];
-    if(host && host !== 'ownlybiz.com' && host !== 'www.ownlybiz.com') return (window._currentExpert && window._currentExpert.slug) || window._currentExpertSlug || window._browseExpert || '';
-    var path = (location.pathname || '').replace(/^\/+|\/+$/g, '');
-    if(path && path.indexOf('dash/') !== 0 && path !== 'admin') return path;
+	    if(host && host !== 'ownlybiz.com' && host !== 'www.ownlybiz.com') return (window._currentExpert && window._currentExpert.slug) || window._currentExpertSlug || window._browseExpert || '';
+	    var path = (location.pathname || '').replace(/^\/+|\/+$/g, '');
+	    if(path === 'terms' || path.indexOf('legal/') === 0) return '';
+	    if(path && path.indexOf('dash/') !== 0 && path !== 'admin') return path;
     return (window._currentExpert && window._currentExpert.slug) || window._currentExpertSlug || window._browseExpert || '';
   }
-  function isExpertRoute(){
-    var host = (location.hostname || '').toLowerCase();
-    if(new URLSearchParams(location.search || '').has('expert')) return true;
+	  function isExpertRoute(){
+	    var host = (location.hostname || '').toLowerCase();
+	    var path = (location.pathname || '').replace(/^\/+|\/+$/g, '');
+	    if(path === 'terms' || path.indexOf('legal/') === 0) return false;
+	    if(new URLSearchParams(location.search || '').has('expert')) return true;
     if(document.querySelector('#view-4.active')) return true;
     if(/^[^.]+\.ownlybiz\.com$/i.test(host) && host !== 'www.ownlybiz.com') return true;
     if(host && host !== 'ownlybiz.com' && host !== 'www.ownlybiz.com' && host !== 'localhost' && host !== '127.0.0.1') return true;

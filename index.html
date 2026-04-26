@@ -17578,8 +17578,8 @@ window.OB_RTC = (function(){
   var pc=null, localStream=null, sid=null, ch=null, _role=null, _muted=false, _camOff=false;
   var _pendingOffer=null, _pendingIce=[], _pendingAnswer=null;
   var _lastOfferSdp=null, _lastAnswerSdp=null, _remoteAnswerSet=false, _answerApplying=false, _offerRetryTimer=null;
-  var _connectDeadlineTimer=null, _connectionIssueTimer=null, _connectedOnce=false, _endingForIssue=false;
-  var ICE={iceServers:[{urls:'stun:stun.l.google.com:19302'},{urls:'stun:stun1.l.google.com:19302'},{urls:'turn:a.relay.metered.ca:80',username:'83eebabf8b4cce9d5dbcb649',credential:'2D7JvfkOQtBdYW3R'},{urls:'turn:a.relay.metered.ca:443',username:'83eebabf8b4cce9d5dbcb649',credential:'2D7JvfkOQtBdYW3R'},{urls:'turn:a.relay.metered.ca:443?transport=tcp',username:'83eebabf8b4cce9d5dbcb649',credential:'2D7JvfkOQtBdYW3R'}]};
+  var _connectDeadlineTimer=null, _connectionIssueTimer=null, _connectedOnce=false, _endingForIssue=false, _iceRestartAttempted=false;
+  var ICE={iceServers:[{urls:'stun:stun.l.google.com:19302'},{urls:'stun:stun1.l.google.com:19302'},{urls:'turn:a.relay.metered.ca:80',username:'83eebabf8b4cce9d5dbcb649',credential:'2D7JvfkOQtBdYW3R'},{urls:'turn:a.relay.metered.ca:443',username:'83eebabf8b4cce9d5dbcb649',credential:'2D7JvfkOQtBdYW3R'},{urls:'turn:a.relay.metered.ca:443?transport=tcp',username:'83eebabf8b4cce9d5dbcb649',credential:'2D7JvfkOQtBdYW3R'}],iceCandidatePoolSize:10,bundlePolicy:'max-bundle',rtcpMuxPolicy:'require'};
   function _apiBase(){return window.OWNLYBIZ_API_URL||window._OB_BACKEND||'https://ownlybiz-backend-production.up.railway.app';}
   function _authToken(){return sessionStorage.getItem('ob_t')||localStorage.getItem('ob_t')||localStorage.getItem('ob_client_token')||sessionStorage.getItem('ob_client_token')||sessionStorage.getItem('ob_token')||localStorage.getItem('ob_token')||'';}
 
@@ -17675,13 +17675,32 @@ window.OB_RTC = (function(){
     if(_connectionIssueTimer)clearTimeout(_connectionIssueTimer);
     _connectionIssueTimer=setTimeout(function(){
       if(!pc)return;
-      if(pc.connectionState==='connected')return;
+      if(pc.connectionState==='connected'||pc.iceConnectionState==='connected'||pc.iceConnectionState==='completed')return;
       _endForConnectionIssue(reason);
     },delay);
   }
+  async function _tryIceRestart(reason){
+    if(!pc||_iceRestartAttempted||_endingForIssue)return false;
+    _iceRestartAttempted=true;
+    if(typeof window._rtcDbg==='function')window._rtcDbg('ICE restart attempt: '+(reason||'connection_issue'));
+    try{if(pc.restartIce)pc.restartIce();}catch(e){}
+    if(_role==='client'&&pc.signalingState==='stable'){
+      try{
+        _remoteAnswerSet=false;
+        var offer=await pc.createOffer({iceRestart:true});
+        await pc.setLocalDescription(offer);
+        _send({type:'rtc_offer',session_id:sid,sdp:offer.sdp});
+        if(typeof window._rtcDbg==='function')window._rtcDbg('ICE restart offer sent');
+      }catch(e){
+        if(typeof window._rtcDbg==='function')window._rtcDbg('ICE restart failed: '+e.message);
+      }
+    }
+    return true;
+  }
   function _markRtcConnected(){
-    if(_connectedOnce)return;
+    if(_connectedOnce){_clearConnectionTimers();return;}
     _connectedOnce=true;
+    _iceRestartAttempted=false;
     _clearConnectionTimers();
     try{_send({type:'rtc_connected',session_id:sid,channel:ch});}catch(e){}
     try{if(typeof window._obRtcConnected==='function')window._obRtcConnected(sid,ch,_role);}catch(e){}
@@ -17716,20 +17735,29 @@ window.OB_RTC = (function(){
 
     pc.onicecandidate=function(e){if(e.candidate)_send({type:'rtc_ice',session_id:sid,candidate:e.candidate});};
 
-    pc.onconnectionstatechange=function(){
-      console.log('[RTC] State: '+pc.connectionState);
-      if(typeof _dbg==='function')_dbg('State: '+pc.connectionState);
+    function _renderConnectionState(label,state){
+      console.log('[RTC] '+label+': '+state);
+      if(typeof _dbg==='function')_dbg(label+': '+state);
       var el=document.getElementById('rtc-status');if(el){
         var m={new:'Initializing...',connecting:'Connecting...',connected:'\u{2705} Connected',disconnected:'Reconnecting...',failed:'Connection Failed',closed:'Ended'};
-        el.textContent=m[pc.connectionState]||pc.connectionState;
+        el.textContent=m[state]||state;
       }
       var el2=document.getElementById('b3-rtc-status');if(el2){
         var m2={new:'Initializing...',connecting:'Connecting...',connected:'\u{2705} Connected',disconnected:'Reconnecting...',failed:'Failed',closed:'Ended'};
-        el2.textContent=m2[pc.connectionState]||pc.connectionState;
+        el2.textContent=m2[state]||state;
       }
+    }
+    pc.onconnectionstatechange=function(){
+      _renderConnectionState('State',pc.connectionState);
       if(pc.connectionState==='connected')_markRtcConnected();
-      else if(pc.connectionState==='disconnected')_scheduleConnectionIssue('rtc_disconnected_timeout',15000);
-      else if(pc.connectionState==='failed')_scheduleConnectionIssue('rtc_connection_failed',3000);
+      else if(pc.connectionState==='disconnected'){_tryIceRestart('rtc_disconnected');_scheduleConnectionIssue('rtc_disconnected_timeout',15000);}
+      else if(pc.connectionState==='failed'){_tryIceRestart('rtc_connection_failed');_scheduleConnectionIssue('rtc_connection_failed',7000);}
+    };
+    pc.oniceconnectionstatechange=function(){
+      _renderConnectionState('ICE',pc.iceConnectionState);
+      if(pc.iceConnectionState==='connected'||pc.iceConnectionState==='completed')_markRtcConnected();
+      else if(pc.iceConnectionState==='disconnected'){_tryIceRestart('ice_disconnected');_scheduleConnectionIssue('rtc_ice_disconnected_timeout',15000);}
+      else if(pc.iceConnectionState==='failed'){_tryIceRestart('ice_failed');_scheduleConnectionIssue('rtc_ice_failed',7000);}
     };
   }
 
@@ -17737,6 +17765,7 @@ window.OB_RTC = (function(){
     if(pc!==null){console.log('[RTC] Already active, skipping duplicate start()');if(window._rtcDbg)window._rtcDbg('SKIP: already active');return true;}
     sid=sessionId; ch=channel; _role=role; _muted=false; _camOff=false;
     _connectedOnce=false; _endingForIssue=false;
+    _iceRestartAttempted=false;
     _lastOfferSdp=null; _lastAnswerSdp=null; _remoteAnswerSet=false; _answerApplying=false;
     if(_offerRetryTimer){clearTimeout(_offerRetryTimer);_offerRetryTimer=null;}
     _clearConnectionTimers();
@@ -17864,7 +17893,7 @@ window.OB_RTC = (function(){
     _lastOfferSdp=null;_lastAnswerSdp=null;_remoteAnswerSet=false;_answerApplying=false;
     if(_offerRetryTimer){clearTimeout(_offerRetryTimer);_offerRetryTimer=null;}
     var ra=document.getElementById('rtc-remote-audio');if(ra){ra.srcObject=null;ra.remove();}
-    sid=null;ch=null;_role=null;_muted=false;_camOff=false;_connectedOnce=false;_endingForIssue=false;
+    sid=null;ch=null;_role=null;_muted=false;_camOff=false;_connectedOnce=false;_endingForIssue=false;_iceRestartAttempted=false;
   }
 
   return{start:start,handleOffer:handleOffer,handleAnswer:handleAnswer,handleIce:handleIce,toggleMute:toggleMute,toggleCamera:toggleCamera,end:end,cleanup:cleanup,isActive:function(){return pc!==null;},getChannel:function(){return ch;},getSid:function(){return sid;}};
@@ -20324,6 +20353,434 @@ window._handleRTCMessage=function(d){
 
   installGuards();
   [250, 900, 1800, 3200, 5200].forEach(function(ms){ setTimeout(installGuards, ms); });
+})();
+</script>
+<style>
+.ob-channel-toggle{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:12px 0 4px;padding:10px 12px;border:1px solid rgba(196,98,45,.18);border-radius:12px;background:rgba(196,98,45,.045);font-size:12px;font-weight:800;color:var(--brown);}
+.ob-channel-toggle input{width:18px;height:18px;accent-color:var(--terra);cursor:pointer;}
+.ob-channel-toggle .ob-channel-state{font-size:11px;color:var(--sage);font-weight:900;text-transform:uppercase;letter-spacing:.04em;}
+.ob-channel-toggle.is-off{background:rgba(148,130,112,.08);border-color:rgba(148,130,112,.25);color:var(--gray-400);}
+.ob-channel-toggle.is-off .ob-channel-state{color:#b45309;}
+.ob-not-offered-badge{position:absolute;top:8px;right:8px;background:#7b6f66;color:white;font-size:9px;font-weight:900;text-transform:uppercase;letter-spacing:.05em;border-radius:999px;padding:3px 7px;pointer-events:none;z-index:3;}
+#session-request-overlay.ob-floating-request-overlay{pointer-events:none!important;background:transparent!important;backdrop-filter:none!important;align-items:flex-start!important;justify-content:flex-end!important;padding:18px!important;}
+#session-request-sheet.ob-floating-request-sheet{pointer-events:auto!important;width:min(420px,calc(100vw - 28px))!important;max-width:420px!important;border-radius:22px!important;padding-bottom:22px!important;box-shadow:0 20px 70px rgba(37,24,16,.24)!important;transform:none!important;animation:obFloatIn .22s ease-out both;}
+.ob-browser-notify-btn{display:block;margin:12px 24px 0;width:calc(100% - 48px);padding:10px 12px;border-radius:12px;border:1px solid rgba(196,98,45,.22);background:rgba(196,98,45,.06);color:var(--brown);font-size:12px;font-weight:800;cursor:pointer;font-family:var(--font-body);}
+@keyframes obFloatIn{from{opacity:0;transform:translateY(-8px) scale(.98);}to{opacity:1;transform:translateY(0) scale(1);}}
+@media(max-width:680px){
+  #session-request-overlay.ob-floating-request-overlay{align-items:flex-end!important;justify-content:center!important;padding:12px!important;}
+  #session-request-sheet.ob-floating-request-sheet{width:100%!important;max-width:100%!important;border-radius:22px 22px 16px 16px!important;max-height:86vh!important;overflow:auto!important;}
+  .ob-channel-toggle{align-items:flex-start;}
+}
+</style>
+<script>
+/* PRODUCTION SAFETY PATCH 2026-04-26: channel availability, floating requests, RTC UX */
+(function(){
+  if(window._obProdSafetyPatch20260426) return;
+  window._obProdSafetyPatch20260426 = true;
+  var BASE = window.OWNLYBIZ_API_URL || window._OB_BACKEND || 'https://ownlybiz-backend-production.up.railway.app';
+  var CHANNELS = ['chat','voice','video'];
+  function tok(){ return sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || localStorage.getItem('ob_client_token') || ''; }
+  function role(){ try { return (JSON.parse(sessionStorage.getItem('ob_u') || localStorage.getItem('ob_u') || '{}').role || '').toLowerCase(); } catch(e) { return ''; } }
+  function api(path, opts){
+    opts = opts || {};
+    opts.headers = Object.assign({'Content-Type':'application/json'}, opts.headers || {});
+    if(tok()) opts.headers.Authorization = 'Bearer ' + tok();
+    return fetch(BASE + path, opts).then(function(r){ return r.json().catch(function(){ return {}; }).then(function(d){ if(!r.ok) throw new Error(d.error || ('HTTP ' + r.status)); return d; }); });
+  }
+  function num(v, fallback){ var n = parseFloat(v); return isFinite(n) ? n : (fallback || 0); }
+  function int(v, fallback){ var n = parseInt(v, 10); return isFinite(n) ? n : (fallback || 0); }
+  function toastMsg(msg,type){ try { if(typeof toast === 'function') toast(msg,type); else if(typeof _showToast === 'function') _showToast(msg,type === 'err' ? 'red' : 'green'); } catch(e){} }
+  function enabledFlag(value, fallback){
+    if(value === undefined || value === null || value === '') return fallback === 0 ? 0 : 1;
+    if(value === false) return 0;
+    return ['0','false','off','no','disabled'].indexOf(String(value).trim().toLowerCase()) >= 0 ? 0 : 1;
+  }
+  function channelEnabled(data, ch){
+    data = data || window._currentExpert || {};
+    return enabledFlag(data[ch + '_enabled'], 1) === 1;
+  }
+  function firstEnabledChannel(data){
+    data = data || window._currentExpert || {};
+    for(var i=0;i<CHANNELS.length;i++){ if(channelEnabled(data, CHANNELS[i])) return CHANNELS[i]; }
+    return '';
+  }
+  function setChecked(id, value){
+    var el = document.getElementById(id);
+    if(el) el.checked = enabledFlag(value, 1) === 1;
+  }
+  function readEnabled(ch){
+    var el = document.getElementById(ch + '-enabled');
+    if(el) return el.checked ? 1 : 0;
+    return channelEnabled(window._currentExpert || {}, ch) ? 1 : 0;
+  }
+  function readTextInt(id){
+    var el = document.getElementById(id);
+    return el ? int(('value' in el ? el.value : el.textContent), 0) : 0;
+  }
+  function firstExistingInt(ids){
+    for(var i=0;i<ids.length;i++){
+      var el = document.getElementById(ids[i]);
+      if(el) return int(('value' in el ? el.value : el.textContent), 0);
+    }
+    return 0;
+  }
+  function readNum(id, fallback){
+    var el = document.getElementById(id);
+    return el ? num(el.value, fallback) : fallback;
+  }
+  function collectRatesWithAvailability(){
+    return {
+      chat_pm: readNum('rate-chat', readNum('sfield-chat-rate', 3.5)),
+      chat_free_min: firstExistingInt(['fm-chat','free-min-chat','sfield-free-min']),
+      chat_enabled: readEnabled('chat'),
+      voice_pm: readNum('rate-voice', readNum('sfield-voice-rate', 4)),
+      voice_free_min: firstExistingInt(['fm-voice','free-min-voice']),
+      voice_enabled: readEnabled('voice'),
+      video_pm: readNum('rate-video', readNum('sfield-video-rate', 5)),
+      video_free_min: firstExistingInt(['fm-video','free-min-video']),
+      video_enabled: readEnabled('video')
+    };
+  }
+  function ensurePricingToggles(){
+    CHANNELS.forEach(function(ch){
+      var input = document.getElementById('rate-' + ch);
+      var card = input && input.closest ? input.closest('.rate-config-card') : null;
+      if(!card || document.getElementById(ch + '-enabled')) return;
+      var label = ch.charAt(0).toUpperCase() + ch.slice(1);
+      var row = document.createElement('label');
+      row.className = 'ob-channel-toggle';
+      row.innerHTML = '<span><span style="display:block;">Accept ' + label + ' sessions</span><span class="ob-channel-state">Available</span></span><input type="checkbox" id="' + ch + '-enabled" checked>';
+      var preview = card.querySelector('.rate-preview');
+      if(preview && preview.parentNode) preview.parentNode.insertBefore(row, preview);
+      else card.appendChild(row);
+      row.querySelector('input').addEventListener('change', function(){ applyChannelAvailabilityUi(window._currentExpert || collectRatesWithAvailability()); });
+    });
+  }
+  function syncEnabledControls(rates){
+    rates = rates || {};
+    ensurePricingToggles();
+    CHANNELS.forEach(function(ch){
+      setChecked(ch + '-enabled', rates[ch + '_enabled']);
+      if(window._currentExpert) window._currentExpert[ch + '_enabled'] = enabledFlag(rates[ch + '_enabled'], 1);
+    });
+    applyChannelAvailabilityUi(Object.assign({}, window._currentExpert || {}, rates));
+  }
+  function channelFromText(el){
+    var txt = ((el && el.textContent) || '').toLowerCase();
+    if(txt.indexOf('voice') >= 0) return 'voice';
+    if(txt.indexOf('video') >= 0) return 'video';
+    if(txt.indexOf('chat') >= 0) return 'chat';
+    return '';
+  }
+  function setUnavailableBadge(el, show){
+    if(!el) return;
+    el.style.position = el.style.position || 'relative';
+    var badge = el.querySelector('.ob-not-offered-badge');
+    if(show && !badge){
+      badge = document.createElement('span');
+      badge.className = 'ob-not-offered-badge';
+      badge.textContent = 'Not offered';
+      el.appendChild(badge);
+    } else if(!show && badge) {
+      badge.remove();
+    }
+  }
+  function applyChannelAvailabilityUi(data){
+    data = Object.assign({}, window._currentExpert || {}, data || {});
+    CHANNELS.forEach(function(ch){
+      var on = channelEnabled(data, ch);
+      var toggle = document.getElementById(ch + '-enabled');
+      if(toggle){
+        toggle.checked = on;
+        var row = toggle.closest('.ob-channel-toggle');
+        if(row){
+          row.classList.toggle('is-off', !on);
+          var state = row.querySelector('.ob-channel-state');
+          if(state) state.textContent = on ? 'Available' : 'Off';
+        }
+      }
+    });
+    document.querySelectorAll('#stype-grid .stype-btn[data-mode="permin"]').forEach(function(btn){
+      var ch = channelFromText(btn);
+      if(!ch) return;
+      var on = channelEnabled(data, ch);
+      btn.dataset.ch = ch;
+      btn.dataset.channelDisabled = on ? '0' : '1';
+      btn.classList.toggle('disabled-channel', !on);
+      btn.setAttribute('aria-disabled', on ? 'false' : 'true');
+      setUnavailableBadge(btn, !on);
+    });
+    document.querySelectorAll('.bfl-type-btn').forEach(function(btn){
+      var ch = btn.getAttribute('data-ch') || channelFromText(btn);
+      if(!ch) return;
+      var on = channelEnabled(data, ch);
+      btn.dataset.channelDisabled = on ? '0' : '1';
+      btn.style.opacity = on ? '1' : '.45';
+      btn.style.pointerEvents = on ? 'auto' : 'none';
+      btn.setAttribute('aria-disabled', on ? 'false' : 'true');
+      setUnavailableBadge(btn, !on);
+    });
+    var activeBfl = document.querySelector('.bfl-type-btn.active');
+    if(activeBfl && activeBfl.dataset.channelDisabled === '1'){
+      var next = firstEnabledChannel(data);
+      var nextBtn = next && document.querySelector('.bfl-type-btn[data-ch="' + next + '"]');
+      if(nextBtn && typeof window.selectBflChannel === 'function') window.selectBflChannel(nextBtn);
+    }
+  }
+  window.obApplyChannelAvailabilityUi = applyChannelAvailabilityUi;
+
+  function fetchRatesAndAvailability(){
+    if(!tok()) { applyChannelAvailabilityUi(); return Promise.resolve(null); }
+    var url = window._adminViewingExpertId ? '/api/admin/experts/' + encodeURIComponent(window._adminViewingExpertId) + '/rates' : '/api/experts/rates';
+    return api(url).then(function(d){
+      var rates = d.rates || d || {};
+      syncEnabledControls(rates);
+      return rates;
+    }).catch(function(){ applyChannelAvailabilityUi(); return null; });
+  }
+  function saveRatesWithAvailability(){
+    if(!tok()){ toastMsg('Please log in first','err'); return; }
+    var body = collectRatesWithAvailability();
+    var adminId = window._adminViewingExpertId;
+    var url = adminId ? '/api/admin/experts/' + encodeURIComponent(adminId) + '/rates' : '/api/experts/rates';
+    var method = adminId ? 'PUT' : 'POST';
+    var statusEl = document.getElementById('save-status-pricing');
+    var btn = document.getElementById('pay-save-btn');
+    if(statusEl){ statusEl.textContent = 'Saving...'; statusEl.style.color = 'var(--gray-400)'; }
+    if(btn){ btn.disabled = true; btn.textContent = 'Saving...'; }
+    return api(url, {method:method, body:JSON.stringify(body)}).then(function(){
+      if(window._currentExpert) Object.assign(window._currentExpert, body);
+      syncEnabledControls(body);
+      if(typeof window.obSyncRateControls === 'function') try { window.obSyncRateControls(body); } catch(e) {}
+      if(statusEl){ statusEl.textContent = 'Saved'; statusEl.style.color = 'var(--sage)'; }
+      if(btn){ btn.disabled = false; btn.textContent = 'Save All Changes'; }
+      toastMsg('Pricing saved','ok');
+      if(typeof saveExpertPackages === 'function') try { saveExpertPackages(tok()); } catch(e) {}
+    }).catch(function(e){
+      if(statusEl){ statusEl.textContent = 'Error'; statusEl.style.color = '#dc2626'; }
+      if(btn){ btn.disabled = false; btn.textContent = 'Save All Changes'; }
+      toastMsg(e.message || 'Save failed','err');
+    });
+  }
+
+  function wrapAvailabilityControls(){
+    ensurePricingToggles();
+    if(window.saveExpertPricing !== saveRatesWithAvailability) window.saveExpertPricing = saveRatesWithAvailability;
+    var currentSaveSettings = window.saveSettingsBlock;
+    if(currentSaveSettings && !currentSaveSettings._obAvailabilityWrapped){
+      window.saveSettingsBlock = function(section){
+        if(section === 'pricing') return saveRatesWithAvailability();
+        return currentSaveSettings.apply(this, arguments);
+      };
+      window.saveSettingsBlock._obAvailabilityWrapped = true;
+    }
+    var currentLoadPricing = window.loadExpertPricing;
+    if(currentLoadPricing && !currentLoadPricing._obAvailabilityWrapped){
+      window.loadExpertPricing = function(){
+        var ret = currentLoadPricing.apply(this, arguments);
+        setTimeout(fetchRatesAndAvailability, 180);
+        setTimeout(fetchRatesAndAvailability, 900);
+        return ret;
+      };
+      window.loadExpertPricing._obAvailabilityWrapped = true;
+    }
+    var currentApplyWebsite = window._applyExpertWebsite;
+    if(currentApplyWebsite && !currentApplyWebsite._obAvailabilityWrapped){
+      window._applyExpertWebsite = function(data){
+        var ret = currentApplyWebsite.apply(this, arguments);
+        if(data) {
+          data.chat_enabled = enabledFlag(data.chat_enabled, 1);
+          data.voice_enabled = enabledFlag(data.voice_enabled, 1);
+          data.video_enabled = enabledFlag(data.video_enabled, 1);
+          window._currentExpert = Object.assign(window._currentExpert || {}, data);
+        }
+        setTimeout(function(){ applyChannelAvailabilityUi(data); }, 50);
+        setTimeout(function(){ applyChannelAvailabilityUi(data); }, 600);
+        return ret;
+      };
+      window._applyExpertWebsite._obAvailabilityWrapped = true;
+    }
+    var currentRefreshPublic = window.obRefreshPublicFreeMinuteCopy;
+    if(currentRefreshPublic && !currentRefreshPublic._obAvailabilityWrapped){
+      window.obRefreshPublicFreeMinuteCopy = function(data){
+        var ret = currentRefreshPublic.apply(this, arguments);
+        applyChannelAvailabilityUi(data);
+        return ret;
+      };
+      window.obRefreshPublicFreeMinuteCopy._obAvailabilityWrapped = true;
+    }
+    var currentSelectStype = window.selectStype;
+    if(currentSelectStype && !currentSelectStype._obAvailabilityWrapped){
+      window.selectStype = function(el, mode){
+        if(el && el.dataset && el.dataset.channelDisabled === '1'){
+          toastMsg('This expert is not accepting that session type right now.','err');
+          return;
+        }
+        return currentSelectStype.apply(this, arguments);
+      };
+      window.selectStype._obAvailabilityWrapped = true;
+    }
+    var currentOpenBooking = window.openBookingOverlay;
+    if(currentOpenBooking && !currentOpenBooking._obAvailabilityWrapped){
+      window.openBookingOverlay = function(channel){
+        channel = (channel || 'chat').toLowerCase();
+        if(channel && CHANNELS.indexOf(channel) >= 0 && !channelEnabled(window._currentExpert || {}, channel)){
+          toastMsg('This expert is not accepting ' + channel + ' sessions right now.','err');
+          return;
+        }
+        return currentOpenBooking.apply(this, arguments);
+      };
+      window.openBookingOverlay._obAvailabilityWrapped = true;
+    }
+    var currentSelectBfl = window.selectBflChannel;
+    if(currentSelectBfl && !currentSelectBfl._obAvailabilityWrapped){
+      window.selectBflChannel = function(el){
+        if(el && el.dataset && el.dataset.channelDisabled === '1'){
+          toastMsg('This expert is not accepting that session type right now.','err');
+          return;
+        }
+        return currentSelectBfl.apply(this, arguments);
+      };
+      window.selectBflChannel._obAvailabilityWrapped = true;
+    }
+    var currentOpenBfl = window.openBookLaterModal;
+    if(currentOpenBfl && !currentOpenBfl._obAvailabilityWrapped){
+      window.openBookLaterModal = function(channel){
+        var next = channel && channelEnabled(window._currentExpert || {}, channel) ? channel : firstEnabledChannel(window._currentExpert || {});
+        if(!next){ toastMsg('This expert is not accepting bookings right now.','err'); return; }
+        var ret = currentOpenBfl.call(this, next);
+        [0,80,260,700].forEach(function(ms){ setTimeout(function(){
+          applyChannelAvailabilityUi();
+          var btn = document.querySelector('.bfl-type-btn[data-ch="' + next + '"]');
+          if(btn && typeof window.selectBflChannel === 'function') window.selectBflChannel(btn);
+        }, ms); });
+        return ret;
+      };
+      window.openBookLaterModal._obAvailabilityWrapped = true;
+    }
+    window.handleExpertCTA = function(){
+      if(typeof expertOnline !== 'undefined' && !expertOnline){
+        alert('This expert is currently offline. Please check back later or leave a message.');
+        return;
+      }
+      if(typeof showExpertPage === 'function') showExpertPage('book');
+      setTimeout(function(){
+        applyChannelAvailabilityUi();
+        var ch = firstEnabledChannel(window._currentExpert || {});
+        var btn = ch && document.querySelector('#stype-grid .stype-btn[data-ch="' + ch + '"]');
+        if(btn && typeof window.selectStype === 'function'){
+          window._obPendingChannel = ch;
+          window.selectStype(btn, 'permin');
+        }
+      }, 80);
+    };
+  }
+
+  function playRequestTone(){
+    try{
+      var Ctx = window.AudioContext || window.webkitAudioContext;
+      if(!Ctx) return;
+      var ctx = window._obRequestAudioCtx || new Ctx();
+      window._obRequestAudioCtx = ctx;
+      if(ctx.state === 'suspended') ctx.resume().catch(function(){});
+      [660, 880].forEach(function(freq, i){
+        var osc = ctx.createOscillator();
+        var gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = freq;
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        var start = ctx.currentTime + (i * 0.16);
+        gain.gain.setValueAtTime(0.0001, start);
+        gain.gain.exponentialRampToValueAtTime(0.22, start + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.24);
+        osc.start(start);
+        osc.stop(start + 0.26);
+      });
+    }catch(e){}
+  }
+  function ensureNotificationButton(){
+    if(!('Notification' in window)) return;
+    var sheet = document.getElementById('session-request-sheet');
+    if(!sheet) return;
+    var existing = document.getElementById('ob-enable-browser-notifications');
+    if(Notification.permission === 'granted'){
+      if(existing) existing.remove();
+      return;
+    }
+    if(existing) return;
+    var actions = sheet.querySelector('button[onclick*="acceptSessionRequest"]');
+    var btn = document.createElement('button');
+    btn.id = 'ob-enable-browser-notifications';
+    btn.className = 'ob-browser-notify-btn';
+    btn.type = 'button';
+    btn.textContent = Notification.permission === 'denied' ? 'Browser notifications blocked in this browser' : 'Enable browser notifications';
+    btn.disabled = Notification.permission === 'denied';
+    btn.onclick = function(e){
+      e.preventDefault();
+      e.stopPropagation();
+      Notification.requestPermission().then(function(permission){
+        if(permission === 'granted'){ btn.remove(); toastMsg('Browser notifications enabled','ok'); }
+      });
+    };
+    if(actions && actions.parentNode) sheet.insertBefore(btn, actions.parentNode);
+    else sheet.appendChild(btn);
+  }
+  function browserNotifyRequest(opts){
+    if(!('Notification' in window) || Notification.permission !== 'granted') return;
+    var now = Date.now();
+    if(now - (window._obLastBrowserNotifyAt || 0) < 6000) return;
+    window._obLastBrowserNotifyAt = now;
+    var client = (opts && opts.clientName) || 'A client';
+    var channel = (opts && (opts.channel || opts.sessionType)) || 'session';
+    try { new Notification('New Ownlybiz session request', { body: client + ' is requesting a ' + channel + '.', tag: 'ownlybiz-session-request' }); } catch(e) {}
+  }
+  function configureFloatingRequest(opts){
+    var overlay = document.getElementById('session-request-overlay');
+    var sheet = document.getElementById('session-request-sheet');
+    if(!overlay || !sheet) return;
+    overlay.classList.add('ob-floating-request-overlay');
+    sheet.classList.add('ob-floating-request-sheet');
+    overlay.style.setProperty('display','flex','important');
+    sheet.style.setProperty('display','block','important');
+    sheet.style.transform = 'none';
+    ensureNotificationButton();
+    if(navigator.vibrate) try { navigator.vibrate([160, 70, 160]); } catch(e) {}
+    if(opts && opts.sessionId){
+      overlay.dataset.sessionId = opts.sessionId;
+      sheet.dataset.sessionId = opts.sessionId;
+    }
+  }
+  function installFloatingRequestWrapper(){
+    var current = window.showSessionRequest;
+    if(!current || current._obFloatingRequestWrapped) return;
+    var source = current._obFloatingRequestSource || current;
+    function wrapped(opts){
+      var ret = source.apply(this, arguments);
+      playRequestTone();
+      browserNotifyRequest(opts || {});
+      [0,80,240,700].forEach(function(ms){ setTimeout(function(){ configureFloatingRequest(opts || {}); }, ms); });
+      return ret;
+    }
+    wrapped._obFloatingRequestWrapped = true;
+    wrapped._obFloatingRequestSource = source;
+    window.showSessionRequest = wrapped;
+  }
+
+  function init(){
+    wrapAvailabilityControls();
+    installFloatingRequestWrapper();
+    applyChannelAvailabilityUi();
+    if(tok()) setTimeout(fetchRatesAndAvailability, 400);
+  }
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
+  [80,300,900,1800,3200,5600,9000,12500,15500].forEach(function(ms){
+    setTimeout(function(){
+      wrapAvailabilityControls();
+      installFloatingRequestWrapper();
+      applyChannelAvailabilityUi();
+    }, ms);
+  });
 })();
 </script>
 </body>

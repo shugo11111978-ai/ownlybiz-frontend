@@ -1627,22 +1627,53 @@ input[type=range]{width:100%;accent-color:var(--terra);}
 }
 
 </style>
-<style>body{opacity:0}body.ownly-ready{opacity:1;transition:opacity .15s ease}html.ob-route-loading body{opacity:0!important}.coming-soon-badge{position:absolute;top:8px;right:8px;background:#ef4444;color:white;font-size:9px;font-weight:700;padding:2px 7px;border-radius:6px;text-transform:uppercase;letter-spacing:.5px;pointer-events:none;z-index:2;}
+<style>body{opacity:0}body.ownly-ready{opacity:1;transition:opacity .15s ease}html.ob-route-loading body{opacity:0!important}html.ob-public-loading #view-4,html.ob-dashboard-loading #view-3,html.ob-admin-loading #view-6{visibility:hidden}.coming-soon-badge{position:absolute;top:8px;right:8px;background:#ef4444;color:white;font-size:9px;font-weight:700;padding:2px 7px;border-radius:6px;text-transform:uppercase;letter-spacing:.5px;pointer-events:none;z-index:2;}
 .stype-btn.disabled-channel{opacity:.45;pointer-events:none;position:relative;}
 .sso-btn.coming-soon{opacity:.5;pointer-events:none;position:relative;}
+.session-start-mode{display:none!important;}
+#view-4 .expert-about-strip p,
+#view-4 #ew-about-bio p,
+#view-4 #ew-hero-quote,
+#view-4 .services-full-sub,
+#view-4 .service-big-desc,
+#view-4 .contact-sub,
+#view-4 .contact-description,
+#view-4 .ew-free-desc{color:rgba(246,241,233,.92)!important;}
 </style>
 <script>
 (function(){
   var path=(location.pathname||'').replace(/^\/+|\/+$/g,'');
+  var host=(location.hostname||'').toLowerCase();
   var q=new URLSearchParams(location.search);
   var reserved=['','index.html','admin','signup','dashboard','login','expert','session','connectors','settings','messages','analytics','payments','packages','reviews','clients','sessions','pricing'];
-  var needsData=path.indexOf('dash/')===0 || q.has('expert') || (path && reserved.indexOf(path)===-1);
-  if(needsData) document.documentElement.classList.add('ob-route-loading');
-  window.obRouteReady=function(){
-    document.documentElement.classList.remove('ob-route-loading');
+  var isDashboardRoute=path.indexOf('dash/')===0;
+  var isAdminRoute=path==='admin';
+  var isCustomDomain=!!host && host !== 'ownlybiz.com' && host !== 'www.ownlybiz.com';
+  var isExpertSubdomain=/^[^.]+\.ownlybiz\.com$/i.test(host) && !/^www\.ownlybiz\.com$/i.test(host);
+  var isPublicExpertRoute=q.has('expert') || (path && reserved.indexOf(path)===-1) || isCustomDomain || isExpertSubdomain;
+  var routeKind=isDashboardRoute?'dashboard':(isAdminRoute?'admin':(isPublicExpertRoute?'public':''));
+  if(routeKind){
+    document.documentElement.classList.add('ob-route-loading');
+    document.documentElement.classList.add('ob-'+routeKind+'-loading');
+  }
+  window._markRouteLoading=function(kind){
+    kind=kind||routeKind||'';
+    document.documentElement.classList.add('ob-route-loading');
+    if(kind) document.documentElement.classList.add('ob-'+kind+'-loading');
+  };
+  window._markRouteReady=function(kind){
+    ['public','dashboard','admin'].forEach(function(name){
+      if(!kind || kind===name) document.documentElement.classList.remove('ob-'+name+'-loading');
+    });
+    if(!document.documentElement.classList.contains('ob-public-loading') &&
+       !document.documentElement.classList.contains('ob-dashboard-loading') &&
+       !document.documentElement.classList.contains('ob-admin-loading')) {
+      document.documentElement.classList.remove('ob-route-loading');
+    }
     if(document.body) document.body.classList.add('ownly-ready');
   };
-  setTimeout(function(){ if(window.obRouteReady) window.obRouteReady(); }, needsData ? 6500 : 1800);
+  window.obRouteReady=function(kind){ if(window._markRouteReady) window._markRouteReady(kind); };
+  setTimeout(function(){ if(window.obRouteReady) window.obRouteReady(routeKind); }, routeKind ? 8000 : 1800);
 })();
 </script>
 
@@ -3126,7 +3157,7 @@ window._OB_BACKEND='https://ownlybiz-backend-production.up.railway.app';
           <!-- Per-Minute Rates -->
           <div class="pay-section" data-group="pricing">
             <div class="pay-section-title">Per-Minute Session Rates</div>
-            <div class="pay-section-sub">Set your rates and billing model for each channel. <strong>Charge upfront</strong> requires payment before the session begins. <strong>Free minutes first</strong> is only available when you have free intro minutes configured for that channel.</div>
+            <div class="pay-section-sub">Set your live session rates for each channel. Free intro minutes are managed below.</div>
             <div class="rate-config-grid">
               <div class="rate-config-card">
                 <div class="rate-config-icon">💬</div>
@@ -7844,6 +7875,7 @@ function selectTheme(el){
   var colorInput = document.getElementById('we-accent-color');
   if(preset && presetColors[preset] && colorInput){
     colorInput.value = presetColors[preset];
+    if(typeof window.obApplyAccentColor === 'function') window.obApplyAccentColor(colorInput.value);
   }
 }
 function updateSlug(v){
@@ -10556,7 +10588,7 @@ async function savePaymentConfig() {
           // Set cooldown to prevent stale pending sessions from triggering popup
           window._sessionEndCooldown=Date.now();
         }
-        else { try{if(window._obClientWs&&window._obClientWs.readyState<=1)window._obClientWs.close();}catch(e){}try{if(window._obWs&&window._obWs.readyState<=1)window._obWs.close();}catch(e){}window._obClientWs=null;window._obWs=null;window._obWsHooked=false;window._obWsConnecting=false;var _s=d.session||{};var _fm=_s.free_minutes||0;var _rt=parseFloat(_s.rate_per_min||0);var _bm=obBillableWholeMinutes(_s.duration_secs||0,_fm);var _tm=Math.floor((_s.duration_secs||0)/60);var _re=document.getElementById('receipt-total');if(_re)_re.textContent=fmt$(_bm*_rt);var _rd=document.getElementById('receipt-duration');if(_rd)_rd.textContent=(_tm===0&&(_s.duration_secs||0)>0?'< 1':_tm)+' min'+(_fm>0?' ('+_fm+' free + '+_bm.toFixed(2)+' billed)':'');var _rr=document.getElementById('receipt-rate');if(_rr)_rr.textContent=_rt.toFixed(2)+'/min';if(typeof phoneGo==='function') phoneGo('A5');}
+        else { try{if(window._obClientWs&&window._obClientWs.readyState<=1)window._obClientWs.close();}catch(e){}try{if(window._obWs&&window._obWs.readyState<=1)window._obWs.close();}catch(e){}window._obClientWs=null;window._obWs=null;window._obWsHooked=false;window._obWsConnecting=false;var _s=d.session||{};var _fm=_s.free_minutes||0;var _rt=parseFloat(_s.rate_per_min||0);var _bm=obBillableWholeMinutes(_s.duration_secs||0,_fm);var _tm=(_s.duration_secs||0)>0?Math.max(1,Math.ceil((_s.duration_secs||0)/60)):0;var _total=(typeof _s.total_charged==='number'&&!isNaN(_s.total_charged))?_s.total_charged:(_bm*_rt);var _re=document.getElementById('receipt-total');if(_re)_re.textContent=fmt$(_total);var _rd=document.getElementById('receipt-duration');if(_rd)_rd.textContent=_tm+' min'+(_fm>0?' ('+_fm+' free + '+_bm.toFixed(2)+' billed)':'');var _rr=document.getElementById('receipt-rate');if(_rr)_rr.textContent=_rt.toFixed(2)+'/min';if(typeof phoneGo==='function') phoneGo('A5');}
         break; }
       case 'message':    if(Auth.isExpert&&!(window._obMarkMessageSeen&&window._obMarkMessageSeen(d))) _appendMsg(d); break;
       case 'typing':     _showTyping(d); break;
@@ -10899,7 +10931,7 @@ async function savePaymentConfig() {
         <div style="width:42px;height:42px;border-radius:50%;background:${clr(s.client_name)};color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;flex-shrink:0;font-size:14px;">${ini(s.client_name)}</div>
         <div style="flex:1;min-width:0;">
           <div style="font-weight:600;">${esc(s.client_name)}</div>
-          <div style="font-size:12px;color:#888;margin-top:2px;">${s.channel} · ${dt(s.created_at)} · ${Math.round((s.duration_sec||0)/60)} min</div>
+          <div style="font-size:12px;color:#888;margin-top:2px;">${s.channel} · ${dt(s.created_at)} · ${((s.duration_secs||s.duration_sec||0)>0?Math.max(1,Math.ceil((s.duration_secs||s.duration_sec||0)/60)):0)} min</div>
         </div>
         <div style="text-align:right;flex-shrink:0;">
           <div style="font-weight:700;color:${s.status==='ended'?'var(--sage)':'#888'};">${fmt$(s.expert_earned||0)}</div>
@@ -11057,7 +11089,7 @@ async function savePaymentConfig() {
         } else {
           var dtFmt=function(ts){if(!ts)return'';var d=new Date(ts*1000);return d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});}
           txList.innerHTML=sessions.map(function(s){
-            var dur=Math.round((s.duration_secs||0)/60);
+            var dur=((s.duration_secs||0)>0?Math.max(1,Math.ceil((s.duration_secs||0)/60)):0);
             return '<div style="display:flex;justify-content:space-between;align-items:center;padding:12px 0;border-bottom:1px solid var(--gray-200);">'+
               '<div><div style="font-weight:600;font-size:14px;color:var(--brown);">'+( s.client_name||'Client')+'</div>'+
               '<div style="font-size:12px;color:var(--gray-400);">'+dtFmt(s.started_at)+' · '+dur+' min · '+s.channel+'</div></div>'+
@@ -12073,7 +12105,7 @@ async function savePaymentConfig() {
     }
     // Reveal page delayed — anti-flicker overrides handle ownly-ready after real data loads
     // Safety fallback: reveal after 2.5s if no other trigger fires
-    setTimeout(function(){ if(!document.body.classList.contains('ownly-ready')) document.body.classList.add('ownly-ready'); }, 2500);
+    setTimeout(function(){ if(typeof window._markRouteReady === 'function') window._markRouteReady(); }, 6000);
 
     // Health check in background - no blocking
     fetch(`${API}/health`,{signal:AbortSignal.timeout(5000)})
@@ -13214,7 +13246,12 @@ function _refreshPublicPage(e) {
   });
 
   // Bio - expert-about-strip and bare <p> inside ep-about
-  document.querySelectorAll('.expert-about-strip').forEach(function(el){ el.textContent = e.bio || el.textContent; });
+  document.querySelectorAll('.expert-about-strip').forEach(function(el){
+    if(!e.bio) return;
+    var p = el.querySelector('p') || document.createElement('p');
+    p.textContent = e.bio;
+    if(!p.parentNode) el.appendChild(p);
+  });
   var aboutSection = document.getElementById('ep-about');
   if(aboutSection){
     var bioPara = aboutSection.querySelector('p');
@@ -13905,6 +13942,7 @@ window.loadExpertWebsite = function(slug) {
     return;
   }
   window._browseExpert = slug;
+  if(typeof window._markRouteLoading === 'function') window._markRouteLoading('public');
 
   // Call the ORIGINAL Cursor function (buried in s3) via OwnlyAPI if available
   if(window.OwnlyAPI && window.OwnlyAPI.loadExpertWebsite) {
@@ -13912,28 +13950,32 @@ window.loadExpertWebsite = function(slug) {
   }
 
   // Fetch expert data + rates and refresh public page
-  setTimeout(function(){
-    fetch('https://ownlybiz-backend-production.up.railway.app/api/experts/' + slug)
-      .then(function(r){ return r.json(); })
-      .then(function(d){
-        var e = d.expert || d;
-        if(!e || !e.name) return;
-        // e now contains chat_pm, voice_pm, video_pm from expert_rates JOIN (backend fix)
-        // Also has rate_chat, rate_voice, rate_video from expert_profiles
-        // Use expert_rates values if available, fallback to expert_profiles
-        e.chat_pm  = e.chat_pm  || e.rate_chat  || 0;
-        e.voice_pm = e.voice_pm || e.rate_voice || 0;
-        e.video_pm = e.video_pm || e.rate_video || 0;
-        e.chat_free_min = e.chat_free_min || e.free_minutes || 0;
-        e.packages = d.packages || [];
-        window._currentExpert = e;
-        window._currentExpertId = e.user_id || e.id;
-        window._currentExpertSlug = e.slug || slug;
-        setExpertOnlineStatus(!!e.is_online);
-        if(typeof window._applyExpertWebsite === 'function') window._applyExpertWebsite(e);
-        _refreshPublicPage(e);
-      }).catch(function(){});
-  }, 200);
+  fetch('https://ownlybiz-backend-production.up.railway.app/api/experts/' + slug)
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      var e = d.expert || d;
+      if(!e || !e.name) {
+        if(typeof window._markRouteReady === 'function') window._markRouteReady('public');
+        return;
+      }
+      // e now contains chat_pm, voice_pm, video_pm from expert_rates JOIN (backend fix)
+      // Also has rate_chat, rate_voice, rate_video from expert_profiles
+      // Use expert_rates values if available, fallback to expert_profiles
+      e.chat_pm  = e.chat_pm  || e.rate_chat  || 0;
+      e.voice_pm = e.voice_pm || e.rate_voice || 0;
+      e.video_pm = e.video_pm || e.rate_video || 0;
+      e.chat_free_min = e.chat_free_min || e.free_minutes || 0;
+      e.packages = d.packages || [];
+      window._currentExpert = e;
+      window._currentExpertId = e.user_id || e.id;
+      window._currentExpertSlug = e.slug || slug;
+      setExpertOnlineStatus(!!e.is_online);
+      if(typeof window._applyExpertWebsite === 'function') window._applyExpertWebsite(e);
+      _refreshPublicPage(e);
+      if(typeof window._markRouteReady === 'function') window._markRouteReady('public');
+    }).catch(function(){
+      if(typeof window._markRouteReady === 'function') window._markRouteReady('public');
+    });
 };
 
 // --- Start live poll on expert public pages ---
@@ -14541,9 +14583,7 @@ function _openMyWebsite() {
   window._refreshPublicPage = function(e) {
     if(_origRPP18) _origRPP18.call(this, e);
     // Reveal body AFTER real data is painted - eliminates Expert flash
-    if(!document.body.classList.contains('ownly-ready')) {
-      document.body.classList.add('ownly-ready');
-    }
+    if(typeof window._markRouteReady === 'function') window._markRouteReady('public');
   };
 })();
 
@@ -14554,10 +14594,8 @@ function _openMyWebsite() {
     if(_origLS18) _origLS18.call(this);
     // Reveal after settings load (dashboard case)
     setTimeout(function(){
-      if(!document.body.classList.contains('ownly-ready')) {
-        document.body.classList.add('ownly-ready');
-      }
-    }, 900);
+      if(typeof window._markRouteReady === 'function') window._markRouteReady('dashboard');
+    }, 1200);
   };
 })();
 
@@ -14568,10 +14606,8 @@ function _openMyWebsite() {
     if(_origLD18) _origLD18.call(this, slug);
     // Fallback reveal after data has a chance to paint in case no other trigger fires
     setTimeout(function(){
-      if(!document.body.classList.contains('ownly-ready')) {
-        document.body.classList.add('ownly-ready');
-      }
-    }, 1400);
+      if(typeof window._markRouteReady === 'function') window._markRouteReady('dashboard');
+    }, 1600);
   };
 })();
 
@@ -14592,10 +14628,8 @@ function _openMyWebsite() {
 
 // Safety net: always reveal body after 1.5s no matter what
 setTimeout(function(){
-  if(!document.body.classList.contains('ownly-ready')) {
-    document.body.classList.add('ownly-ready');
-  }
-}, 3000);
+  if(typeof window._markRouteReady === 'function') window._markRouteReady();
+}, 6500);
 
 // ═══════════════════════════════════════
 // WEBSITE EDITOR FUNCTIONS
@@ -14921,8 +14955,8 @@ window._applyExpertWebsite = function _applyExpertWebsite(data) {
     // Homepage mini service cards
     document.querySelectorAll('.service-mini-price').forEach(function(el, i){
       if (i === 0) el.textContent = '$' + parseFloat(data.rate_chat).toFixed(2) + '/min' + (data.free_minutes ? ' · ' + data.free_minutes + ' free' : '');
-      if (i === 1 && data.rate_voice) el.textContent = '$' + parseFloat(data.rate_voice).toFixed(2) + '/min';
-      if (i === 2 && data.rate_video) el.textContent = '$' + parseFloat(data.rate_video).toFixed(2) + '/min';
+      if (i === 1 && data.rate_voice) el.textContent = '$' + parseFloat(data.rate_voice).toFixed(2) + '/min' + ((data.voice_free_min || data.free_minutes_voice) ? ' · ' + (data.voice_free_min || data.free_minutes_voice) + ' min free' : '');
+      if (i === 2 && data.rate_video) el.textContent = '$' + parseFloat(data.rate_video).toFixed(2) + '/min' + ((data.video_free_min || data.free_minutes_video) ? ' · ' + (data.video_free_min || data.free_minutes_video) + ' min free' : '');
     });
     // Free minutes tag
     document.querySelectorAll('.tag-free').forEach(function(el){
@@ -17962,9 +17996,13 @@ window._handleRTCMessage=function(d){
       window._obReturnExpertUrl = expertReturnUrl(data.slug);
     }
     if(_origApplyWebsite) _origApplyWebsite.call(this, data);
-    if(data && data.theme_color) applyAccentColor(data.theme_color);
+    if(data){
+      var presetMap={warm:'#C4622D',ocean:'#2b6cb0',forest:'#2d8a4e',sunset:'#d35400',midnight:'#5b21b6',rose:'#be185d',slate:'#475569',charcoal:'#374151'};
+      var accent=data.theme_color || presetMap[data.theme_preset] || '';
+      if(accent) applyAccentColor(accent);
+    }
     refreshPublicFreeMinuteCopy(data);
-    routeReady();
+    if(typeof window._markRouteReady === 'function') window._markRouteReady('public');
   };
 
   document.addEventListener('input', function(e){
@@ -18131,12 +18169,12 @@ window._handleRTCMessage=function(d){
   window.loadSettings=function(){
     if(_origLoadSettingsPlan) _origLoadSettingsPlan.apply(this, arguments);
     setTimeout(loadPlan, 350);
-    setTimeout(routeReady, 1500);
+    setTimeout(function(){ if(typeof window._markRouteReady === 'function') window._markRouteReady('dashboard'); else routeReady(); }, 1500);
   };
   var _origLoadDashboardStaging=window.loadDashboard;
   window.loadDashboard=function(slug){
     if(_origLoadDashboardStaging) _origLoadDashboardStaging.apply(this, arguments);
-    setTimeout(routeReady, 2400);
+    setTimeout(function(){ if(typeof window._markRouteReady === 'function') window._markRouteReady('dashboard'); else routeReady(); }, 2400);
   };
   var _origSaveSettingsPlan=window.saveSettingsBlock;
   window.saveSettingsBlock=function(section){
@@ -18271,7 +18309,8 @@ window._handleRTCMessage=function(d){
   function adminLoading(panelName, label){
     var c=adminContent(panelName);
     if(!c) return;
-    c.innerHTML='<div style="background:#fff;border:1px solid rgba(196,98,45,.18);border-radius:8px;padding:32px;color:#3a2a1f;text-align:center;">Loading '+esc(label||'data')+'...</div>';
+    if(c.children.length && !c.querySelector('[data-ob-loading]')) return;
+    c.innerHTML='<div data-ob-loading="1" style="background:#fff;border:1px solid rgba(196,98,45,.18);border-radius:8px;padding:32px;color:#3a2a1f;text-align:center;">Loading '+esc(label||'data')+'...</div>';
   }
 
   window.loadAdminSupport = function(){
@@ -18315,7 +18354,9 @@ window._handleRTCMessage=function(d){
       var d = String(v).indexOf('-') >= 0 ? new Date(v) : new Date((String(v).length>12?Number(v):Number(v)*1000));
       return isNaN(d.getTime()) ? '' : d.toLocaleString();
     }
-    panel.innerHTML='<div class="db-content"><div style="background:var(--white);border:1px solid var(--gray-200);border-radius:8px;padding:28px;color:var(--brown);">Loading real message threads...</div></div>';
+    if(!panel.querySelector('.db-content')){
+      panel.innerHTML='<div class="db-content"><div style="background:var(--white);border:1px solid var(--gray-200);border-radius:8px;padding:28px;color:var(--brown);">Loading real message threads...</div></div>';
+    }
     api('/api/sessions?limit=30').then(function(d){
       var sessions=d.sessions||[];
       var cards=sessions.map(function(s){
@@ -18500,10 +18541,10 @@ window._handleRTCMessage=function(d){
   function applyClientReceipt(sess){
     sess = sess || {};
     var free = int(sess.free_minutes,0), rate = num(sess.rate_per_min,0), dur = int(sess.duration_secs,0);
-    var billed = billableMinutes(dur, free), total = billed * rate;
+    var billed = billableMinutes(dur, free), total = num(sess.total_charged, billed * rate);
     var el;
     el=document.getElementById('receipt-total'); if(el) el.textContent = money(total);
-    el=document.getElementById('receipt-duration'); if(el) el.textContent = (dur > 0 && dur < 60 ? '< 1' : Math.floor(dur/60)) + ' min' + (free > 0 ? ' (' + free + ' free + ' + billed.toFixed(2) + ' billed)' : '');
+    el=document.getElementById('receipt-duration'); if(el) el.textContent = (dur > 0 ? Math.max(1, Math.ceil(dur/60)) : 0) + ' min' + (free > 0 ? ' (' + free + ' free + ' + billed.toFixed(2) + ' billed)' : '');
     el=document.getElementById('receipt-rate'); if(el) el.textContent = money(rate) + '/min';
     el=document.getElementById('receipt-session-type'); if(el) el.textContent = (sess.channel || 'chat').charAt(0).toUpperCase() + (sess.channel || 'chat').slice(1) + ' with ' + ((window._currentExpert && window._currentExpert.name) || 'Expert');
     if(typeof phoneGo === 'function') phoneGo('A5');

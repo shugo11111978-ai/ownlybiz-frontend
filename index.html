@@ -8448,7 +8448,10 @@ function openBookingOverlay(channelId) {
         fetch(BASE2 + '/api/payments/config')
           .then(function(r){ return r.json(); })
           .then(function(cfg){
-            if (!cfg.publishable_key) return;
+            if (!cfg.publishable_key) {
+              if (typeof obStagingPaymentBypassAllowed === 'function' && obStagingPaymentBypassAllowed(cfg)) showBovStagingPaymentBypass();
+              return;
+            }
             var stripe = Stripe(cfg.publishable_key);
             var elements = stripe.elements();
             var card = elements.create('card', {
@@ -8601,6 +8604,34 @@ function bovSignup() {
   });
 }
 
+function showBovStagingPaymentBypass() {
+  var mount = document.getElementById('bov-card-element');
+  var errEl = document.getElementById('bov-card-error');
+  var btn = document.getElementById('bov-pay-btn');
+  if (mount) {
+    mount.innerHTML = '<div style="background:rgba(34,197,94,.08);border:1.5px solid rgba(34,197,94,.22);border-radius:10px;padding:12px 14px;color:#15803d;font-size:13px;font-weight:700;line-height:1.45;">Staging payment bypass active - no real card is required for this test session.</div>';
+    mount.style.padding = '0';
+    mount.style.border = 'none';
+    mount.style.minHeight = '0';
+    mount._stripeCard = false;
+  }
+  if (errEl) errEl.style.display = 'none';
+  if (btn && /Authorize/i.test(btn.textContent || '')) btn.textContent = 'Start Staging Session →';
+}
+
+function completeBovStagingPaymentBypass(btn) {
+  localStorage.setItem('ob_hpm','1');
+  if (btn) btn.textContent = 'Authorized ✓';
+  _bovGoStep(3);
+  var badge = document.getElementById('bov-step-pay-badge');
+  var conn  = document.getElementById('bov-step-conn-badge');
+  if (badge) { badge.style.background = '#dcfce7'; badge.style.color = '#166534'; }
+  setTimeout(function() {
+    if (conn) { conn.style.background = '#dcfce7'; conn.style.color = '#166534'; conn.textContent = '✓ Connected'; }
+    setTimeout(function() { _launchSession(false); }, 500);
+  }, 500);
+}
+
 async function bovAuthorize() {
   var BASE = 'https://victorious-wisdom-production-a6b0.up.railway.app';
   var btn = document.getElementById('bov-pay-btn');
@@ -8616,34 +8647,19 @@ async function bovAuthorize() {
   var t = sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || localStorage.getItem('ob_client_token') || '';
   if (!t) { showErr('Please log in first.'); return; }
 
-  function stagingPaymentBypassAllowed() {
-    var host = window.location.hostname;
-    return window.OWNLYBIZ_IS_STAGING === true
-      && (host === 'localhost' || host.indexOf('git-staging') !== -1 || host.indexOf('vercel.app') !== -1)
-      && host !== 'ownlybiz.com'
-      && host !== 'www.ownlybiz.com'
-      && host !== 'ownlybiz.vercel.app';
-  }
-
-  if (stagingPaymentBypassAllowed()) {
-    localStorage.setItem('ob_hpm','1');
-    if (btn) btn.textContent = 'Authorized ✓';
-    _bovGoStep(3);
-    var badge = document.getElementById('bov-step-pay-badge');
-    var conn  = document.getElementById('bov-step-conn-badge');
-    if (badge) { badge.style.background = '#dcfce7'; badge.style.color = '#166534'; }
-    setTimeout(function() {
-      if (conn) { conn.style.background = '#dcfce7'; conn.style.color = '#166534'; conn.textContent = '✓ Connected'; }
-      setTimeout(function() { _launchSession(false); }, 500);
-    }, 500);
-    return;
-  }
-
   // Get Stripe publishable key from backend, then confirm card setup
   fetch(BASE + '/api/payments/config')
     .then(function(r){ return r.json(); })
     .then(function(cfg){
-      if (!cfg.publishable_key) { showErr('Payment not configured — contact support.'); return; }
+      if (!cfg.publishable_key) {
+        if (typeof obStagingPaymentBypassAllowed === 'function' && obStagingPaymentBypassAllowed(cfg)) {
+          showBovStagingPaymentBypass();
+          completeBovStagingPaymentBypass(btn);
+          return;
+        }
+        showErr('Payment not configured — contact support.');
+        return;
+      }
 
       var stripe = Stripe(cfg.publishable_key);
 
@@ -11685,7 +11701,10 @@ async function savePaymentConfig() {
             var _tok=sessionStorage.getItem('ob_t')||localStorage.getItem('ob_t')||'';
             if(!_tok||typeof Stripe==='undefined') return;
             var _cfg=await fetch(_BASE+'/api/payments/config').then(function(r){return r.json();});
-            if(!_cfg||!_cfg.publishable_key) return;
+            if(!_cfg||!_cfg.publishable_key) {
+              if(typeof obStagingPaymentBypassAllowed === 'function' && obStagingPaymentBypassAllowed(_cfg)) showBovStagingPaymentBypass();
+              return;
+            }
             var _stripe=Stripe(_cfg.publishable_key);
             var _elements=_stripe.elements();
             var _card=_elements.create('card',{
@@ -16689,11 +16708,16 @@ var _bflCardReady = false;
 var _bflCardComplete = false;
 var _bflStripeConfigured = null;
 
-function bflStagingPaymentBypassAllowed(cfg) {
+function obStagingPaymentBypassAllowed(cfg) {
   var host = (window.location && window.location.hostname) || '';
   var apiBase = window.OWNLYBIZ_API_URL || window._OB_BACKEND || '';
   var stagingHost = host.indexOf('vercel.app') >= 0 || apiBase.indexOf('victorious-wisdom-production-a6b0') >= 0;
-  return !!cfg && stagingHost && cfg.mode === 'test' && cfg.configured === false && !cfg.publishable_key;
+  var productionHost = host === 'ownlybiz.com' || host === 'www.ownlybiz.com' || /\.ownlybiz\.com$/.test(host);
+  return !!cfg && stagingHost && !productionHost && cfg.mode === 'test' && cfg.configured === false && !cfg.publishable_key;
+}
+
+function bflStagingPaymentBypassAllowed(cfg) {
+  return obStagingPaymentBypassAllowed(cfg);
 }
 
 function showBflStagingPaymentBypass(cardSection, cardDiv) {

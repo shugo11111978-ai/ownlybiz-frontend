@@ -299,6 +299,24 @@ input,textarea,select{font-family:var(--font-body)}
 .privacy-consent .accept{background:var(--terra);color:white;}
 .privacy-consent .necessary{background:var(--white);border:1px solid var(--gray-200);color:var(--brown);}
 .privacy-consent .manage{background:transparent;color:var(--terra);}
+@media (max-width:680px){
+  .privacy-consent{
+    left:12px;
+    right:12px;
+    bottom:max(12px,env(safe-area-inset-bottom));
+    max-height:min(72vh,calc(100dvh - 28px));
+    overflow:auto;
+    padding:16px;
+    border-radius:20px;
+    -webkit-overflow-scrolling:touch;
+  }
+  .privacy-consent h3{font-size:20px;line-height:1.08;}
+  .privacy-consent p{font-size:12.5px;line-height:1.5;}
+  .privacy-consent label{font-size:12.5px!important;}
+  .privacy-consent-actions{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+  .privacy-consent-actions .manage{grid-column:1/-1;text-align:left;padding:4px 0;}
+  .privacy-consent button{padding:11px 12px;}
+}
 .gdpr-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px;margin:18px 0;}
 .gdpr-card{border:1px solid rgba(196,98,45,.2);background:rgba(196,98,45,.04);border-radius:16px;padding:16px;}
 .gdpr-card strong{display:block;font-size:13px;color:var(--brown);margin-bottom:4px;}
@@ -14865,7 +14883,7 @@ var rawPath = (window.location.pathname||'').replace(/^\/+/,'').replace(/\/+$/,'
       // Only redirect if: expert role, on root/dashboard URL (not already on /dash/)
       var path = (window.location.pathname||'').replace(/^\/+/,'').replace(/\/+$/,'');
       var onDash = path.indexOf('dash/') === 0;
-      if(!onDash && u.role === 'expert' && !window._adminViewingExpertId) {
+	      if(!onDash && u.role === 'expert' && !window._adminViewingExpertId) {
         // Get their slug and redirect
         var tok = sessionStorage.getItem('ob_t');
         if(tok) {
@@ -17921,9 +17939,10 @@ window.OB_RTC = (function(){
   var pc=null, localStream=null, sid=null, ch=null, _role=null, _muted=false, _camOff=false;
   var _pendingOffer=null, _pendingIce=[], _pendingAnswer=null;
   var _lastOfferSdp=null, _lastAnswerSdp=null, _lastLocalOfferSdp=null, _remoteAnswerSet=false, _answerApplying=false, _offerRetryTimer=null;
-  var _connectDeadlineTimer=null, _connectionIssueTimer=null, _connectedOnce=false, _endingForIssue=false, _iceRestartAttempted=false;
-  var _localIce=[], _peerReady=false, _rtcConfigLoaded=false, _rtcConfigPromise=null;
+  var _connectDeadlineTimer=null, _connectionIssueTimer=null, _billingReadyTimer=null, _connectedOnce=false, _endingForIssue=false, _iceRestartAttempted=false;
+  var _localIce=[], _peerReady=false, _remoteMediaSeen=false, _remoteMediaKinds={audio:false,video:false}, _rtcConfigLoaded=false, _rtcConfigPromise=null;
   var RTC_TIMEOUTS={initialMs:35000,reconnectMs:15000,failureMs:7000};
+  var RTC_BILLING_STABLE_MS=3500;
   var DEFAULT_ICE={iceServers:[{urls:'stun:stun.l.google.com:19302'},{urls:'stun:stun1.l.google.com:19302'}],iceCandidatePoolSize:10,bundlePolicy:'max-bundle',rtcpMuxPolicy:'require'};
   var ICE=DEFAULT_ICE;
   function _apiBase(){return window.OWNLYBIZ_API_URL||window._OB_BACKEND||'https://victorious-wisdom-production-a6b0.up.railway.app';}
@@ -17952,6 +17971,7 @@ window.OB_RTC = (function(){
       RTC_TIMEOUTS.initialMs=parseInt(rtc.connection_timeout_ms||RTC_TIMEOUTS.initialMs,10)||RTC_TIMEOUTS.initialMs;
       RTC_TIMEOUTS.reconnectMs=parseInt(rtc.reconnect_grace_ms||RTC_TIMEOUTS.reconnectMs,10)||RTC_TIMEOUTS.reconnectMs;
       RTC_TIMEOUTS.failureMs=parseInt(rtc.failure_grace_ms||RTC_TIMEOUTS.failureMs,10)||RTC_TIMEOUTS.failureMs;
+      RTC_BILLING_STABLE_MS=parseInt(rtc.billing_stable_ms||RTC_BILLING_STABLE_MS,10)||RTC_BILLING_STABLE_MS;
     }
   }
   function _loadRtcConfig(){
@@ -18058,14 +18078,15 @@ window.OB_RTC = (function(){
   function _clearConnectionTimers(){
     if(_connectDeadlineTimer){clearTimeout(_connectDeadlineTimer);_connectDeadlineTimer=null;}
     if(_connectionIssueTimer){clearTimeout(_connectionIssueTimer);_connectionIssueTimer=null;}
+    if(_billingReadyTimer){clearTimeout(_billingReadyTimer);_billingReadyTimer=null;}
   }
-  function _fallbackEndSession(failedSid){
+  function _fallbackEndSession(failedSid, reason){
     var tok=_authToken();
     if(!failedSid||!tok)return;
     fetch(_apiBase()+'/api/sessions/'+encodeURIComponent(failedSid)+'/end',{
       method:'POST',
       headers:{'Content-Type':'application/json','Authorization':'Bearer '+tok},
-      body:'{}'
+      body:JSON.stringify({connectionIssue:true, reason:reason||'rtc_connection_failed'})
     }).catch(function(){});
   }
   function _endForConnectionIssue(reason){
@@ -18075,7 +18096,7 @@ window.OB_RTC = (function(){
     _clearConnectionTimers();
     try{_send({type:'rtc_failed',session_id:failedSid,channel:failedChannel,reason:reason||'rtc_connection_failed'});}catch(e){}
     try{if(typeof window._obHandleSessionConnectionFailure==='function')window._obHandleSessionConnectionFailure(failedSid,failedChannel,reason||'rtc_connection_failed',_role);}catch(e){}
-    _fallbackEndSession(failedSid);
+    _fallbackEndSession(failedSid, reason||'rtc_connection_failed');
     cleanup();
   }
   function _scheduleConnectionIssue(reason, delay){
@@ -18106,12 +18127,42 @@ window.OB_RTC = (function(){
     }
     return true;
   }
+  function _hasStableTransport(){
+    if(!pc) return false;
+    return pc.connectionState==='connected' || pc.iceConnectionState==='connected' || pc.iceConnectionState==='completed';
+  }
+  function _hasRequiredMedia(){
+    if(!localStream) return false;
+    var localLive=localStream.getTracks().some(function(t){return t.readyState==='live';});
+    if(!localLive || !_remoteMediaSeen) return false;
+    if(ch==='video') return !!(_remoteMediaKinds.audio && _remoteMediaKinds.video);
+    if(ch==='voice') return !!_remoteMediaKinds.audio;
+    return true;
+  }
+  function _maybeMarkRtcConnected(trigger){
+    if(_connectedOnce||_endingForIssue||!pc) return;
+    if(!_hasStableTransport()||!_hasRequiredMedia()){
+      if(window._rtcDbg)window._rtcDbg('Billing wait: transport/media not stable yet ('+(trigger||'state')+')');
+      return;
+    }
+    if(_billingReadyTimer) return;
+    if(window._rtcDbg)window._rtcDbg('Billing-ready stability window started ('+(trigger||'state')+')');
+    _billingReadyTimer=setTimeout(function(){
+      _billingReadyTimer=null;
+      if(_connectedOnce||_endingForIssue||!pc) return;
+      if(!_hasStableTransport()||!_hasRequiredMedia()){
+        if(window._rtcDbg)window._rtcDbg('Billing-ready stability window cancelled: media/transport changed');
+        return;
+      }
+      _markRtcConnected();
+    }, RTC_BILLING_STABLE_MS);
+  }
   function _markRtcConnected(){
     if(_connectedOnce){_clearConnectionTimers();return;}
     _connectedOnce=true;
     _iceRestartAttempted=false;
     _clearConnectionTimers();
-    try{_send({type:'rtc_connected',session_id:sid,channel:ch});}catch(e){}
+    try{_send({type:'rtc_connected',session_id:sid,channel:ch,billing_ready:true,stable:true,stable_ms:RTC_BILLING_STABLE_MS});}catch(e){}
     try{if(typeof window._obRtcConnected==='function')window._obRtcConnected(sid,ch,_role);}catch(e){}
   }
   function _sendLocalIceCandidates(){
@@ -18151,6 +18202,9 @@ window.OB_RTC = (function(){
 
     pc.ontrack=function(e){
       console.log('[RTC] Remote track: '+e.track.kind);
+      _remoteMediaSeen=true;
+      if(e.track.kind==='audio'||e.track.kind==='video') _remoteMediaKinds[e.track.kind]=true;
+      try{e.track.onunmute=function(){_remoteMediaSeen=true;_maybeMarkRtcConnected('remote-track-unmuted');};}catch(_e){}
       if(e.track.kind==='audio'){
         var ra=document.getElementById('rtc-remote-audio');
         if(!ra){ra=document.createElement('audio');ra.id='rtc-remote-audio';ra.autoplay=true;ra.playsInline=true;document.body.appendChild(ra);}
@@ -18170,6 +18224,7 @@ window.OB_RTC = (function(){
         var lt=(_role==='expert'&&elv)?elv:lv;
         if(lt){lt.srcObject=localStream;lt.muted=true;lt.play().catch(function(){});}
       }
+      _maybeMarkRtcConnected('remote-track');
     };
 
     pc.onicecandidate=function(e){
@@ -18194,15 +18249,15 @@ window.OB_RTC = (function(){
     }
     pc.onconnectionstatechange=function(){
       _renderConnectionState('State',pc.connectionState);
-      if(pc.connectionState==='connected')_markRtcConnected();
-      else if(pc.connectionState==='disconnected'){_tryIceRestart('rtc_disconnected');_scheduleConnectionIssue('rtc_disconnected_timeout',RTC_TIMEOUTS.reconnectMs);}
-      else if(pc.connectionState==='failed'){_tryIceRestart('rtc_connection_failed');_scheduleConnectionIssue('rtc_connection_failed',RTC_TIMEOUTS.failureMs);}
+      if(pc.connectionState==='connected')_maybeMarkRtcConnected('connectionstate');
+      else if(pc.connectionState==='disconnected'){if(_billingReadyTimer){clearTimeout(_billingReadyTimer);_billingReadyTimer=null;}_tryIceRestart('rtc_disconnected');_scheduleConnectionIssue('rtc_disconnected_timeout',RTC_TIMEOUTS.reconnectMs);}
+      else if(pc.connectionState==='failed'){if(_billingReadyTimer){clearTimeout(_billingReadyTimer);_billingReadyTimer=null;}_tryIceRestart('rtc_connection_failed');_scheduleConnectionIssue('rtc_connection_failed',RTC_TIMEOUTS.failureMs);}
     };
     pc.oniceconnectionstatechange=function(){
       _renderConnectionState('ICE',pc.iceConnectionState);
-      if(pc.iceConnectionState==='connected'||pc.iceConnectionState==='completed')_markRtcConnected();
-      else if(pc.iceConnectionState==='disconnected'){_tryIceRestart('ice_disconnected');_scheduleConnectionIssue('rtc_ice_disconnected_timeout',RTC_TIMEOUTS.reconnectMs);}
-      else if(pc.iceConnectionState==='failed'){_tryIceRestart('ice_failed');_scheduleConnectionIssue('rtc_ice_failed',RTC_TIMEOUTS.failureMs);}
+      if(pc.iceConnectionState==='connected'||pc.iceConnectionState==='completed')_maybeMarkRtcConnected('iceconnectionstate');
+      else if(pc.iceConnectionState==='disconnected'){if(_billingReadyTimer){clearTimeout(_billingReadyTimer);_billingReadyTimer=null;}_tryIceRestart('ice_disconnected');_scheduleConnectionIssue('rtc_ice_disconnected_timeout',RTC_TIMEOUTS.reconnectMs);}
+      else if(pc.iceConnectionState==='failed'){if(_billingReadyTimer){clearTimeout(_billingReadyTimer);_billingReadyTimer=null;}_tryIceRestart('ice_failed');_scheduleConnectionIssue('rtc_ice_failed',RTC_TIMEOUTS.failureMs);}
     };
   }
 
@@ -18210,7 +18265,7 @@ window.OB_RTC = (function(){
     if(pc!==null){console.log('[RTC] Already active, skipping duplicate start()');if(window._rtcDbg)window._rtcDbg('SKIP: already active');return true;}
     sid=sessionId; ch=channel; _role=role; _muted=false; _camOff=false;
     _connectedOnce=false; _endingForIssue=false;
-    _peerReady=false; _localIce=[];
+    _peerReady=false; _localIce=[]; _remoteMediaSeen=false; _remoteMediaKinds={audio:false,video:false};
     _iceRestartAttempted=false;
     _lastOfferSdp=null; _lastAnswerSdp=null; _lastLocalOfferSdp=null; _remoteAnswerSet=false; _answerApplying=false;
     if(_offerRetryTimer){clearTimeout(_offerRetryTimer);_offerRetryTimer=null;}
@@ -18233,7 +18288,7 @@ window.OB_RTC = (function(){
     }
     _setupPC();
     _connectDeadlineTimer=setTimeout(function(){
-      if(pc&&pc.connectionState!=='connected')_endForConnectionIssue('rtc_initial_connection_timeout');
+      if(pc&&!_connectedOnce)_endForConnectionIssue('rtc_initial_connection_timeout');
     },RTC_TIMEOUTS.initialMs);
     _dbg('PC created. Buffered: offer='+(!!_pendingOffer)+' ice='+_pendingIce.length);
     console.log('[RTC] PC created, processing '+_pendingIce.length+' buffered ICE + offer='+(!!_pendingOffer));
@@ -18360,7 +18415,7 @@ window.OB_RTC = (function(){
     if(localStream){localStream.getTracks().forEach(function(t){t.stop();});localStream=null;}
 	    _pendingOffer=null;_pendingIce=[];_pendingAnswer=null;
     _lastOfferSdp=null;_lastAnswerSdp=null;_lastLocalOfferSdp=null;_remoteAnswerSet=false;_answerApplying=false;
-    _localIce=[];_peerReady=false;
+    _localIce=[];_peerReady=false;_remoteMediaSeen=false;_remoteMediaKinds={audio:false,video:false};
     if(_offerRetryTimer){clearTimeout(_offerRetryTimer);_offerRetryTimer=null;}
     var ra=document.getElementById('rtc-remote-audio');if(ra){ra.srcObject=null;ra.remove();}
     sid=null;ch=null;_role=null;_muted=false;_camOff=false;_connectedOnce=false;_endingForIssue=false;_iceRestartAttempted=false;
@@ -19533,7 +19588,7 @@ window._handleRTCMessage=function(d){
     if(sid && sid !== window._obActiveSessId && sid !== window._sid && sid !== window._sessId) return;
     setText('rtc-status', '\u2705 Connected');
     setText('b3-rtc-status', '\u2705 Connected');
-    setText('live-billing-status', 'Connected - billing timer active');
+    setText('live-billing-status', 'Media connected - waiting for billing confirmation');
   };
   window._obHandleSessionConnectionFailure = function(sid, ch, reason, roleName){
     if(sid && sid !== window._obActiveSessId && sid !== window._sid && sid !== window._sessId) return;
@@ -19580,7 +19635,9 @@ window._handleRTCMessage=function(d){
         fp.textContent = remaining > 0 ? ('Free intro active: ' + fmtTime(remaining) + ' remaining') : 'Free intro complete - billing active';
       }
       var bs = document.getElementById('live-billing-status');
-      if(bs && free > 0) bs.textContent = remaining > 0 ? 'Client is in free intro time' : 'Billing active after free intro';
+      if(bs) bs.textContent = free > 0
+        ? (remaining > 0 ? 'Client is in free intro time' : 'Billing active after free intro')
+        : 'Billing active';
     }
     tick();
     window._expertSessInterval = setInterval(tick, 1000);
@@ -20172,7 +20229,9 @@ window._handleRTCMessage=function(d){
     var fp = document.getElementById('live-free-period');
     if(fp){ fp.style.display = free > 0 ? 'block' : 'none'; if(free > 0) fp.textContent = 'Free period: ' + free + ' min intro included'; }
     var bs = document.getElementById('live-billing-status');
-    if(bs) bs.textContent = free > 0 ? 'Client is in free intro time' : 'Billing starts when client connects';
+    if(bs) bs.textContent = (ch === 'voice' || ch === 'video') && !sess.started_at
+      ? 'Connecting - billing has not started'
+      : (free > 0 ? 'Client is in free intro time' : 'Billing starts when client connects');
     var chat = document.getElementById('expert-chat-area');
     var rtc = document.getElementById('expert-rtc-area');
     if(ch === 'voice' || ch === 'video'){
@@ -22574,16 +22633,55 @@ window._handleRTCMessage=function(d){
 	  }
 	  function readExpertConsentBanner(){
 	    var data = window._currentExpert || {};
-	    return flagEnabled(data.privacy_cookie_banner_enabled, true);
+	    var enabled = flagEnabled(data.privacy_cookie_banner_enabled, true);
+	    if(!enabled) closeConsent();
+	    return enabled;
+	  }
+	  function expertSlugForConsent(){
+	    var data = window._currentExpert || {};
+	    if(data.slug) return String(data.slug);
+	    if(window._currentExpertSlug) return String(window._currentExpertSlug);
+	    if(window._browseExpert) return String(window._browseExpert);
+	    var q = new URLSearchParams(location.search || '').get('expert');
+	    if(q) return q;
+	    var host = (location.hostname || '').toLowerCase();
+	    var sub = host.match(/^([^.]+)\.ownlybiz\.com$/);
+	    if(sub && sub[1] !== 'www') return sub[1];
+	    var path = (location.pathname || '').replace(/^\/+|\/+$/g, '');
+	    var first = path.split('/').filter(Boolean)[0] || '';
+	    var reserved = {'':1,'index.html':1,'admin':1,'dash':1,'signup':1,'dashboard':1,'login':1,'expert':1,'session':1,'connectors':1,'settings':1,'messages':1,'analytics':1,'payments':1,'packages':1,'reviews':1,'clients':1,'sessions':1,'pricing':1,'how':1,'features':1,'experts':1,'blog':1,'contact':1,'terms':1,'legal':1};
+	    return reserved[first] ? '' : first;
+	  }
+	  function fetchExpertConsentBanner(slug){
+	    if(!slug) return Promise.resolve(false);
+	    return fetch(API + '/experts/' + encodeURIComponent(slug)).then(function(r){ return r.json(); }).then(function(d){
+	      var expert = d && (d.expert || d);
+	      if(expert && expert.slug){
+	        window._currentExpert = Object.assign(window._currentExpert || {}, expert);
+	        window._currentExpertSlug = expert.slug;
+	      }
+	      return readExpertConsentBanner();
+	    }).catch(function(){ return false; });
 	  }
 	  function waitForExpertConsentBanner(){
 	    return new Promise(function(resolve){
 	      var tries = 0;
+	      var fetching = false;
 	      function check(){
 	        tries += 1;
 	        var data = window._currentExpert || {};
-	        if(data.privacy_cookie_banner_enabled !== undefined || data.slug || data.id || data.user_id || tries >= 25){
+	        if(data.privacy_cookie_banner_enabled !== undefined){
 	          resolve(readExpertConsentBanner());
+	          return;
+	        }
+	        var slug = expertSlugForConsent();
+	        if(slug && !fetching){
+	          fetching = true;
+	          fetchExpertConsentBanner(slug).then(resolve);
+	          return;
+	        }
+	        if(tries >= 25){
+	          resolve(false);
 	          return;
 	        }
 	        setTimeout(check, 200);
@@ -23718,6 +23816,7 @@ window._handleRTCMessage=function(d){
       try { sessionStorage.setItem('ob_next', location.pathname + location.search); } catch(e) {}
       if(typeof window.switchView === 'function') window.switchView(1);
       if(typeof window.showMktPage === 'function') window.showMktPage('login');
+      try { history.replaceState({obRoute:true}, '', '/login'); } catch(e) {}
       applyPlatformFallbackSeo();
       if(typeof window._markRouteReady === 'function') window._markRouteReady('dashboard');
       return;
@@ -23738,6 +23837,7 @@ window._handleRTCMessage=function(d){
       try { sessionStorage.setItem('ob_next', location.pathname + location.search); } catch(e) {}
       if(typeof window.switchView === 'function') window.switchView(1);
       if(typeof window.showMktPage === 'function') window.showMktPage('login');
+      try { history.replaceState({obRoute:true}, '', '/login'); } catch(e) {}
       applyPlatformFallbackSeo();
       if(typeof window._markRouteReady === 'function') window._markRouteReady('admin');
       return;
@@ -23890,6 +23990,263 @@ window._handleRTCMessage=function(d){
   }, true);
   if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else setTimeout(boot, 0);
   window.addEventListener('popstate', applyRoute);
+})();
+</script>
+<script>
+/* Staging guardrails 2026-04-28: expert-domain loading, consent, alerts, RTC freshness */
+(function(){
+  if(window._obProductionGuardrails20260428) return;
+  window._obProductionGuardrails20260428 = true;
+
+  var BUILD = '20260428-staging-rtc-billing-guard-2';
+  window.OB_FRONTEND_BUILD = BUILD;
+  var BASE = (window.OWNLYBIZ_API_URL || window._OB_BACKEND || 'https://victorious-wisdom-production-a6b0.up.railway.app').replace(/\/$/, '');
+
+  function h(){ return (location.hostname || '').toLowerCase(); }
+  function platformHost(){
+    var host = h();
+    return host === 'ownlybiz.com' || host === 'www.ownlybiz.com' || host === 'localhost' || host === '127.0.0.1' || host.indexOf('vercel.app') >= 0;
+  }
+  function publicExpertHost(){
+    var host = h();
+    if(!host || platformHost()) return false;
+    return true;
+  }
+  function publicExpertContext(){
+    var path = (location.pathname || '').replace(/^\/+|\/+$/g, '');
+    if(path === 'terms' || path.indexOf('legal/') === 0 || path.indexOf('dash/') === 0 || path === 'admin') return false;
+    if(publicExpertHost()) return true;
+    if(new URLSearchParams(location.search || '').has('expert')) return true;
+    return !!document.querySelector('#view-4.active');
+  }
+  function hasExpertPayload(){
+    var e = window._currentExpert || {};
+    return !!((e.slug || e.name || e.user_id || e.id) && !window._customDomainPending);
+  }
+  function closeConsentIfDisabled(data){
+    data = data || window._currentExpert || {};
+    var value = data.privacy_cookie_banner_enabled;
+    var disabled = value !== undefined && value !== null && ['0','false','off','no','disabled'].indexOf(String(value).trim().toLowerCase()) >= 0;
+    if(disabled){
+      var el = document.getElementById('privacy-consent');
+      if(el) el.classList.remove('active');
+    }
+  }
+
+  var originalMarkReady = window._markRouteReady;
+  if(originalMarkReady && !originalMarkReady._obGuarded){
+    window._markRouteReady = function(kind){
+      if((kind === 'public' || !kind) && publicExpertContext() && publicExpertHost() && !hasExpertPayload()){
+        document.documentElement.classList.add('ob-route-loading');
+        document.documentElement.classList.add('ob-public-loading');
+        return;
+      }
+      return originalMarkReady.apply(this, arguments);
+    };
+    window._markRouteReady._obGuarded = true;
+  }
+
+  function lookupCustomDomain(){
+    if(!publicExpertHost()) return;
+    if(window._currentExpertSlug || window._browseExpert) return;
+    if(window._obCustomDomainLookupStarted) return;
+    window._obCustomDomainLookupStarted = true;
+    window._customDomainPending = true;
+    fetch(BASE + '/api/domains/lookup?domain=' + encodeURIComponent(h()), {cache:'no-store'})
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if(!d || !d.slug) throw new Error('Domain not mapped');
+        window._browseExpert = d.slug;
+        window._currentExpertSlug = d.slug;
+        window._customDomainPending = false;
+        if(typeof window.loadExpertWebsite === 'function') window.loadExpertWebsite(d.slug);
+      }).catch(function(){
+        window._customDomainPending = false;
+        setTimeout(showProfileLoadFallback, 50);
+      });
+  }
+  function showProfileLoadFallback(){
+    if(hasExpertPayload() || !publicExpertHost()) return;
+    var home = document.getElementById('ep-home');
+    if(home){
+      home.innerHTML = '<div style="min-height:60vh;display:flex;align-items:center;justify-content:center;text-align:center;padding:42px 22px;color:var(--brown);background:var(--cream);"><div style="max-width:420px;"><div style="font-family:var(--font-head);font-size:28px;margin-bottom:10px;">Expert site is loading</div><p style="color:var(--gray-500);line-height:1.6;margin-bottom:18px;">We could not finish loading this expert profile yet. Please refresh in a moment.</p><button class="btn btn-primary" onclick="location.reload()">Refresh</button></div></div>';
+    }
+    if(originalMarkReady) originalMarkReady.call(window, 'public');
+  }
+
+  var previousLoadExpertWebsite = window.loadExpertWebsite;
+  if(previousLoadExpertWebsite && !previousLoadExpertWebsite._obGuarded){
+    window.loadExpertWebsite = function(slug){
+      var resolved = slug || window._browseExpert || window._currentExpertSlug || '';
+      if(publicExpertHost() && (!resolved || resolved === 'expert-slug')){
+        if(typeof window._markRouteLoading === 'function') window._markRouteLoading('public');
+        lookupCustomDomain();
+        return;
+      }
+      return previousLoadExpertWebsite.apply(this, arguments);
+    };
+    window.loadExpertWebsite._obGuarded = true;
+  }
+
+  var previousApplyExpertWebsite = window._applyExpertWebsite;
+  if(previousApplyExpertWebsite && !previousApplyExpertWebsite._obConsentGuarded){
+    window._applyExpertWebsite = function(data){
+      var ret = previousApplyExpertWebsite.apply(this, arguments);
+      closeConsentIfDisabled(data);
+      return ret;
+    };
+    window._applyExpertWebsite._obConsentGuarded = true;
+  }
+
+  window.obPrimeSessionAlertAudio = function(){
+    try {
+      var Ctx = window.AudioContext || window.webkitAudioContext;
+      if(!Ctx) return false;
+      var ctx = window._obSessionAlertAudioCtx || new Ctx();
+      window._obSessionAlertAudioCtx = ctx;
+      if(ctx.state === 'suspended' && ctx.resume) {
+        ctx.resume().then(function(){
+          window._obSessionAlertAudioUnlocked = ctx.state === 'running';
+          if(window._obSessionAlertAudioUnlocked) {
+            try { localStorage.setItem('ob_session_alert_audio_unlocked', '1'); } catch(e) {}
+            var primer = document.getElementById('ob-session-alert-primer');
+            if(primer) primer.remove();
+          }
+        }).catch(function(){});
+      }
+      var osc = ctx.createOscillator();
+      var gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime + 0.03);
+      window._obSessionAlertAudioUnlocked = ctx.state === 'running';
+      if(window._obSessionAlertAudioUnlocked) try { localStorage.setItem('ob_session_alert_audio_unlocked', '1'); } catch(e) {}
+      return window._obSessionAlertAudioUnlocked;
+    } catch(e) { return false; }
+  };
+  window.obSessionAlertAudioReady = function(){
+    try {
+      var ctx = window._obSessionAlertAudioCtx;
+      return !!(window._obSessionAlertAudioUnlocked && ctx && ctx.state === 'running');
+    } catch(e) { return false; }
+  };
+  window.obShowSessionAlertPrimer = function(){
+    try {
+      var role = '';
+      try { role = (JSON.parse(sessionStorage.getItem('ob_u') || localStorage.getItem('ob_u') || '{}').role || '').toLowerCase(); } catch(e) {}
+      var requestOverlay = document.getElementById('session-request-overlay');
+      var requestVisible = requestOverlay && (requestOverlay.classList.contains('show') || requestOverlay.style.display === 'flex');
+      if(role !== 'expert' && !document.querySelector('#view-3.active') && !requestVisible) return;
+      if(window.obSessionAlertAudioReady && window.obSessionAlertAudioReady()) return;
+      if(document.getElementById('ob-session-alert-primer')) return;
+      var btn = document.createElement('button');
+      btn.id = 'ob-session-alert-primer';
+      btn.type = 'button';
+      btn.textContent = 'Enable session alerts';
+      btn.style.cssText = 'position:fixed;right:16px;bottom:16px;z-index:2147483647;border:1px solid rgba(160,101,161,.35);background:#fffaf4;color:#3a241c;border-radius:999px;padding:10px 14px;font:800 13px/1.2 system-ui,-apple-system,sans-serif;box-shadow:0 12px 32px rgba(42,24,16,.18);';
+      btn.onclick = function(e){
+        e.preventDefault();
+        e.stopPropagation();
+        window.obPrimeSessionAlertAudio();
+        if('Notification' in window && Notification.permission === 'default'){
+          try { Notification.requestPermission().catch(function(){}); } catch(_e) {}
+        }
+        setTimeout(function(){ if(window.obSessionAlertAudioReady && window.obSessionAlertAudioReady()) btn.remove(); }, 220);
+      };
+      document.body.appendChild(btn);
+    } catch(e) {}
+  };
+  window.obPlaySessionAlertTone = function(){
+    try {
+      var Ctx = window.AudioContext || window.webkitAudioContext;
+      if(!Ctx) return;
+      var ctx = window._obSessionAlertAudioCtx || new Ctx();
+      window._obSessionAlertAudioCtx = ctx;
+      if(ctx.state === 'suspended'){
+        if(ctx.resume) ctx.resume().catch(function(){});
+        if(window.obShowSessionAlertPrimer) window.obShowSessionAlertPrimer();
+        return;
+      }
+      window._obSessionAlertAudioUnlocked = true;
+      [660, 880, 660].forEach(function(freq, i){
+        var osc = ctx.createOscillator();
+        var gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = freq;
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        var start = ctx.currentTime + i * 0.17;
+        gain.gain.setValueAtTime(0.0001, start);
+        gain.gain.exponentialRampToValueAtTime(0.28, start + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.24);
+        osc.start(start);
+        osc.stop(start + 0.26);
+      });
+    } catch(e) {}
+  };
+  document.addEventListener('pointerdown', function(){
+    var role = '';
+    try { role = (JSON.parse(sessionStorage.getItem('ob_u') || localStorage.getItem('ob_u') || '{}').role || '').toLowerCase(); } catch(e) {}
+    if(role === 'expert' || document.querySelector('#view-3.active')) window.obPrimeSessionAlertAudio();
+  }, {capture:true, once:true});
+
+  function installRequestSoundGuard(){
+    if(!window.showSessionRequest || window.showSessionRequest._obSoundGuarded) return;
+    var previousShowSessionRequest = window.showSessionRequest;
+    window.showSessionRequest = function(opts){
+      var ret = previousShowSessionRequest.apply(this, arguments);
+      setTimeout(function(){
+        var btn = document.getElementById('ob-enable-browser-notifications');
+        if(btn && /Enable browser notifications/i.test(btn.textContent || '')) btn.textContent = 'Enable session alerts';
+      }, 80);
+      if(window.obShowSessionAlertPrimer && !(window.obSessionAlertAudioReady && window.obSessionAlertAudioReady())) window.obShowSessionAlertPrimer();
+      window.obPlaySessionAlertTone();
+      return ret;
+    };
+    window.showSessionRequest._obSoundGuarded = true;
+  }
+  installRequestSoundGuard();
+  [300,1000,2500,5000].forEach(function(ms){ setTimeout(installRequestSoundGuard, ms); });
+  document.addEventListener('pointerdown', function(e){
+    var btn = e.target && e.target.closest ? e.target.closest('#ob-enable-browser-notifications') : null;
+    if(btn) window.obPrimeSessionAlertAudio();
+  }, true);
+  [600,1800,4000].forEach(function(ms){ setTimeout(function(){ if(window.obShowSessionAlertPrimer) window.obShowSessionAlertPrimer(); }, ms); });
+
+  window.obEnsureFreshRuntime = function(){
+    return fetch(location.origin + '/?ob_build_check=' + Date.now(), {cache:'no-store'})
+      .then(function(r){ return r.text(); })
+      .then(function(html){
+        var match = html.match(/OB_FRONTEND_BUILD\s*=\s*['"]([^'"]+)/) || html.match(/var\s+BUILD\s*=\s*['"]([^'"]+)/);
+        var latest = match && match[1];
+        if(latest && latest !== BUILD){
+          try { sessionStorage.setItem('ob_after_refresh_notice', 'Your session page was refreshed to the latest Ownlybiz version.'); } catch(e) {}
+          location.reload();
+          return false;
+        }
+        return true;
+      }).catch(function(){ return true; });
+  };
+  function wrapRtcFreshness(){
+    if(!window.OB_RTC || !window.OB_RTC.start || window.OB_RTC.start._obFreshGuarded) return;
+    var oldStart = window.OB_RTC.start;
+    window.OB_RTC.start = function(){
+      var args = arguments;
+      return window.obEnsureFreshRuntime().then(function(ok){
+        if(!ok) return false;
+        return oldStart.apply(window.OB_RTC, args);
+      });
+    };
+    window.OB_RTC.start._obFreshGuarded = true;
+  }
+  wrapRtcFreshness();
+  setTimeout(wrapRtcFreshness, 1000);
+
+  lookupCustomDomain();
+  setTimeout(function(){ if(publicExpertHost() && !hasExpertPayload()) lookupCustomDomain(); }, 1200);
+  setTimeout(function(){ if(publicExpertHost() && !hasExpertPayload()) showProfileLoadFallback(); }, 12000);
 })();
 </script>
 </body>

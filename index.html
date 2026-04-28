@@ -18106,6 +18106,29 @@ window.OB_RTC = (function(){
     }
     if(window._rtcDbg)window._rtcDbg('Replayed '+_localIce.length+' ICE candidates');
   }
+  function _hasRemoteDescription(){
+    return !!(pc&&pc.remoteDescription&&pc.remoteDescription.type);
+  }
+  function _queueRemoteIce(candidate, reason){
+    if(!candidate)return;
+    _pendingIce.push(candidate);
+    if(_pendingIce.length>120)_pendingIce.shift();
+    if(window._rtcDbg)window._rtcDbg('Buffered remote ICE'+(reason?' ('+reason+')':'')+', queue='+_pendingIce.length);
+  }
+  async function _flushPendingIce(reason){
+    if(!pc||!_hasRemoteDescription()||!_pendingIce.length)return;
+    var queued=_pendingIce.splice(0,_pendingIce.length);
+    var kept=[];
+    for(var i=0;i<queued.length;i++){
+      try{await pc.addIceCandidate(queued[i]);}
+      catch(e){
+        if(e&&e.name==='InvalidStateError')kept.push(queued[i]);
+        else if(window._rtcDbg)window._rtcDbg('Dropped invalid remote ICE: '+(e&&e.message?e.message:'unknown'));
+      }
+    }
+    if(kept.length)_pendingIce=kept.concat(_pendingIce).slice(-120);
+    if(window._rtcDbg)window._rtcDbg('Flushed remote ICE after '+(reason||'description')+', applied='+(queued.length-kept.length)+', pending='+_pendingIce.length);
+  }
 
   function _setupPC(){
     pc=new RTCPeerConnection(ICE);
@@ -18200,9 +18223,8 @@ window.OB_RTC = (function(){
     _dbg('PC created. Buffered: offer='+(!!_pendingOffer)+' ice='+_pendingIce.length);
     console.log('[RTC] PC created, processing '+_pendingIce.length+' buffered ICE + offer='+(!!_pendingOffer));
     if(_pendingOffer){_dbg('Processing buffered offer...');var po=_pendingOffer;_pendingOffer=null;await handleOffer(po);_dbg('Buffered offer processed, answer sent');}else{_dbg('No buffered offer to process');}
-    for(var i=0;i<_pendingIce.length;i++){try{await pc.addIceCandidate(_pendingIce[i]);}catch(e){}}
-    _pendingIce=[];
     if(_pendingAnswer){var pa=_pendingAnswer;_pendingAnswer=null;await handleAnswer(pa);}
+    await _flushPendingIce('rtc start');
 
     _ensureRtcWs(function(){
       _send({type:'rtc_ready',session_id:sid,channel:ch});
@@ -18255,6 +18277,7 @@ window.OB_RTC = (function(){
 	    try{
 	      if(window._rtcDbg)window._rtcDbg('Processing offer directly...');
 	      await pc.setRemoteDescription({type:'offer',sdp:sdp});
+      await _flushPendingIce('offer');
 	      var a=await pc.createAnswer();
 	      await pc.setLocalDescription(a);
       _lastOfferSdp=sdp;
@@ -18280,6 +18303,7 @@ window.OB_RTC = (function(){
       await pc.setRemoteDescription({type:'answer',sdp:sdp});
       _remoteAnswerSet=true;
       if(_offerRetryTimer){clearTimeout(_offerRetryTimer);_offerRetryTimer=null;}
+      await _flushPendingIce('answer');
       _sendLocalIceCandidates();
       console.log('[RTC] Remote desc set');
     }catch(e){_answerApplying=false;console.error('[RTC] handleAnswer error:',e);return;}
@@ -18287,8 +18311,13 @@ window.OB_RTC = (function(){
 	  }
   async function handleIce(c){
     if(!c)return;
-    if(!pc){_pendingIce.push(c);return;}
-    try{await pc.addIceCandidate(c);}catch(e){}
+    if(!pc){_queueRemoteIce(c,'pc not ready');return;}
+    if(!_hasRemoteDescription()){_queueRemoteIce(c,'remote description not ready');return;}
+    try{await pc.addIceCandidate(c);}
+    catch(e){
+      if(e&&e.name==='InvalidStateError')_queueRemoteIce(c,'browser not ready');
+      else if(window._rtcDbg)window._rtcDbg('Remote ICE rejected: '+(e&&e.message?e.message:'unknown'));
+    }
   }
   function handleReady(){
     _peerReady=true;

@@ -17994,26 +17994,35 @@ window.OB_RTC = (function(){
     try{ws.send(JSON.stringify({type:'join',session_id:sid}));}catch(e){}
     try{ws.send(JSON.stringify({type:'join_session',sessionId:sid}));}catch(e){}
   }
-  var _rtcWs=null;
+  var _rtcWs=null, _rtcWsCallbacks=[];
+  function _flushRtcWsCallbacks(ws){
+    var callbacks=_rtcWsCallbacks.splice(0,_rtcWsCallbacks.length);
+    callbacks.forEach(function(cb){try{cb(ws);}catch(e){}});
+  }
   function _ensureRtcWs(cb){
     if(_rtcWs&&_rtcWs.readyState===1){cb(_rtcWs);return;}
     var w=_ws();if(w){cb(w);return;}
+    if(_rtcWs&&_rtcWs.readyState===0){_rtcWsCallbacks.push(cb);return;}
+    if(_rtcWs&&_rtcWs.readyState>1)_rtcWs=null;
     // Create dedicated RTC WebSocket
     var wsUrl=_apiBase().replace('https://','wss://').replace('http://','ws://')+'/ws';
     var tok=_authToken();
     if(window._rtcDbg)window._rtcDbg('WS URL: '+wsUrl+' tok='+(tok?'present':'missing'));
     if(window._rtcDbg)window._rtcDbg('Creating RTC WS...');
-    _rtcWs=new WebSocket(wsUrl);
-    _rtcWs.onopen=function(){
+    _rtcWsCallbacks.push(cb);
+    var ws=new WebSocket(wsUrl);
+    _rtcWs=ws;
+    ws.onopen=function(){
       if(window._rtcDbg)window._rtcDbg('RTC WS connected');
-      if(tok)_rtcWs.send(JSON.stringify({type:'auth',token:tok}));
+      if(tok)ws.send(JSON.stringify({type:'auth',token:tok}));
       setTimeout(function(){
-        if(sid)_rtcWs.send(JSON.stringify({type:'join',session_id:sid}));
+        if(ws.readyState!==1)return;
+        if(sid)ws.send(JSON.stringify({type:'join',session_id:sid}));
         if(window._rtcDbg)window._rtcDbg('RTC WS joined room');
-        setTimeout(function(){cb(_rtcWs);},300);
+        setTimeout(function(){if(ws.readyState===1)_flushRtcWsCallbacks(ws);},300);
       },300);
     };
-    _rtcWs.onmessage=function(evt){
+    ws.onmessage=function(evt){
       try{
         var d=JSON.parse(evt.data);
         if(d.type&&d.type.indexOf('rtc_')===0){
@@ -18022,9 +18031,15 @@ window.OB_RTC = (function(){
         }
       }catch(e){}
     };
-    _rtcWs.onerror=function(){if(window._rtcDbg)window._rtcDbg('RTC WS error');};
-    _rtcWs.onclose=function(){_rtcWs=null;if(window._rtcDbg)window._rtcDbg('RTC WS closed');};
-    window._expertWs=_rtcWs;
+    ws.onerror=function(){if(window._rtcDbg)window._rtcDbg('RTC WS error');};
+    ws.onclose=function(){
+      if(_rtcWs===ws)_rtcWs=null;
+      var retryCallbacks=_rtcWsCallbacks.splice(0,_rtcWsCallbacks.length);
+      retryCallbacks.forEach(function(waitingCb){setTimeout(function(){_ensureRtcWs(waitingCb);},250);});
+      if(window._rtcDbg)window._rtcDbg('RTC WS closed');
+    };
+    if(_role==='expert')window._expertWs=ws;
+    else window._obClientWs=ws;
   }
   function _send(d){
     var ws=_ws();

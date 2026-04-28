@@ -8089,19 +8089,25 @@ function showExpertPage(page){
   var eburger = document.getElementById('expert-hamburger');
   if(elinks) elinks.classList.remove('mobile-open');
   if(eburger) eburger.classList.remove('open');
-  if(page==='book'){
-    stypeSelected = false;
-    document.querySelectorAll('.stype-btn').forEach(b=>b.classList.remove('active'));
-    var errEl = document.getElementById('stype-error');
+	  if(page==='book'){
+	    stypeSelected = false;
+	    document.querySelectorAll('.stype-btn').forEach(b=>b.classList.remove('active'));
+	    var errEl = document.getElementById('stype-error');
     if(errEl) errEl.style.display='none';
     // Reset panels to default hidden state
     var pp=document.getElementById('book-permin-panel');
     var fp=document.getElementById('book-fixed-panel');
     var wp=document.getElementById('book-written-panel');
-    if(pp) pp.style.display='none';
-    if(fp) fp.style.display='none';
-    if(wp) wp.style.display='none';
-  }
+	    if(pp) pp.style.display='none';
+	    if(fp) fp.style.display='none';
+	    if(wp) wp.style.display='none';
+	    setTimeout(function(){
+	      var available = document.querySelector('#stype-grid .stype-btn[data-mode="permin"]:not(.ob-channel-unavailable):not(.disabled-channel)');
+	      var fallback = document.querySelector('#stype-grid .stype-btn[data-mode="permin"]');
+	      var btn = available || fallback;
+	      if(btn && typeof selectStype === 'function') selectStype(btn, 'permin');
+	    }, 120);
+	  }
 	  var onlineSlug = window._browseExpert || window._currentExpertSlug || (window._currentExpert && window._currentExpert.slug) || '';
 	  if(!onlineSlug && !window._isSubdomain) onlineSlug = window.location.pathname.replace(/^\//, '').split('/')[0];
 	  if(onlineSlug) loadExpertOnlineStatus(onlineSlug);
@@ -10535,24 +10541,48 @@ async function savePaymentConfig() {
         // Toast
         if (typeof toast === 'function') toast('Welcome back, ' + d.user.name + '! 👋');
 
-        // Navigate based on role
-        setTimeout(function() {
-          if (d.user.role === 'admin') {
-            if (typeof switchView === 'function') switchView(6);
-            // Load admin data (with slight delay to let READY flag be set)
-            setTimeout(function() {
+	        // Navigate based on role
+	        setTimeout(function() {
+	          var nextPath = '';
+	          try {
+	            nextPath = sessionStorage.getItem('ob_next') || '';
+	            if (nextPath && nextPath.charAt(0) === '/' && nextPath.indexOf('//') !== 0) {
+	              sessionStorage.removeItem('ob_next');
+	              window.location.href = nextPath;
+	              return;
+	            }
+	          } catch(e) {}
+	          if (d.user.role === 'admin') {
+	            try { window.history.replaceState({}, '', '/admin/dashboard'); } catch(e) {}
+	            if (typeof switchView === 'function') switchView(6);
+	            // Load admin data (with slight delay to let READY flag be set)
+	            setTimeout(function() {
               if (window.OwnlyAPI) {
                 window.OwnlyAPI.loadAdminDashboard && window.OwnlyAPI.loadAdminDashboard();
                 window.OwnlyAPI.loadAdminExperts && window.OwnlyAPI.loadAdminExperts();
-              }
-            }, 800);
-          } else if (d.user.role === 'expert') {
-            if (typeof switchView === 'function') switchView(3);
-            if (window.OwnlyAPI && window.OwnlyAPI.loadExpertDashboard) window.OwnlyAPI.loadExpertDashboard();
-          } else {
-            if (typeof switchView === 'function') switchView(4);
-          }
-        }, 400);
+	              }
+	            }, 800);
+	          } else if (d.user.role === 'expert') {
+	            fetch(BASE + '/api/experts/me/dashboard', { headers: { 'Authorization': 'Bearer ' + d.token } })
+	              .then(function(r){ return r.json(); })
+	              .then(function(ed){
+	                var slug = ed && ed.profile && ed.profile.slug ? ed.profile.slug : '';
+	                if (slug) {
+	                  window._myExpertSlug = slug;
+	                  window._dashSlug = slug;
+	                  try { window.history.replaceState({}, '', '/dash/' + encodeURIComponent(slug)); } catch(e) {}
+	                  if (typeof window.loadDashboard === 'function') { window.loadDashboard(slug); return; }
+	                }
+	                if (typeof switchView === 'function') switchView(3);
+	                if (window.OwnlyAPI && window.OwnlyAPI.loadExpertDashboard) window.OwnlyAPI.loadExpertDashboard();
+	              }).catch(function(){
+	                if (typeof switchView === 'function') switchView(3);
+	                if (window.OwnlyAPI && window.OwnlyAPI.loadExpertDashboard) window.OwnlyAPI.loadExpertDashboard();
+	              });
+	          } else {
+	            if (typeof switchView === 'function') switchView(4);
+	          }
+	        }, 400);
 
       } catch(err) {
         console.error('[OB] Login error:', err);
@@ -10688,12 +10718,13 @@ async function savePaymentConfig() {
           _launchSession(true);
         }
         break;
-      case 'session_declined': {
-        var _dSid = d.session?.id || d.sessionId;
-        if(_dSid && _dSid !== window._pendingSid && _dSid !== window._obPendingSessId) break; // stale — ignore
-        toast('Expert declined — try again', 'err');
-        if(typeof closeBookingOverlay==='function') closeBookingOverlay();
-        break; }
+	      case 'session_declined':
+	      case 'session_expired': {
+	        var _dSid = d.session?.id || d.sessionId;
+	        if(_dSid && _dSid !== window._pendingSid && _dSid !== window._obPendingSessId) break; // stale — ignore
+	        toast(d.type === 'session_expired' ? 'Session request expired — please start again' : 'Expert declined — try again', 'err');
+	        if(typeof closeBookingOverlay==='function') closeBookingOverlay();
+	        break; }
       case 'session_ended': {
         window._sid=null; window._expertSessActive=false;
         window._obActiveSessId=null;window._obPendingSessId=null;window._pendingSid=null;window._obIncomingSessId=null;
@@ -10825,23 +10856,52 @@ async function savePaymentConfig() {
     const pInp = page.querySelector('input[type=password],[placeholder*="password"i],[id*="pass"i]');
     const btn  = page.querySelector('button.btn-primary,button[type=submit],.login-btn');
     if (!btn) return;
-    btn.onclick = async () => {
-      const email=eInp?.value?.trim(); const pass=pInp?.value;
-      if(!email||!pass) return toast('Enter email and password','err');
-      btnLoad(btn,true);
-      try {
-        const d=await api('POST','/auth/login',{email,password:pass});
-        Auth.save(d.token,d.user);
-        WS.connect();
-        toast(`Welcome back, ${d.user.name}! 👋`);
-        setTimeout(()=>{
-          if(d.user.role==='admin')       { switchView(6); loadAdminDashboard(); }
-          else if(d.user.role==='expert') { switchView(3); loadExpertDashboard(); }
-          else                            { switchView(4); }
-        },400);
-      } catch(err){ toast(err.message,'err'); }
-      finally{ btnLoad(btn,false); }
-    };
+	    btn.onclick = async () => {
+	      const email=eInp?.value?.trim(); const pass=pInp?.value;
+	      if(!email||!pass) return toast('Enter email and password','err');
+	      btnLoad(btn,true);
+	      try {
+	        const d=await api('POST','/auth/login',{email,password:pass});
+	        Auth.save(d.token,d.user);
+	        WS.connect();
+	        toast(`Welcome back, ${d.user.name}! 👋`);
+	        setTimeout(()=>{
+	          try {
+	            const nextPath = sessionStorage.getItem('ob_next') || '';
+	            if(nextPath && nextPath.charAt(0) === '/' && nextPath.indexOf('//') !== 0) {
+	              sessionStorage.removeItem('ob_next');
+	              window.location.href = nextPath;
+	              return;
+	            }
+	          } catch(e) {}
+	          if(d.user.role==='admin') {
+	            try { window.history.replaceState({}, '', '/admin/dashboard'); } catch(e) {}
+	            switchView(6);
+	            loadAdminDashboard();
+	          }
+	          else if(d.user.role==='expert') {
+	            api('GET','/experts/me/dashboard').then(function(ed){
+	              var slug = ed && ed.profile && ed.profile.slug ? ed.profile.slug : '';
+	              if(slug) {
+	                window._myExpertSlug = slug;
+	                window._dashSlug = slug;
+	                try { window.history.replaceState({}, '', '/dash/' + encodeURIComponent(slug)); } catch(e) {}
+	                if(typeof window.loadDashboard === 'function') { window.loadDashboard(slug); return; }
+	              }
+	              switchView(3);
+	              loadExpertDashboard();
+	            }).catch(function(){
+	              switchView(3);
+	              loadExpertDashboard();
+	            });
+	          }
+	          else {
+	            switchView(4);
+	          }
+	        },400);
+	      } catch(err){ toast(err.message,'err'); }
+	      finally{ btnLoad(btn,false); }
+	    };
     // Add sign-up link if missing
     const su = page.querySelector('.signup-link,.goto-signup');
     if(su) su.onclick=()=>switchView(2);
@@ -12626,6 +12686,10 @@ async function savePaymentConfig() {
 function loadAdminPaymentSettings() {
   var tok = sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t');
   if (!tok) return;
+  try {
+    var role = (JSON.parse(sessionStorage.getItem('ob_u') || localStorage.getItem('ob_u') || '{}').role || '').toLowerCase();
+    if (role !== 'admin') return;
+  } catch(e) { return; }
   fetch('https://ownlybiz-backend-production.up.railway.app/api/admin/settings', {
     headers: { 'Authorization': 'Bearer ' + tok }
   }).then(function(r) { return r.json(); }).then(function(d) {
@@ -13653,6 +13717,8 @@ function _fixDashboardDate(){
   var months = ['January','February','March','April','May','June','July','August','September','October','November','December'];
   el.textContent = days[now.getDay()]+', '+months[now.getMonth()]+' '+now.getDate()+', '+now.getFullYear()+' \u00B7 '+now.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
 }
+if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', _fixDashboardDate); else _fixDashboardDate();
+setInterval(_fixDashboardDate, 60000);
 
 // --- P2-A: Revenue chart from real data ---
 function _renderRevenueChart(monthlyRevenue){
@@ -14620,12 +14686,21 @@ window.loadDashboard = function(slug) {
   var u = {};
   try { u = JSON.parse(sessionStorage.getItem('ob_u')||'{}'); } catch(e){}
 
-  // If not logged in at all - go to login
-  if(!tok) {
-    sessionStorage.setItem('ob_next', '/dash/'+slug);
-    window.location.href = '/';
-    return;
-  }
+	  // If not logged in at all - go to login
+		  if(!tok) {
+		    try {
+		      var currentNext = (window.location.pathname || '') + (window.location.search || '');
+		      var fallbackNext = '/dash/' + slug;
+		      var exactNext = currentNext.indexOf('/dash/' + slug) === 0 ? currentNext : fallbackNext;
+		      var existingNext = sessionStorage.getItem('ob_next') || '';
+		      if(!existingNext || existingNext.indexOf('/dash/'+slug) !== 0) sessionStorage.setItem('ob_next', exactNext);
+		    } catch(e) { sessionStorage.setItem('ob_next', '/dash/'+slug); }
+	    if(typeof switchView === 'function') switchView(1);
+	    if(typeof showMktPage === 'function') showMktPage('login');
+	    try { window.history.replaceState({}, '', '/login'); } catch(e) {}
+	    if(typeof window._markRouteReady === 'function') window._markRouteReady('dashboard');
+	    return;
+	  }
 
   if(u.role === 'admin') {
     // ADMIN PATH: fetch expert by slug to get their ID, then load with admin endpoints
@@ -14771,7 +14846,7 @@ var rawPath = (window.location.pathname||'').replace(/^\/+/,'').replace(/\/+$/,'
       // Only redirect if: expert role, on root/dashboard URL (not already on /dash/)
       var path = (window.location.pathname||'').replace(/^\/+/,'').replace(/\/+$/,'');
       var onDash = path.indexOf('dash/') === 0;
-      if(!onDash && u.role === 'expert' && !window._adminViewingExpertId) {
+	      if(!onDash && u.role === 'expert' && !window._adminViewingExpertId) {
         // Get their slug and redirect
         var tok = sessionStorage.getItem('ob_t');
         if(tok) {
@@ -14779,10 +14854,14 @@ var rawPath = (window.location.pathname||'').replace(/^\/+/,'').replace(/\/+$/,'
             .then(function(r){return r.json();})
             .then(function(d){
               var slug = d.profile && d.profile.slug ? d.profile.slug : null;
-              if(slug) {
-                window._myExpertSlug = slug;
-                window.history.replaceState({}, '', '/dash/'+slug);
-              }
+	              if(slug) {
+	                window._myExpertSlug = slug;
+	                var currentPath = (window.location.pathname || '').replace(/\/+$/,'');
+	                var dashBase = '/dash/' + slug;
+	                if(currentPath !== dashBase && currentPath.indexOf(dashBase + '/') !== 0) {
+	                  window.history.replaceState({}, '', dashBase);
+	                }
+	              }
             }).catch(function(){});
         }
       }
@@ -15935,14 +16014,14 @@ body.expert-page #mob-cta-bar{display:none!important;}
         if(role==='expert'){openExpertLivePanel(sid);}else{openClientChat(sid);}
       }
     }
-    if(d.type==='session_declined'){
-      var sid2=d.sessionId||(d.session&&d.session.id);
-      if(sid2&&sid2===window._obPendingSessId){
-        stopStatusPoll();
-        var ov2=document.getElementById('ob-waiting-overlay');if(ov2)ov2.classList.remove('show');
-        window._obPendingSessId=null;if(typeof toast==='function')toast('Expert declined — try again','err');
-      }
-    }
+	    if(d.type==='session_declined'||d.type==='session_expired'){
+	      var sid2=d.sessionId||(d.session&&d.session.id);
+	      if(sid2&&sid2===window._obPendingSessId){
+	        stopStatusPoll();
+	        var ov2=document.getElementById('ob-waiting-overlay');if(ov2)ov2.classList.remove('show');
+	        window._obPendingSessId=null;if(typeof toast==='function')toast(d.type==='session_expired'?'Session request expired — please start again':'Expert declined — try again','err');
+	      }
+	    }
     if(d.type==='session_started'){
       console.log('[OB] session_started received, started_at:', d.started_at);
       // Start expert timer
@@ -17866,26 +17945,35 @@ window.OB_RTC = (function(){
     try{ws.send(JSON.stringify({type:'join',session_id:sid}));}catch(e){}
     try{ws.send(JSON.stringify({type:'join_session',sessionId:sid}));}catch(e){}
   }
-  var _rtcWs=null;
+  var _rtcWs=null, _rtcWsCallbacks=[];
+  function _flushRtcWsCallbacks(ws){
+    var callbacks=_rtcWsCallbacks.splice(0,_rtcWsCallbacks.length);
+    callbacks.forEach(function(cb){try{cb(ws);}catch(e){}});
+  }
   function _ensureRtcWs(cb){
     if(_rtcWs&&_rtcWs.readyState===1){cb(_rtcWs);return;}
     var w=_ws();if(w){cb(w);return;}
+    if(_rtcWs&&_rtcWs.readyState===0){_rtcWsCallbacks.push(cb);return;}
+    if(_rtcWs&&_rtcWs.readyState>1)_rtcWs=null;
     // Create dedicated RTC WebSocket
     var wsUrl=_apiBase().replace('https://','wss://').replace('http://','ws://')+'/ws';
     var tok=_authToken();
     if(window._rtcDbg)window._rtcDbg('WS URL: '+wsUrl+' tok='+(tok?'present':'missing'));
     if(window._rtcDbg)window._rtcDbg('Creating RTC WS...');
-    _rtcWs=new WebSocket(wsUrl);
-    _rtcWs.onopen=function(){
+    _rtcWsCallbacks.push(cb);
+    var ws=new WebSocket(wsUrl);
+    _rtcWs=ws;
+    ws.onopen=function(){
       if(window._rtcDbg)window._rtcDbg('RTC WS connected');
-      if(tok)_rtcWs.send(JSON.stringify({type:'auth',token:tok}));
+      if(tok)ws.send(JSON.stringify({type:'auth',token:tok}));
       setTimeout(function(){
-        if(sid)_rtcWs.send(JSON.stringify({type:'join',session_id:sid}));
+        if(ws.readyState!==1)return;
+        if(sid)ws.send(JSON.stringify({type:'join',session_id:sid}));
         if(window._rtcDbg)window._rtcDbg('RTC WS joined room');
-        setTimeout(function(){cb(_rtcWs);},300);
+        setTimeout(function(){if(ws.readyState===1)_flushRtcWsCallbacks(ws);},300);
       },300);
     };
-    _rtcWs.onmessage=function(evt){
+    ws.onmessage=function(evt){
       try{
         var d=JSON.parse(evt.data);
         if(d.type&&d.type.indexOf('rtc_')===0){
@@ -17894,9 +17982,15 @@ window.OB_RTC = (function(){
         }
       }catch(e){}
     };
-    _rtcWs.onerror=function(){if(window._rtcDbg)window._rtcDbg('RTC WS error');};
-    _rtcWs.onclose=function(){_rtcWs=null;if(window._rtcDbg)window._rtcDbg('RTC WS closed');};
-    window._expertWs=_rtcWs;
+    ws.onerror=function(){if(window._rtcDbg)window._rtcDbg('RTC WS error');};
+    ws.onclose=function(){
+      if(_rtcWs===ws)_rtcWs=null;
+      var retryCallbacks=_rtcWsCallbacks.splice(0,_rtcWsCallbacks.length);
+      retryCallbacks.forEach(function(waitingCb){setTimeout(function(){_ensureRtcWs(waitingCb);},250);});
+      if(window._rtcDbg)window._rtcDbg('RTC WS closed');
+    };
+    if(_role==='expert')window._expertWs=ws;
+    else window._obClientWs=ws;
   }
   function _send(d){
     var ws=_ws();
@@ -17977,6 +18071,29 @@ window.OB_RTC = (function(){
       try{_send({type:'rtc_ice',session_id:sid,candidate:_localIce[i]});}catch(e){}
     }
     if(window._rtcDbg)window._rtcDbg('Replayed '+_localIce.length+' ICE candidates');
+  }
+  function _hasRemoteDescription(){
+    return !!(pc&&pc.remoteDescription&&pc.remoteDescription.type);
+  }
+  function _queueRemoteIce(candidate, reason){
+    if(!candidate)return;
+    _pendingIce.push(candidate);
+    if(_pendingIce.length>120)_pendingIce.shift();
+    if(window._rtcDbg)window._rtcDbg('Buffered remote ICE'+(reason?' ('+reason+')':'')+', queue='+_pendingIce.length);
+  }
+  async function _flushPendingIce(reason){
+    if(!pc||!_hasRemoteDescription()||!_pendingIce.length)return;
+    var queued=_pendingIce.splice(0,_pendingIce.length);
+    var kept=[];
+    for(var i=0;i<queued.length;i++){
+      try{await pc.addIceCandidate(queued[i]);}
+      catch(e){
+        if(e&&e.name==='InvalidStateError')kept.push(queued[i]);
+        else if(window._rtcDbg)window._rtcDbg('Dropped invalid remote ICE: '+(e&&e.message?e.message:'unknown'));
+      }
+    }
+    if(kept.length)_pendingIce=kept.concat(_pendingIce).slice(-120);
+    if(window._rtcDbg)window._rtcDbg('Flushed remote ICE after '+(reason||'description')+', applied='+(queued.length-kept.length)+', pending='+_pendingIce.length);
   }
 
   function _setupPC(){
@@ -18072,9 +18189,8 @@ window.OB_RTC = (function(){
     _dbg('PC created. Buffered: offer='+(!!_pendingOffer)+' ice='+_pendingIce.length);
     console.log('[RTC] PC created, processing '+_pendingIce.length+' buffered ICE + offer='+(!!_pendingOffer));
     if(_pendingOffer){_dbg('Processing buffered offer...');var po=_pendingOffer;_pendingOffer=null;await handleOffer(po);_dbg('Buffered offer processed, answer sent');}else{_dbg('No buffered offer to process');}
-    for(var i=0;i<_pendingIce.length;i++){try{await pc.addIceCandidate(_pendingIce[i]);}catch(e){}}
-    _pendingIce=[];
     if(_pendingAnswer){var pa=_pendingAnswer;_pendingAnswer=null;await handleAnswer(pa);}
+    await _flushPendingIce('rtc start');
 
     _ensureRtcWs(function(){
       _send({type:'rtc_ready',session_id:sid,channel:ch});
@@ -18127,6 +18243,7 @@ window.OB_RTC = (function(){
 	    try{
 	      if(window._rtcDbg)window._rtcDbg('Processing offer directly...');
 	      await pc.setRemoteDescription({type:'offer',sdp:sdp});
+      await _flushPendingIce('offer');
 	      var a=await pc.createAnswer();
 	      await pc.setLocalDescription(a);
       _lastOfferSdp=sdp;
@@ -18152,6 +18269,7 @@ window.OB_RTC = (function(){
       await pc.setRemoteDescription({type:'answer',sdp:sdp});
       _remoteAnswerSet=true;
       if(_offerRetryTimer){clearTimeout(_offerRetryTimer);_offerRetryTimer=null;}
+      await _flushPendingIce('answer');
       _sendLocalIceCandidates();
       console.log('[RTC] Remote desc set');
     }catch(e){_answerApplying=false;console.error('[RTC] handleAnswer error:',e);return;}
@@ -18159,8 +18277,13 @@ window.OB_RTC = (function(){
 	  }
   async function handleIce(c){
     if(!c)return;
-    if(!pc){_pendingIce.push(c);return;}
-    try{await pc.addIceCandidate(c);}catch(e){}
+    if(!pc){_queueRemoteIce(c,'pc not ready');return;}
+    if(!_hasRemoteDescription()){_queueRemoteIce(c,'remote description not ready');return;}
+    try{await pc.addIceCandidate(c);}
+    catch(e){
+      if(e&&e.name==='InvalidStateError')_queueRemoteIce(c,'browser not ready');
+      else if(window._rtcDbg)window._rtcDbg('Remote ICE rejected: '+(e&&e.message?e.message:'unknown'));
+    }
   }
   function handleReady(){
     _peerReady=true;
@@ -20274,8 +20397,13 @@ window._handleRTCMessage=function(d){
       window._obActiveSessId = sess.id || sid;
       hideRequestOverlay(sid);
       window.openExpertLivePanel(sess.id || sid);
-    } catch(e) {
-      if(String(e.message || '').toLowerCase().indexOf('not pending') >= 0){
+	    } catch(e) {
+	      if(String(e.message || '').toLowerCase().indexOf('expired') >= 0){
+	        hideRequestOverlay(sid);
+	        toastMsg('That session request expired. Ask the client to start again.','err');
+	        return;
+	      }
+	      if(String(e.message || '').toLowerCase().indexOf('not pending') >= 0){
         try {
           var current = await api('/api/sessions/' + encodeURIComponent(sid));
           if(current && current.session && current.session.status === 'active'){
@@ -21223,7 +21351,12 @@ window._handleRTCMessage=function(d){
   window._obPaymentSessionPatch20260426 = true;
   var API = (window.OWNLYBIZ_API_URL || window._OB_BACKEND || 'https://ownlybiz-backend-production.up.railway.app') + '/api';
   var CHANNELS = ['chat','voice','video'];
-  function token(){ return sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || localStorage.getItem('ob_client_token') || ''; }
+	  function token(){ return sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || localStorage.getItem('ob_client_token') || ''; }
+	  function currentRole(){
+	    try { return (JSON.parse(sessionStorage.getItem('ob_u') || localStorage.getItem('ob_u') || '{}').role || '').toLowerCase(); }
+	    catch(e) { return ''; }
+	  }
+	  function isAdminUser(){ return currentRole() === 'admin'; }
   function toastSafe(msg, type){
     try {
       if(typeof _showToast === 'function') _showToast(msg, type === 'err' ? 'red' : 'green');
@@ -21300,10 +21433,10 @@ window._handleRTCMessage=function(d){
       var pk = existingSetting(settings, mode, 'publishable_key');
       info.textContent = connected ? ((pk ? pk.slice(0, 18) + '… · ' : '') + 'Stripe ' + mode + ' mode active') : 'Add Stripe ' + mode + ' keys';
     }
-  }
-  function loadStripeSettings(){
-    if(!token()) return Promise.resolve();
-    stripeSelect();
+	  }
+	  function loadStripeSettings(){
+	    if(!token() || !isAdminUser()) return Promise.resolve();
+	    stripeSelect();
     return fetch(API + '/admin/settings', {headers:{Authorization:'Bearer ' + token()}})
       .then(function(r){ return r.json(); })
       .then(function(d){
@@ -23068,9 +23201,14 @@ window._handleRTCMessage=function(d){
   if(window._obAdminSeoConfig20260426) return;
   window._obAdminSeoConfig20260426 = true;
 
-  var BASE = (window.OWNLYBIZ_API_URL || window._OB_BACKEND || 'https://ownlybiz-backend-production.up.railway.app').replace(/\/$/, '');
-  var API = BASE + '/api';
-  var SEO_FIELDS = [
+	  var BASE = (window.OWNLYBIZ_API_URL || window._OB_BACKEND || 'https://ownlybiz-backend-production.up.railway.app').replace(/\/$/, '');
+	  var API = BASE + '/api';
+	  function adminRole(){
+	    try { return (JSON.parse(sessionStorage.getItem('ob_u') || localStorage.getItem('ob_u') || '{}').role || '').toLowerCase(); }
+	    catch(e) { return ''; }
+	  }
+	  function isAdmin(){ return adminRole() === 'admin'; }
+	  var SEO_FIELDS = [
     'platform_seo_title','platform_seo_description','platform_seo_canonical_url','platform_seo_robots','platform_seo_keywords',
     'platform_og_title','platform_og_description','platform_og_image_url','platform_twitter_card',
     'platform_schema_enabled','platform_schema_type','platform_schema_name','platform_schema_url','platform_schema_logo_url',
@@ -23293,17 +23431,19 @@ window._handleRTCMessage=function(d){
         check(p.platform_schema_enabled === '1' ? 'Structured data enabled' : 'Structured data disabled', p.platform_schema_enabled === '1', p.platform_schema_enabled !== '1') +
         check(p.platform_og_image_url ? 'Social image configured' : 'Social image not configured yet', !!p.platform_og_image_url, true);
     }
-  };
-  window.loadAdminSeoSettings = function(){
-    ensureAdminSeoUi();
+	  };
+	  window.loadAdminSeoSettings = function(){
+	    if(!isAdmin()) return;
+	    ensureAdminSeoUi();
     request('GET', '/admin/settings').then(function(data){
       var settings = Object.assign({}, DEFAULTS, data.settings || {});
       SEO_FIELDS.forEach(function(key){ setField(key, settings[key]); });
       window.obPreviewAdminSeo();
     }).catch(function(err){ toastMsg(err.message || 'Could not load SEO settings', 'err'); });
-  };
-  window.obSaveAdminSeoSettings = function(){
-    var payload = readPayload();
+	  };
+	  window.obSaveAdminSeoSettings = function(){
+	    if(!isAdmin()) return toastMsg('Admin access required.', 'err');
+	    var payload = readPayload();
     if(!validUrl(payload.platform_seo_canonical_url)) return toastMsg('Canonical URL must be a valid http/https URL.', 'err');
     if(payload.platform_og_image_url && !validUrl(payload.platform_og_image_url)) return toastMsg('Open Graph image must be a valid http/https URL.', 'err');
     request('PUT', '/admin/settings', payload).then(function(){
@@ -23524,13 +23664,14 @@ window._handleRTCMessage=function(d){
   }
   function applyDashRoute(route){
     if(route.slug) window._dashSlug = route.slug;
-    if(userRole() !== 'expert' && userRole() !== 'admin'){
-      try { sessionStorage.setItem('ob_next', location.pathname + location.search); } catch(e) {}
-      if(typeof window.switchView === 'function') window.switchView(1);
-      if(typeof window.showMktPage === 'function') window.showMktPage('login');
-      applyPlatformFallbackSeo();
-      if(typeof window._markRouteReady === 'function') window._markRouteReady('dashboard');
-      return;
+	    if(userRole() !== 'expert' && userRole() !== 'admin'){
+	      try { sessionStorage.setItem('ob_next', location.pathname + location.search); } catch(e) {}
+	      if(typeof window.switchView === 'function') window.switchView(1);
+	      if(typeof window.showMktPage === 'function') window.showMktPage('login');
+	      try { history.replaceState({obRoute:true}, '', '/login'); } catch(e) {}
+	      applyPlatformFallbackSeo();
+	      if(typeof window._markRouteReady === 'function') window._markRouteReady('dashboard');
+	      return;
     }
     if(typeof window.switchView === 'function' && !document.querySelector('#view-3.active')) window.switchView(3);
     if(route.slug && typeof window.loadDashboard === 'function') window.loadDashboard(route.slug);
@@ -23544,13 +23685,14 @@ window._handleRTCMessage=function(d){
     }, 80);
   }
   function applyAdminRoute(route){
-    if(userRole() !== 'admin'){
-      try { sessionStorage.setItem('ob_next', location.pathname + location.search); } catch(e) {}
-      if(typeof window.switchView === 'function') window.switchView(1);
-      if(typeof window.showMktPage === 'function') window.showMktPage('login');
-      applyPlatformFallbackSeo();
-      if(typeof window._markRouteReady === 'function') window._markRouteReady('admin');
-      return;
+	    if(userRole() !== 'admin'){
+	      try { sessionStorage.setItem('ob_next', location.pathname + location.search); } catch(e) {}
+	      if(typeof window.switchView === 'function') window.switchView(1);
+	      if(typeof window.showMktPage === 'function') window.showMktPage('login');
+	      try { history.replaceState({obRoute:true}, '', '/login'); } catch(e) {}
+	      applyPlatformFallbackSeo();
+	      if(typeof window._markRouteReady === 'function') window._markRouteReady('admin');
+	      return;
     }
     applyPlatformFallbackSeo();
     if(typeof window.switchView === 'function' && !document.querySelector('#view-6.active')) window.switchView(6);

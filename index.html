@@ -17891,7 +17891,7 @@ window.OB_RTC = (function(){
   var _pendingOffer=null, _pendingIce=[], _pendingAnswer=null;
   var _lastOfferSdp=null, _lastAnswerSdp=null, _lastLocalOfferSdp=null, _remoteAnswerSet=false, _answerApplying=false, _offerRetryTimer=null;
   var _connectDeadlineTimer=null, _connectionIssueTimer=null, _billingReadyTimer=null, _connectedOnce=false, _endingForIssue=false, _iceRestartAttempted=false;
-  var _localIce=[], _peerReady=false, _remoteMediaSeen=false, _rtcConfigLoaded=false, _rtcConfigPromise=null;
+  var _localIce=[], _peerReady=false, _remoteMediaSeen=false, _remoteMediaKinds={audio:false,video:false}, _rtcConfigLoaded=false, _rtcConfigPromise=null;
   var RTC_TIMEOUTS={initialMs:35000,reconnectMs:15000,failureMs:7000};
   var RTC_BILLING_STABLE_MS=3500;
   var DEFAULT_ICE={iceServers:[{urls:'stun:stun.l.google.com:19302'},{urls:'stun:stun1.l.google.com:19302'}],iceCandidatePoolSize:10,bundlePolicy:'max-bundle',rtcpMuxPolicy:'require'};
@@ -18085,7 +18085,10 @@ window.OB_RTC = (function(){
   function _hasRequiredMedia(){
     if(!localStream) return false;
     var localLive=localStream.getTracks().some(function(t){return t.readyState==='live';});
-    return !!(localLive && _remoteMediaSeen);
+    if(!localLive || !_remoteMediaSeen) return false;
+    if(ch==='video') return !!(_remoteMediaKinds.audio && _remoteMediaKinds.video);
+    if(ch==='voice') return !!_remoteMediaKinds.audio;
+    return true;
   }
   function _maybeMarkRtcConnected(trigger){
     if(_connectedOnce||_endingForIssue||!pc) return;
@@ -18151,6 +18154,7 @@ window.OB_RTC = (function(){
     pc.ontrack=function(e){
       console.log('[RTC] Remote track: '+e.track.kind);
       _remoteMediaSeen=true;
+      if(e.track.kind==='audio'||e.track.kind==='video') _remoteMediaKinds[e.track.kind]=true;
       try{e.track.onunmute=function(){_remoteMediaSeen=true;_maybeMarkRtcConnected('remote-track-unmuted');};}catch(_e){}
       if(e.track.kind==='audio'){
         var ra=document.getElementById('rtc-remote-audio');
@@ -18212,7 +18216,7 @@ window.OB_RTC = (function(){
     if(pc!==null){console.log('[RTC] Already active, skipping duplicate start()');if(window._rtcDbg)window._rtcDbg('SKIP: already active');return true;}
     sid=sessionId; ch=channel; _role=role; _muted=false; _camOff=false;
     _connectedOnce=false; _endingForIssue=false;
-    _peerReady=false; _localIce=[]; _remoteMediaSeen=false;
+    _peerReady=false; _localIce=[]; _remoteMediaSeen=false; _remoteMediaKinds={audio:false,video:false};
     _iceRestartAttempted=false;
     _lastOfferSdp=null; _lastAnswerSdp=null; _lastLocalOfferSdp=null; _remoteAnswerSet=false; _answerApplying=false;
     if(_offerRetryTimer){clearTimeout(_offerRetryTimer);_offerRetryTimer=null;}
@@ -18362,7 +18366,7 @@ window.OB_RTC = (function(){
     if(localStream){localStream.getTracks().forEach(function(t){t.stop();});localStream=null;}
 	    _pendingOffer=null;_pendingIce=[];_pendingAnswer=null;
     _lastOfferSdp=null;_lastAnswerSdp=null;_lastLocalOfferSdp=null;_remoteAnswerSet=false;_answerApplying=false;
-    _localIce=[];_peerReady=false;_remoteMediaSeen=false;
+    _localIce=[];_peerReady=false;_remoteMediaSeen=false;_remoteMediaKinds={audio:false,video:false};
     if(_offerRetryTimer){clearTimeout(_offerRetryTimer);_offerRetryTimer=null;}
     var ra=document.getElementById('rtc-remote-audio');if(ra){ra.srcObject=null;ra.remove();}
     sid=null;ch=null;_role=null;_muted=false;_camOff=false;_connectedOnce=false;_endingForIssue=false;_iceRestartAttempted=false;
@@ -23944,7 +23948,7 @@ window._handleRTCMessage=function(d){
   if(window._obProductionGuardrails20260428) return;
   window._obProductionGuardrails20260428 = true;
 
-  var BUILD = '20260428-prod-rtc-billing-guard-1';
+  var BUILD = '20260428-prod-rtc-billing-guard-2';
   window.OB_FRONTEND_BUILD = BUILD;
   var BASE = (window.OWNLYBIZ_API_URL || window._OB_BACKEND || 'https://ownlybiz-backend-production.up.railway.app').replace(/\/$/, '');
 

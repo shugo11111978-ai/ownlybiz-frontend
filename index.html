@@ -299,6 +299,24 @@ input,textarea,select{font-family:var(--font-body)}
 .privacy-consent .accept{background:var(--terra);color:white;}
 .privacy-consent .necessary{background:var(--white);border:1px solid var(--gray-200);color:var(--brown);}
 .privacy-consent .manage{background:transparent;color:var(--terra);}
+@media (max-width:680px){
+  .privacy-consent{
+    left:12px;
+    right:12px;
+    bottom:max(12px,env(safe-area-inset-bottom));
+    max-height:min(72vh,calc(100dvh - 28px));
+    overflow:auto;
+    padding:16px;
+    border-radius:20px;
+    -webkit-overflow-scrolling:touch;
+  }
+  .privacy-consent h3{font-size:20px;line-height:1.08;}
+  .privacy-consent p{font-size:12.5px;line-height:1.5;}
+  .privacy-consent label{font-size:12.5px!important;}
+  .privacy-consent-actions{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+  .privacy-consent-actions .manage{grid-column:1/-1;text-align:left;padding:4px 0;}
+  .privacy-consent button{padding:11px 12px;}
+}
 .gdpr-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px;margin:18px 0;}
 .gdpr-card{border:1px solid rgba(196,98,45,.2);background:rgba(196,98,45,.04);border-radius:16px;padding:16px;}
 .gdpr-card strong{display:block;font-size:13px;color:var(--brown);margin-bottom:4px;}
@@ -22524,16 +22542,55 @@ window._handleRTCMessage=function(d){
 	  }
 	  function readExpertConsentBanner(){
 	    var data = window._currentExpert || {};
-	    return flagEnabled(data.privacy_cookie_banner_enabled, true);
+	    var enabled = flagEnabled(data.privacy_cookie_banner_enabled, true);
+	    if(!enabled) closeConsent();
+	    return enabled;
+	  }
+	  function expertSlugForConsent(){
+	    var data = window._currentExpert || {};
+	    if(data.slug) return String(data.slug);
+	    if(window._currentExpertSlug) return String(window._currentExpertSlug);
+	    if(window._browseExpert) return String(window._browseExpert);
+	    var q = new URLSearchParams(location.search || '').get('expert');
+	    if(q) return q;
+	    var host = (location.hostname || '').toLowerCase();
+	    var sub = host.match(/^([^.]+)\.ownlybiz\.com$/);
+	    if(sub && sub[1] !== 'www') return sub[1];
+	    var path = (location.pathname || '').replace(/^\/+|\/+$/g, '');
+	    var first = path.split('/').filter(Boolean)[0] || '';
+	    var reserved = {'':1,'index.html':1,'admin':1,'dash':1,'signup':1,'dashboard':1,'login':1,'expert':1,'session':1,'connectors':1,'settings':1,'messages':1,'analytics':1,'payments':1,'packages':1,'reviews':1,'clients':1,'sessions':1,'pricing':1,'how':1,'features':1,'experts':1,'blog':1,'contact':1,'terms':1,'legal':1};
+	    return reserved[first] ? '' : first;
+	  }
+	  function fetchExpertConsentBanner(slug){
+	    if(!slug) return Promise.resolve(false);
+	    return fetch(API + '/experts/' + encodeURIComponent(slug)).then(function(r){ return r.json(); }).then(function(d){
+	      var expert = d && (d.expert || d);
+	      if(expert && expert.slug){
+	        window._currentExpert = Object.assign(window._currentExpert || {}, expert);
+	        window._currentExpertSlug = expert.slug;
+	      }
+	      return readExpertConsentBanner();
+	    }).catch(function(){ return false; });
 	  }
 	  function waitForExpertConsentBanner(){
 	    return new Promise(function(resolve){
 	      var tries = 0;
+	      var fetching = false;
 	      function check(){
 	        tries += 1;
 	        var data = window._currentExpert || {};
-	        if(data.privacy_cookie_banner_enabled !== undefined || data.slug || data.id || data.user_id || tries >= 25){
+	        if(data.privacy_cookie_banner_enabled !== undefined){
 	          resolve(readExpertConsentBanner());
+	          return;
+	        }
+	        var slug = expertSlugForConsent();
+	        if(slug && !fetching){
+	          fetching = true;
+	          fetchExpertConsentBanner(slug).then(resolve);
+	          return;
+	        }
+	        if(tries >= 25){
+	          resolve(false);
 	          return;
 	        }
 	        setTimeout(check, 200);
@@ -23842,6 +23899,214 @@ window._handleRTCMessage=function(d){
   }, true);
   if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else setTimeout(boot, 0);
   window.addEventListener('popstate', applyRoute);
+})();
+</script>
+<script>
+/* Production guardrails 2026-04-28: expert-domain loading, consent, alerts, RTC freshness */
+(function(){
+  if(window._obProductionGuardrails20260428) return;
+  window._obProductionGuardrails20260428 = true;
+
+  var BUILD = '20260428-prod-guardrails-1';
+  window.OB_FRONTEND_BUILD = BUILD;
+  var BASE = (window.OWNLYBIZ_API_URL || window._OB_BACKEND || 'https://ownlybiz-backend-production.up.railway.app').replace(/\/$/, '');
+
+  function h(){ return (location.hostname || '').toLowerCase(); }
+  function platformHost(){
+    var host = h();
+    return host === 'ownlybiz.com' || host === 'www.ownlybiz.com' || host === 'localhost' || host === '127.0.0.1' || host.indexOf('vercel.app') >= 0;
+  }
+  function publicExpertHost(){
+    var host = h();
+    if(!host || platformHost()) return false;
+    return true;
+  }
+  function publicExpertContext(){
+    var path = (location.pathname || '').replace(/^\/+|\/+$/g, '');
+    if(path === 'terms' || path.indexOf('legal/') === 0 || path.indexOf('dash/') === 0 || path === 'admin') return false;
+    if(publicExpertHost()) return true;
+    if(new URLSearchParams(location.search || '').has('expert')) return true;
+    return !!document.querySelector('#view-4.active');
+  }
+  function hasExpertPayload(){
+    var e = window._currentExpert || {};
+    return !!((e.slug || e.name || e.user_id || e.id) && !window._customDomainPending);
+  }
+  function closeConsentIfDisabled(data){
+    data = data || window._currentExpert || {};
+    var value = data.privacy_cookie_banner_enabled;
+    var disabled = value !== undefined && value !== null && ['0','false','off','no','disabled'].indexOf(String(value).trim().toLowerCase()) >= 0;
+    if(disabled){
+      var el = document.getElementById('privacy-consent');
+      if(el) el.classList.remove('active');
+    }
+  }
+
+  var originalMarkReady = window._markRouteReady;
+  if(originalMarkReady && !originalMarkReady._obGuarded){
+    window._markRouteReady = function(kind){
+      if((kind === 'public' || !kind) && publicExpertContext() && publicExpertHost() && !hasExpertPayload()){
+        document.documentElement.classList.add('ob-route-loading');
+        document.documentElement.classList.add('ob-public-loading');
+        return;
+      }
+      return originalMarkReady.apply(this, arguments);
+    };
+    window._markRouteReady._obGuarded = true;
+  }
+
+  function lookupCustomDomain(){
+    if(!publicExpertHost()) return;
+    if(window._currentExpertSlug || window._browseExpert) return;
+    if(window._obCustomDomainLookupStarted) return;
+    window._obCustomDomainLookupStarted = true;
+    window._customDomainPending = true;
+    fetch(BASE + '/api/domains/lookup?domain=' + encodeURIComponent(h()), {cache:'no-store'})
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        if(!d || !d.slug) throw new Error('Domain not mapped');
+        window._browseExpert = d.slug;
+        window._currentExpertSlug = d.slug;
+        window._customDomainPending = false;
+        if(typeof window.loadExpertWebsite === 'function') window.loadExpertWebsite(d.slug);
+      }).catch(function(){
+        window._customDomainPending = false;
+        setTimeout(showProfileLoadFallback, 50);
+      });
+  }
+  function showProfileLoadFallback(){
+    if(hasExpertPayload() || !publicExpertHost()) return;
+    var home = document.getElementById('ep-home');
+    if(home){
+      home.innerHTML = '<div style="min-height:60vh;display:flex;align-items:center;justify-content:center;text-align:center;padding:42px 22px;color:var(--brown);background:var(--cream);"><div style="max-width:420px;"><div style="font-family:var(--font-head);font-size:28px;margin-bottom:10px;">Expert site is loading</div><p style="color:var(--gray-500);line-height:1.6;margin-bottom:18px;">We could not finish loading this expert profile yet. Please refresh in a moment.</p><button class="btn btn-primary" onclick="location.reload()">Refresh</button></div></div>';
+    }
+    if(originalMarkReady) originalMarkReady.call(window, 'public');
+  }
+
+  var previousLoadExpertWebsite = window.loadExpertWebsite;
+  if(previousLoadExpertWebsite && !previousLoadExpertWebsite._obGuarded){
+    window.loadExpertWebsite = function(slug){
+      var resolved = slug || window._browseExpert || window._currentExpertSlug || '';
+      if(publicExpertHost() && (!resolved || resolved === 'expert-slug')){
+        if(typeof window._markRouteLoading === 'function') window._markRouteLoading('public');
+        lookupCustomDomain();
+        return;
+      }
+      return previousLoadExpertWebsite.apply(this, arguments);
+    };
+    window.loadExpertWebsite._obGuarded = true;
+  }
+
+  var previousApplyExpertWebsite = window._applyExpertWebsite;
+  if(previousApplyExpertWebsite && !previousApplyExpertWebsite._obConsentGuarded){
+    window._applyExpertWebsite = function(data){
+      var ret = previousApplyExpertWebsite.apply(this, arguments);
+      closeConsentIfDisabled(data);
+      return ret;
+    };
+    window._applyExpertWebsite._obConsentGuarded = true;
+  }
+
+  window.obPrimeSessionAlertAudio = function(){
+    try {
+      var Ctx = window.AudioContext || window.webkitAudioContext;
+      if(!Ctx) return false;
+      var ctx = window._obSessionAlertAudioCtx || new Ctx();
+      window._obSessionAlertAudioCtx = ctx;
+      if(ctx.state === 'suspended' && ctx.resume) ctx.resume().catch(function(){});
+      var osc = ctx.createOscillator();
+      var gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime + 0.03);
+      try { localStorage.setItem('ob_session_alert_audio_unlocked', '1'); } catch(e) {}
+      return true;
+    } catch(e) { return false; }
+  };
+  window.obPlaySessionAlertTone = function(){
+    try {
+      var Ctx = window.AudioContext || window.webkitAudioContext;
+      if(!Ctx) return;
+      var ctx = window._obSessionAlertAudioCtx || new Ctx();
+      window._obSessionAlertAudioCtx = ctx;
+      if(ctx.state === 'suspended' && ctx.resume) ctx.resume().catch(function(){});
+      [660, 880, 660].forEach(function(freq, i){
+        var osc = ctx.createOscillator();
+        var gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.value = freq;
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        var start = ctx.currentTime + i * 0.17;
+        gain.gain.setValueAtTime(0.0001, start);
+        gain.gain.exponentialRampToValueAtTime(0.28, start + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.24);
+        osc.start(start);
+        osc.stop(start + 0.26);
+      });
+    } catch(e) {}
+  };
+  document.addEventListener('pointerdown', function(){
+    var role = '';
+    try { role = (JSON.parse(sessionStorage.getItem('ob_u') || localStorage.getItem('ob_u') || '{}').role || '').toLowerCase(); } catch(e) {}
+    if(role === 'expert' || document.querySelector('#view-3.active')) window.obPrimeSessionAlertAudio();
+  }, {capture:true, once:true});
+
+  function installRequestSoundGuard(){
+    if(!window.showSessionRequest || window.showSessionRequest._obSoundGuarded) return;
+    var previousShowSessionRequest = window.showSessionRequest;
+    window.showSessionRequest = function(opts){
+      var ret = previousShowSessionRequest.apply(this, arguments);
+      setTimeout(function(){
+        var btn = document.getElementById('ob-enable-browser-notifications');
+        if(btn && /Enable browser notifications/i.test(btn.textContent || '')) btn.textContent = 'Enable session alerts';
+      }, 80);
+      window.obPlaySessionAlertTone();
+      return ret;
+    };
+    window.showSessionRequest._obSoundGuarded = true;
+  }
+  installRequestSoundGuard();
+  [300,1000,2500,5000].forEach(function(ms){ setTimeout(installRequestSoundGuard, ms); });
+  document.addEventListener('pointerdown', function(e){
+    var btn = e.target && e.target.closest ? e.target.closest('#ob-enable-browser-notifications') : null;
+    if(btn) window.obPrimeSessionAlertAudio();
+  }, true);
+
+  window.obEnsureFreshRuntime = function(){
+    return fetch(location.origin + '/?ob_build_check=' + Date.now(), {cache:'no-store'})
+      .then(function(r){ return r.text(); })
+      .then(function(html){
+        var match = html.match(/OB_FRONTEND_BUILD\s*=\s*['"]([^'"]+)/) || html.match(/var\s+BUILD\s*=\s*['"]([^'"]+)/);
+        var latest = match && match[1];
+        if(latest && latest !== BUILD){
+          try { sessionStorage.setItem('ob_after_refresh_notice', 'Your session page was refreshed to the latest Ownlybiz version.'); } catch(e) {}
+          location.reload();
+          return false;
+        }
+        return true;
+      }).catch(function(){ return true; });
+  };
+  function wrapRtcFreshness(){
+    if(!window.OB_RTC || !window.OB_RTC.start || window.OB_RTC.start._obFreshGuarded) return;
+    var oldStart = window.OB_RTC.start;
+    window.OB_RTC.start = function(){
+      var args = arguments;
+      return window.obEnsureFreshRuntime().then(function(ok){
+        if(!ok) return false;
+        return oldStart.apply(window.OB_RTC, args);
+      });
+    };
+    window.OB_RTC.start._obFreshGuarded = true;
+  }
+  wrapRtcFreshness();
+  setTimeout(wrapRtcFreshness, 1000);
+
+  lookupCustomDomain();
+  setTimeout(function(){ if(publicExpertHost() && !hasExpertPayload()) lookupCustomDomain(); }, 1200);
+  setTimeout(function(){ if(publicExpertHost() && !hasExpertPayload()) showProfileLoadFallback(); }, 12000);
 })();
 </script>
 </body>

@@ -17890,9 +17890,10 @@ window.OB_RTC = (function(){
   var pc=null, localStream=null, sid=null, ch=null, _role=null, _muted=false, _camOff=false;
   var _pendingOffer=null, _pendingIce=[], _pendingAnswer=null;
   var _lastOfferSdp=null, _lastAnswerSdp=null, _lastLocalOfferSdp=null, _remoteAnswerSet=false, _answerApplying=false, _offerRetryTimer=null;
-  var _connectDeadlineTimer=null, _connectionIssueTimer=null, _connectedOnce=false, _endingForIssue=false, _iceRestartAttempted=false;
-  var _localIce=[], _peerReady=false, _rtcConfigLoaded=false, _rtcConfigPromise=null;
+  var _connectDeadlineTimer=null, _connectionIssueTimer=null, _billingReadyTimer=null, _connectedOnce=false, _endingForIssue=false, _iceRestartAttempted=false;
+  var _localIce=[], _peerReady=false, _remoteMediaSeen=false, _rtcConfigLoaded=false, _rtcConfigPromise=null;
   var RTC_TIMEOUTS={initialMs:35000,reconnectMs:15000,failureMs:7000};
+  var RTC_BILLING_STABLE_MS=3500;
   var DEFAULT_ICE={iceServers:[{urls:'stun:stun.l.google.com:19302'},{urls:'stun:stun1.l.google.com:19302'}],iceCandidatePoolSize:10,bundlePolicy:'max-bundle',rtcpMuxPolicy:'require'};
   var ICE=DEFAULT_ICE;
   function _apiBase(){return window.OWNLYBIZ_API_URL||window._OB_BACKEND||'https://ownlybiz-backend-production.up.railway.app';}
@@ -17921,6 +17922,7 @@ window.OB_RTC = (function(){
       RTC_TIMEOUTS.initialMs=parseInt(rtc.connection_timeout_ms||RTC_TIMEOUTS.initialMs,10)||RTC_TIMEOUTS.initialMs;
       RTC_TIMEOUTS.reconnectMs=parseInt(rtc.reconnect_grace_ms||RTC_TIMEOUTS.reconnectMs,10)||RTC_TIMEOUTS.reconnectMs;
       RTC_TIMEOUTS.failureMs=parseInt(rtc.failure_grace_ms||RTC_TIMEOUTS.failureMs,10)||RTC_TIMEOUTS.failureMs;
+      RTC_BILLING_STABLE_MS=parseInt(rtc.billing_stable_ms||RTC_BILLING_STABLE_MS,10)||RTC_BILLING_STABLE_MS;
     }
   }
   function _loadRtcConfig(){
@@ -18027,14 +18029,15 @@ window.OB_RTC = (function(){
   function _clearConnectionTimers(){
     if(_connectDeadlineTimer){clearTimeout(_connectDeadlineTimer);_connectDeadlineTimer=null;}
     if(_connectionIssueTimer){clearTimeout(_connectionIssueTimer);_connectionIssueTimer=null;}
+    if(_billingReadyTimer){clearTimeout(_billingReadyTimer);_billingReadyTimer=null;}
   }
-  function _fallbackEndSession(failedSid){
+  function _fallbackEndSession(failedSid, reason){
     var tok=_authToken();
     if(!failedSid||!tok)return;
     fetch(_apiBase()+'/api/sessions/'+encodeURIComponent(failedSid)+'/end',{
       method:'POST',
       headers:{'Content-Type':'application/json','Authorization':'Bearer '+tok},
-      body:'{}'
+      body:JSON.stringify({connectionIssue:true, reason:reason||'rtc_connection_failed'})
     }).catch(function(){});
   }
   function _endForConnectionIssue(reason){
@@ -18044,7 +18047,7 @@ window.OB_RTC = (function(){
     _clearConnectionTimers();
     try{_send({type:'rtc_failed',session_id:failedSid,channel:failedChannel,reason:reason||'rtc_connection_failed'});}catch(e){}
     try{if(typeof window._obHandleSessionConnectionFailure==='function')window._obHandleSessionConnectionFailure(failedSid,failedChannel,reason||'rtc_connection_failed',_role);}catch(e){}
-    _fallbackEndSession(failedSid);
+    _fallbackEndSession(failedSid, reason||'rtc_connection_failed');
     cleanup();
   }
   function _scheduleConnectionIssue(reason, delay){
@@ -18075,12 +18078,39 @@ window.OB_RTC = (function(){
     }
     return true;
   }
+  function _hasStableTransport(){
+    if(!pc) return false;
+    return pc.connectionState==='connected' || pc.iceConnectionState==='connected' || pc.iceConnectionState==='completed';
+  }
+  function _hasRequiredMedia(){
+    if(!localStream) return false;
+    var localLive=localStream.getTracks().some(function(t){return t.readyState==='live';});
+    return !!(localLive && _remoteMediaSeen);
+  }
+  function _maybeMarkRtcConnected(trigger){
+    if(_connectedOnce||_endingForIssue||!pc) return;
+    if(!_hasStableTransport()||!_hasRequiredMedia()){
+      if(window._rtcDbg)window._rtcDbg('Billing wait: transport/media not stable yet ('+(trigger||'state')+')');
+      return;
+    }
+    if(_billingReadyTimer) return;
+    if(window._rtcDbg)window._rtcDbg('Billing-ready stability window started ('+(trigger||'state')+')');
+    _billingReadyTimer=setTimeout(function(){
+      _billingReadyTimer=null;
+      if(_connectedOnce||_endingForIssue||!pc) return;
+      if(!_hasStableTransport()||!_hasRequiredMedia()){
+        if(window._rtcDbg)window._rtcDbg('Billing-ready stability window cancelled: media/transport changed');
+        return;
+      }
+      _markRtcConnected();
+    }, RTC_BILLING_STABLE_MS);
+  }
   function _markRtcConnected(){
     if(_connectedOnce){_clearConnectionTimers();return;}
     _connectedOnce=true;
     _iceRestartAttempted=false;
     _clearConnectionTimers();
-    try{_send({type:'rtc_connected',session_id:sid,channel:ch});}catch(e){}
+    try{_send({type:'rtc_connected',session_id:sid,channel:ch,billing_ready:true,stable:true,stable_ms:RTC_BILLING_STABLE_MS});}catch(e){}
     try{if(typeof window._obRtcConnected==='function')window._obRtcConnected(sid,ch,_role);}catch(e){}
   }
   function _sendLocalIceCandidates(){
@@ -18120,6 +18150,8 @@ window.OB_RTC = (function(){
 
     pc.ontrack=function(e){
       console.log('[RTC] Remote track: '+e.track.kind);
+      _remoteMediaSeen=true;
+      try{e.track.onunmute=function(){_remoteMediaSeen=true;_maybeMarkRtcConnected('remote-track-unmuted');};}catch(_e){}
       if(e.track.kind==='audio'){
         var ra=document.getElementById('rtc-remote-audio');
         if(!ra){ra=document.createElement('audio');ra.id='rtc-remote-audio';ra.autoplay=true;ra.playsInline=true;document.body.appendChild(ra);}
@@ -18139,6 +18171,7 @@ window.OB_RTC = (function(){
         var lt=(_role==='expert'&&elv)?elv:lv;
         if(lt){lt.srcObject=localStream;lt.muted=true;lt.play().catch(function(){});}
       }
+      _maybeMarkRtcConnected('remote-track');
     };
 
     pc.onicecandidate=function(e){
@@ -18163,15 +18196,15 @@ window.OB_RTC = (function(){
     }
     pc.onconnectionstatechange=function(){
       _renderConnectionState('State',pc.connectionState);
-      if(pc.connectionState==='connected')_markRtcConnected();
-      else if(pc.connectionState==='disconnected'){_tryIceRestart('rtc_disconnected');_scheduleConnectionIssue('rtc_disconnected_timeout',RTC_TIMEOUTS.reconnectMs);}
-      else if(pc.connectionState==='failed'){_tryIceRestart('rtc_connection_failed');_scheduleConnectionIssue('rtc_connection_failed',RTC_TIMEOUTS.failureMs);}
+      if(pc.connectionState==='connected')_maybeMarkRtcConnected('connectionstate');
+      else if(pc.connectionState==='disconnected'){if(_billingReadyTimer){clearTimeout(_billingReadyTimer);_billingReadyTimer=null;}_tryIceRestart('rtc_disconnected');_scheduleConnectionIssue('rtc_disconnected_timeout',RTC_TIMEOUTS.reconnectMs);}
+      else if(pc.connectionState==='failed'){if(_billingReadyTimer){clearTimeout(_billingReadyTimer);_billingReadyTimer=null;}_tryIceRestart('rtc_connection_failed');_scheduleConnectionIssue('rtc_connection_failed',RTC_TIMEOUTS.failureMs);}
     };
     pc.oniceconnectionstatechange=function(){
       _renderConnectionState('ICE',pc.iceConnectionState);
-      if(pc.iceConnectionState==='connected'||pc.iceConnectionState==='completed')_markRtcConnected();
-      else if(pc.iceConnectionState==='disconnected'){_tryIceRestart('ice_disconnected');_scheduleConnectionIssue('rtc_ice_disconnected_timeout',RTC_TIMEOUTS.reconnectMs);}
-      else if(pc.iceConnectionState==='failed'){_tryIceRestart('ice_failed');_scheduleConnectionIssue('rtc_ice_failed',RTC_TIMEOUTS.failureMs);}
+      if(pc.iceConnectionState==='connected'||pc.iceConnectionState==='completed')_maybeMarkRtcConnected('iceconnectionstate');
+      else if(pc.iceConnectionState==='disconnected'){if(_billingReadyTimer){clearTimeout(_billingReadyTimer);_billingReadyTimer=null;}_tryIceRestart('ice_disconnected');_scheduleConnectionIssue('rtc_ice_disconnected_timeout',RTC_TIMEOUTS.reconnectMs);}
+      else if(pc.iceConnectionState==='failed'){if(_billingReadyTimer){clearTimeout(_billingReadyTimer);_billingReadyTimer=null;}_tryIceRestart('ice_failed');_scheduleConnectionIssue('rtc_ice_failed',RTC_TIMEOUTS.failureMs);}
     };
   }
 
@@ -18179,7 +18212,7 @@ window.OB_RTC = (function(){
     if(pc!==null){console.log('[RTC] Already active, skipping duplicate start()');if(window._rtcDbg)window._rtcDbg('SKIP: already active');return true;}
     sid=sessionId; ch=channel; _role=role; _muted=false; _camOff=false;
     _connectedOnce=false; _endingForIssue=false;
-    _peerReady=false; _localIce=[];
+    _peerReady=false; _localIce=[]; _remoteMediaSeen=false;
     _iceRestartAttempted=false;
     _lastOfferSdp=null; _lastAnswerSdp=null; _lastLocalOfferSdp=null; _remoteAnswerSet=false; _answerApplying=false;
     if(_offerRetryTimer){clearTimeout(_offerRetryTimer);_offerRetryTimer=null;}
@@ -18202,7 +18235,7 @@ window.OB_RTC = (function(){
     }
     _setupPC();
     _connectDeadlineTimer=setTimeout(function(){
-      if(pc&&pc.connectionState!=='connected')_endForConnectionIssue('rtc_initial_connection_timeout');
+      if(pc&&!_connectedOnce)_endForConnectionIssue('rtc_initial_connection_timeout');
     },RTC_TIMEOUTS.initialMs);
     _dbg('PC created. Buffered: offer='+(!!_pendingOffer)+' ice='+_pendingIce.length);
     console.log('[RTC] PC created, processing '+_pendingIce.length+' buffered ICE + offer='+(!!_pendingOffer));
@@ -18329,7 +18362,7 @@ window.OB_RTC = (function(){
     if(localStream){localStream.getTracks().forEach(function(t){t.stop();});localStream=null;}
 	    _pendingOffer=null;_pendingIce=[];_pendingAnswer=null;
     _lastOfferSdp=null;_lastAnswerSdp=null;_lastLocalOfferSdp=null;_remoteAnswerSet=false;_answerApplying=false;
-    _localIce=[];_peerReady=false;
+    _localIce=[];_peerReady=false;_remoteMediaSeen=false;
     if(_offerRetryTimer){clearTimeout(_offerRetryTimer);_offerRetryTimer=null;}
     var ra=document.getElementById('rtc-remote-audio');if(ra){ra.srcObject=null;ra.remove();}
     sid=null;ch=null;_role=null;_muted=false;_camOff=false;_connectedOnce=false;_endingForIssue=false;_iceRestartAttempted=false;
@@ -19502,7 +19535,7 @@ window._handleRTCMessage=function(d){
     if(sid && sid !== window._obActiveSessId && sid !== window._sid && sid !== window._sessId) return;
     setText('rtc-status', '\u2705 Connected');
     setText('b3-rtc-status', '\u2705 Connected');
-    setText('live-billing-status', 'Connected - billing timer active');
+    setText('live-billing-status', 'Media connected - waiting for billing confirmation');
   };
   window._obHandleSessionConnectionFailure = function(sid, ch, reason, roleName){
     if(sid && sid !== window._obActiveSessId && sid !== window._sid && sid !== window._sessId) return;
@@ -19549,7 +19582,9 @@ window._handleRTCMessage=function(d){
         fp.textContent = remaining > 0 ? ('Free intro active: ' + fmtTime(remaining) + ' remaining') : 'Free intro complete - billing active';
       }
       var bs = document.getElementById('live-billing-status');
-      if(bs && free > 0) bs.textContent = remaining > 0 ? 'Client is in free intro time' : 'Billing active after free intro';
+      if(bs) bs.textContent = free > 0
+        ? (remaining > 0 ? 'Client is in free intro time' : 'Billing active after free intro')
+        : 'Billing active';
     }
     tick();
     window._expertSessInterval = setInterval(tick, 1000);
@@ -20141,7 +20176,9 @@ window._handleRTCMessage=function(d){
     var fp = document.getElementById('live-free-period');
     if(fp){ fp.style.display = free > 0 ? 'block' : 'none'; if(free > 0) fp.textContent = 'Free period: ' + free + ' min intro included'; }
     var bs = document.getElementById('live-billing-status');
-    if(bs) bs.textContent = free > 0 ? 'Client is in free intro time' : 'Billing starts when client connects';
+    if(bs) bs.textContent = (ch === 'voice' || ch === 'video') && !sess.started_at
+      ? 'Connecting - billing has not started'
+      : (free > 0 ? 'Client is in free intro time' : 'Billing starts when client connects');
     var chat = document.getElementById('expert-chat-area');
     var rtc = document.getElementById('expert-rtc-area');
     if(ch === 'voice' || ch === 'video'){
@@ -23907,7 +23944,7 @@ window._handleRTCMessage=function(d){
   if(window._obProductionGuardrails20260428) return;
   window._obProductionGuardrails20260428 = true;
 
-  var BUILD = '20260428-prod-guardrails-1';
+  var BUILD = '20260428-prod-rtc-billing-guard-1';
   window.OB_FRONTEND_BUILD = BUILD;
   var BASE = (window.OWNLYBIZ_API_URL || window._OB_BACKEND || 'https://ownlybiz-backend-production.up.railway.app').replace(/\/$/, '');
 
@@ -24013,7 +24050,16 @@ window._handleRTCMessage=function(d){
       if(!Ctx) return false;
       var ctx = window._obSessionAlertAudioCtx || new Ctx();
       window._obSessionAlertAudioCtx = ctx;
-      if(ctx.state === 'suspended' && ctx.resume) ctx.resume().catch(function(){});
+      if(ctx.state === 'suspended' && ctx.resume) {
+        ctx.resume().then(function(){
+          window._obSessionAlertAudioUnlocked = ctx.state === 'running';
+          if(window._obSessionAlertAudioUnlocked) {
+            try { localStorage.setItem('ob_session_alert_audio_unlocked', '1'); } catch(e) {}
+            var primer = document.getElementById('ob-session-alert-primer');
+            if(primer) primer.remove();
+          }
+        }).catch(function(){});
+      }
       var osc = ctx.createOscillator();
       var gain = ctx.createGain();
       osc.connect(gain);
@@ -24021,9 +24067,42 @@ window._handleRTCMessage=function(d){
       gain.gain.setValueAtTime(0.0001, ctx.currentTime);
       osc.start(ctx.currentTime);
       osc.stop(ctx.currentTime + 0.03);
-      try { localStorage.setItem('ob_session_alert_audio_unlocked', '1'); } catch(e) {}
-      return true;
+      window._obSessionAlertAudioUnlocked = ctx.state === 'running';
+      if(window._obSessionAlertAudioUnlocked) try { localStorage.setItem('ob_session_alert_audio_unlocked', '1'); } catch(e) {}
+      return window._obSessionAlertAudioUnlocked;
     } catch(e) { return false; }
+  };
+  window.obSessionAlertAudioReady = function(){
+    try {
+      var ctx = window._obSessionAlertAudioCtx;
+      return !!(window._obSessionAlertAudioUnlocked && ctx && ctx.state === 'running');
+    } catch(e) { return false; }
+  };
+  window.obShowSessionAlertPrimer = function(){
+    try {
+      var role = '';
+      try { role = (JSON.parse(sessionStorage.getItem('ob_u') || localStorage.getItem('ob_u') || '{}').role || '').toLowerCase(); } catch(e) {}
+      var requestOverlay = document.getElementById('session-request-overlay');
+      var requestVisible = requestOverlay && (requestOverlay.classList.contains('show') || requestOverlay.style.display === 'flex');
+      if(role !== 'expert' && !document.querySelector('#view-3.active') && !requestVisible) return;
+      if(window.obSessionAlertAudioReady && window.obSessionAlertAudioReady()) return;
+      if(document.getElementById('ob-session-alert-primer')) return;
+      var btn = document.createElement('button');
+      btn.id = 'ob-session-alert-primer';
+      btn.type = 'button';
+      btn.textContent = 'Enable session alerts';
+      btn.style.cssText = 'position:fixed;right:16px;bottom:16px;z-index:2147483647;border:1px solid rgba(160,101,161,.35);background:#fffaf4;color:#3a241c;border-radius:999px;padding:10px 14px;font:800 13px/1.2 system-ui,-apple-system,sans-serif;box-shadow:0 12px 32px rgba(42,24,16,.18);';
+      btn.onclick = function(e){
+        e.preventDefault();
+        e.stopPropagation();
+        window.obPrimeSessionAlertAudio();
+        if('Notification' in window && Notification.permission === 'default'){
+          try { Notification.requestPermission().catch(function(){}); } catch(_e) {}
+        }
+        setTimeout(function(){ if(window.obSessionAlertAudioReady && window.obSessionAlertAudioReady()) btn.remove(); }, 220);
+      };
+      document.body.appendChild(btn);
+    } catch(e) {}
   };
   window.obPlaySessionAlertTone = function(){
     try {
@@ -24031,7 +24110,12 @@ window._handleRTCMessage=function(d){
       if(!Ctx) return;
       var ctx = window._obSessionAlertAudioCtx || new Ctx();
       window._obSessionAlertAudioCtx = ctx;
-      if(ctx.state === 'suspended' && ctx.resume) ctx.resume().catch(function(){});
+      if(ctx.state === 'suspended'){
+        if(ctx.resume) ctx.resume().catch(function(){});
+        if(window.obShowSessionAlertPrimer) window.obShowSessionAlertPrimer();
+        return;
+      }
+      window._obSessionAlertAudioUnlocked = true;
       [660, 880, 660].forEach(function(freq, i){
         var osc = ctx.createOscillator();
         var gain = ctx.createGain();
@@ -24063,6 +24147,7 @@ window._handleRTCMessage=function(d){
         var btn = document.getElementById('ob-enable-browser-notifications');
         if(btn && /Enable browser notifications/i.test(btn.textContent || '')) btn.textContent = 'Enable session alerts';
       }, 80);
+      if(window.obShowSessionAlertPrimer && !(window.obSessionAlertAudioReady && window.obSessionAlertAudioReady())) window.obShowSessionAlertPrimer();
       window.obPlaySessionAlertTone();
       return ret;
     };
@@ -24074,6 +24159,7 @@ window._handleRTCMessage=function(d){
     var btn = e.target && e.target.closest ? e.target.closest('#ob-enable-browser-notifications') : null;
     if(btn) window.obPrimeSessionAlertAudio();
   }, true);
+  [600,1800,4000].forEach(function(ms){ setTimeout(function(){ if(window.obShowSessionAlertPrimer) window.obShowSessionAlertPrimer(); }, ms); });
 
   window.obEnsureFreshRuntime = function(){
     return fetch(location.origin + '/?ob_build_check=' + Date.now(), {cache:'no-store'})

@@ -4430,9 +4430,11 @@ window._OB_BACKEND='https://victorious-wisdom-production-a6b0.up.railway.app';
 	              </div>
 
 	              <!-- ══════════════════ BILLING & PAYOUTS ══════════════════ -->
-              <div class="settings-block coming-soon" id="sblock-billing" style="display:none;">
+              <div class="settings-block" id="sblock-billing" style="display:none;">
                 <div class="settings-block-title">Billing & Payouts</div>
                 <div class="settings-block-desc">Manage how you receive earnings and your billing information.</div>
+
+                <div id="ob-plan-settings-anchor"></div>
 
                 <!-- Stripe connect status -->
                 <div style="background:linear-gradient(135deg,rgba(99,91,255,.06),rgba(99,91,255,.03));border:1.5px solid rgba(99,91,255,.2);border-radius:14px;padding:18px 20px;margin-bottom:24px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
@@ -10136,6 +10138,7 @@ function settingsNav(el, blockId) {
   var block = document.getElementById(blockId);
   if (block) { block.style.display='block'; block.scrollIntoView({behavior:'smooth',block:'start'}); }
   if(blockId==='sblock-website' && typeof loadDomainSettings==='function') loadDomainSettings();
+  if(blockId==='sblock-billing' && typeof loadPlan==='function') setTimeout(loadPlan, 60);
 }
 
 // ══════════════════════════════════════════
@@ -18841,15 +18844,17 @@ window._handleRTCMessage=function(d){
   window.markAllContactRead=function(){ api('/api/experts/me/contact-messages/read-all',{method:'PUT'}).then(function(){window.loadContactInbox();}).catch(function(e){toastMsg(e.message,'err');}); };
 
 	  function ensurePlanSettings(){
-	    var profile=document.getElementById('sblock-profile');
-	    if(!profile || document.getElementById('plan-settings-card')) return;
+	    var billing=document.getElementById('sblock-billing');
+	    if(!billing || document.getElementById('plan-settings-card')) return;
 	    var row=document.createElement('div');
 	    row.id='plan-settings-card';
 	    row.className='settings-field-row';
 	    row.style.alignItems='flex-start';
-	    row.innerHTML='<div><div class="settings-field-label">Ownlybiz Plan</div><div class="settings-field-sub">Monthly subscription + platform fee. Paid plans activate only after Stripe confirms payment.</div></div><div style="flex:1;max-width:680px;"><div id="ob-plan-summary" style="margin-bottom:10px;color:var(--gray-500);font-size:13px;">Loading plan...</div><div id="ob-plan-grid" style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:10px;"></div><div id="ob-plan-actions" style="display:flex;gap:8px;flex-wrap:wrap;"></div><span class="save-status" id="save-status-plan" style="display:block;margin-top:8px;"></span></div>';
-	    var saveRow=profile.querySelector('.settings-save-row');
-	    profile.insertBefore(row, saveRow || null);
+	    row.style.gap='18px';
+	    row.style.marginBottom='24px';
+	    row.innerHTML='<div style="min-width:170px;"><div class="settings-field-label">Ownlybiz Plan</div><div class="settings-field-sub">Subscription tier + platform fee. Paid plans activate only after Stripe confirms payment.</div></div><div style="flex:1;min-width:240px;"><div id="ob-plan-summary" style="margin-bottom:10px;color:var(--gray-500);font-size:13px;">Loading plan...</div><div id="ob-plan-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-bottom:10px;"></div><div id="ob-plan-actions" style="display:flex;gap:8px;flex-wrap:wrap;"></div><span class="save-status" id="save-status-plan" style="display:block;margin-top:8px;"></span></div>';
+	    var anchor=document.getElementById('ob-plan-settings-anchor');
+	    if(anchor) anchor.replaceWith(row); else billing.insertBefore(row, billing.children[2] || null);
 	  }
 	  function moneyPlan(v){var n=parseFloat(v||0);return '$'+(Math.round(n)===n?n.toFixed(0):n.toFixed(2));}
 	  function planStatusText(s){
@@ -18869,7 +18874,9 @@ window._handleRTCMessage=function(d){
 	    if(!grid||!actions) return;
 	    var sub=data.subscription||{plan:'starter',active_plan:'starter',status:'active'};
 	    var effectivePlan=sub.active_plan||sub.plan||'starter';
-	    if(summary) summary.innerHTML='<strong>Current:</strong> '+esc(planStatusText(sub))+' · Stripe '+esc(data.mode||'test')+' mode';
+	    var stripeNote=data.stripe_configured ? '' : ' · <span style="color:#dc2626;font-weight:700;">Stripe '+esc(data.mode||'test')+' not configured</span>';
+	    var stripeErrors=(data.stripe_errors||data.errors||[]).filter(Boolean);
+	    if(summary) summary.innerHTML='<strong>Current:</strong> '+esc(planStatusText(sub))+' · Stripe '+esc(data.mode||'test')+' mode'+stripeNote+(stripeErrors.length?'<div style="margin-top:4px;color:#dc2626;">'+esc(stripeErrors[0])+'</div>':'');
 	    var plans=data.plans||[];
 	    grid.innerHTML=plans.map(function(p){
 	      var current=effectivePlan===p.id;

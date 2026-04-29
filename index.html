@@ -9897,24 +9897,83 @@ var connectorData = {
   webhooks: {title:'Custom Webhooks', icon:'🔗', status:'configured', fields:[{label:'Endpoint URL 1',val:'https://myapp.com/ownlybiz/sessions',type:'text'},{label:'Endpoint URL 2',val:'https://myapp.com/ownlybiz/payments',type:'text'},{label:'Events',type:'select',opts:['All events','Session events only','Payment events only']},{label:'Include auth header',type:'toggle'}]},
   api: {title:'Ownlybiz REST API', icon:'🛠️', status:'', fields:[{label:'API Key Name',val:'',placeholder:'My App',type:'text'},{label:'Permissions',type:'select',opts:['Read only','Read + Write','Admin']}]},
 };
+function showStripeHandoff(state, detail) {
+  if (!document.getElementById('ob-stripe-handoff-style')) {
+    var css = document.createElement('style');
+    css.id = 'ob-stripe-handoff-style';
+    css.textContent = '#ob-stripe-handoff{position:fixed;inset:auto 24px 24px auto;z-index:999999;opacity:0;pointer-events:none;transform:translateY(16px);transition:opacity .2s ease,transform .2s ease;}#ob-stripe-handoff.is-visible{opacity:1;pointer-events:auto;transform:translateY(0);}#ob-stripe-handoff .ob-stripe-handoff-card{width:min(420px,calc(100vw - 32px));display:flex;gap:14px;align-items:flex-start;background:#fffaf2;color:#2f1f17;border:1px solid rgba(196,98,45,.24);border-radius:20px;padding:18px 20px;box-shadow:0 22px 60px rgba(37,24,16,.22);}#ob-stripe-handoff h3{margin:0 0 6px;font:900 18px/1.15 Georgia,serif;}#ob-stripe-handoff p{margin:0;color:#6f625c;font:600 13px/1.45 inherit;}#ob-stripe-handoff small{display:block;margin-top:9px;color:#8a7b73;font:700 11px/1.35 inherit;}#ob-stripe-handoff .ob-stripe-handoff-icon{width:42px;height:42px;flex:0 0 42px;border-radius:14px;background:linear-gradient(135deg,#635bff,#9d6cff);display:grid;place-items:center;box-shadow:0 10px 24px rgba(99,91,255,.28);}#ob-stripe-handoff .ob-stripe-handoff-icon span{width:17px;height:17px;border:3px solid rgba(255,255,255,.45);border-top-color:#fff;border-radius:999px;animation:obStripeSpin .85s linear infinite;}#ob-stripe-handoff.error .ob-stripe-handoff-card{border-color:rgba(220,38,38,.28);background:#fff5f5;}#ob-stripe-handoff.error .ob-stripe-handoff-icon{background:#dc2626;}#ob-stripe-handoff.done .ob-stripe-handoff-icon{background:#16a34a;}#ob-stripe-handoff.done .ob-stripe-handoff-icon span{animation:none;border:0;width:18px;height:18px;position:relative;}#ob-stripe-handoff.done .ob-stripe-handoff-icon span:after{content:\"\";position:absolute;left:3px;top:0;width:8px;height:15px;border:solid #fff;border-width:0 3px 3px 0;transform:rotate(45deg);}@keyframes obStripeSpin{to{transform:rotate(360deg)}}@media(max-width:720px){#ob-stripe-handoff{inset:auto 12px 12px 12px;}#ob-stripe-handoff .ob-stripe-handoff-card{width:auto;padding:16px;border-radius:18px;}}';
+    document.head.appendChild(css);
+  }
+  var el = document.getElementById('ob-stripe-handoff');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'ob-stripe-handoff';
+    el.innerHTML = '<div class="ob-stripe-handoff-card"><div class="ob-stripe-handoff-icon"><span></span></div><div><h3 id="ob-stripe-handoff-title">Opening Stripe setup</h3><p id="ob-stripe-handoff-detail"></p><small id="ob-stripe-handoff-note"></small></div></div>';
+    document.body.appendChild(el);
+  }
+  el.className = 'is-visible ' + (state || 'loading');
+  var title = document.getElementById('ob-stripe-handoff-title');
+  var msg = document.getElementById('ob-stripe-handoff-detail');
+  var note = document.getElementById('ob-stripe-handoff-note');
+  if (title) title.textContent = state === 'error' ? 'Stripe setup needs attention' : (state === 'done' ? 'Stripe is ready' : 'Opening secure Stripe setup');
+  if (msg) msg.textContent = detail || 'We are taking you to Stripe to complete secure payout setup. Most experts finish in about 5 minutes.';
+  if (note) note.textContent = state === 'error' ? 'You can try again when ready.' : 'Keep this tab open. Stripe will send you back to Ownlybiz when you finish.';
+  return el;
+}
+function hideStripeHandoffSoon(ms) {
+  setTimeout(function(){
+    var el = document.getElementById('ob-stripe-handoff');
+    if (el) el.className = '';
+  }, ms || 1800);
+}
+function setStripeConnectLoading(loading) {
+  document.querySelectorAll('#expert-stripe-connect-btn,.pay-processor[onclick*="stripe"] button,.conn-card[onclick*="stripe"] button').forEach(function(btn){
+    if (!btn) return;
+    if (loading) {
+      if (!btn.dataset.obStripeOldText) btn.dataset.obStripeOldText = btn.textContent || '';
+      btn.disabled = true;
+      btn.textContent = 'Opening Stripe...';
+    } else {
+      btn.disabled = false;
+      if (btn.dataset.obStripeOldText) btn.textContent = btn.dataset.obStripeOldText;
+      delete btn.dataset.obStripeOldText;
+    }
+  });
+}
 function openConnectorModal(type) {
   if (type !== 'stripe') { _showToast(type + ' not supported yet', 'red'); return; }
   var tok = sessionStorage.getItem('ob_t');
   if (!tok) { _showToast('Please log in first', 'red'); return; }
-  _showToast('Connecting to Stripe...', 'green');
+  setStripeConnectLoading(true);
+  showStripeHandoff('loading', 'We are taking you to Stripe to complete secure payout setup. Most experts finish in about 5 minutes.');
   fetch('https://victorious-wisdom-production-a6b0.up.railway.app/api/experts/stripe/connect', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + tok },
     body: JSON.stringify({ return_url: window.location.href })
-  }).then(function(r) { return r.json(); }).then(function(d) {
+  }).then(function(r) {
+    return r.json().catch(function(){ return {}; }).then(function(d) {
+      if (!r.ok) throw new Error(d.error || 'Could not connect Stripe');
+      return d;
+    });
+  }).then(function(d) {
     if (d.url) {
-      window.location.href = d.url;
+      showStripeHandoff('loading', 'Stripe is ready. Redirecting you now to finish verification and payout setup.');
+      setTimeout(function(){ window.location.href = d.url; }, 550);
     } else if (d.account_id) {
+      setStripeConnectLoading(false);
+      showStripeHandoff('done', 'Stripe already has your account on file. Refreshing your payment status now.');
+      hideStripeHandoffSoon(1800);
       _showToast('Stripe already connected: ' + d.account_id.substring(0,12) + '...', 'green');
     } else {
+      setStripeConnectLoading(false);
+      showStripeHandoff('error', d.error || 'Could not connect Stripe. Please try again.');
       _showToast('Error: ' + (d.error || 'Could not connect Stripe'), 'red');
     }
-  }).catch(function(e) { _showToast('Network error: ' + e.message, 'red'); });
+  }).catch(function(e) {
+    setStripeConnectLoading(false);
+    showStripeHandoff('error', e.message || 'Network error while opening Stripe.');
+    _showToast('Network error: ' + e.message, 'red');
+  });
 }
 function closeConnectorModal() {
   document.getElementById('connector-modal').classList.remove('open');
@@ -16839,11 +16898,38 @@ window._obOpenClientChat = openClientChat;
   function tok(){ return sessionStorage.getItem('ob_t')||localStorage.getItem('ob_t')||''; }
   function hdr(){ return {Authorization:'Bearer '+tok(),'Content-Type':'application/json'}; }
 
-  // FIX 1: correct path /api/experts/stripe/status
-  window.fetchStripeStatus = function fetchStripeStatus(cb){
-    fetch(BASE+'/api/experts/stripe/status',{headers:hdr()})
-      .then(function(r){return r.json();})
-      .then(function(d){cb(d);}).catch(function(){cb(null);});
+  var _obStripeStatusInFlight=null;
+  var _obStripeStatusLastData=null;
+  var _obStripeStatusLastAt=0;
+
+  // FIX 1: correct path /api/experts/stripe/status, with a short shared cache to avoid request storms
+  window.fetchStripeStatus = function fetchStripeStatus(cb, force){
+    if(!tok()){
+      if(cb) cb(null);
+      return Promise.resolve(null);
+    }
+    var now=Date.now();
+    if(!force && _obStripeStatusLastData && now - _obStripeStatusLastAt < 12000){
+      if(cb) cb(_obStripeStatusLastData);
+      return Promise.resolve(_obStripeStatusLastData);
+    }
+    if(!force && _obStripeStatusInFlight){
+      return _obStripeStatusInFlight.then(function(d){ if(cb) cb(d); return d; });
+    }
+    _obStripeStatusInFlight = fetch(BASE+'/api/experts/stripe/status',{headers:hdr()})
+      .then(function(r){return r.json().catch(function(){return {};}).then(function(d){ if(!r.ok) throw new Error(d.error||'Request failed'); return d; });})
+      .then(function(d){
+        _obStripeStatusLastData=d;
+        _obStripeStatusLastAt=Date.now();
+        _obStripeStatusInFlight=null;
+        if(cb) cb(d);
+        return d;
+      }, function(){
+        _obStripeStatusInFlight=null;
+        if(cb) cb(null);
+        return null;
+      });
+    return _obStripeStatusInFlight;
   }
 
   // FIX 2: UI — red when not configured, green when connected
@@ -16905,7 +16991,7 @@ window._obOpenClientChat = openClientChat;
     }
   }
 
-  window.obCheckStripeStatus = function(){ fetchStripeStatus(updateStripeUI); };
+  window.obCheckStripeStatus = function(){ fetchStripeStatus(updateStripeUI, true); };
 
   // FIX 3: send expert_user_id so admin's connect saves to expert's record
   var origOpenConnector = window.openConnectorModal;
@@ -16947,7 +17033,7 @@ window._obOpenClientChat = openClientChat;
     history.replaceState(null,'', window.location.pathname);
     if(sp==='success'||sp==='refresh'){
       // Small delay so dashboard fully renders
-      setTimeout(function(){ fetchStripeStatus(updateStripeUI); }, 800);
+      setTimeout(function(){ fetchStripeStatus(updateStripeUI, true); }, 800);
     }
   }
 
@@ -18971,16 +19057,48 @@ window._handleRTCMessage=function(d){
   window.markContactRead=function(id){ api('/api/experts/me/contact-messages/'+id+'/read',{method:'PUT'}).then(function(){window.loadContactInbox();}).catch(function(e){toastMsg(e.message,'err');}); };
   window.markAllContactRead=function(){ api('/api/experts/me/contact-messages/read-all',{method:'PUT'}).then(function(){window.loadContactInbox();}).catch(function(e){toastMsg(e.message,'err');}); };
 
+	  function installPlanBillingStyles(){
+	    if(document.getElementById('ob-plan-billing-style')) return;
+	    var style=document.createElement('style');
+	    style.id='ob-plan-billing-style';
+	    style.textContent=[
+	      '#plan-settings-card.ob-plan-shell{display:block!important;width:100%!important;max-width:1180px!important;margin:0 auto 28px!important;padding:0!important;border:0!important;background:transparent!important;}',
+	      '#plan-settings-card .ob-plan-header{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;margin-bottom:16px;padding:18px 20px;border:1px solid rgba(196,98,45,.18);border-radius:22px;background:linear-gradient(135deg,rgba(255,250,242,.96),rgba(247,238,226,.8));box-shadow:0 14px 34px rgba(37,24,16,.06);}',
+	      '#plan-settings-card .ob-plan-kicker{margin:0 0 5px;color:var(--terra);font-size:11px;font-weight:900;letter-spacing:.1em;text-transform:uppercase;}',
+	      '#plan-settings-card .ob-plan-title{margin:0;color:var(--brown);font:900 24px/1.1 Georgia,serif;}',
+	      '#plan-settings-card .ob-plan-sub{max-width:620px;margin:8px 0 0;color:var(--gray-500);font-size:13px;line-height:1.45;}',
+	      '#plan-settings-card .ob-plan-header-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}',
+	      '#plan-settings-card #ob-plan-summary{margin-bottom:16px;}',
+	      '#plan-settings-card .ob-plan-summary-card{display:flex;justify-content:space-between;gap:14px;align-items:center;padding:14px 16px;border-radius:18px;background:#fff;border:1px solid rgba(122,140,110,.18);box-shadow:0 10px 24px rgba(37,24,16,.04);}',
+	      '#plan-settings-card .ob-plan-summary-card strong{color:var(--brown);}',
+	      '#ob-plan-grid.ob-plan-grid{display:grid!important;grid-template-columns:repeat(3,minmax(0,1fr))!important;gap:16px!important;align-items:stretch!important;margin-bottom:14px!important;}',
+	      '#ob-plan-grid .ob-plan-card{display:flex!important;flex-direction:column!important;min-height:360px;border-radius:22px!important;padding:20px!important;overflow:hidden;position:relative;}',
+	      '#ob-plan-grid .ob-plan-card:before{content:"";position:absolute;inset:0 0 auto;height:5px;background:linear-gradient(90deg,var(--terra),rgba(122,140,110,.7));opacity:.28;}',
+	      '#ob-plan-grid .ob-plan-card.is-current:before{opacity:1;}',
+	      '#ob-plan-grid .ob-plan-card-title{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;}',
+	      '#ob-plan-grid .ob-plan-card-name{font:900 20px/1.1 Georgia,serif;color:var(--brown);}',
+	      '#ob-plan-grid .ob-plan-card-badge{font-size:11px;font-weight:900;border-radius:999px;padding:5px 9px;white-space:nowrap;}',
+	      '#ob-plan-grid .ob-plan-price{font-size:32px;line-height:1;font-weight:950;color:var(--brown);margin:18px 0 4px;}',
+	      '#ob-plan-grid .ob-plan-annual{font-size:12px;color:var(--gray-400);font-weight:700;}',
+	      '#ob-plan-grid .ob-plan-fee{font-size:13px;color:var(--sage);font-weight:900;margin-top:14px;padding:9px 10px;border-radius:12px;background:rgba(122,140,110,.1);}',
+	      '#ob-plan-grid .ob-plan-features{margin:14px 0 0 18px;padding:0;color:var(--gray-500);font-size:12px;line-height:1.65;}',
+	      '#ob-plan-grid .ob-plan-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:auto;padding-top:16px;}',
+	      '#ob-plan-grid .ob-plan-warning{font-size:11px;color:#dc2626;margin-top:8px;font-weight:800;}',
+	      '#plan-settings-card #ob-plan-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center;}',
+	      '#plan-settings-card #save-status-plan{display:block;margin-top:8px;}',
+	      '@media(max-width:1180px){#ob-plan-grid.ob-plan-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important;}}',
+	      '@media(max-width:760px){#plan-settings-card.ob-plan-shell{max-width:none!important;margin:0 0 24px!important;}#plan-settings-card .ob-plan-header{display:block;padding:16px;border-radius:18px;}#plan-settings-card .ob-plan-header-actions{margin-top:14px;}#plan-settings-card .ob-plan-summary-card{display:block;}#ob-plan-grid.ob-plan-grid{grid-template-columns:1fr!important;gap:12px!important;}#ob-plan-grid .ob-plan-card{min-height:0;padding:17px!important;border-radius:18px!important;}#ob-plan-grid .ob-plan-price{font-size:27px;}#ob-plan-grid .ob-plan-actions .btn{flex:1;min-width:120px;}}'
+	    ].join('');
+	    document.head.appendChild(style);
+	  }
 	  function ensurePlanSettings(){
+	    installPlanBillingStyles();
 	    var billing=document.getElementById('sblock-billing');
 	    if(!billing || document.getElementById('plan-settings-card')) return;
 	    var row=document.createElement('div');
 	    row.id='plan-settings-card';
-	    row.className='settings-field-row';
-	    row.style.alignItems='flex-start';
-	    row.style.gap='18px';
-	    row.style.marginBottom='24px';
-	    row.innerHTML='<div style="min-width:190px;"><div class="settings-field-label">Ownlybiz Plan</div><div class="settings-field-sub">Your subscription tier controls your platform fee. Paid plans activate only after Stripe confirms payment.</div></div><div style="flex:1;min-width:240px;"><div id="ob-plan-summary" style="margin-bottom:12px;color:var(--gray-500);font-size:13px;">Loading plan...</div><div id="ob-plan-grid" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px;margin-bottom:12px;"></div><div id="ob-plan-actions" style="display:flex;gap:8px;flex-wrap:wrap;"></div><span class="save-status" id="save-status-plan" style="display:block;margin-top:8px;"></span></div>';
+	    row.className='ob-plan-shell';
+	    row.innerHTML='<div class="ob-plan-header"><div><div class="ob-plan-kicker">Billing plan</div><h2 class="ob-plan-title">Choose the margin that fits your practice</h2><p class="ob-plan-sub">Starter has no monthly subscription and uses the standard platform fee. Paid plans lower the platform fee after Stripe confirms the subscription, so upgrades stay safe and auditable.</p></div><div class="ob-plan-header-actions"><button class="btn btn-secondary btn-sm" onclick="loadPlan(true)">Refresh plan</button></div></div><div id="ob-plan-summary" style="color:var(--gray-500);font-size:13px;">Loading plan...</div><div id="ob-plan-grid" class="ob-plan-grid"></div><div id="ob-plan-actions"></div><span class="save-status" id="save-status-plan"></span>';
 	    var anchor=document.getElementById('ob-plan-settings-anchor');
 	    if(anchor) anchor.replaceWith(row); else billing.insertBefore(row, billing.children[2] || null);
 	  }
@@ -19053,7 +19171,7 @@ window._handleRTCMessage=function(d){
 	    var effectivePlan=sub.active_plan||sub.plan||'starter';
 	    var stripeNote=data.stripe_configured ? '' : ' · <span style="color:#dc2626;font-weight:700;">Stripe '+escPlan(data.mode||'test')+' not configured</span>';
 	    var stripeErrors=(data.stripe_errors||data.errors||[]).filter(Boolean);
-	    if(summary) summary.innerHTML='<div style="padding:12px 14px;border-radius:12px;background:rgba(122,140,110,.08);border:1px solid rgba(122,140,110,.16);"><strong>Current:</strong> '+escPlan(planStatusText(sub))+' · Stripe '+escPlan(data.mode||'test')+' mode'+stripeNote+(stripeErrors.length?'<div style="margin-top:4px;color:#dc2626;font-weight:700;">'+escPlan(stripeErrors[0])+'</div>':'')+'</div>';
+	    if(summary) summary.innerHTML='<div class="ob-plan-summary-card"><div><strong>Current:</strong> '+escPlan(planStatusText(sub))+' · Stripe '+escPlan(data.mode||'test')+' mode'+stripeNote+(stripeErrors.length?'<div style="margin-top:5px;color:#dc2626;font-weight:800;">'+escPlan(stripeErrors[0])+'</div>':'')+'</div><div style="font-size:12px;color:var(--gray-400);font-weight:800;">Changes activate after Stripe confirms payment.</div></div>';
 	    var plans=data.plans||[];
 	    var activePlanMeta=plans.find(function(p){return p.id===effectivePlan;}) || plans.find(function(p){return p.id==='starter';}) || {};
 	    var feeDisplay=document.getElementById('expert-platform-fee-display');
@@ -19072,27 +19190,27 @@ window._handleRTCMessage=function(d){
 	      if(p.is_paid){
 	        var monthlyDisabled=current||!!monthlyProblem;
 	        var annualDisabled=current||!!annualProblem;
-	        buttonRow='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;">'+
+	        buttonRow='<div class="ob-plan-actions">'+
 	          '<button class="btn btn-primary btn-sm" '+(monthlyDisabled?'disabled ':'')+'title="'+escPlan(monthlyProblem)+'" onclick="obStartPlanCheckout(\''+escPlan(p.id)+'\',\'monthly\')">'+(current?'Current':'Monthly')+'</button>'+
 	          '<button class="btn btn-secondary btn-sm" '+(annualDisabled?'disabled ':'')+'title="'+escPlan(annualProblem)+'" onclick="obStartPlanCheckout(\''+escPlan(p.id)+'\',\'annual\')">'+(current?'Current':'Annual')+'</button>'+
 	        '</div>'+
-	        ((monthlyProblem||annualProblem)&&!current?'<div style="font-size:11px;color:#dc2626;margin-top:8px;font-weight:700;">'+escPlan(monthlyProblem||annualProblem)+'</div>':'');
+	        ((monthlyProblem||annualProblem)&&!current?'<div class="ob-plan-warning">'+escPlan(monthlyProblem||annualProblem)+'</div>':'');
 	      } else {
-	        buttonRow='<div style="font-size:12px;color:var(--sage);font-weight:800;margin-top:12px;">Included automatically. No subscription checkout needed.</div>';
+	        buttonRow='<div class="ob-plan-actions"><span style="font-size:12px;color:var(--sage);font-weight:900;">Included automatically. No subscription checkout needed.</span></div>';
 	      }
-	      return '<div class="ob-plan-card" data-plan="'+escPlan(p.id)+'" style="border:1.5px solid '+(current?'var(--terra)':'var(--gray-200)')+';border-radius:16px;padding:15px;background:'+(current?'rgba(196,98,45,.08)':'var(--white)')+';color:var(--brown);box-shadow:0 8px 20px rgba(37,24,16,.04);">'+
-	        '<div style="display:flex;justify-content:space-between;gap:8px;align-items:start;"><strong style="font-size:17px;">'+escPlan(p.name||p.id)+'</strong><span style="font-size:11px;font-weight:900;color:'+(current?'var(--terra)':'var(--gray-400)')+';background:'+(current?'rgba(196,98,45,.12)':'rgba(0,0,0,.04)')+';border-radius:999px;padding:4px 8px;">'+escPlan(badge)+'</span></div>'+
-	        '<div style="font-size:24px;font-weight:900;margin:10px 0 2px;">'+escPlan(price)+'</div>'+
-	        (annual?'<div style="font-size:12px;color:var(--gray-400);">Annual: '+escPlan(annual)+'</div>':'<div style="font-size:12px;color:var(--gray-400);">Launch without a monthly subscription.</div>')+
-	        '<div style="font-size:13px;color:var(--sage);font-weight:900;margin-top:10px;">'+escPlan(fee)+'% platform fee · you keep '+escPlan(cut)+'%</div>'+
-	        '<ul style="margin:12px 0 0 18px;padding:0;color:var(--gray-500);font-size:12px;line-height:1.7;">'+features+'</ul>'+
+	      return '<div class="ob-plan-card '+(current?'is-current':'')+'" data-plan="'+escPlan(p.id)+'" style="border:1.5px solid '+(current?'var(--terra)':'var(--gray-200)')+';background:'+(current?'rgba(196,98,45,.08)':'var(--white)')+';color:var(--brown);box-shadow:0 12px 28px rgba(37,24,16,.06);">'+
+	        '<div class="ob-plan-card-title"><strong class="ob-plan-card-name">'+escPlan(p.name||p.id)+'</strong><span class="ob-plan-card-badge" style="color:'+(current?'var(--terra)':'var(--gray-400)')+';background:'+(current?'rgba(196,98,45,.12)':'rgba(0,0,0,.04)')+';">'+escPlan(badge)+'</span></div>'+
+	        '<div class="ob-plan-price">'+escPlan(price)+'</div>'+
+	        (annual?'<div class="ob-plan-annual">Annual: '+escPlan(annual)+'</div>':'<div class="ob-plan-annual">Launch without a monthly subscription.</div>')+
+	        '<div class="ob-plan-fee">'+escPlan(fee)+'% platform fee · you keep '+escPlan(cut)+'%</div>'+
+	        '<ul class="ob-plan-features">'+features+'</ul>'+
 	        buttonRow+
 	      '</div>';
 	    }).join('');
 	    var paidActive=sub.stripe_subscription_id||(['active','trialing','past_due'].indexOf(String(sub.status||'').toLowerCase())>=0&&effectivePlan!=='starter');
 	    actions.innerHTML=
 	      (paidActive?'<button class="btn btn-primary btn-sm" onclick="obOpenBillingPortal()">Manage billing in Stripe</button>':'')+
-	      '<button class="btn btn-secondary btn-sm" onclick="loadPlan()">Refresh</button>';
+	      '<button class="btn btn-secondary btn-sm" onclick="loadPlan(true)">Refresh</button>';
 	  }
 	  function startPlanCheckout(plan,interval,returnUrl,statusId){
 	    var st=document.getElementById(statusId||'save-status-plan'); if(st){st.textContent='Starting secure Stripe checkout...';st.style.color='var(--gray-400)';}
@@ -19181,13 +19299,33 @@ window._handleRTCMessage=function(d){
 	      '</div>';
 	    }).join('');
 	  }
-	  function loadPlan(){
+	  var _obPlanLoadInFlight=null;
+	  var _obPlanLastData=null;
+	  var _obPlanLastAt=0;
+	  function loadPlan(force){
 	    ensurePlanSettings();
-	    if(!tok()) return;
-	    api('/api/subscriptions/me').then(renderPlanSettings).catch(function(e){
+	    if(!tok()) return Promise.resolve(null);
+	    var now=Date.now();
+	    if(!force && _obPlanLastData && now - _obPlanLastAt < 12000){
+	      renderPlanSettings(_obPlanLastData);
+	      return Promise.resolve(_obPlanLastData);
+	    }
+	    if(!force && _obPlanLoadInFlight){
+	      return _obPlanLoadInFlight.then(function(d){ if(d) renderPlanSettings(d); return d; });
+	    }
+	    _obPlanLoadInFlight = api('/api/subscriptions/me').then(function(d){
+	      _obPlanLastData=d;
+	      _obPlanLastAt=Date.now();
+	      renderPlanSettings(d);
+	      _obPlanLoadInFlight=null;
+	      return d;
+	    }, function(e){
+	      _obPlanLoadInFlight=null;
 	      var summary=document.getElementById('ob-plan-summary');
 	      if(summary) summary.textContent='Could not load plan: '+(e.message||'Request failed');
+	      return null;
 	    });
+	    return _obPlanLoadInFlight;
 	  }
 	  window.loadPlan=loadPlan;
 	  window.loadSignupPlanChoice=function(){
@@ -22486,16 +22624,35 @@ window._handleRTCMessage=function(d){
     var path = location.pathname || '';
     return path.indexOf('/dash/') === 0 || path === '/admin' || !!document.querySelector('#view-3.active,#view-6.active');
   }
-  function fetchRates(){
+  var _obRatesInFlight=null;
+  var _obRatesLastData=null;
+  var _obRatesLastAt=0;
+  var _obRatesLastKey='';
+  function fetchRates(force){
     if(!token() || !privateRatesContext()) return Promise.resolve(null);
     var adminId = window._adminViewingExpertId;
     var url = adminId ? '/admin/experts/' + encodeURIComponent(adminId) + '/rates' : '/experts/rates';
-    return api(url).then(function(d){
+    var key = adminId ? 'admin:' + adminId : 'me';
+    var now = Date.now();
+    if(!force && _obRatesLastData && _obRatesLastKey === key && now - _obRatesLastAt < 12000){
+      applyAvailability(_obRatesLastData);
+      return Promise.resolve(_obRatesLastData);
+    }
+    if(!force && _obRatesInFlight) return _obRatesInFlight;
+    _obRatesInFlight = api(url).then(function(d){
       var rates = d.rates || d || {};
       window._currentExpert = Object.assign(window._currentExpert || {}, rates);
       applyAvailability(rates);
+      _obRatesLastData = rates;
+      _obRatesLastAt = Date.now();
+      _obRatesLastKey = key;
+      _obRatesInFlight = null;
       return rates;
-    }).catch(function(){ return null; });
+    }, function(){
+      _obRatesInFlight = null;
+      return null;
+    });
+    return _obRatesInFlight;
   }
 
   var placeholderPatterns = [
@@ -22712,6 +22869,13 @@ window._handleRTCMessage=function(d){
     var banner = document.getElementById('payment-setup-banner');
     if(banner) banner.classList.remove('ob-pay-needs-setup');
     if(!token()) return;
+    if(typeof window.fetchStripeStatus === 'function') {
+      window.fetchStripeStatus(function(d){
+        if(typeof window.updateStripeUI === 'function') window.updateStripeUI(d);
+        else setPaymentBanner(d);
+      });
+      return;
+    }
     api('/experts/stripe/status').then(function(d){
       if(typeof window.updateStripeUI === 'function') window.updateStripeUI(d);
       else setPaymentBanner(d);
@@ -22750,6 +22914,7 @@ window._handleRTCMessage=function(d){
     }
   }, true);
 
+  var _obProductionExperienceLastRefreshAt = 0;
   function init(){
     installSaveHandlers();
     wrapPublicRenderers();
@@ -22759,11 +22924,15 @@ window._handleRTCMessage=function(d){
     applyCachedExpert();
     sanitizePlaceholders(window._currentExpert || {});
     applyAvailability(window._currentExpert || {});
-    fetchRates();
-    refreshPaymentStatus();
+    var now = Date.now();
+    if(now - _obProductionExperienceLastRefreshAt > 12000){
+      _obProductionExperienceLastRefreshAt = now;
+      fetchRates();
+      refreshPaymentStatus();
+    }
   }
   if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
-  [60,220,700,1500,3200,6000,10000,16000,22000].forEach(function(ms){ setTimeout(init, ms); });
+  [120,1200,4200].forEach(function(ms){ setTimeout(init, ms); });
 })();
 </script>
 <script>

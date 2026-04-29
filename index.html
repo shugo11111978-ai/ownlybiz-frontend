@@ -8549,10 +8549,10 @@ function openBookingOverlay(channelId) {
         var BASE2 = 'https://victorious-wisdom-production-a6b0.up.railway.app';
         var t2 = sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || '';
         if (!t2) return;
-        fetch(BASE2 + '/api/payments/config')
+        fetch((typeof obPaymentConfigUrl === 'function' ? obPaymentConfigUrl(BASE2) : BASE2 + '/api/payments/config?ts=' + Date.now()), {cache:'no-store'})
           .then(function(r){ return r.json(); })
           .then(function(cfg){
-            if (!cfg.publishable_key) {
+            if (!cfg.publishable_key || (typeof obValidStripePublishableKey === 'function' && !obValidStripePublishableKey(cfg.publishable_key))) {
               if (typeof obStagingPaymentBypassAllowed === 'function' && obStagingPaymentBypassAllowed(cfg)) showBovStagingPaymentBypass();
               return;
             }
@@ -8752,10 +8752,10 @@ async function bovAuthorize() {
   if (!t) { showErr('Please log in first.'); return; }
 
   // Get Stripe publishable key from backend, then confirm card setup
-  fetch(BASE + '/api/payments/config')
+  fetch((typeof obPaymentConfigUrl === 'function' ? obPaymentConfigUrl(BASE) : BASE + '/api/payments/config?ts=' + Date.now()), {cache:'no-store'})
     .then(function(r){ return r.json(); })
     .then(function(cfg){
-      if (!cfg.publishable_key) {
+      if (!cfg.publishable_key || (typeof obValidStripePublishableKey === 'function' && !obValidStripePublishableKey(cfg.publishable_key))) {
         if (typeof obStagingPaymentBypassAllowed === 'function' && obStagingPaymentBypassAllowed(cfg)) {
           showBovStagingPaymentBypass();
           completeBovStagingPaymentBypass(btn);
@@ -8765,7 +8765,14 @@ async function bovAuthorize() {
         return;
       }
 
-      var stripe = Stripe(cfg.publishable_key);
+      var stripe;
+      try {
+        stripe = Stripe(cfg.publishable_key);
+      } catch (stripeErr) {
+        window._stripePk = '';
+        showErr('Payment configuration refreshed. Please reload this page and try again.');
+        return;
+      }
 
       // Get or create card element
       var cardEl = window._bovCardElement;
@@ -11918,8 +11925,8 @@ async function savePaymentConfig() {
             var _BASE='https://victorious-wisdom-production-a6b0.up.railway.app';
             var _tok=sessionStorage.getItem('ob_t')||localStorage.getItem('ob_t')||'';
             if(!_tok||typeof Stripe==='undefined') return;
-            var _cfg=await fetch(_BASE+'/api/payments/config').then(function(r){return r.json();});
-            if(!_cfg||!_cfg.publishable_key) {
+            var _cfg=await fetch((typeof obPaymentConfigUrl === 'function' ? obPaymentConfigUrl(_BASE) : _BASE + '/api/payments/config?ts=' + Date.now()), {cache:'no-store'}).then(function(r){return r.json();});
+            if(!_cfg||!_cfg.publishable_key || (typeof obValidStripePublishableKey === 'function' && !obValidStripePublishableKey(_cfg.publishable_key))) {
               if(typeof obStagingPaymentBypassAllowed === 'function' && obStagingPaymentBypassAllowed(_cfg)) showBovStagingPaymentBypass();
               return;
             }
@@ -17081,6 +17088,14 @@ function obStagingPaymentBypassAllowed(cfg) {
   return !!cfg && stagingHost && !productionHost && cfg.mode === 'test' && cfg.configured === false && !cfg.publishable_key;
 }
 
+function obValidStripePublishableKey(key) {
+  return /^pk_(test|live)_[A-Za-z0-9]+$/.test(String(key || '').trim());
+}
+
+function obPaymentConfigUrl(base) {
+  return String(base || '').replace(/\/$/, '') + '/api/payments/config?ts=' + Date.now();
+}
+
 function bflStagingPaymentBypassAllowed(cfg) {
   return obStagingPaymentBypassAllowed(cfg);
 }
@@ -17230,16 +17245,17 @@ function mountBflCardElement() {
   if (!cardDiv || !cardSection) return;
   if (_bflCardElement) return;
   try {
-    var pk = window._stripePk || '';
+    var pk = obValidStripePublishableKey(window._stripePk) ? window._stripePk : '';
+    if (window._stripePk && !pk) window._stripePk = '';
     if (!pk) {
-      fetch('https://victorious-wisdom-production-a6b0.up.railway.app/api/payments/config')
+      fetch(obPaymentConfigUrl('https://victorious-wisdom-production-a6b0.up.railway.app'), {cache:'no-store'})
         .then(function(r) { return r.json(); })
         .then(function(d) {
           if (bflStagingPaymentBypassAllowed(d)) {
             showBflStagingPaymentBypass(cardSection, cardDiv);
             return;
           }
-          if (d.publishable_key) {
+          if (d.publishable_key && obValidStripePublishableKey(d.publishable_key)) {
             window._stripePk = d.publishable_key;
             _bflStripeConfigured = true;
             _bflStripe = Stripe(d.publishable_key);
@@ -19347,7 +19363,7 @@ window._handleRTCMessage=function(d){
 	    if(!force && _obPlanLoadInFlight){
 	      return _obPlanLoadInFlight.then(function(d){ if(d) renderPlanSettings(d); return d; });
 	    }
-	    _obPlanLoadInFlight = api('/api/subscriptions/me').then(function(d){
+	    _obPlanLoadInFlight = api('/api/subscriptions/me' + (force ? '?sync=1' : '')).then(function(d){
 	      _obPlanLastData=d;
 	      _obPlanLastAt=Date.now();
 	      renderPlanSettings(d);
@@ -24927,18 +24943,31 @@ window._handleRTCMessage=function(d){
         applyFee(fee);
       }).catch(function(){});
   }
+  function refreshLiveSessionCut(){
+    var sid = window._obActiveSessId || window._sid || window._sessId || '';
+    if(!sid){ refreshPlanCut(); return; }
+    fetch(BASE + '/api/sessions/' + encodeURIComponent(sid), {headers:{Authorization:'Bearer ' + tok()}})
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        var sess = d.session || d || {};
+        if(sess.platform_fee_pct != null) applyFee(sess.platform_fee_pct);
+        else refreshPlanCut();
+      }).catch(refreshPlanCut);
+  }
   function install(){
     if(typeof window.dbNav === 'function' && !window.dbNav._obPlanCutDisplayGuarded){
       var oldDbNav = window.dbNav;
       window.dbNav = function(el, panel){
         var ret = oldDbNav.apply(this, arguments);
-        if(panel === 'live-session' || panel === 'overview') setTimeout(refreshPlanCut, 500);
+        if(panel === 'live-session') setTimeout(refreshLiveSessionCut, 700);
+        if(panel === 'overview') setTimeout(refreshPlanCut, 500);
         return ret;
       };
       window.dbNav._obPlanCutDisplayGuarded = true;
     }
     if(document.getElementById('expert-plan-overview-card') || (document.getElementById('db-panel-live-session') && document.getElementById('db-panel-live-session').classList.contains('active'))){
-      refreshPlanCut();
+      if(document.getElementById('db-panel-live-session') && document.getElementById('db-panel-live-session').classList.contains('active')) refreshLiveSessionCut();
+      else refreshPlanCut();
     }
   }
   if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', install); else install();

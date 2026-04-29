@@ -19654,6 +19654,36 @@ window._handleRTCMessage=function(d){
   function num(v, fallback){ var n=parseFloat(v); return isFinite(n) ? n : (fallback || 0); }
   function int(v, fallback){ var n=parseInt(v, 10); return isFinite(n) ? n : (fallback || 0); }
   function money(v){ return '$' + num(v,0).toFixed(2); }
+  function applyExpertCutFromFeePct(feePct, rate){
+    var fee = parseFloat(feePct);
+    if(!isFinite(fee)) return false;
+    if(fee > 1) fee = fee / 100;
+    fee = Math.max(0, Math.min(1, fee));
+    var cut = parseFloat((1 - fee).toFixed(4));
+    window._expertSessCut = cut;
+    var liveCut = document.getElementById('live-sess-cut');
+    if(liveCut) liveCut.textContent = Math.round(cut * 100) + '%';
+    var earnRateEl = document.getElementById('live-earn-rate');
+    var perMin = num(rate, num(window._expertSessRate, 3.5));
+    if(earnRateEl) earnRateEl.textContent = money(perMin * cut) + '/min';
+    return true;
+  }
+  function refreshExpertCutFromSubscription(fallbackPlan, rate){
+    if(!tok()) return Promise.resolve(false);
+    return api('/api/subscriptions/me').then(function(d){
+      var sub = d.subscription || {};
+      var planId = String(sub.active_plan || sub.plan || fallbackPlan || 'starter').toLowerCase();
+      var plans = d.plans || [];
+      var plan = plans.find(function(p){ return String(p.id || '').toLowerCase() === planId; }) || null;
+      var fee = plan && plan.platform_fee_pct != null ? plan.platform_fee_pct : null;
+      if(fee == null){
+        if(planId === 'pro') fee = 8;
+        else if(planId === 'scale') fee = 5;
+        else fee = 12;
+      }
+      return applyExpertCutFromFeePct(fee, rate);
+    }).catch(function(){ return false; });
+  }
   function billableMinutes(durationSecs, freeMins){
     if(typeof window.obBillableWholeMinutes === 'function') return window.obBillableWholeMinutes(durationSecs, freeMins);
     return Math.max(0, (Math.max(0, int(durationSecs,0)) / 60) - int(freeMins,0));
@@ -20788,6 +20818,8 @@ window._handleRTCMessage=function(d){
     window._expertSessFreeMins = free;
     setText('live-sess-subtitle', ch.charAt(0).toUpperCase() + ch.slice(1) + ' session with ' + (sess.client_name || 'Client'));
     setText('live-sess-rate', money(rate) + '/min');
+    if(sess.platform_fee_pct != null) applyExpertCutFromFeePct(sess.platform_fee_pct, rate);
+    else refreshExpertCutFromSubscription(sess.expert_plan, rate);
     var fp = document.getElementById('live-free-period');
     if(fp){ fp.style.display = free > 0 ? 'block' : 'none'; if(free > 0) fp.textContent = 'Free period: ' + free + ' min intro included'; }
     var bs = document.getElementById('live-billing-status');
@@ -24840,6 +24872,58 @@ window._handleRTCMessage=function(d){
   lookupCustomDomain();
   setTimeout(function(){ if(publicExpertHost() && !hasExpertPayload()) lookupCustomDomain(); }, 1200);
   setTimeout(function(){ if(publicExpertHost() && !hasExpertPayload()) showProfileLoadFallback(); }, 12000);
+})();
+</script>
+<script>
+/* STAGING BILLING DISPLAY GUARD: keep live-session cut aligned with active plan */
+(function(){
+  if(window._obPlanCutDisplayGuard20260429) return;
+  window._obPlanCutDisplayGuard20260429 = true;
+  var BASE = (window.OWNLYBIZ_API_URL || window._OB_BACKEND || 'https://victorious-wisdom-production-a6b0.up.railway.app').replace(/\/$/, '');
+  function tok(){ return sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || ''; }
+  function money(v){ var n=parseFloat(v); if(!isFinite(n)) n=0; return '$' + n.toFixed(2); }
+  function applyFee(feePct){
+    var fee = parseFloat(feePct);
+    if(!isFinite(fee)) return false;
+    if(fee > 1) fee = fee / 100;
+    fee = Math.max(0, Math.min(1, fee));
+    var cut = parseFloat((1 - fee).toFixed(4));
+    window._expertSessCut = cut;
+    var cutEl = document.getElementById('live-sess-cut');
+    if(cutEl) cutEl.textContent = Math.round(cut * 100) + '%';
+    var earn = document.getElementById('live-earn-rate');
+    var rate = parseFloat(window._expertSessRate || ((document.getElementById('live-sess-rate') || {}).textContent || '').replace(/[^0-9.]/g,'') || 3.5);
+    if(earn) earn.textContent = money(rate * cut) + '/min';
+    return true;
+  }
+  function refreshPlanCut(){
+    if(!tok()) return;
+    fetch(BASE + '/api/subscriptions/me', {headers:{Authorization:'Bearer ' + tok()}})
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        var sub = d.subscription || {};
+        var planId = String(sub.active_plan || sub.plan || 'starter').toLowerCase();
+        var plan = (d.plans || []).find(function(p){ return String(p.id || '').toLowerCase() === planId; });
+        var fee = plan && plan.platform_fee_pct != null ? plan.platform_fee_pct : (planId === 'scale' ? 5 : planId === 'pro' ? 8 : 12);
+        applyFee(fee);
+      }).catch(function(){});
+  }
+  function install(){
+    if(typeof window.dbNav === 'function' && !window.dbNav._obPlanCutDisplayGuarded){
+      var oldDbNav = window.dbNav;
+      window.dbNav = function(el, panel){
+        var ret = oldDbNav.apply(this, arguments);
+        if(panel === 'live-session') setTimeout(refreshPlanCut, 500);
+        return ret;
+      };
+      window.dbNav._obPlanCutDisplayGuarded = true;
+    }
+    if(document.getElementById('db-panel-live-session') && document.getElementById('db-panel-live-session').classList.contains('active')){
+      refreshPlanCut();
+    }
+  }
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', install); else install();
+  [300,1000,2500,5000].forEach(function(ms){ setTimeout(install, ms); });
 })();
 </script>
 </body>

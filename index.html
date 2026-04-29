@@ -20348,8 +20348,30 @@ window._handleRTCMessage=function(d){
     });
     scheduleDedupe(panelId);
   }
-  window._obShowNoActiveExpertLiveSession = function(){
-    if(activeExpertSessionId()) return;
+  function setExpertEndButtonsDisabled(disabled){
+    document.querySelectorAll('#db-panel-live-session button').forEach(function(btn){
+      if(/End Session|End Call/i.test(btn.textContent || '')){
+        btn.disabled = !!disabled;
+        btn.style.opacity = disabled ? '.45' : '';
+        btn.style.cursor = disabled ? 'not-allowed' : '';
+      }
+    });
+  }
+  window._obShowNoActiveExpertLiveSession = function(force){
+    if(!force && activeExpertSessionId()) return;
+    window._obActiveSessId = null;
+    window._sid = null;
+    window._sessId = null;
+    window._expertSessActive = false;
+    try { if(window._expertTimerInterval) clearInterval(window._expertTimerInterval); } catch(e) {}
+    try { if(window._expertSessInterval) clearInterval(window._expertSessInterval); } catch(e) {}
+    try { if(window._expertSessionPoller) clearInterval(window._expertSessionPoller); } catch(e) {}
+    try { if(window._obExpertSessionPoller) clearInterval(window._obExpertSessionPoller); } catch(e) {}
+    window._expertTimerInterval = null;
+    window._expertSessInterval = null;
+    window._expertSessionPoller = null;
+    window._obExpertSessionPoller = null;
+    window._expertSessSeconds = 0;
     prepareExpertMessagePanel('', {clear:true});
     stopExpertTimerKeepDisplay();
     setText('live-sess-subtitle', 'No active client session');
@@ -20363,6 +20385,7 @@ window._handleRTCMessage=function(d){
     }
     var input = document.getElementById('expert-chat-input');
     if(input){ input.disabled = true; input.placeholder = 'No active session'; }
+    setExpertEndButtonsDisabled(true);
   };
   function applyClientReceipt(sess){
     sess = sess || {};
@@ -20761,6 +20784,7 @@ window._handleRTCMessage=function(d){
     }
   }
   function resetExpertLivePanelForActiveSession(){
+    setExpertEndButtonsDisabled(false);
     var status = document.getElementById('live-client-status');
     if(status){
       status.textContent = '● Online';
@@ -24945,11 +24969,20 @@ window._handleRTCMessage=function(d){
   }
   function refreshLiveSessionCut(){
     var sid = window._obActiveSessId || window._sid || window._sessId || '';
-    if(!sid){ refreshPlanCut(); return; }
+    if(!sid){
+      if(typeof window._obShowNoActiveExpertLiveSession === 'function') window._obShowNoActiveExpertLiveSession(true);
+      refreshPlanCut();
+      return;
+    }
     fetch(BASE + '/api/sessions/' + encodeURIComponent(sid), {headers:{Authorization:'Bearer ' + tok()}})
       .then(function(r){ return r.json(); })
       .then(function(d){
         var sess = d.session || d || {};
+        if(!sess.id || sess.status === 'ended' || sess.status === 'cancelled'){
+          if(typeof window._obShowNoActiveExpertLiveSession === 'function') window._obShowNoActiveExpertLiveSession(true);
+          refreshPlanCut();
+          return;
+        }
         if(sess.platform_fee_pct != null) applyFee(sess.platform_fee_pct);
         else refreshPlanCut();
       }).catch(refreshPlanCut);

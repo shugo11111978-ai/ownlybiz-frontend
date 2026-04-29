@@ -19245,6 +19245,38 @@ window._handleRTCMessage=function(d){
 	      throw new Error('No billing portal URL returned');
 	    }).catch(function(e){if(st){st.textContent=e.message||'Billing portal failed';st.style.color='#dc2626';}toastMsg(e.message||'Billing portal failed','err');});
 	  };
+	  function cleanBillingReturnUrl(){
+	    try {
+	      var url = new URL(window.location.href);
+	      url.searchParams.delete('billing');
+	      url.searchParams.delete('session_id');
+	      history.replaceState(null, '', url.pathname + (url.search ? url.search : '') + url.hash);
+	    } catch(e) {}
+	  }
+	  function syncCheckoutReturn(){
+	    var params = new URLSearchParams(window.location.search || '');
+	    if(params.get('billing') !== 'success' || !params.get('session_id') || window._obCheckoutReturnSynced) return null;
+	    window._obCheckoutReturnSynced = true;
+	    var st=document.getElementById('save-status-plan');
+	    var summary=document.getElementById('ob-plan-summary');
+	    if(st){st.textContent='Confirming Stripe subscription...';st.style.color='var(--gray-400)';}
+	    if(summary) summary.innerHTML='<div class="ob-plan-summary-card"><div><strong>Confirming payment with Stripe...</strong><div style="margin-top:5px;color:var(--gray-500);font-weight:700;">This usually takes a few seconds.</div></div></div>';
+	    return api('/api/subscriptions/sync-checkout',{
+	      method:'POST',
+	      body:JSON.stringify({session_id:params.get('session_id')})
+	    }).then(function(d){
+	      cleanBillingReturnUrl();
+	      _obPlanLastData=null;
+	      _obPlanLastAt=0;
+	      if(st){st.textContent='Plan activated from Stripe.';st.style.color='var(--sage)';}
+	      toastMsg('Plan activated. Your platform fee has been updated.','ok');
+	      return d;
+	    }).catch(function(e){
+	      if(st){st.textContent=e.message||'Stripe confirmation failed';st.style.color='#dc2626';}
+	      if(summary) summary.innerHTML='<div class="ob-plan-summary-card"><div><strong>Stripe confirmation needs attention.</strong><div style="margin-top:5px;color:#dc2626;font-weight:800;">'+escPlan(e.message||'Could not confirm the subscription yet.')+'</div></div></div>';
+	      return null;
+	    });
+	  }
 	  window.obOpenExpertBillingSettings=function(){
 	    if(typeof switchView==='function') switchView(3);
 	    setTimeout(function(){
@@ -19305,6 +19337,8 @@ window._handleRTCMessage=function(d){
 	  function loadPlan(force){
 	    ensurePlanSettings();
 	    if(!tok()) return Promise.resolve(null);
+	    var checkoutSync = syncCheckoutReturn();
+	    if(checkoutSync) return checkoutSync.then(function(){ return loadPlan(true); });
 	    var now=Date.now();
 	    if(!force && _obPlanLastData && now - _obPlanLastAt < 12000){
 	      renderPlanSettings(_obPlanLastData);

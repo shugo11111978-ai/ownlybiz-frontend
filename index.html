@@ -24896,11 +24896,30 @@ window._handleRTCMessage=function(d){
     if(earn) earn.textContent = money(rate * cut) + '/min';
     return true;
   }
+  function applyOverviewPlan(data){
+    data = data || {};
+    var sub = data.subscription || {};
+    var planId = String(sub.active_plan || sub.plan || 'starter').toLowerCase();
+    var plan = (data.plans || []).find(function(p){ return String(p.id || '').toLowerCase() === planId; }) || {};
+    var fee = plan.platform_fee_pct != null ? plan.platform_fee_pct : (planId === 'scale' ? 5 : planId === 'pro' ? 8 : 12);
+    var cut = plan.expert_cut_pct != null ? plan.expert_cut_pct : Math.max(0, 100 - fee);
+    var name = document.getElementById('expert-plan-overview-name');
+    var status = document.getElementById('expert-plan-overview-status');
+    var detail = document.getElementById('expert-plan-overview-detail');
+    if(name) name.textContent = (plan.name || (planId.charAt(0).toUpperCase() + planId.slice(1))) + ' plan';
+    if(status){
+      status.textContent = String(sub.status || 'active').replace(/_/g, ' ');
+      status.style.color = planId === 'starter' ? 'var(--terra)' : 'var(--sage)';
+      status.style.background = planId === 'starter' ? 'rgba(196,98,45,.1)' : 'rgba(122,140,110,.12)';
+    }
+    if(detail) detail.textContent = fee + '% platform fee, you keep ' + cut + '% of session revenue.';
+  }
   function refreshPlanCut(){
     if(!tok()) return;
     fetch(BASE + '/api/subscriptions/me', {headers:{Authorization:'Bearer ' + tok()}})
       .then(function(r){ return r.json(); })
       .then(function(d){
+        applyOverviewPlan(d);
         var sub = d.subscription || {};
         var planId = String(sub.active_plan || sub.plan || 'starter').toLowerCase();
         var plan = (d.plans || []).find(function(p){ return String(p.id || '').toLowerCase() === planId; });
@@ -24913,12 +24932,12 @@ window._handleRTCMessage=function(d){
       var oldDbNav = window.dbNav;
       window.dbNav = function(el, panel){
         var ret = oldDbNav.apply(this, arguments);
-        if(panel === 'live-session') setTimeout(refreshPlanCut, 500);
+        if(panel === 'live-session' || panel === 'overview') setTimeout(refreshPlanCut, 500);
         return ret;
       };
       window.dbNav._obPlanCutDisplayGuarded = true;
     }
-    if(document.getElementById('db-panel-live-session') && document.getElementById('db-panel-live-session').classList.contains('active')){
+    if(document.getElementById('expert-plan-overview-card') || (document.getElementById('db-panel-live-session') && document.getElementById('db-panel-live-session').classList.contains('active'))){
       refreshPlanCut();
     }
   }

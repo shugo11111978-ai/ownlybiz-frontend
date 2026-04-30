@@ -25568,6 +25568,14 @@ window._handleRTCMessage=function(d){
       '#ob-media-preflight-card .ob-mp-copy{font-size:12px;color:var(--gray-500);line-height:1.45;}',
       '#ob-media-preflight-btn{border:none;border-radius:12px;padding:10px 13px;background:var(--sage);color:white;font-weight:900;white-space:nowrap;cursor:pointer;}',
       '#ob-media-preflight-btn:disabled{opacity:.65;cursor:wait;}',
+      '#ob-scheduled-media-card{background:rgba(122,140,110,.08);border:1.5px solid rgba(122,140,110,.24);border-radius:14px;padding:14px 15px;margin:0 0 18px;text-align:left;color:var(--brown);}',
+      '#ob-scheduled-media-card[data-state="ready"]{background:rgba(34,197,94,.08);border-color:rgba(34,197,94,.24);}',
+      '#ob-scheduled-media-card[data-state="error"]{background:rgba(220,38,38,.07);border-color:rgba(220,38,38,.26);}',
+      '#ob-scheduled-media-card .ob-sm-row{display:flex;align-items:center;justify-content:space-between;gap:12px;}',
+      '#ob-scheduled-media-card .ob-sm-title{font-weight:900;font-size:14px;margin-bottom:4px;}',
+      '#ob-scheduled-media-card .ob-sm-copy{font-size:12px;color:var(--gray-500);line-height:1.45;}',
+      '#ob-scheduled-media-card button{border:none;border-radius:12px;padding:10px 13px;background:var(--sage);color:white;font-weight:900;white-space:nowrap;cursor:pointer;}',
+      '#ob-scheduled-media-card button:disabled{opacity:.65;cursor:wait;}',
       '#ob-plan-confirm{position:fixed;inset:0;z-index:100002;background:rgba(37,24,16,.48);display:none;align-items:center;justify-content:center;padding:18px;backdrop-filter:blur(5px);}',
       '#ob-plan-confirm .ob-plan-confirm-card{width:min(440px,calc(100vw - 32px));background:#fffaf2;color:#251810;border:1px solid rgba(196,98,45,.24);border-radius:24px;padding:24px;box-shadow:0 24px 90px rgba(37,24,16,.28);}',
       '#ob-plan-confirm h3{margin:0 0 8px;font:900 25px/1.08 Georgia,serif;}',
@@ -25576,7 +25584,7 @@ window._handleRTCMessage=function(d){
       '#ob-plan-confirm button{flex:1;border-radius:14px;padding:13px 15px;font-weight:900;cursor:pointer;}',
       '#ob-plan-confirm-cancel{background:white;border:1.5px solid var(--gray-200);color:var(--brown);}',
       '#ob-plan-confirm-ok{background:var(--terra);border:1.5px solid var(--terra);color:white;}',
-      '@media(max-width:720px){#ob-media-preflight-card .ob-mp-row{display:block;}#ob-media-preflight-btn{width:100%;margin-top:12px;}#ob-plan-confirm .ob-plan-confirm-actions{display:block;}#ob-plan-confirm button{width:100%;margin-top:10px;}}'
+      '@media(max-width:720px){#ob-media-preflight-card .ob-mp-row,#ob-scheduled-media-card .ob-sm-row{display:block;}#ob-media-preflight-btn,#ob-scheduled-media-card button{width:100%;margin-top:12px;}#ob-plan-confirm .ob-plan-confirm-actions{display:block;}#ob-plan-confirm button{width:100%;margin-top:10px;}}'
     ].join('\n');
     document.head.appendChild(style);
   }
@@ -25962,6 +25970,230 @@ window._handleRTCMessage=function(d){
     }
   }
 
+  function recoverDashboardPanel(panel){
+    panel = String(panel || '').toLowerCase();
+    var target = document.getElementById('db-panel-' + panel);
+    if(panel === 'pricing' && !target) target = document.getElementById('db-panel-payments');
+    if(!target) {
+      target = document.querySelector('.db-tab-panel.active[id^="db-panel-"]');
+      panel = target && target.id ? target.id.replace('db-panel-', '') : panel;
+    }
+    if(!target) return;
+    document.querySelectorAll('.db-tab-panel').forEach(function(p){
+      if(p === target || p.classList.contains('active')) p.style.display = '';
+      else if(p.style.display === '') p.style.display = '';
+    });
+    target.classList.add('active');
+    target.style.display = '';
+    if(panel === 'bookings' && typeof window.loadExpertBookings === 'function'){
+      var list = document.getElementById('bookings-list');
+      if(list && !list._obRecoveringBookings && (!list.children.length || /Loading bookings/i.test(list.textContent || ''))){
+        list._obRecoveringBookings = true;
+        setTimeout(function(){ list._obRecoveringBookings = false; }, 2000);
+        try { window.loadExpertBookings(); } catch(e) {}
+      }
+    }
+  }
+  function installDashboardPanelRecovery(){
+    if(window.dbNav && !window.dbNav._obPanelDisplayRecovery){
+      var oldDbNav = window.dbNav;
+      window.dbNav = function(el, panel){
+        var ret = oldDbNav.apply(this, arguments);
+        setTimeout(function(){ recoverDashboardPanel(panel); }, 0);
+        setTimeout(function(){ recoverDashboardPanel(panel); }, 120);
+        return ret;
+      };
+      window.dbNav._obPanelDisplayRecovery = true;
+    }
+    if(!window._obPanelDisplayRecoveryTimer){
+      window._obPanelDisplayRecoveryTimer = setInterval(function(){
+        var active = document.querySelector('.db-tab-panel.active[id^="db-panel-"]');
+        if(active && active.style.display === 'none') active.style.display = '';
+      }, 1200);
+    }
+  }
+
+  function bookingChannelById(bookingId){
+    bookingId = String(bookingId || '');
+    var list = window._expertBookings || [];
+    for(var i=0;i<list.length;i++){
+      if(String(list[i].id || '') === bookingId) return String(list[i].channel || 'chat').toLowerCase();
+    }
+    return String(window._obPendingChannel || window.currentBookChannel || 'chat').toLowerCase();
+  }
+  function installScheduledExpertStartGuard(){
+    if(window.startBookingSession && !window.startBookingSession._obScheduledMediaHardening){
+      var oldStartBookingSession = window.startBookingSession;
+      window.startBookingSession = function(bookingId){
+        var args = arguments;
+        var channel = bookingChannelById(bookingId);
+        if(MEDIA.indexOf(channel) < 0) return oldStartBookingSession.apply(this, args);
+        if(window._obBookingMediaStartLock === bookingId) return;
+        window._obBookingMediaStartLock = bookingId;
+        window._obPendingChannel = channel;
+        window.currentBookChannel = channel;
+        toastMsg('Checking '+(channel === 'video' ? 'camera and microphone' : 'microphone')+' before starting...', 'ok');
+        return ensureMediaPermission(channel, 'expert').then(function(ok){
+          if(!ok) return null;
+          var ret = oldStartBookingSession.apply(window, args);
+          [350, 900, 1800, 3200, 5600, 8200].forEach(function(ms){
+            setTimeout(function(){
+              var sid = window._sid || window._obActiveSessId || '';
+              if(!sid) return;
+              forceExpertMediaPanel({id:sid, channel:channel});
+              ensureExpertRtcStarted(sid, channel);
+            }, ms);
+          });
+          return ret;
+        }).finally(function(){
+          setTimeout(function(){ if(window._obBookingMediaStartLock === bookingId) window._obBookingMediaStartLock = ''; }, 1200);
+        });
+      };
+      window.startBookingSession._obScheduledMediaHardening = true;
+    }
+  }
+
+  function bookingIdFromLocation(){
+    try {
+      var q = new URLSearchParams(location.search || '').get('booking');
+      if(q) return q;
+    } catch(e) {}
+    var match = (location.pathname || '').match(/^\/booking\/([^/?#]+)/);
+    return match ? decodeURIComponent(match[1]) : '';
+  }
+  function scheduledMediaCardHtml(channel){
+    if(MEDIA.indexOf(channel) < 0) return '';
+    var ready = !!liveStreamFor(channel);
+    var needs = channel === 'video' ? 'camera and microphone' : 'microphone';
+    var title = ready ? 'Media is ready' : 'Check your '+needs+' before start';
+    var copy = ready
+      ? 'You can keep this page open. The session timer still starts only after the call connects.'
+      : 'Allow access now so the scheduled session can connect fast when the expert starts it.';
+    return '<div id="ob-scheduled-media-card" data-channel="'+esc(channel)+'" data-state="'+(ready ? 'ready' : 'idle')+'">' +
+      '<div class="ob-sm-row"><div><div class="ob-sm-title">'+esc(title)+'</div><div class="ob-sm-copy">'+esc(copy)+'</div><div id="ob-scheduled-media-status" class="ob-sm-copy" style="font-weight:800;margin-top:6px;">'+(ready ? 'Ready to join.' : 'Permission is checked before joining.')+'</div></div>' +
+      '<button type="button" data-ob-scheduled-preflight="1">'+(ready ? 'Ready' : 'Enable '+esc(needs))+'</button></div></div>';
+  }
+  function setScheduledMediaStatus(state, message){
+    var card = document.getElementById('ob-scheduled-media-card');
+    var txt = document.getElementById('ob-scheduled-media-status');
+    var btn = card && card.querySelector('button[data-ob-scheduled-preflight]');
+    if(card) card.setAttribute('data-state', state || 'idle');
+    if(txt) txt.textContent = message || '';
+    if(btn){
+      btn.disabled = state === 'checking';
+      btn.textContent = state === 'ready' ? 'Ready' : (state === 'checking' ? 'Checking...' : btn.textContent);
+    }
+  }
+  function renderScheduledBookingOverlay(data, bookingId){
+    if(!data || data.error) return;
+    ensurePreflightStyle();
+    var old = document.getElementById('booking-join-overlay');
+    if(old) old.remove();
+    var booking = data.booking || {};
+    var session = data.session || {};
+    var expert = data.expert || {};
+    var expertName = expert.name || 'Expert';
+    var channel = String(booking.channel || session.channel || 'chat').toLowerCase();
+    if(['chat','voice','video'].indexOf(channel) < 0) channel = 'chat';
+    window._obScheduledBookingChannel = channel;
+    if(expert){
+      window._currentExpert = Object.assign(window._currentExpert || {}, expert);
+      if(expert.slug){
+        window._currentExpertSlug = expert.slug;
+        window._browseExpert = expert.slug;
+      }
+    }
+    var date = booking.scheduled_date || '';
+    var time = booking.scheduled_time || '';
+    var d = new Date(date + 'T12:00:00');
+    var dateStr = isNaN(d.getTime()) ? date : d.toLocaleDateString('en-US', {weekday:'long', month:'long', day:'numeric'});
+    var parts = String(time || '00:00').split(':');
+    var hh = parseInt(parts[0] || 0, 10), mm = parts[1] || '00';
+    var ap = hh >= 12 ? 'PM' : 'AM', h12 = hh > 12 ? hh - 12 : (hh === 0 ? 12 : hh);
+    var timeStr = h12 + ':' + mm + ' ' + ap;
+    var status = data.status || booking.status || 'waiting';
+    window._obScheduledBookingLastStatus = status;
+    var statusHtml = '';
+    if(status === 'active' && session.id){
+      statusHtml = '<div style="background:rgba(34,197,94,.1);border-radius:12px;padding:16px;text-align:center;margin-bottom:18px;">' +
+        '<div style="font-size:28px;margin-bottom:6px;">&#9679;</div>' +
+        '<div style="font-weight:900;color:#15803d;font-size:16px;">Session is live</div>' +
+        '<div style="font-size:13px;color:#15803d;">Join when your device is ready.</div></div>' +
+        scheduledMediaCardHtml(channel) +
+        '<button id="ob-scheduled-join-btn" class="btn btn-primary" style="width:100%;padding:14px;font-size:16px;">Join Session -></button>';
+    } else if(status === 'ended') {
+      statusHtml = '<div style="background:rgba(107,114,128,.08);border-radius:12px;padding:18px;text-align:center;color:var(--gray-500);font-size:14px;">This scheduled session has ended.</div>';
+    } else {
+      statusHtml = scheduledMediaCardHtml(channel) +
+        '<div style="background:rgba(245,158,11,.08);border-radius:12px;padding:16px;text-align:center;margin-bottom:20px;">' +
+        '<div style="font-size:28px;margin-bottom:6px;">&#8987;</div>' +
+        '<div style="font-weight:900;color:#b45309;font-size:16px;">Waiting for Expert</div>' +
+        '<div style="font-size:13px;color:#92400e;">Your session is confirmed. The expert will start it at the scheduled time.</div></div>' +
+        '<div style="font-size:12px;color:var(--gray-400);text-align:center;">This page will auto-refresh when the session starts.</div>';
+    }
+    var overlay = document.createElement('div');
+    overlay.id = 'booking-join-overlay';
+    overlay.style.cssText = 'position:fixed;inset:0;background:var(--cream);z-index:99998;display:flex;align-items:center;justify-content:center;padding:20px;';
+    overlay.innerHTML = '<div style="background:var(--white);border-radius:20px;max-width:440px;width:100%;padding:32px;box-shadow:0 16px 60px rgba(0,0,0,.12);">' +
+      '<div style="text-align:center;margin-bottom:20px;"><div style="font-family:var(--font-head);font-size:24px;font-weight:900;color:var(--brown);margin-bottom:4px;">Scheduled Session</div>' +
+      '<div style="font-size:14px;color:var(--gray-400);">with '+esc(expertName)+'</div></div>' +
+      '<div style="background:var(--cream);border-radius:12px;padding:16px;margin-bottom:20px;">' +
+      '<div style="display:flex;justify-content:space-between;font-size:14px;margin-bottom:8px;"><span style="color:var(--gray-400);">Date</span><span style="font-weight:800;color:var(--brown);">'+esc(dateStr)+'</span></div>' +
+      '<div style="display:flex;justify-content:space-between;font-size:14px;margin-bottom:8px;"><span style="color:var(--gray-400);">Time</span><span style="font-weight:800;color:var(--brown);">'+esc(timeStr)+'</span></div>' +
+      '<div style="display:flex;justify-content:space-between;font-size:14px;"><span style="color:var(--gray-400);">Type</span><span style="font-weight:800;color:var(--brown);">'+esc(channel.charAt(0).toUpperCase() + channel.slice(1))+'</span></div></div>' +
+      statusHtml + '</div>';
+    document.body.appendChild(overlay);
+    var join = document.getElementById('ob-scheduled-join-btn');
+    if(join){
+      join.onclick = function(){
+        if(typeof window.joinActiveBookingSession === 'function') window.joinActiveBookingSession(session.id, booking.expert_id, channel);
+      };
+    }
+    if(status === 'waiting' || status === 'confirmed'){
+      if(window._obScheduledBookingPoller) clearInterval(window._obScheduledBookingPoller);
+      window._obScheduledBookingPoller = setInterval(function(){ refreshScheduledBookingOverlay(bookingId); }, 5000);
+    } else if(window._obScheduledBookingPoller) {
+      clearInterval(window._obScheduledBookingPoller);
+      window._obScheduledBookingPoller = null;
+    }
+  }
+  function refreshScheduledBookingOverlay(bookingId){
+    bookingId = bookingId || bookingIdFromLocation();
+    if(!bookingId) return;
+    fetch(BASE + '/api/bookings/' + encodeURIComponent(bookingId) + '/join', {cache:'no-store'})
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        var nextStatus = (d && (d.status || (d.booking && d.booking.status))) || 'waiting';
+        var overlay = document.getElementById('booking-join-overlay');
+        var previousStatus = window._obScheduledBookingLastStatus || '';
+        if(overlay && nextStatus !== 'active' && nextStatus !== 'ended' && previousStatus && previousStatus !== 'active' && previousStatus !== 'ended') return;
+        renderScheduledBookingOverlay(d, bookingId);
+      })
+      .catch(function(){});
+  }
+  function installScheduledBookingGuard(){
+    if(!window._obScheduledPreflightClickGuard){
+      window._obScheduledPreflightClickGuard = true;
+      document.addEventListener('click', function(e){
+        var btn = e.target && e.target.closest && e.target.closest('[data-ob-scheduled-preflight]');
+        if(!btn) return;
+        e.preventDefault();
+        var card = document.getElementById('ob-scheduled-media-card');
+        var channel = card ? String(card.getAttribute('data-channel') || '').toLowerCase() : window._obScheduledBookingChannel;
+        if(MEDIA.indexOf(channel) < 0) return;
+        setScheduledMediaStatus('checking', 'Requesting permission...');
+        ensureMediaPermission(channel, 'client').then(function(ok){
+          setScheduledMediaStatus(ok ? 'ready' : 'error', ok ? 'Ready to join.' : 'Permission is required for this scheduled session.');
+        });
+      }, true);
+    }
+    var bookingId = bookingIdFromLocation();
+    if(bookingId && window._obScheduledBookingId !== bookingId){
+      window._obScheduledBookingId = bookingId;
+      setTimeout(function(){ refreshScheduledBookingOverlay(bookingId); }, 120);
+    }
+  }
+
   function ensurePlanConfirmModal(){
     ensurePreflightStyle();
     var modal = document.getElementById('ob-plan-confirm');
@@ -26062,6 +26294,9 @@ window._handleRTCMessage=function(d){
     installMediaPreflight();
     installConnectBannerGuard();
     installExpertMediaPanelGuard();
+    installDashboardPanelRecovery();
+    installScheduledExpertStartGuard();
+    installScheduledBookingGuard();
     installPlanConfirmGuard();
     installTransactionalConsentGuard();
     if(location.pathname.indexOf('/dash/') >= 0) setTimeout(function(){ refreshConnectBanner(true); }, 1200);

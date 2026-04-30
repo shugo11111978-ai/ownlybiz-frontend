@@ -25468,5 +25468,476 @@ window._handleRTCMessage=function(d){
   window.addEventListener('storage', cleanAuthStorage);
 })();
 </script>
+<script>
+/* STAGING FLOW HARDENING 2026-04-30: login, media preflight, Stripe Connect, and plan confirmations */
+(function(){
+  if(window._obStagingFlowHardening20260430) return;
+  window._obStagingFlowHardening20260430 = true;
+  var BASE = (window.OWNLYBIZ_API_URL || window._OB_BACKEND || 'https://victorious-wisdom-production-a6b0.up.railway.app').replace(/\/$/, '');
+  var MEDIA = ['voice','video'];
+
+  function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
+  function toastMsg(msg,type){ if(typeof toast === 'function') toast(msg,type); else if(typeof _showToast === 'function') _showToast(msg,type === 'err' ? 'red' : 'green'); else console.log(msg); }
+  function jwtPayload(token){
+    try {
+      if(!token || token.split('.').length < 2) return {};
+      var payload = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+      while(payload.length % 4) payload += '=';
+      return JSON.parse(decodeURIComponent(escape(atob(payload))));
+    } catch(e) { return {}; }
+  }
+  function roleOfToken(token){ return String(jwtPayload(token).role || '').toLowerCase(); }
+  function token(){
+    return sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || localStorage.getItem('ob_expert_token') || localStorage.getItem('ob_client_token') || '';
+  }
+  function api(path, opts){
+    opts = opts || {};
+    opts.headers = Object.assign({'Content-Type':'application/json'}, opts.headers || {});
+    var t = token();
+    if(t) opts.headers.Authorization = 'Bearer ' + t;
+    return fetch(BASE + path, opts).then(function(r){
+      return r.json().catch(function(){ return {}; }).then(function(d){
+        if(!r.ok){ var err = new Error(d.error || 'Request failed'); err.data = d; err.status = r.status; throw err; }
+        return d;
+      });
+    });
+  }
+  function currentChannel(){
+    var ch = '';
+    try { ch = window.selectedChannel && window.selectedChannel.id; } catch(e) {}
+    ch = ch || window._obPendingChannel || window.currentBookChannel || window._obPreflightChannel || '';
+    ch = String(ch || 'chat').toLowerCase();
+    return MEDIA.indexOf(ch) >= 0 ? ch : 'chat';
+  }
+  function mediaConstraints(channel){
+    var audio = {echoCancellation:true, noiseSuppression:true, autoGainControl:true};
+    if(channel === 'video') return {audio:audio, video:{width:{ideal:640,max:1280},height:{ideal:480,max:720},frameRate:{ideal:24,max:30}}};
+    return {audio:audio, video:false};
+  }
+  function liveStreamFor(channel){
+    var pf = window._obPreflightMedia;
+    if(!pf || pf.channel !== channel || !pf.stream) return null;
+    var tracks = pf.stream.getTracks ? pf.stream.getTracks() : [];
+    var live = tracks.filter(function(t){ return t.readyState === 'live'; });
+    if(!live.length) return null;
+    if(channel === 'video' && !live.some(function(t){ return t.kind === 'video'; })) return null;
+    if(!live.some(function(t){ return t.kind === 'audio'; })) return null;
+    return pf.stream;
+  }
+  function setPreflightStatus(state, msg){
+    var card = document.getElementById('ob-media-preflight-card');
+    var txt = document.getElementById('ob-media-preflight-status');
+    var btn = document.getElementById('ob-media-preflight-btn');
+    if(card) card.setAttribute('data-state', state || 'idle');
+    if(txt) txt.textContent = msg || '';
+    if(btn) {
+      btn.disabled = state === 'checking';
+      btn.textContent = state === 'ready' ? 'Camera and mic ready' : (state === 'checking' ? 'Checking...' : 'Enable before connecting');
+    }
+  }
+  function ensurePreflightStyle(){
+    if(document.getElementById('ob-flow-hardening-style')) return;
+    var style = document.createElement('style');
+    style.id = 'ob-flow-hardening-style';
+    style.textContent = [
+      '#ob-media-preflight-card{background:rgba(122,140,110,.08);border:1.5px solid rgba(122,140,110,.26);border-radius:14px;padding:14px 15px;margin:0 0 18px;color:var(--brown);}',
+      '#ob-media-preflight-card[data-state="error"]{background:rgba(220,38,38,.07);border-color:rgba(220,38,38,.26);}',
+      '#ob-media-preflight-card[data-state="ready"]{background:rgba(34,197,94,.08);border-color:rgba(34,197,94,.24);}',
+      '#ob-media-preflight-card .ob-mp-row{display:flex;gap:12px;align-items:center;justify-content:space-between;}',
+      '#ob-media-preflight-card .ob-mp-title{font-weight:900;font-size:14px;margin-bottom:4px;}',
+      '#ob-media-preflight-card .ob-mp-copy{font-size:12px;color:var(--gray-500);line-height:1.45;}',
+      '#ob-media-preflight-btn{border:none;border-radius:12px;padding:10px 13px;background:var(--sage);color:white;font-weight:900;white-space:nowrap;cursor:pointer;}',
+      '#ob-media-preflight-btn:disabled{opacity:.65;cursor:wait;}',
+      '#ob-plan-confirm{position:fixed;inset:0;z-index:100002;background:rgba(37,24,16,.48);display:none;align-items:center;justify-content:center;padding:18px;backdrop-filter:blur(5px);}',
+      '#ob-plan-confirm .ob-plan-confirm-card{width:min(440px,calc(100vw - 32px));background:#fffaf2;color:#251810;border:1px solid rgba(196,98,45,.24);border-radius:24px;padding:24px;box-shadow:0 24px 90px rgba(37,24,16,.28);}',
+      '#ob-plan-confirm h3{margin:0 0 8px;font:900 25px/1.08 Georgia,serif;}',
+      '#ob-plan-confirm p{margin:0;color:#6f625c;font:600 14px/1.55 inherit;}',
+      '#ob-plan-confirm .ob-plan-confirm-actions{display:flex;gap:10px;margin-top:20px;}',
+      '#ob-plan-confirm button{flex:1;border-radius:14px;padding:13px 15px;font-weight:900;cursor:pointer;}',
+      '#ob-plan-confirm-cancel{background:white;border:1.5px solid var(--gray-200);color:var(--brown);}',
+      '#ob-plan-confirm-ok{background:var(--terra);border:1.5px solid var(--terra);color:white;}',
+      '@media(max-width:720px){#ob-media-preflight-card .ob-mp-row{display:block;}#ob-media-preflight-btn{width:100%;margin-top:12px;}#ob-plan-confirm .ob-plan-confirm-actions{display:block;}#ob-plan-confirm button{width:100%;margin-top:10px;}}'
+    ].join('\n');
+    document.head.appendChild(style);
+  }
+  function renderPreflightCard(channel){
+    ensurePreflightStyle();
+    if(MEDIA.indexOf(channel) < 0) {
+      var old = document.getElementById('ob-media-preflight-card');
+      if(old) old.style.display = 'none';
+      return;
+    }
+    var begin = document.getElementById('presess-begin-btn');
+    if(!begin) return;
+    var card = document.getElementById('ob-media-preflight-card');
+    if(!card){
+      card = document.createElement('div');
+      card.id = 'ob-media-preflight-card';
+      begin.parentNode.insertBefore(card, begin);
+    }
+    var needs = channel === 'video' ? 'camera and microphone' : 'microphone';
+    card.style.display = 'block';
+    card.innerHTML = '<div class="ob-mp-row"><div><div class="ob-mp-title">Check your '+esc(needs)+' first</div><div class="ob-mp-copy">We ask before connecting so the session does not start with a broken '+esc(channel)+' call or unexpected billing.</div><div id="ob-media-preflight-status" class="ob-mp-copy" style="font-weight:800;margin-top:6px;"></div></div><button id="ob-media-preflight-btn" type="button">Enable before connecting</button></div>';
+    card.querySelector('#ob-media-preflight-btn').onclick = function(){ ensureMediaPermission(channel, 'client'); };
+    setPreflightStatus(liveStreamFor(channel) ? 'ready' : 'idle', liveStreamFor(channel) ? 'Ready to connect.' : 'Permission is checked before the request is sent.');
+  }
+  function ensureMediaPermission(channel, roleName){
+    channel = MEDIA.indexOf(String(channel || '').toLowerCase()) >= 0 ? String(channel).toLowerCase() : 'chat';
+    if(MEDIA.indexOf(channel) < 0) return Promise.resolve(true);
+    var existing = liveStreamFor(channel);
+    if(existing){
+      setPreflightStatus('ready', 'Ready to connect.');
+      return Promise.resolve(true);
+    }
+    if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+      setPreflightStatus('error', 'This browser does not support secure camera/microphone access.');
+      toastMsg('This browser cannot start '+channel+' sessions securely.', 'err');
+      return Promise.resolve(false);
+    }
+    ensurePreflightStyle();
+    setPreflightStatus('checking', 'Requesting '+(channel === 'video' ? 'camera and microphone' : 'microphone')+' permission...');
+    return navigator.mediaDevices.getUserMedia(mediaConstraints(channel)).then(function(stream){
+      window._obPreflightMedia = {channel:channel, role:roleName || '', stream:stream, at:Date.now()};
+      window._obPreflightChannel = channel;
+      setPreflightStatus('ready', 'Ready to connect.');
+      return true;
+    }).catch(function(err){
+      setPreflightStatus('error', 'Permission is required before this '+channel+' session can start.');
+      toastMsg((err && err.message) ? err.message : 'Camera or microphone permission is required.', 'err');
+      return false;
+    });
+  }
+  function installPreflightGetUserMediaBridge(){
+    if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || navigator.mediaDevices.getUserMedia._obPreflightBridge) return;
+    var nativeGetUserMedia = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+    navigator.mediaDevices.getUserMedia = function(constraints){
+      var wantsVideo = !!(constraints && constraints.video);
+      var channel = wantsVideo ? 'video' : 'voice';
+      var stream = liveStreamFor(channel);
+      if(stream) return Promise.resolve(stream);
+      return nativeGetUserMedia(constraints);
+    };
+    navigator.mediaDevices.getUserMedia._obPreflightBridge = true;
+  }
+  function installMediaPreflight(){
+    installPreflightGetUserMediaBridge();
+    if(window.openBookingOverlay && !window.openBookingOverlay._obMediaPreflightHardening){
+      var oldOpenBookingOverlay = window.openBookingOverlay;
+      window.openBookingOverlay = function(channel){
+        window._obPreflightChannel = String(channel || 'chat').toLowerCase();
+        var ret = oldOpenBookingOverlay.apply(this, arguments);
+        setTimeout(function(){ renderPreflightCard(currentChannel()); }, 80);
+        setTimeout(function(){ renderPreflightCard(currentChannel()); }, 350);
+        return ret;
+      };
+      window.openBookingOverlay._obMediaPreflightHardening = true;
+    }
+    if(window._launchSession && !window._launchSession._obMediaPreflightHardening){
+      var oldLaunch = window._launchSession;
+      window._launchSession = function(){
+        var ret = oldLaunch.apply(this, arguments);
+        setTimeout(function(){ renderPreflightCard(currentChannel()); }, 80);
+        return ret;
+      };
+      window._launchSession._obMediaPreflightHardening = true;
+    }
+    if(window._beginSession && !window._beginSession._obMediaPreflightHardening){
+      var oldBegin = window._beginSession;
+      window._beginSession = function(){
+        var args = arguments;
+        var ch = currentChannel();
+        if(MEDIA.indexOf(ch) < 0) return oldBegin.apply(this, args);
+        var btn = document.getElementById('presess-begin-btn');
+        if(btn){ btn.disabled = true; btn.textContent = 'Checking media...'; }
+        ensureMediaPermission(ch, 'client').then(function(ok){
+          if(btn){ btn.disabled = false; btn.textContent = 'Begin Session ->'; }
+          if(ok) oldBegin.apply(window, args);
+        });
+      };
+      window._beginSession._obMediaPreflightHardening = true;
+    }
+    if(window.joinActiveBookingSession && !window.joinActiveBookingSession._obMediaPreflightHardening){
+      var oldJoinActiveBookingSession = window.joinActiveBookingSession;
+      window.joinActiveBookingSession = function(sessionId, expertId, channel){
+        var args = arguments;
+        channel = String(channel || 'chat').toLowerCase();
+        if(MEDIA.indexOf(channel) < 0) return oldJoinActiveBookingSession.apply(this, args);
+        ensureMediaPermission(channel, 'client').then(function(ok){
+          if(ok) oldJoinActiveBookingSession.apply(window, args);
+        });
+      };
+      window.joinActiveBookingSession._obMediaPreflightHardening = true;
+    }
+    if(window.acceptSessionRequest && !window.acceptSessionRequest._obExpertMediaPreflightHardening){
+      var oldAccept = window.acceptSessionRequest;
+      window.acceptSessionRequest = function(){
+        var args = arguments;
+        var label = (document.getElementById('req-session-type') || {}).textContent || window._obPendingChannel || '';
+        var ch = (String(label).toLowerCase().match(/voice|video/) || [''])[0];
+        if(MEDIA.indexOf(ch) < 0) return oldAccept.apply(this, args);
+        toastMsg('Checking '+(ch === 'video' ? 'camera and microphone' : 'microphone')+' before accepting...', 'ok');
+        ensureMediaPermission(ch, 'expert').then(function(ok){
+          if(ok) oldAccept.apply(window, args);
+        });
+      };
+      window.acceptSessionRequest._obExpertMediaPreflightHardening = true;
+      window._obAcceptPendingRequest = window.acceptSessionRequest;
+    }
+  }
+
+  function saveLoginState(tokenValue, user){
+    user = user || jwtPayload(tokenValue);
+    var role = String(user.role || roleOfToken(tokenValue) || '').toLowerCase();
+    try { sessionStorage.setItem('ob_t', tokenValue); localStorage.setItem('ob_t', tokenValue); } catch(e) {}
+    try { sessionStorage.setItem('ob_u', JSON.stringify(user)); localStorage.setItem('ob_u', JSON.stringify(user)); } catch(e) {}
+    if(role === 'client'){
+      try { sessionStorage.setItem('ob_client_t', tokenValue); localStorage.setItem('ob_client_token', tokenValue); localStorage.setItem('ob_client_user', JSON.stringify(user)); } catch(e) {}
+    } else if(role === 'expert' || role === 'admin'){
+      try { localStorage.setItem('ob_expert_token', tokenValue); localStorage.setItem('ob_expert_user', JSON.stringify(user)); } catch(e) {}
+      var clientToken = localStorage.getItem('ob_client_token') || '';
+      if(clientToken && roleOfToken(clientToken) !== 'client') {
+        try { localStorage.removeItem('ob_client_token'); } catch(e) {}
+      }
+    }
+  }
+  function showLoginError(message){
+    var errEl = document.getElementById('mkt-login-error');
+    if(errEl){
+      errEl.textContent = message || 'Login failed';
+      errEl.style.display = 'block';
+    }
+    toastMsg(message || 'Login failed', 'err');
+  }
+  async function robustLogin(){
+    if(window._obRobustLoginSubmitting) return;
+    var emailEl = document.getElementById('mkt-login-email');
+    var passEl = document.getElementById('mkt-login-pass');
+    var btn = document.getElementById('mkt-login-btn');
+    var email = (emailEl && emailEl.value || '').trim();
+    var password = (passEl && passEl.value || '');
+    if(!email || !password){ showLoginError('Enter email and password'); return; }
+    window._obRobustLoginSubmitting = true;
+    if(btn){ btn.disabled = true; btn.textContent = 'Signing in...'; }
+    try {
+      var res = await fetch(BASE + '/api/auth/login', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({email:email, password:password})});
+      var data = await res.json().catch(function(){ return {}; });
+      if(!res.ok || !data.token) throw new Error(data.error || 'Invalid email or password');
+      saveLoginState(data.token, data.user || {});
+      var role = String((data.user && data.user.role) || roleOfToken(data.token) || '').toLowerCase();
+      var nextPath = '';
+      try { nextPath = sessionStorage.getItem('ob_next') || ''; if(nextPath) sessionStorage.removeItem('ob_next'); } catch(e) {}
+      if(nextPath && nextPath.charAt(0) === '/' && nextPath.indexOf('//') !== 0){ window.location.href = nextPath; return; }
+      if(role === 'admin'){ window.location.href = '/admin/dashboard'; return; }
+      if(role === 'expert'){
+        var ed = await fetch(BASE + '/api/experts/me/dashboard', {headers:{Authorization:'Bearer ' + data.token}}).then(function(r){ return r.json(); }).catch(function(){ return {}; });
+        var slug = ed && ed.profile && ed.profile.slug ? ed.profile.slug : ((data.user && data.user.slug) || 'liran-test');
+        window.location.href = '/dash/' + encodeURIComponent(slug) + '/overview';
+        return;
+      }
+      window.location.href = '/';
+    } catch(e) {
+      showLoginError(e.message || 'Login failed');
+    } finally {
+      window._obRobustLoginSubmitting = false;
+      if(btn){ btn.disabled = false; btn.textContent = 'Sign In ->'; }
+    }
+  }
+  function installLoginGuard(){
+    var btn = document.getElementById('mkt-login-btn');
+    if(btn) btn.setAttribute('type', 'button');
+    if(window._obLoginCaptureInstalled) return;
+    window._obLoginCaptureInstalled = true;
+    document.addEventListener('click', function(e){
+      var target = e.target && e.target.closest ? e.target.closest('#mkt-login-btn') : null;
+      if(!target) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      robustLogin();
+    }, true);
+    document.addEventListener('keydown', function(e){
+      if(e.key !== 'Enter') return;
+      var pass = document.getElementById('mkt-login-pass');
+      if(e.target !== pass) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      robustLogin();
+    }, true);
+  }
+
+  function applyConnectBanner(status){
+    var banner = document.getElementById('payment-setup-banner');
+    if(!banner || !status || status.error) return;
+    var connected = !!status.connected;
+    if(connected){
+      banner.classList.remove('ob-pay-needs-setup');
+      banner.style.setProperty('display', 'none', 'important');
+      return;
+    }
+    var pending = !!(status.pending || status.stripe_account_id || status.account_id);
+    banner.classList.add('ob-pay-needs-setup');
+    banner.style.setProperty('display', 'flex', 'important');
+    var title = banner.querySelector('div[style*="font-weight:700"]');
+    var detail = banner.querySelector('div[style*="line-height:1.5"]');
+    var btn = banner.querySelector('button.btn');
+    if(title) title.textContent = pending ? 'Finish Stripe Connect verification' : 'Connect Stripe to receive paid sessions';
+    if(detail) detail.textContent = pending
+      ? 'Your Stripe account exists, but verification is not complete yet. Staging test mode may still let you test sessions, but live payouts require Connect to be complete.'
+      : 'Connect Stripe before real clients can pay you and before payouts can be sent. Staging test mode can bypass this only for QA.';
+    if(btn){
+      btn.textContent = pending ? 'Complete Setup ->' : 'Connect Stripe ->';
+      btn.onclick = function(){
+        if(typeof window.openConnectorModal === 'function') window.openConnectorModal('stripe');
+        else if(typeof dbNav === 'function') dbNav(document.querySelector('[onclick*="payments"]'), 'payments');
+      };
+    }
+  }
+  function refreshConnectBanner(force){
+    if(!token() || roleOfToken(token()) === 'client') return;
+    var path = location.pathname || '';
+    if(path.indexOf('/dash/') < 0 && !document.getElementById('payment-setup-banner')) return;
+    if(typeof window.fetchStripeStatus === 'function'){
+      return window.fetchStripeStatus(function(d){ applyConnectBanner(d); }, !!force);
+    }
+    return api('/api/experts/stripe/status').then(applyConnectBanner).catch(function(){});
+  }
+  function installConnectBannerGuard(){
+    if(window.updateStripeUI && !window.updateStripeUI._obConnectBannerHardening){
+      var oldUpdateStripeUI = window.updateStripeUI;
+      window.updateStripeUI = function(status){
+        var ret = oldUpdateStripeUI.apply(this, arguments);
+        setTimeout(function(){ applyConnectBanner(status); }, 0);
+        return ret;
+      };
+      window.updateStripeUI._obConnectBannerHardening = true;
+    }
+    if(window.loadExpertDashboard && !window.loadExpertDashboard._obConnectBannerHardening){
+      var oldLoadExpertDashboard = window.loadExpertDashboard;
+      window.loadExpertDashboard = function(){
+        var ret = oldLoadExpertDashboard.apply(this, arguments);
+        setTimeout(function(){ refreshConnectBanner(true); }, 700);
+        setTimeout(function(){ refreshConnectBanner(false); }, 2500);
+        return ret;
+      };
+      window.loadExpertDashboard._obConnectBannerHardening = true;
+    }
+  }
+
+  function forceExpertMediaPanel(sess){
+    sess = sess || {};
+    var ch = String(sess.channel || window._obPendingChannel || '').toLowerCase();
+    if(MEDIA.indexOf(ch) < 0) return;
+    if(typeof switchView === 'function') {
+      try { switchView(3); } catch(e) {}
+    }
+    if(typeof dbNav === 'function') {
+      try { dbNav(document.querySelector('[onclick*="live-session"]'), 'live-session'); } catch(e) {}
+    }
+    var panel = document.getElementById('db-panel-live-session');
+    if(panel){
+      document.querySelectorAll('.db-tab-panel').forEach(function(p){ p.classList.remove('active'); p.style.display = 'none'; });
+      panel.classList.add('active');
+      panel.style.display = '';
+    }
+    var chat = document.getElementById('expert-chat-area');
+    var rtc = document.getElementById('expert-rtc-area');
+    var video = document.getElementById('expert-rtc-video-box');
+    var label = document.getElementById('expert-rtc-channel');
+    var cam = document.getElementById('rtc-cam-btn');
+    if(chat) chat.style.display = 'none';
+    if(rtc) rtc.style.display = 'block';
+    if(video) video.style.display = ch === 'video' ? 'block' : 'none';
+    if(label) label.textContent = ch === 'video' ? 'Video Call' : 'Voice Call';
+    if(cam) cam.style.display = ch === 'video' ? '' : 'none';
+  }
+  function installExpertMediaPanelGuard(){
+    if(window.openExpertLivePanel && !window.openExpertLivePanel._obMediaPanelHardening){
+      var oldOpenExpertLivePanel = window.openExpertLivePanel;
+      window.openExpertLivePanel = function(sid){
+        var ret = oldOpenExpertLivePanel.apply(this, arguments);
+        if(sid){
+          [180, 700, 1600].forEach(function(ms){
+            setTimeout(function(){
+              api('/api/sessions/' + encodeURIComponent(sid)).then(function(d){ forceExpertMediaPanel(d.session || d || {}); }).catch(function(){ forceExpertMediaPanel({id:sid, channel:window._obPendingChannel}); });
+            }, ms);
+          });
+        }
+        return ret;
+      };
+      window.openExpertLivePanel._obMediaPanelHardening = true;
+    }
+  }
+
+  function ensurePlanConfirmModal(){
+    ensurePreflightStyle();
+    var modal = document.getElementById('ob-plan-confirm');
+    if(modal) return modal;
+    modal = document.createElement('div');
+    modal.id = 'ob-plan-confirm';
+    modal.innerHTML = '<div class="ob-plan-confirm-card"><h3 id="ob-plan-confirm-title">Confirm plan change</h3><p id="ob-plan-confirm-body">Please confirm this billing change.</p><div class="ob-plan-confirm-actions"><button id="ob-plan-confirm-cancel" type="button">Cancel</button><button id="ob-plan-confirm-ok" type="button">Confirm</button></div></div>';
+    document.body.appendChild(modal);
+    return modal;
+  }
+  function confirmPlanAction(title, body, confirmText){
+    return new Promise(function(resolve){
+      var modal = ensurePlanConfirmModal();
+      var t = document.getElementById('ob-plan-confirm-title');
+      var b = document.getElementById('ob-plan-confirm-body');
+      var ok = document.getElementById('ob-plan-confirm-ok');
+      var cancel = document.getElementById('ob-plan-confirm-cancel');
+      if(t) t.textContent = title;
+      if(b) b.textContent = body;
+      if(ok) ok.textContent = confirmText || 'Confirm';
+      modal.style.display = 'flex';
+      function close(answer){
+        modal.style.display = 'none';
+        ok.onclick = cancel.onclick = null;
+        resolve(answer);
+      }
+      ok.onclick = function(){ close(true); };
+      cancel.onclick = function(){ close(false); };
+      modal.onclick = function(e){ if(e.target === modal) close(false); };
+    });
+  }
+  function planLabel(plan, interval){
+    plan = String(plan || '').toLowerCase();
+    return plan.charAt(0).toUpperCase() + plan.slice(1) + (interval ? ' ' + interval : '');
+  }
+  function installPlanConfirmGuard(){
+    if(window.obStartPlanCheckout && !window.obStartPlanCheckout._obConfirmHardening){
+      var oldStartCheckout = window.obStartPlanCheckout;
+      window.obStartPlanCheckout = function(plan, interval){
+        var args = arguments;
+        return confirmPlanAction('Confirm subscription checkout', 'You are about to choose '+planLabel(plan, interval)+'. Stripe will securely collect payment details and return you to Ownlybiz.', 'Continue to Stripe')
+          .then(function(ok){ if(ok) return oldStartCheckout.apply(window, args); return null; });
+      };
+      window.obStartPlanCheckout._obConfirmHardening = true;
+    }
+    if(window.obChangePlan && !window.obChangePlan._obConfirmHardening){
+      var oldChangePlan = window.obChangePlan;
+      window.obChangePlan = function(plan, interval){
+        var args = arguments;
+        var isStarter = String(plan || '').toLowerCase() === 'starter';
+        var body = isStarter
+          ? 'You are scheduling a downgrade to Starter. Paid-plan benefits may end at the current billing period according to Stripe.'
+          : 'You are changing to '+planLabel(plan, interval)+'. Ownlybiz will ask Stripe to update the existing subscription instead of creating a duplicate.';
+        return confirmPlanAction(isStarter ? 'Confirm downgrade' : 'Confirm plan change', body, isStarter ? 'Schedule downgrade' : 'Change plan')
+          .then(function(ok){ if(ok) return oldChangePlan.apply(window, args); return null; });
+      };
+      window.obChangePlan._obConfirmHardening = true;
+    }
+  }
+
+  function boot(){
+    installLoginGuard();
+    installMediaPreflight();
+    installConnectBannerGuard();
+    installExpertMediaPanelGuard();
+    installPlanConfirmGuard();
+    if(location.pathname.indexOf('/dash/') >= 0) setTimeout(function(){ refreshConnectBanner(true); }, 1200);
+  }
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+  [300, 900, 1800, 3500, 7000].forEach(function(ms){ setTimeout(boot, ms); });
+})();
+</script>
 </body>
 </html>

@@ -18806,12 +18806,12 @@ window._handleRTCMessage=function(d){
   function esc(s){ var d=document.createElement('div'); d.textContent=s==null?'':String(s); return d.innerHTML; }
   function toastMsg(msg,type){ if(typeof toast==='function') toast(msg,type); else if(typeof _showToast==='function') _showToast(msg,type==='err'?'red':'green'); }
   function routeReady(){ if(typeof window.obRouteReady === 'function') window.obRouteReady(); else if(document.body) document.body.classList.add('ownly-ready'); }
-  function api(path, opts){
-    opts = opts || {};
-    opts.headers = Object.assign({'Content-Type':'application/json'}, opts.headers || {});
-    if(tok()) opts.headers.Authorization = 'Bearer ' + tok();
-    return fetch(BASE + path, opts).then(function(r){ return r.json().then(function(d){ if(!r.ok) throw new Error(d.error || 'Request failed'); return d; }); });
-  }
+	  function api(path, opts){
+	    opts = opts || {};
+	    opts.headers = Object.assign({'Content-Type':'application/json'}, opts.headers || {});
+	    if(tok()) opts.headers.Authorization = 'Bearer ' + tok();
+	    return fetch(BASE + path, opts).then(function(r){ return r.json().then(function(d){ if(!r.ok){var err=new Error(d.error || 'Request failed');err.data=d;err.status=r.status;throw err;} return d; }); });
+	  }
 
 	  function resolveExpertSlug(){
 	    var reservedSlugs = ['','index.html','admin','signup','dashboard','login','expert','session','connectors','settings','messages','analytics','payments','packages','reviews','clients','sessions','pricing','how','features','experts','blog','contact'];
@@ -19352,8 +19352,19 @@ window._handleRTCMessage=function(d){
 	      if(d.url){setTimeout(function(){window.location.href=d.url;},450);return;}
 	      if(d.portal_url){throw new Error('A paid subscription already exists. Use Change Plan here instead of creating another checkout.');}
 	      throw new Error('No checkout URL returned');
-	    }).catch(function(e){hidePlanTransition();if(st){st.textContent=e.message||'Checkout failed';st.style.color='#dc2626';}toastMsg(e.message||'Checkout failed','err');});
-	  }
+		    }).catch(function(e){
+		      hidePlanTransition();
+		      if(e&&e.data&&e.data.subscription){
+		        _obPlanLastData=null;
+		        _obPlanLastAt=0;
+		        if(st){st.textContent='Existing paid plan found. Refreshing your billing page now.';st.style.color='var(--sage)';}
+		        toastMsg('Existing paid plan found. Billing has been refreshed.','ok');
+		        return loadPlan(true);
+		      }
+		      if(st){st.textContent=e.message||'Checkout failed';st.style.color='#dc2626';}
+		      toastMsg(e.message||'Checkout failed','err');
+		    });
+		  }
 	  window.obStartPlanCheckout=function(plan,interval){
 	    return startPlanCheckout(plan,interval,window.location.href.split('?')[0],'save-status-plan');
 	  };

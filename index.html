@@ -25999,11 +25999,39 @@ window._handleRTCMessage=function(d){
     }
   }
 
-  function forceExpertMediaPanel(sess){
+  function dashPanelFromPath(){
+    var m = (location.pathname || '').match(/^\/dash\/[^/?#]+\/([^/?#]+)/);
+    return m ? decodeURIComponent(m[1] || '').toLowerCase() : '';
+  }
+  function activeDashPanel(){
+    var active = document.querySelector('.db-tab-panel.active[id^="db-panel-"]');
+    return active && active.id ? active.id.replace('db-panel-', '').toLowerCase() : '';
+  }
+  function markLiveTakeover(ms){
+    window._obAllowLiveTakeoverUntil = Date.now() + (ms || 12000);
+    window._obManualDashboardPanel = 'live-session';
+  }
+  window._obMarkLiveTakeover = markLiveTakeover;
+  function shouldOpenLivePanel(force){
+    if(force) return true;
+    if(typeof window._obShouldOpenLivePanel === 'function') return window._obShouldOpenLivePanel(false);
+    if(window._obAllowLiveTakeoverUntil && Date.now() < window._obAllowLiveTakeoverUntil) return true;
+    var routed = dashPanelFromPath();
+    if(routed && routed !== 'live-session') return false;
+    var active = activeDashPanel();
+    return !active || active === 'live-session';
+  }
+
+  function forceExpertMediaPanel(sess, opts){
     sess = sess || {};
+    opts = opts || {};
     var ch = String(sess.channel || window._obPendingChannel || '').toLowerCase();
     if(MEDIA.indexOf(ch) < 0) return;
     var sid = sess.id || sess.session_id || sess.sessionId || window._obActiveSessId || window._sid || '';
+    if(!shouldOpenLivePanel(!!opts.forceOpen)){
+      if(sid) scheduleExpertRtcRecovery(sid, ch);
+      return;
+    }
     if(typeof switchView === 'function') {
       try { switchView(3); } catch(e) {}
     }
@@ -26069,7 +26097,8 @@ window._handleRTCMessage=function(d){
 	      }, ms);
 	    });
 	  }
-	  function activateExpertMediaMode(sid, channel, sess){
+	  function activateExpertMediaMode(sid, channel, sess, opts){
+	    opts = opts || {};
 	    channel = String(channel || '').toLowerCase();
 	    if(!sid || MEDIA.indexOf(channel) < 0) return;
 	    window._obExpertMediaActive = {sid:String(sid), channel:channel, until:Date.now() + 45000};
@@ -26077,40 +26106,41 @@ window._handleRTCMessage=function(d){
 	    window.currentBookChannel = channel;
 	    window._obActiveSessId = sid;
 	    window._sid = sid;
-	    forceExpertMediaPanel(Object.assign({id:sid, channel:channel}, sess || {}));
+	    forceExpertMediaPanel(Object.assign({id:sid, channel:channel}, sess || {}), opts);
 	    ensureExpertRtcStarted(sid, channel);
 	    scheduleExpertRtcRecovery(sid, channel);
 	    [120, 420, 900, 1600, 2600, 4200, 6500, 9800, 13500].forEach(function(ms){
 	      setTimeout(function(){
 	        var active = window._obExpertMediaActive;
 	        if(!active || active.sid !== String(sid) || active.channel !== channel) return;
-	        forceExpertMediaPanel(Object.assign({id:sid, channel:channel}, sess || {}));
+	        forceExpertMediaPanel(Object.assign({id:sid, channel:channel}, sess || {}), opts);
 	        ensureExpertRtcStarted(sid, channel);
 	      }, ms);
 	    });
 	  }
-	  function hydrateExpertMediaPanel(sid, fallbackChannel){
+	  function hydrateExpertMediaPanel(sid, fallbackChannel, opts){
 	    if(!sid) return;
 	    api('/api/sessions/' + encodeURIComponent(sid)).then(function(d){
 	      var sess = d.session || d || {};
 	      var ch = String(sess.channel || fallbackChannel || window._obPendingChannel || '').toLowerCase();
-	      if(MEDIA.indexOf(ch) >= 0) activateExpertMediaMode(sess.id || sid, ch, sess);
+	      if(MEDIA.indexOf(ch) >= 0) activateExpertMediaMode(sess.id || sid, ch, sess, opts);
 	    }).catch(function(){
 	      var ch = String(fallbackChannel || window._obPendingChannel || '').toLowerCase();
-	      if(MEDIA.indexOf(ch) >= 0) activateExpertMediaMode(sid, ch, {id:sid, channel:ch});
+	      if(MEDIA.indexOf(ch) >= 0) activateExpertMediaMode(sid, ch, {id:sid, channel:ch}, opts);
 	    });
 	  }
 	  function installExpertMediaPanelGuard(){
 	    if(!window.openExpertLivePanel || window.openExpertLivePanel === ownedOpenExpertLivePanel) return;
 	    ownedOpenExpertLivePanelBase = window.openExpertLivePanel;
 	    ownedOpenExpertLivePanel = function(sid){
+	      if(sid) markLiveTakeover(15000);
 	      var ret;
 	      try {
 	        ret = ownedOpenExpertLivePanelBase.apply(this, arguments);
 	      } finally {
 	        if(sid){
 	          [120, 550, 1400, 2800].forEach(function(ms){
-	            setTimeout(function(){ hydrateExpertMediaPanel(sid, window._obPendingChannel); }, ms);
+	            setTimeout(function(){ hydrateExpertMediaPanel(sid, window._obPendingChannel, {forceOpen:true}); }, ms);
 	          });
 	        }
 	      }
@@ -26212,13 +26242,14 @@ window._handleRTCMessage=function(d){
 	          window.currentBookChannel = finalChannel;
 	          if(sess.rate_per_min != null) window._obPendingRate = parseFloat(sess.rate_per_min || window._obPendingRate || 0) || window._obPendingRate;
 	          toastMsg('Session started','ok');
+	          markLiveTakeover(18000);
 	          if(typeof window.connectExpertWs === 'function') {
 	            try { window.connectExpertWs(sess.id); } catch(e) {}
 	          }
 	          if(MEDIA.indexOf(finalChannel) >= 0){
-	            activateExpertMediaMode(sess.id, finalChannel, sess);
+	            activateExpertMediaMode(sess.id, finalChannel, sess, {forceOpen:true});
 	            if(typeof window.openExpertLivePanel === 'function') window.openExpertLivePanel(sess.id);
-	            activateExpertMediaMode(sess.id, finalChannel, sess);
+	            activateExpertMediaMode(sess.id, finalChannel, sess, {forceOpen:true});
 	          } else if(typeof window.openExpertLivePanel === 'function') {
 	            window.openExpertLivePanel(sess.id);
 	          } else if(typeof dbNav === 'function') {
@@ -26571,6 +26602,47 @@ window._handleRTCMessage=function(d){
   function currentChannel(){
     return String((window._obExpertSessionSticky && window._obExpertSessionSticky.channel) || window._obPendingChannel || window.currentBookChannel || 'chat').toLowerCase();
   }
+  function dashPanelFromPath(){
+    var m = (location.pathname || '').match(/^\/dash\/[^/?#]+\/([^/?#]+)/);
+    return m ? decodeURIComponent(m[1] || '').toLowerCase() : '';
+  }
+  function activeDashPanel(){
+    var active = document.querySelector('.db-tab-panel.active[id^="db-panel-"]');
+    return active && active.id ? active.id.replace('db-panel-', '').toLowerCase() : '';
+  }
+  function dashboardSlug(){
+    var m = (location.pathname || '').match(/^\/dash\/([^/?#]+)/);
+    if(m && m[1]) return decodeURIComponent(m[1]);
+    try {
+      var raw = sessionStorage.getItem('ob_u') || localStorage.getItem('ob_u') || '{}';
+      var u = JSON.parse(raw);
+      return u.slug || u.expert_slug || window._currentExpertSlug || 'liran-test';
+    } catch(e) {
+      return window._currentExpertSlug || 'liran-test';
+    }
+  }
+  function writeLiveRoute(){
+    var slug = dashboardSlug();
+    if(!slug) return;
+    var next = '/dash/' + encodeURIComponent(slug) + '/live-session';
+    if((location.pathname || '') !== next) {
+      try { history.replaceState({obRoute:true}, '', next); } catch(e) {}
+    }
+  }
+  function markLiveTakeover(ms){
+    window._obAllowLiveTakeoverUntil = Date.now() + (ms || 12000);
+    window._obManualDashboardPanel = 'live-session';
+  }
+  window._obMarkLiveTakeover = markLiveTakeover;
+  function shouldOpenLivePanel(force){
+    if(force) return true;
+    if(window._obAllowLiveTakeoverUntil && Date.now() < window._obAllowLiveTakeoverUntil) return true;
+    var routed = dashPanelFromPath();
+    if(routed && routed !== 'live-session') return false;
+    var active = activeDashPanel();
+    return !active || active === 'live-session';
+  }
+  window._obShouldOpenLivePanel = shouldOpenLivePanel;
   function isRtcActive(){
     try { return !!(window.OB_RTC && window.OB_RTC.isActive && window.OB_RTC.isActive()); } catch(e) { return false; }
   }
@@ -26590,6 +26662,7 @@ window._handleRTCMessage=function(d){
     var nav = document.getElementById('db-nav-live') || document.querySelector('[onclick*="live-session"]');
     if(nav) nav.classList.add('active');
     setText('db-page-title','Live Session');
+    writeLiveRoute();
     if(!hasActiveExpertSession()) setTimeout(function(){ claimLatestExpertActiveSession(false); }, 80);
   }
   function setCutFromFee(feePct, rate){
@@ -26703,7 +26776,7 @@ window._handleRTCMessage=function(d){
     window._expertSessRate = rate;
     window._expertSessFreeMins = free;
     window._expertSessCut = sticky.cut;
-    activatePanel();
+    if(shouldOpenLivePanel(false)) activatePanel();
     showActiveControls(sess);
     setText('live-sess-subtitle', ch.charAt(0).toUpperCase() + ch.slice(1) + ' session with ' + sticky.clientName);
     setText('live-sess-rate', money(rate) + '/min');
@@ -26760,6 +26833,7 @@ window._handleRTCMessage=function(d){
   }
   function claimLatestExpertActiveSession(force){
     if(!token()) return Promise.resolve(null);
+    if(!force && !shouldOpenLivePanel(false)) return Promise.resolve(null);
     if(!force && currentSid()) return syncExpertSession(currentSid());
     var now = Date.now();
     if(activeClaimInFlight) return activeClaimInFlight;
@@ -26802,6 +26876,19 @@ window._handleRTCMessage=function(d){
     });
   }
   function installSessionWrappers(){
+    if(window.dbNav && !window.dbNav._obLiveRouteOwnerGuard){
+      var oldDbNavRouteOwner = window.dbNav;
+      window.dbNav = function(el, panel){
+        if(panel && panel !== 'live-session'){
+          window._obManualDashboardPanel = panel;
+          window._obAllowLiveTakeoverUntil = 0;
+        } else if(panel === 'live-session') {
+          markLiveTakeover(9000);
+        }
+        return oldDbNavRouteOwner.apply(this, arguments);
+      };
+      window.dbNav._obLiveRouteOwnerGuard = true;
+    }
     if(window._obShowNoActiveExpertLiveSession && !window._obShowNoActiveExpertLiveSession._obStableGuard){
       originalShowNoActive = window._obShowNoActiveExpertLiveSession;
       window._obShowNoActiveExpertLiveSession = function(force){
@@ -26835,6 +26922,7 @@ window._handleRTCMessage=function(d){
         if(!sid) return originalOpenExpertLivePanel.apply(this, arguments);
         window._sid = sid;
         window._obActiveSessId = sid;
+        markLiveTakeover(15000);
         activatePanel();
         var ret;
         try { ret = originalOpenExpertLivePanel.apply(this, arguments); } catch(e) {}

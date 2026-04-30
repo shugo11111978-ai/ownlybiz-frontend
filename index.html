@@ -27339,6 +27339,7 @@ window._handleRTCMessage=function(d){
   }
 
   function showNoActiveSession(){
+    window._obOwnerSessionLive = false;
     if(currentSid()) return;
     stopStableTimer(true);
     setText('live-sess-subtitle', 'No active client session');
@@ -27585,7 +27586,7 @@ window._handleRTCMessage=function(d){
   function showIncomingRequest(payload){
     var sess = payload.session || payload || {};
     var sid = sess.id || payload.session_id || payload.sessionId;
-    if(!sid || currentSid()) return;
+    if(!sid || hasActiveExpertSession()) return;
     var channel = String(sess.channel || payload.channel || 'chat').toLowerCase();
     var client = payload.client || {};
     var clientName = client.name || sess.client_name || 'Client';
@@ -27624,17 +27625,14 @@ window._handleRTCMessage=function(d){
     var sid = window._pendingSid || window._obIncomingSessId || (document.getElementById('session-request-sheet') || {}).dataset && document.getElementById('session-request-sheet').dataset.sessionId;
     if(!sid) return Promise.resolve(null);
     var channel = currentChannel();
-    return ensureMediaPermission(channel, 'expert').then(function(ok){
-      if(!ok) return null;
-      hideIncomingRequest();
-      return api('/api/sessions/' + encodeURIComponent(sid) + '/accept', { method:'POST', body:'{}' }).then(function(d){
-        var sess = d.session || { id:sid, channel:channel };
-        toastMsg('Session accepted. Opening Live Session...', 'ok');
-        return openExpertLivePanelOwner(sess.id || sid, { forcePanel:true, session:sess });
-      }).catch(function(e){
-        toastMsg(e.status === 410 ? 'This request expired. Ask the client to start again.' : (e.message || 'Could not accept session'), 'err');
-        return null;
-      });
+    hideIncomingRequest();
+    toastMsg('Session accepted. Opening Live Session...', 'ok');
+    return api('/api/sessions/' + encodeURIComponent(sid) + '/accept', { method:'POST', body:'{}' }).then(function(d){
+      var sess = d.session || { id:sid, channel:channel };
+      return openExpertLivePanelOwner(sess.id || sid, { forcePanel:true, session:sess });
+    }).catch(function(e){
+      toastMsg(e.status === 410 ? 'This request expired. Ask the client to start again.' : (e.message || 'Could not accept session'), 'err');
+      return null;
     });
   }
   function declineIncomingRequest(){
@@ -27720,21 +27718,22 @@ window._handleRTCMessage=function(d){
       if(['chat','voice','video'].indexOf(channel) < 0) channel = 'chat';
       window._obPendingChannel = channel;
       window.currentBookChannel = channel;
-      return ensureMediaPermission(channel, 'expert').then(function(ok){
-        if(!ok) return null;
-        toastMsg(channel === 'chat' ? 'Starting scheduled session...' : 'Starting session. Opening Live Session and connecting media...', 'ok');
-        return api('/api/bookings/' + encodeURIComponent(bookingId) + '/start', { method:'POST', body:'{}' }, 15000).then(function(d){
-          var sess = d.session || {};
-          if(!sess.id) throw new Error(d.error || 'No session returned');
-          return openExpertLivePanelOwner(sess.id, { forcePanel:true, session:sess });
-        }).catch(function(e){
-          return recoverStartedBooking(bookingId, booking).then(function(sess){
-            if(sess && sess.id) {
-              toastMsg('Session is already started. Opening Live Session now.', 'ok');
-              return openExpertLivePanelOwner(sess.id, { forcePanel:true, session:sess });
-            }
-            throw e;
-          });
+      setDashboardPanel('live-session', { force:true });
+      showMediaUi(channel);
+      setText('live-sess-subtitle', 'Starting scheduled ' + channel + ' session...');
+      setText('live-billing-status', MEDIA[channel] ? 'Opening Live Session. Media connects here before billing starts.' : 'Opening Live Session and waiting for the client.');
+      toastMsg(channel === 'chat' ? 'Starting scheduled session...' : 'Opening Live Session. Camera and microphone connect on this page.', 'ok');
+      return api('/api/bookings/' + encodeURIComponent(bookingId) + '/start', { method:'POST', body:'{}' }, 15000).then(function(d){
+        var sess = d.session || {};
+        if(!sess.id) throw new Error(d.error || 'No session returned');
+        return openExpertLivePanelOwner(sess.id, { forcePanel:true, session:sess });
+      }).catch(function(e){
+        return recoverStartedBooking(bookingId, booking).then(function(sess){
+          if(sess && sess.id) {
+            toastMsg('Session is already started. Opening Live Session now.', 'ok');
+            return openExpertLivePanelOwner(sess.id, { forcePanel:true, session:sess });
+          }
+          throw e;
         });
       });
     }).catch(function(e){
@@ -27783,6 +27782,7 @@ window._handleRTCMessage=function(d){
     window._sid = sess.id;
     window._sessId = sess.id;
     window._obActiveSessId = sess.id;
+    window._obOwnerSessionLive = true;
     window._obPendingChannel = channel;
     window.currentBookChannel = channel;
     window._expertSessRate = rate;
@@ -27865,6 +27865,7 @@ window._handleRTCMessage=function(d){
     window._sid = null;
     window._sessId = null;
     window._obActiveSessId = null;
+    window._obOwnerSessionLive = false;
     window._pendingSid = null;
     window._obIncomingSessId = null;
     window._obExpertSessionSticky = null;
@@ -27932,7 +27933,7 @@ window._handleRTCMessage=function(d){
     });
   }
   function pollPendingRequests(){
-    if(!isExpertDash() || !token() || currentSid()) return;
+    if(!isExpertDash() || !token() || hasActiveExpertSession()) return;
     var overlay = document.getElementById('session-request-overlay');
     if(overlay && overlay.style.display && overlay.style.display !== 'none') return;
     api('/api/sessions/pending?ts=' + Date.now(), { cache:'no-store' }, 9000).then(function(d){
@@ -27955,6 +27956,16 @@ window._handleRTCMessage=function(d){
       if(chosen) openExpertLivePanelOwner(chosen.id, { forcePanel:false, session:chosen });
       else showNoActiveSession();
     }).catch(function(){ showNoActiveSession(); });
+  }
+  function hasActiveExpertSession(){
+    if(!currentSid()) return false;
+    var sticky = window._obExpertSessionSticky || {};
+    if(window._obOwnerSessionLive && String(sticky.status || '').toLowerCase() !== 'ended') return true;
+    return routePanel() === 'live-session' && !!document.getElementById('expert-rtc-area') && String(getTextValue('live-sess-subtitle') || '').toLowerCase().indexOf('no active') < 0;
+  }
+  function getTextValue(id){
+    var el = document.getElementById(id);
+    return el ? el.textContent : '';
   }
   function installOwner(){
     clearLegacySessionIntervals();

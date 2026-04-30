@@ -19583,7 +19583,7 @@ window._handleRTCMessage=function(d){
 		        ? 'Starter launches immediately. Paid plans use secure Stripe Checkout and return you to Ownlybiz.'
 		        : 'Starter is ready now. Paid upgrades unlock after admin completes Stripe '+String((data&&data.mode)||'test')+' setup. '+(stripeErrors[0]||'');
 		    }
-		    grid.style.cssText='display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;align-items:stretch;margin-bottom:24px;';
+		    grid.style.cssText='display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:16px;align-items:stretch;margin-bottom:24px;width:100%;';
 	    var plans=(data&&data.plans)||[];
 	    var planCopy={
 	      starter:{tag:'Fastest launch',headline:'Launch today with no monthly bill',cta:'Launch on Starter',features:['No monthly subscription','12% platform fee','Website, booking, chat, voice, video']},
@@ -19609,20 +19609,20 @@ window._handleRTCMessage=function(d){
 		        '</div>'+
 		        ((problemMonthly||problemAnnual)?'<div style="font-size:11px;color:#dc2626;margin-top:8px;font-weight:700;">'+escPlan(problemMonthly||problemAnnual)+'</div>':'');
 		      }
-		      return '<div style="border:1.5px solid '+(isSelected?'var(--terra)':'var(--gray-200)')+';border-radius:18px;padding:16px;background:'+(isSelected?'rgba(196,98,45,.08)':'var(--white)')+';box-shadow:0 14px 32px rgba(37,24,16,.06);display:flex;flex-direction:column;min-height:360px;min-width:0;overflow:hidden;">'+
+		      return '<div style="border:1.5px solid '+(isSelected?'var(--terra)':'var(--gray-200)')+';border-radius:18px;padding:16px;background:'+(isSelected?'rgba(196,98,45,.08)':'var(--white)')+';box-shadow:0 14px 32px rgba(37,24,16,.06);display:flex;flex-direction:column;min-height:0;min-width:0;overflow:visible;">'+
 	        '<div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;"><strong style="color:var(--brown);font-size:18px;">'+escPlan(p.name||p.id)+'</strong><span style="font-size:10px;color:'+(isSelected?'var(--terra)':'var(--sage)')+';font-weight:900;background:'+(isSelected?'rgba(196,98,45,.12)':'rgba(122,140,110,.12)')+';border-radius:999px;padding:4px 8px;">'+escPlan(isSelected?'Selected':meta.tag)+'</span></div>'+
 	        '<div style="font-size:13px;color:var(--gray-500);line-height:1.45;margin-top:8px;min-height:38px;">'+escPlan(meta.headline)+'</div>'+
 	        '<div style="font-size:26px;font-weight:900;color:var(--brown);margin-top:12px;">'+escPlan(price)+'</div>'+
 	        (annual?'<div style="font-size:12px;color:var(--gray-400);">Annual '+escPlan(annual)+'</div>':'<div style="font-size:12px;color:var(--gray-400);">No subscription checkout needed</div>')+
 	        '<div style="font-size:13px;color:var(--sage);font-weight:900;margin-top:10px;">'+escPlan(fee)+'% platform fee</div>'+
 	        '<ul style="margin:12px 0 0;padding-left:18px;color:var(--gray-500);font-size:12px;line-height:1.55;flex:1;min-height:82px;">'+features+'</ul>'+
-	        action+
+	        '<div style="margin-top:auto;padding-top:14px;">'+action+'</div>'+
 	      '</div>';
 	    }).join('');
 		    if(!document.getElementById('ob-signup-plan-choice-responsive')){
 		      var st=document.createElement('style');
 		      st.id='ob-signup-plan-choice-responsive';
-		      st.textContent='#signup-plan-choice{overflow:visible!important;}#signup-plan-grid{overflow:visible!important;}#signup-plan-grid .btn{white-space:normal;min-width:0;width:100%;}#signup-plan-status{clear:both;padding-top:4px;}@media(max-width:900px){#signup-plan-grid{grid-template-columns:1fr!important;}#signup-plan-grid>div{min-height:0!important;}}';
+		      st.textContent='#signup-plan-choice{overflow:visible!important;width:100%!important;}#signup-plan-grid{overflow:visible!important;width:100%!important;}#signup-plan-grid>div{min-height:0!important;overflow:visible!important;}#signup-plan-grid .btn{white-space:normal;min-width:0;width:100%;}#signup-plan-status{clear:both;padding-top:4px;}@media(max-width:980px){#signup-plan-grid{grid-template-columns:1fr!important;}#signup-plan-grid>div{min-height:0!important;}}';
 		      document.head.appendChild(st);
 		    }
 		    syncSignupPlanFinalCta(data || {});
@@ -25639,6 +25639,23 @@ window._handleRTCMessage=function(d){
       });
     });
   }
+  function apiWithTimeout(path, opts, timeoutMs){
+    opts = opts || {};
+    timeoutMs = timeoutMs || 12000;
+    if(typeof AbortController === 'undefined'){
+      return Promise.race([
+        api(path, opts),
+        new Promise(function(_, reject){ setTimeout(function(){ reject(new Error('Request timed out. Please try again.')); }, timeoutMs); })
+      ]);
+    }
+    var controller = new AbortController();
+    var timer = setTimeout(function(){ try { controller.abort(); } catch(e) {} }, timeoutMs);
+    opts.signal = controller.signal;
+    return api(path, opts).finally(function(){ clearTimeout(timer); }).catch(function(e){
+      if(e && e.name === 'AbortError') throw new Error('Request timed out. Please try again.');
+      throw e;
+    });
+  }
   function currentChannel(){
     var ch = '';
     try { ch = window.selectedChannel && window.selectedChannel.id; } catch(e) {}
@@ -26214,6 +26231,79 @@ window._handleRTCMessage=function(d){
 	      return local;
 	    }).catch(function(){ return local; });
 	  }
+	  function dashboardSlug(){
+	    var m = (location.pathname || '').match(/^\/dash\/([^/?#]+)/);
+	    if(m && m[1]) return decodeURIComponent(m[1]);
+	    try {
+	      var raw = sessionStorage.getItem('ob_u') || localStorage.getItem('ob_u') || '{}';
+	      var u = JSON.parse(raw);
+	      return u.slug || u.expert_slug || window._currentExpertSlug || 'liran-test';
+	    } catch(e) {
+	      return window._currentExpertSlug || 'liran-test';
+	    }
+	  }
+	  function forceScheduledLiveHandoff(sess, channel){
+	    if(!sess || !sess.id) return;
+	    channel = String(channel || sess.channel || 'chat').toLowerCase();
+	    window._sid = sess.id;
+	    window._sessId = sess.id;
+	    window._obActiveSessId = sess.id;
+	    window._pendingSid = null;
+	    window._obIncomingSessId = null;
+	    window._obPendingChannel = channel;
+	    window.currentBookChannel = channel;
+	    if(sess.rate_per_min != null) window._obPendingRate = parseFloat(sess.rate_per_min || window._obPendingRate || 0) || window._obPendingRate;
+	    markLiveTakeover(30000);
+	    try { if(typeof switchView === 'function') switchView(3); } catch(e) {}
+	    try { history.replaceState({obRoute:true}, '', '/dash/' + encodeURIComponent(dashboardSlug()) + '/live-session'); } catch(e) {}
+	    document.querySelectorAll('.db-tab-panel').forEach(function(panel){
+	      var isLive = panel && panel.id === 'db-panel-live-session';
+	      panel.classList.toggle('active', !!isLive);
+	      if(isLive) panel.style.display = '';
+	    });
+	    var panel = document.getElementById('db-panel-live-session');
+	    if(panel){ panel.classList.add('active'); panel.style.display = ''; }
+	    document.querySelectorAll('.db-nav-item').forEach(function(item){ item.classList.remove('active'); });
+	    var nav = document.getElementById('db-nav-live') || document.querySelector('[onclick*="live-session"]');
+	    if(nav) nav.classList.add('active');
+	    var title = document.getElementById('db-page-title');
+	    if(title) title.textContent = 'Live Session';
+	    if(typeof window.connectExpertWs === 'function') {
+	      try { window.connectExpertWs(sess.id); } catch(e) {}
+	    }
+	    if(typeof window.startExpertSessionPoller === 'function') {
+	      try { window.startExpertSessionPoller(sess.id); } catch(e) {}
+	    }
+	    if(MEDIA.indexOf(channel) >= 0) {
+	      var chat = document.getElementById('expert-chat-area');
+	      var rtc = document.getElementById('expert-rtc-area');
+	      var video = document.getElementById('expert-rtc-video-box');
+	      var label = document.getElementById('expert-rtc-channel');
+	      var cam = document.getElementById('rtc-cam-btn');
+	      if(chat) chat.style.display = 'none';
+	      if(rtc) rtc.style.display = 'block';
+	      if(video) video.style.display = channel === 'video' ? 'block' : 'none';
+	      if(label) label.textContent = channel === 'video' ? 'Video Call' : 'Voice Call';
+	      if(cam) cam.style.display = channel === 'video' ? '' : 'none';
+	    }
+	  }
+	  function recoverStartedBookingSession(bookingId, channel){
+	    return api('/api/bookings/' + encodeURIComponent(bookingId) + '/join?ts=' + Date.now(), {cache:'no-store'}).then(function(d){
+	      if(d && d.session && d.session.id) return d.session;
+	      var booking = d && d.booking;
+	      var notes = booking ? ('Scheduled booking: ' + booking.scheduled_date + ' ' + booking.scheduled_time) : '';
+	      return api('/api/sessions?status=active&limit=10&ts=' + Date.now(), {cache:'no-store'}).then(function(active){
+	        var list = active.sessions || active.data || [];
+	        for(var i=0;i<list.length;i++){
+	          var sess = list[i] || {};
+	          if(notes && String(sess.notes || '') !== notes) continue;
+	          if(channel && String(sess.channel || '').toLowerCase() !== String(channel).toLowerCase()) continue;
+	          if(sess.id) return sess;
+	        }
+	        return null;
+	      });
+	    }).catch(function(){ return null; });
+	  }
 	  function startScheduledBookingSession(bookingId){
 	    if(!bookingId || !token()){ toastMsg('Not logged in','err'); return Promise.resolve(null); }
 	    if(scheduledStartLock === String(bookingId)) return Promise.resolve(null);
@@ -26228,7 +26318,7 @@ window._handleRTCMessage=function(d){
 	      if(MEDIA.indexOf(channel) >= 0) toastMsg('Starting session. We will connect '+(channel === 'video' ? 'camera and microphone' : 'microphone')+' on the Live Session page.', 'ok');
 	      return preflight.then(function(ok){
 	        if(!ok) return null;
-	        return api('/api/bookings/' + encodeURIComponent(bookingId) + '/start', {method:'POST', body:'{}'}).then(function(d){
+	        return apiWithTimeout('/api/bookings/' + encodeURIComponent(bookingId) + '/start', {method:'POST', body:'{}'}, 15000).then(function(d){
 	          var sess = d.session || {};
 	          if(!sess.id) throw new Error(d.error || 'No session returned');
 	          var finalChannel = String(sess.channel || channel || 'chat').toLowerCase();
@@ -26241,6 +26331,7 @@ window._handleRTCMessage=function(d){
 	          if(sess.rate_per_min != null) window._obPendingRate = parseFloat(sess.rate_per_min || window._obPendingRate || 0) || window._obPendingRate;
 	          toastMsg('Session started','ok');
 	          markLiveTakeover(18000);
+	          forceScheduledLiveHandoff(sess, finalChannel);
 	          if(typeof window.connectExpertWs === 'function') {
 	            try { window.connectExpertWs(sess.id); } catch(e) {}
 	          }
@@ -26258,6 +26349,19 @@ window._handleRTCMessage=function(d){
 	          }
 	          if(typeof loadExpertBookings === 'function') loadExpertBookings();
 	          return d;
+	        }).catch(function(e){
+	          return recoverStartedBookingSession(bookingId, channel).then(function(sess){
+	            if(sess && sess.id){
+	              var recoveredChannel = String(sess.channel || channel || 'chat').toLowerCase();
+	              toastMsg('Session started. Opening Live Session now.','ok');
+	              forceScheduledLiveHandoff(sess, recoveredChannel);
+	              if(MEDIA.indexOf(recoveredChannel) >= 0) activateExpertMediaMode(sess.id, recoveredChannel, sess, {forceOpen:true});
+	              else if(typeof window.openExpertLivePanel === 'function') window.openExpertLivePanel(sess.id);
+	              if(typeof loadExpertBookings === 'function') loadExpertBookings(true);
+	              return {success:true, session:sess, recovered:true};
+	            }
+	            throw e;
+	          });
 	        });
 	      });
 	    }).catch(function(e){
@@ -26824,6 +26928,13 @@ window._handleRTCMessage=function(d){
     list = Array.isArray(list) ? list : [];
     return list.filter(function(sess){
       var status = String(sess && sess.status || '').toLowerCase();
+      var createdAt = parseInt(sess && sess.created_at || 0, 10) || 0;
+      var isStaleUnjoinedBooking = status === 'active' &&
+        !sess.started_at &&
+        /^Scheduled booking:/.test(String(sess.notes || '')) &&
+        createdAt > 0 &&
+        (Math.floor(Date.now()/1000) - createdAt) > (6 * 60 * 60);
+      if(isStaleUnjoinedBooking) return false;
       return sess && sess.id && status !== 'ended' && status !== 'cancelled' && status !== 'declined';
     }).sort(function(a,b){
       return (parseInt(b.started_at || b.created_at || 0, 10) || 0) - (parseInt(a.started_at || a.created_at || 0, 10) || 0);
@@ -26883,7 +26994,11 @@ window._handleRTCMessage=function(d){
         } else if(panel === 'live-session') {
           markLiveTakeover(9000);
         }
-        return oldDbNavRouteOwner.apply(this, arguments);
+        var ret = oldDbNavRouteOwner.apply(this, arguments);
+        if(panel === 'bookings' && typeof window.loadExpertBookings === 'function') {
+          setTimeout(function(){ window.loadExpertBookings(true); }, 80);
+        }
+        return ret;
       };
       window.dbNav._obLiveRouteOwnerGuard = true;
     }

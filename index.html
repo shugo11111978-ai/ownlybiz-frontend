@@ -25154,5 +25154,319 @@ window._handleRTCMessage=function(d){
   [300,1000,2500,5000].forEach(function(ms){ setTimeout(install, ms); });
 })();
 </script>
+<script>
+/* STAGING RTC + SUBSCRIPTION EXPERIENCE GUARD: role-aware media startup and safe test billing cleanup */
+(function(){
+  if(window._obRtcSubscriptionGuard20260430) return;
+  window._obRtcSubscriptionGuard20260430 = true;
+  var BASE = (window.OWNLYBIZ_API_URL || window._OB_BACKEND || 'https://victorious-wisdom-production-a6b0.up.railway.app').replace(/\/$/, '');
+  var WS_URL = (window.OWNLYBIZ_WS_URL || BASE.replace(/^http/, 'ws') + '/ws');
+
+  function jwtPayload(token){
+    try {
+      if(!token || token.split('.').length < 2) return {};
+      var payload = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+      while(payload.length % 4) payload += '=';
+      return JSON.parse(decodeURIComponent(escape(atob(payload))));
+    } catch(e) { return {}; }
+  }
+  function roleOfToken(token){ return String(jwtPayload(token).role || '').toLowerCase(); }
+  function userFromToken(token){
+    var p = jwtPayload(token);
+    return { id:p.id || p.sub || '', name:p.name || '', email:p.email || '', role:p.role || '' };
+  }
+  function readUser(key){
+    try { return JSON.parse(sessionStorage.getItem(key) || localStorage.getItem(key) || 'null'); } catch(e) { return null; }
+  }
+  function writeSessionUser(user){
+    if(!user || !user.role) return;
+    try { sessionStorage.setItem('ob_u', JSON.stringify(user)); } catch(e) {}
+  }
+  function currentSessionRole(){
+    var token = sessionStorage.getItem('ob_t') || '';
+    return roleOfToken(token) || String((readUser('ob_u') || {}).role || '').toLowerCase();
+  }
+  function cleanAuthStorage(){
+    var currentToken = sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || '';
+    var currentRole = roleOfToken(currentToken) || currentSessionRole();
+    var currentUser = readUser('ob_u') || userFromToken(currentToken);
+    if(currentRole === 'client'){
+      try { localStorage.setItem('ob_client_token', currentToken); } catch(e) {}
+      try { localStorage.setItem('ob_client_user', JSON.stringify(currentUser)); } catch(e) {}
+    }
+    if(currentRole === 'expert' || currentRole === 'admin'){
+      try { localStorage.setItem('ob_expert_token', currentToken); } catch(e) {}
+      try { localStorage.setItem('ob_expert_user', JSON.stringify(currentUser)); } catch(e) {}
+      var clientToken = localStorage.getItem('ob_client_token') || '';
+      if(clientToken && roleOfToken(clientToken) !== 'client'){
+        try { localStorage.removeItem('ob_client_token'); } catch(e) {}
+      }
+    }
+    var storedClient = localStorage.getItem('ob_client_token') || '';
+    if(storedClient && roleOfToken(storedClient) !== 'client'){
+      try { localStorage.removeItem('ob_client_token'); } catch(e) {}
+    }
+  }
+  function tokenForRole(roleName){
+    roleName = String(roleName || '').toLowerCase();
+    var candidates = roleName === 'client'
+      ? [sessionStorage.getItem('ob_client_t'), localStorage.getItem('ob_client_token'), sessionStorage.getItem('ob_t'), localStorage.getItem('ob_t')]
+      : [sessionStorage.getItem('ob_t'), localStorage.getItem('ob_t'), sessionStorage.getItem('ob_expert_token'), localStorage.getItem('ob_expert_token')];
+    for(var i=0;i<candidates.length;i++){
+      var token = candidates[i];
+      var tokenRole = roleOfToken(token);
+      if(!token || !tokenRole) continue;
+      if(roleName === 'client' && tokenRole === 'client') return token;
+      if(roleName === 'expert' && (tokenRole === 'expert' || tokenRole === 'admin')) return token;
+    }
+    return '';
+  }
+  function activateRoleToken(roleName){
+    var token = tokenForRole(roleName);
+    if(!token) return false;
+    var user = roleName === 'client' ? readUser('ob_client_user') : readUser('ob_expert_user');
+    if(!user || !user.role) user = userFromToken(token);
+    try { sessionStorage.setItem('ob_t', token); } catch(e) {}
+    writeSessionUser(user);
+    if(roleName === 'client'){
+      try { sessionStorage.setItem('ob_client_t', token); localStorage.setItem('ob_client_token', token); } catch(e) {}
+    } else {
+      try { localStorage.setItem('ob_expert_token', token); localStorage.setItem('ob_expert_user', JSON.stringify(user)); } catch(e) {}
+    }
+    return true;
+  }
+  function api(path, opts, roleName){
+    opts = opts || {};
+    opts.headers = Object.assign({'Content-Type':'application/json'}, opts.headers || {});
+    var token = tokenForRole(roleName) || sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || '';
+    if(token) opts.headers.Authorization = 'Bearer ' + token;
+    return fetch(BASE + path, opts).then(function(r){
+      return r.json().then(function(d){
+        if(!r.ok){ var err = new Error(d.error || 'Request failed'); err.data = d; err.status = r.status; throw err; }
+        return d;
+      });
+    });
+  }
+  function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
+  function toastMsg(msg,type){ if(typeof toast === 'function') toast(msg,type); else if(typeof _showToast === 'function') _showToast(msg,type === 'err' ? 'red' : 'green'); }
+  function isMedia(channel){ channel = String(channel || '').toLowerCase(); return channel === 'voice' || channel === 'video'; }
+
+  function joinRtcSession(roleName, sid, done){
+    if(!sid){ if(done) done(); return; }
+    activateRoleToken(roleName);
+    var prop = roleName === 'expert' ? '_expertWs' : '_obClientWs';
+    var ensure = roleName === 'expert' ? window._obEnsureExpertWsJoined : window._obEnsureClientWsJoined;
+    function sendJoin(ws){
+      if(!ws || ws.readyState !== 1) return;
+      try { ws.send(JSON.stringify({type:'auth', token: tokenForRole(roleName) || sessionStorage.getItem('ob_t') || ''})); } catch(e) {}
+      try { ws.send(JSON.stringify({type:'join', session_id:sid})); } catch(e) {}
+      try { ws.send(JSON.stringify({type:'join_session', sessionId:sid})); } catch(e) {}
+      try { ws.send(JSON.stringify({type:'session_ready', session_id:sid, kind:'ws_join'})); } catch(e) {}
+      ws._obRtcRole = roleName;
+      ws._obRtcSid = sid;
+    }
+    function finish(){
+      sendJoin(window[prop]);
+      if(done) done();
+    }
+    if(typeof ensure === 'function'){
+      ensure(sid, function(){
+        sendJoin(window[prop]);
+        setTimeout(function(){ sendJoin(window[prop]); }, 350);
+        if(done) setTimeout(done, 120);
+      });
+      return;
+    }
+    var ws = window[prop];
+    if(ws && ws.readyState === 1){ finish(); return; }
+    try {
+      ws = new WebSocket(WS_URL);
+      window[prop] = ws;
+      ws.onopen = finish;
+      ws.onmessage = function(evt){
+        try {
+          var d = JSON.parse(evt.data);
+          if(d.type && d.type.indexOf('rtc_') === 0 && typeof window._handleRTCMessage === 'function') window._handleRTCMessage(d);
+        } catch(e) {}
+      };
+      ws.onclose = function(){ if(window[prop] === ws) window[prop] = null; };
+    } catch(e) { if(done) done(); }
+  }
+
+  function startRtcForSession(sess, roleName){
+    sess = sess || {};
+    var sid = sess.id || sess.session_id || sess.sessionId || window._obActiveSessId || window._sid || window._sessId;
+    var channel = String(sess.channel || window._obPendingChannel || window.currentBookChannel || '').toLowerCase();
+    if(!sid || !isMedia(channel) || !window.OB_RTC || !window.OB_RTC.start) return false;
+    if(!activateRoleToken(roleName)){
+      console.warn('[Ownlybiz RTC] Missing '+roleName+' token for media session '+sid);
+      return false;
+    }
+    window._obPendingRtcSid = sid;
+    window._obActiveSessId = sid;
+    if(roleName === 'expert') window._sid = sid;
+    else window._sessId = sid;
+    function begin(){
+      try {
+        if(window.OB_RTC.isActive && window.OB_RTC.isActive()){
+          var sameSid = !window.OB_RTC.getSid || String(window.OB_RTC.getSid() || '') === String(sid);
+          var sameChannel = !window.OB_RTC.getChannel || String(window.OB_RTC.getChannel() || '') === String(channel);
+          if(sameSid && sameChannel) return true;
+          if(typeof window.OB_RTC.cleanup === 'function') window.OB_RTC.cleanup();
+          else if(typeof window.OB_RTC.end === 'function') window.OB_RTC.end();
+        }
+        var started = window.OB_RTC.start(sid, channel, roleName);
+        [450, 1200, 2600].forEach(function(ms){ setTimeout(function(){ joinRtcSession(roleName, sid); }, ms); });
+        return started;
+      } catch(e) {
+        console.error('[Ownlybiz RTC] start failed:', e);
+        return false;
+      }
+    }
+    joinRtcSession(roleName, sid, function(){ setTimeout(begin, 80); });
+    return true;
+  }
+  window.obStartRtcForSession = startRtcForSession;
+
+  function hydrateAndStartRtc(sid, roleName, delay){
+    if(!sid) return;
+    setTimeout(function(){
+      api('/api/sessions/' + encodeURIComponent(sid), {}, roleName)
+        .then(function(d){ startRtcForSession(d.session || d || {id:sid}, roleName); })
+        .catch(function(){ startRtcForSession({id:sid, channel:window._obPendingChannel || window.currentBookChannel}, roleName); });
+    }, delay || 650);
+  }
+
+  function installRtcWrappers(){
+    if(window.OB_RTC && window.OB_RTC.start && !window.OB_RTC.start._obRoleAwareGuarded){
+      var originalRtcStart = window.OB_RTC.start;
+      window.OB_RTC.start = function(sessionId, channel, roleName){
+        if(isMedia(channel)) {
+          activateRoleToken(roleName);
+          window._obPendingRtcSid = sessionId;
+          joinRtcSession(roleName, sessionId);
+        }
+        return originalRtcStart.apply(window.OB_RTC, arguments);
+      };
+      window.OB_RTC.start._obRoleAwareGuarded = true;
+    }
+    if(window.openClientChat && !window.openClientChat._obRoleAwareGuarded){
+      var oldOpenClientChat = window.openClientChat;
+      window.openClientChat = function(sid){
+        activateRoleToken('client');
+        var ret = oldOpenClientChat.apply(this, arguments);
+        hydrateAndStartRtc(sid, 'client', 700);
+        hydrateAndStartRtc(sid, 'client', 1800);
+        return ret;
+      };
+      window.openClientChat._obRoleAwareGuarded = true;
+    }
+    if(window.joinActiveBookingSession && !window.joinActiveBookingSession._obRoleAwareGuarded){
+      var oldJoinBooking = window.joinActiveBookingSession;
+      window.joinActiveBookingSession = function(sessionId, expertId, channel){
+        window._obPendingChannel = String(channel || window._obPendingChannel || 'chat').toLowerCase();
+        activateRoleToken('client');
+        var ret = oldJoinBooking.apply(this, arguments);
+        hydrateAndStartRtc(sessionId, 'client', 600);
+        hydrateAndStartRtc(sessionId, 'client', 1700);
+        return ret;
+      };
+      window.joinActiveBookingSession._obRoleAwareGuarded = true;
+    }
+    if(window.openExpertLivePanel && !window.openExpertLivePanel._obRoleAwareGuarded){
+      var oldOpenExpertLivePanel = window.openExpertLivePanel;
+      window.openExpertLivePanel = function(sid){
+        activateRoleToken('expert');
+        var ret = oldOpenExpertLivePanel.apply(this, arguments);
+        hydrateAndStartRtc(sid, 'expert', 700);
+        hydrateAndStartRtc(sid, 'expert', 1800);
+        return ret;
+      };
+      window.openExpertLivePanel._obRoleAwareGuarded = true;
+    }
+    if(window.acceptSessionRequest && !window.acceptSessionRequest._obRoleAwareGuarded){
+      var oldAcceptSessionRequest = window.acceptSessionRequest;
+      window.acceptSessionRequest = function(){
+        activateRoleToken('expert');
+        return oldAcceptSessionRequest.apply(this, arguments);
+      };
+      window.acceptSessionRequest._obRoleAwareGuarded = true;
+    }
+  }
+
+  function injectDuplicateSubscriptionUi(data){
+    var summary = document.getElementById('ob-plan-summary');
+    if(!summary || !data) return;
+    var dup = data.duplicate_subscriptions || {};
+    var old = document.getElementById('ob-duplicate-subscription-cleanup');
+    if(old && old.parentNode) old.parentNode.removeChild(old);
+    if(!dup.count) return;
+    var card = document.createElement('div');
+    card.id = 'ob-duplicate-subscription-cleanup';
+    card.style.cssText = 'margin:12px 0 16px;padding:14px 16px;border-radius:18px;border:1.5px solid rgba(196,98,45,.28);background:rgba(196,98,45,.08);display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;color:var(--brown);';
+    card.innerHTML = '<div><strong>Duplicate Stripe test subscriptions detected</strong><div style="font-size:12px;color:var(--gray-500);line-height:1.5;margin-top:4px;">Ownlybiz will keep the newest active plan and can cancel the older duplicate test subscriptions so the Stripe portal is clean.</div></div><button class="btn btn-secondary btn-sm" onclick="obCleanupDuplicateTestSubscriptions()">Clean test duplicates</button>';
+    summary.parentNode.insertBefore(card, summary.nextSibling);
+  }
+  window.obCleanupDuplicateTestSubscriptions = function(){
+    var btn = document.querySelector('#ob-duplicate-subscription-cleanup button');
+    if(btn){ btn.disabled = true; btn.textContent = 'Cleaning...'; }
+    return api('/api/subscriptions/cleanup-test-duplicates', {method:'POST', body:'{}'}, 'expert')
+      .then(function(d){
+        toastMsg((d.cleaned || 0) + ' duplicate test subscription(s) cleaned.', 'ok');
+        injectDuplicateSubscriptionUi(d);
+        if(typeof window.loadPlan === 'function') return window.loadPlan(true);
+        return d;
+      })
+      .catch(function(e){ toastMsg(e.message || 'Cleanup failed', 'err'); })
+      .finally(function(){ if(btn){ btn.disabled = false; btn.textContent = 'Clean test duplicates'; } });
+  };
+
+  function installBillingWrappers(){
+    if(window.loadPlan && !window.loadPlan._obDuplicateAwareGuarded){
+      var oldLoadPlan = window.loadPlan;
+      window.loadPlan = function(force){
+        return oldLoadPlan.apply(this, arguments).then(function(data){
+          injectDuplicateSubscriptionUi(data);
+          return data;
+        });
+      };
+      window.loadPlan._obDuplicateAwareGuarded = true;
+    }
+    if(window.obOpenBillingPortal && !window.obOpenBillingPortal._obPortalCopyGuarded){
+      var oldPortal = window.obOpenBillingPortal;
+      window.obOpenBillingPortal = function(){
+        toastMsg('Opening Stripe payment method settings. Plan upgrades and downgrades stay inside Ownlybiz.', 'ok');
+        return oldPortal.apply(this, arguments);
+      };
+      window.obOpenBillingPortal._obPortalCopyGuarded = true;
+    }
+  }
+
+  function installPolishStyles(){
+    if(document.getElementById('ob-rtc-subscription-polish-style')) return;
+    var style = document.createElement('style');
+    style.id = 'ob-rtc-subscription-polish-style';
+    style.textContent = [
+      '#plan-settings-card.ob-plan-shell{max-width:1180px!important;width:100%!important;}',
+      '#ob-plan-grid.ob-plan-grid{grid-template-columns:repeat(auto-fit,minmax(250px,1fr))!important;}',
+      '#sblock-billing{width:100%!important;}',
+      '#signup-plan-intent button{transition:border-color .16s ease,background .16s ease,transform .16s ease;}',
+      '#signup-plan-intent button:hover{transform:translateY(-1px);}',
+      '@media(max-width:760px){#ob-duplicate-subscription-cleanup{display:block!important;}#ob-duplicate-subscription-cleanup button{width:100%;margin-top:12px;}#ob-plan-grid.ob-plan-grid{grid-template-columns:1fr!important;}}'
+    ].join('\n');
+    document.head.appendChild(style);
+  }
+
+  function boot(){
+    cleanAuthStorage();
+    installPolishStyles();
+    installRtcWrappers();
+    installBillingWrappers();
+  }
+  boot();
+  [250, 900, 1800, 3500, 6500].forEach(function(ms){ setTimeout(boot, ms); });
+  window.addEventListener('storage', cleanAuthStorage);
+})();
+</script>
 </body>
 </html>

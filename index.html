@@ -25849,6 +25849,7 @@ window._handleRTCMessage=function(d){
     sess = sess || {};
     var ch = String(sess.channel || window._obPendingChannel || '').toLowerCase();
     if(MEDIA.indexOf(ch) < 0) return;
+    var sid = sess.id || sess.session_id || sess.sessionId || window._obActiveSessId || window._sid || '';
     if(typeof switchView === 'function') {
       try { switchView(3); } catch(e) {}
     }
@@ -25871,6 +25872,46 @@ window._handleRTCMessage=function(d){
     if(video) video.style.display = ch === 'video' ? 'block' : 'none';
     if(label) label.textContent = ch === 'video' ? 'Video Call' : 'Voice Call';
     if(cam) cam.style.display = ch === 'video' ? '' : 'none';
+    if(sid) scheduleExpertRtcRecovery(sid, ch);
+  }
+  function ensureExpertRtcStarted(sid, channel){
+    if(!sid || MEDIA.indexOf(channel) < 0) return false;
+    window._obPendingChannel = channel;
+    window._obActiveSessId = sid;
+    window._sid = sid;
+    var chat = document.getElementById('expert-chat-area');
+    var rtc = document.getElementById('expert-rtc-area');
+    var video = document.getElementById('expert-rtc-video-box');
+    var label = document.getElementById('expert-rtc-channel');
+    var cam = document.getElementById('rtc-cam-btn');
+    if(chat) chat.style.display = 'none';
+    if(rtc) rtc.style.display = 'block';
+    if(video) video.style.display = channel === 'video' ? 'block' : 'none';
+    if(label) label.textContent = channel === 'video' ? 'Video Call' : 'Voice Call';
+    if(cam) cam.style.display = channel === 'video' ? '' : 'none';
+    if(typeof window.obStartRtcForSession === 'function'){
+      return !!window.obStartRtcForSession({id:sid, channel:channel}, 'expert');
+    }
+    if(!window.OB_RTC || !window.OB_RTC.start) return false;
+    if(window.OB_RTC.isActive && window.OB_RTC.isActive()){
+      var sameSid = !window.OB_RTC.getSid || String(window.OB_RTC.getSid() || '') === String(sid);
+      var sameChannel = !window.OB_RTC.getChannel || String(window.OB_RTC.getChannel() || '') === String(channel);
+      if(sameSid && sameChannel) return true;
+      if(typeof window.OB_RTC.cleanup === 'function') window.OB_RTC.cleanup();
+      else if(typeof window.OB_RTC.end === 'function') window.OB_RTC.end();
+    }
+    try { window.OB_RTC.start(sid, channel, 'expert'); return true; } catch(e) { return false; }
+  }
+  function scheduleExpertRtcRecovery(sid, channel){
+    if(!sid || MEDIA.indexOf(channel) < 0) return;
+    var key = sid + ':' + channel;
+    window._obExpertRtcRecoveryKey = key;
+    [0, 350, 900, 1800, 3200, 5500, 8500].forEach(function(ms){
+      setTimeout(function(){
+        if(window._obExpertRtcRecoveryKey !== key) return;
+        ensureExpertRtcStarted(sid, channel);
+      }, ms);
+    });
   }
   function installExpertMediaPanelGuard(){
     if(window.openExpertLivePanel && !window.openExpertLivePanel._obMediaPanelHardening){

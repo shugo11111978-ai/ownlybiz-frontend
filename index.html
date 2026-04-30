@@ -25627,6 +25627,24 @@ window._handleRTCMessage=function(d){
       return false;
     });
   }
+  function expertPendingRequestSid(){
+    var sheet = document.getElementById('session-request-sheet');
+    var overlay = document.getElementById('session-request-overlay');
+    var btn = sheet && sheet.querySelector('[data-session-id]');
+    return (btn && btn.getAttribute('data-session-id')) ||
+      (sheet && sheet.dataset && sheet.dataset.sessionId) ||
+      (overlay && overlay.dataset && overlay.dataset.sessionId) ||
+      window._pendingSid || window._obIncomingSessId || window._obActiveSessId || window._sid || '';
+  }
+  function scheduleAcceptedExpertMedia(sid, channel){
+    if(!sid || MEDIA.indexOf(channel) < 0) return;
+    [180, 700, 1600, 3200, 5600].forEach(function(ms){
+      setTimeout(function(){
+        forceExpertMediaPanel({id:sid, channel:channel});
+        ensureExpertRtcStarted(sid, channel);
+      }, ms);
+    });
+  }
   function installPreflightGetUserMediaBridge(){
     if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || navigator.mediaDevices.getUserMedia._obPreflightBridge) return;
     var nativeGetUserMedia = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
@@ -25694,10 +25712,14 @@ window._handleRTCMessage=function(d){
         var args = arguments;
         var label = (document.getElementById('req-session-type') || {}).textContent || window._obPendingChannel || '';
         var ch = (String(label).toLowerCase().match(/voice|video/) || [''])[0];
+        var sid = expertPendingRequestSid();
         if(MEDIA.indexOf(ch) < 0) return oldAccept.apply(this, args);
         toastMsg('Checking '+(ch === 'video' ? 'camera and microphone' : 'microphone')+' before accepting...', 'ok');
         ensureMediaPermission(ch, 'expert').then(function(ok){
-          if(ok) oldAccept.apply(window, args);
+          if(ok) {
+            oldAccept.apply(window, args);
+            scheduleAcceptedExpertMedia(sid || expertPendingRequestSid(), ch);
+          }
         });
       };
       window.acceptSessionRequest._obExpertMediaPreflightHardening = true;

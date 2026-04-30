@@ -27158,5 +27158,847 @@ window._handleRTCMessage=function(d){
   setTimeout(function(){ clearInterval(window._obStagingSessionConsistencyInterval); }, 90000);
 })();
 </script>
+<script>
+/* STAGING SESSION OWNER 2026-04-30: single owner for booking start, live request popup, media handoff, and session end sync */
+(function(){
+  if(window._obStagingSessionOwner20260430) return;
+  window._obStagingSessionOwner20260430 = true;
+
+  var host = String(location.hostname || '').toLowerCase();
+  var isStagingSurface = host.indexOf('vercel.app') >= 0 || host === 'localhost' || host === '127.0.0.1';
+  if(!isStagingSurface) return;
+
+  var BASE = (window.OWNLYBIZ_API_URL || window._OB_BACKEND || 'https://victorious-wisdom-production-a6b0.up.railway.app').replace(/\/$/, '');
+  var MEDIA = { voice: true, video: true };
+  var bookingLocks = {};
+  var bookingLoadInFlight = null;
+  var bookingLoadedAt = 0;
+  var wsReconnectTimer = null;
+  var sessionKeeper = null;
+  var pendingPoller = null;
+
+  function token(){
+    return sessionStorage.getItem('ob_t') ||
+      localStorage.getItem('ob_t') ||
+      localStorage.getItem('ob_expert_token') ||
+      sessionStorage.getItem('ob_expert_token') ||
+      localStorage.getItem('ob_client_token') ||
+      sessionStorage.getItem('ob_client_token') || '';
+  }
+  function user(){
+    try { return JSON.parse(sessionStorage.getItem('ob_u') || localStorage.getItem('ob_u') || localStorage.getItem('ob_expert_user') || '{}') || {}; }
+    catch(e) { return {}; }
+  }
+  function role(){
+    var u = user();
+    return String(u.role || (location.pathname.indexOf('/dash/') === 0 ? 'expert' : '') || '').toLowerCase();
+  }
+  function isExpertDash(){
+    return role() === 'expert' || location.pathname.indexOf('/dash/') === 0 || !!document.getElementById('db-panel-live-session');
+  }
+  function hdr(){
+    var h = { 'Content-Type':'application/json' };
+    var t = token();
+    if(t) h.Authorization = 'Bearer ' + t;
+    return h;
+  }
+  function api(path, opts, timeoutMs){
+    opts = opts || {};
+    timeoutMs = timeoutMs || 14000;
+    opts.headers = Object.assign({'Content-Type':'application/json'}, opts.headers || {});
+    var t = token();
+    if(t) opts.headers.Authorization = 'Bearer ' + t;
+    var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    var timer = null;
+    if(controller){
+      opts.signal = controller.signal;
+      timer = setTimeout(function(){ try { controller.abort(); } catch(e) {} }, timeoutMs);
+    }
+    return fetch(BASE + path, opts).then(function(r){
+      return r.json().catch(function(){ return {}; }).then(function(d){
+        if(!r.ok){
+          var err = new Error(d.error || 'Request failed');
+          err.status = r.status;
+          err.data = d;
+          throw err;
+        }
+        return d;
+      });
+    }).finally(function(){ if(timer) clearTimeout(timer); }).catch(function(e){
+      if(e && e.name === 'AbortError') throw new Error('Request timed out. Please try again.');
+      throw e;
+    });
+  }
+  function toastMsg(msg, type){
+    if(typeof window.toast === 'function') window.toast(msg, type);
+    else if(typeof window._showToast === 'function') window._showToast(msg, type === 'err' ? 'red' : 'green');
+    else console.log(msg);
+  }
+  function esc(value){
+    var div = document.createElement('div');
+    div.textContent = value == null ? '' : String(value);
+    return div.innerHTML;
+  }
+  function setText(id, value){
+    var el = document.getElementById(id);
+    if(el) el.textContent = value == null ? '' : String(value);
+  }
+  function money(value){
+    var n = parseFloat(value || 0);
+    return '$' + (Number.isFinite(n) ? n.toFixed(2) : '0.00');
+  }
+  function fmtTime(seconds){
+    seconds = Math.max(0, Math.floor(seconds || 0));
+    return Math.floor(seconds / 60) + ':' + String(seconds % 60).padStart(2, '0');
+  }
+  function cap(value){
+    value = String(value || 'chat').toLowerCase();
+    return value.charAt(0).toUpperCase() + value.slice(1);
+  }
+  function currentSid(){
+    return String(window._obActiveSessId || window._sid || window._sessId || '');
+  }
+  function currentChannel(){
+    return String(window._obPendingChannel || window.currentBookChannel || (window._obExpertSessionSticky && window._obExpertSessionSticky.channel) || 'chat').toLowerCase();
+  }
+  function dashboardSlug(){
+    var m = (location.pathname || '').match(/^\/dash\/([^/?#]+)/);
+    if(m && m[1]) return decodeURIComponent(m[1]);
+    var u = user();
+    return u.slug || u.expert_slug || window._currentExpertSlug || 'liran-test';
+  }
+  function routePanel(){
+    var m = (location.pathname || '').match(/^\/dash\/[^/?#]+\/([^/?#]+)/);
+    return m && m[1] ? decodeURIComponent(m[1]).toLowerCase() : '';
+  }
+  function navForPanel(panel){
+    if(panel === 'live-session') return document.getElementById('db-nav-live') || document.querySelector('.db-nav-item[onclick*="live-session"]');
+    return document.querySelector('.db-nav-item[onclick*="' + panel + '"]') || document.getElementById('db-nav-' + panel);
+  }
+  function writeDashRoute(panel){
+    if(location.pathname.indexOf('/dash/') !== 0) return;
+    var next = '/dash/' + encodeURIComponent(dashboardSlug()) + '/' + encodeURIComponent(panel || 'overview');
+    if(location.pathname !== next) {
+      try { history.replaceState({ obRoute:true, panel:panel }, '', next); } catch(e) {}
+    }
+  }
+  function showDashboardView(){
+    try { if(typeof window.switchView === 'function') window.switchView(3); } catch(e) {}
+    document.querySelectorAll('.view-panel').forEach(function(view){ view.classList.remove('active'); });
+    var dash = document.getElementById('view-3');
+    if(dash) dash.classList.add('active');
+  }
+  function setDashboardPanel(panel, opts){
+    opts = opts || {};
+    panel = String(panel || 'overview').toLowerCase();
+    if(panel === 'pricing') panel = 'pricing';
+    showDashboardView();
+    document.querySelectorAll('.db-tab-panel').forEach(function(p){
+      p.classList.remove('active');
+      p.style.display = '';
+    });
+    var target = document.getElementById('db-panel-' + panel);
+    if(panel === 'pricing' && !target) target = document.getElementById('db-panel-payments');
+    if(target){
+      target.classList.add('active');
+      target.style.display = '';
+    }
+    document.querySelectorAll('.db-nav-item').forEach(function(item){ item.classList.remove('active'); });
+    var nav = opts.el || navForPanel(panel);
+    if(nav) nav.classList.add('active');
+    var titles = {
+      overview:'Dashboard Overview',
+      payments:'Payments & Billing',
+      analytics:'Analytics',
+      clients:'Clients',
+      sessions:'Sessions',
+      reviews:'Reviews',
+      'contact-inbox':'Contact Inbox',
+      packages:'Packages',
+      pricing:'Pricing & Packages',
+      messages:'Messages',
+      settings:'Settings',
+      'live-session':'Live Session',
+      'website-editor':'Edit Website',
+      bookings:'Bookings'
+    };
+    setText('db-page-title', titles[panel] || cap(panel));
+    writeDashRoute(panel);
+    if(panel === 'bookings') setTimeout(function(){ loadBookingsFresh(true); }, 50);
+    if(panel === 'analytics' && typeof window.buildBigChart === 'function') {
+      try { window.buildBigChart(); } catch(e) {}
+    }
+    if(panel === 'contact-inbox' && typeof window.loadContactInbox === 'function') {
+      try { window.loadContactInbox(); } catch(e) {}
+    }
+    if(panel === 'live-session' && currentSid()) {
+      setTimeout(function(){ syncExpertSession(currentSid(), { forcePanel:false }); }, 50);
+    } else if(panel === 'live-session') {
+      showNoActiveSession();
+    }
+  }
+
+  function showNoActiveSession(){
+    if(currentSid()) return;
+    stopStableTimer(true);
+    setText('live-sess-subtitle', 'No active client session');
+    setText('live-client-name', 'Client');
+    setText('live-client-name-side', '-');
+    setText('live-client-sess-label', 'No active session');
+    setText('live-billing-status', '-');
+    var status = document.getElementById('live-client-status');
+    if(status) {
+      status.textContent = '';
+      status.style.cssText = '';
+    }
+    var input = document.getElementById('expert-chat-input');
+    if(input) {
+      input.disabled = true;
+      input.placeholder = 'No active session';
+    }
+    var chat = document.getElementById('expert-chat-area');
+    var rtc = document.getElementById('expert-rtc-area');
+    if(chat) chat.style.display = '';
+    if(rtc) rtc.style.display = 'none';
+  }
+
+  function clearLegacySessionIntervals(){
+    ['_obStagingFlowHardeningReapply','_obStagingSessionConsistencyInterval','_obExpertMediaPanelKeeper'].forEach(function(name){
+      if(window[name]) {
+        try { clearInterval(window[name]); } catch(e) {}
+        window[name] = null;
+      }
+    });
+  }
+  function liveStreamFor(channel){
+    var pf = window._obPreflightMedia;
+    if(!pf || pf.channel !== channel || !pf.stream || !pf.stream.getTracks) return null;
+    var tracks = pf.stream.getTracks().filter(function(t){ return t.readyState === 'live'; });
+    if(!tracks.some(function(t){ return t.kind === 'audio'; })) return null;
+    if(channel === 'video' && !tracks.some(function(t){ return t.kind === 'video'; })) return null;
+    return pf.stream;
+  }
+  function mediaConstraints(channel){
+    var audio = { echoCancellation:true, noiseSuppression:true, autoGainControl:true };
+    if(channel === 'video') return { audio:audio, video:{ width:{ideal:640,max:1280}, height:{ideal:480,max:720}, frameRate:{ideal:24,max:30} } };
+    return { audio:audio, video:false };
+  }
+  function ensureMediaPermission(channel, roleName){
+    channel = String(channel || 'chat').toLowerCase();
+    if(!MEDIA[channel]) return Promise.resolve(true);
+    if(liveStreamFor(channel)) return Promise.resolve(true);
+    if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      toastMsg('This browser cannot securely access the camera or microphone.', 'err');
+      return Promise.resolve(false);
+    }
+    toastMsg('Checking ' + (channel === 'video' ? 'camera and microphone' : 'microphone') + ' before starting...', 'ok');
+    return navigator.mediaDevices.getUserMedia(mediaConstraints(channel)).then(function(stream){
+      window._obPreflightMedia = { channel:channel, role:roleName || '', stream:stream, at:Date.now() };
+      window._obPreflightChannel = channel;
+      return true;
+    }).catch(function(e){
+      toastMsg((e && e.message) || 'Camera or microphone permission is required.', 'err');
+      return false;
+    });
+  }
+  function showMediaUi(channel){
+    var chat = document.getElementById('expert-chat-area');
+    var rtc = document.getElementById('expert-rtc-area');
+    var video = document.getElementById('expert-rtc-video-box');
+    var cam = document.getElementById('rtc-cam-btn');
+    if(MEDIA[channel]){
+      if(chat) chat.style.display = 'none';
+      if(rtc) rtc.style.display = 'block';
+      if(video) video.style.display = channel === 'video' ? 'block' : 'none';
+      if(cam) cam.style.display = channel === 'video' ? '' : 'none';
+      setText('expert-rtc-channel', channel === 'video' ? 'Video Call' : 'Voice Call');
+    } else {
+      if(chat) chat.style.display = '';
+      if(rtc) rtc.style.display = 'none';
+    }
+  }
+  function startRtcRecovery(sid, channel){
+    if(!sid || !MEDIA[channel]) return;
+    var key = sid + ':' + channel;
+    window._obOwnerRtcKey = key;
+    [0, 500, 1200, 2400, 4200, 7000].forEach(function(ms){
+      setTimeout(function(){
+        if(window._obOwnerRtcKey !== key) return;
+        showMediaUi(channel);
+        try {
+          if(window.obStartRtcForSession && window.obStartRtcForSession({ id:sid, channel:channel }, 'expert')) return;
+          if(window.OB_RTC && window.OB_RTC.start) {
+            var active = window.OB_RTC.isActive && window.OB_RTC.isActive();
+            var sameSid = !window.OB_RTC.getSid || String(window.OB_RTC.getSid() || '') === String(sid);
+            var sameCh = !window.OB_RTC.getChannel || String(window.OB_RTC.getChannel() || '') === String(channel);
+            if(active && sameSid && sameCh) return;
+            if(active && (!sameSid || !sameCh)) {
+              if(typeof window.OB_RTC.cleanup === 'function') window.OB_RTC.cleanup();
+              else if(typeof window.OB_RTC.end === 'function') window.OB_RTC.end();
+            }
+            window.OB_RTC.start(sid, channel, 'expert');
+          }
+        } catch(e) {}
+      }, ms);
+    });
+  }
+  function stopStableTimer(reset){
+    ['_expertSessInterval','_expertTimerInterval','_obStableExpertTimer','_obOwnerExpertTimer'].forEach(function(name){
+      if(window[name]) {
+        try { clearInterval(window[name]); } catch(e) {}
+        window[name] = null;
+      }
+    });
+    if(reset){
+      setText('expert-sess-timer', '0:00');
+      setText('expert-session-earnings', '$0.00');
+      setText('expert-net-earnings', '$0.00');
+    }
+  }
+  function startStableTimer(sess){
+    var started = parseInt(sess && (sess.started_at || sess.startedAt) || 0, 10);
+    if(!started) {
+      stopStableTimer(true);
+      setText('live-billing-status', MEDIA[currentChannel()] ? 'Waiting for both sides to connect. Billing has not started.' : 'Waiting for client to connect.');
+      return;
+    }
+    stopStableTimer(false);
+    var sid = sess.id;
+    var rate = parseFloat(sess.rate_per_min || sess.rate || window._expertSessRate || 0) || 0;
+    var free = parseInt(sess.free_minutes != null ? sess.free_minutes : window._expertSessFreeMins || 0, 10) || 0;
+    var feePct = sess.platform_fee_pct != null ? parseFloat(sess.platform_fee_pct) : 12;
+    var cut = Math.max(0, 1 - (feePct / 100));
+    function tick(){
+      if(currentSid() && String(currentSid()) !== String(sid)) return;
+      var elapsed = Math.max(0, Math.floor(Date.now() / 1000) - started);
+      var gross = Math.max(0, elapsed - free * 60) / 60 * rate;
+      setText('expert-sess-timer', fmtTime(elapsed));
+      setText('expert-session-earnings', money(gross));
+      setText('expert-net-earnings', money(gross * cut));
+      var remaining = Math.max(0, Math.ceil(free * 60 - elapsed));
+      var freeEl = document.getElementById('live-free-period');
+      if(freeEl && free > 0) {
+        freeEl.style.display = 'block';
+        freeEl.textContent = remaining > 0 ? ('Free intro active: ' + fmtTime(remaining) + ' remaining') : 'Free intro complete - billing active';
+      } else if(freeEl) {
+        freeEl.style.display = 'none';
+      }
+      setText('live-billing-status', free > 0 && remaining > 0 ? 'Client is in free intro time' : 'Billing active');
+    }
+    tick();
+    window._obOwnerExpertTimer = setInterval(tick, 1000);
+    window._expertSessInterval = window._obOwnerExpertTimer;
+  }
+  function connectExpertRealtime(sid){
+    if(!isExpertDash()) return null;
+    clearTimeout(wsReconnectTimer);
+    if(window._obOwnerExpertWs && window._obOwnerExpertWs.readyState <= 1) {
+      if(sid && window._obOwnerExpertWs.readyState === 1) joinExpertWs(window._obOwnerExpertWs, sid);
+      return window._obOwnerExpertWs;
+    }
+    var wsUrl = BASE.replace('https://', 'wss://').replace('http://', 'ws://') + '/ws';
+    var ws = new WebSocket(wsUrl);
+    window._obOwnerExpertWs = ws;
+    window._expertWs = ws;
+    ws.onopen = function(){
+      try { if(token()) ws.send(JSON.stringify({ type:'auth', token:token() })); } catch(e) {}
+      var activeSid = sid || currentSid();
+      if(activeSid) setTimeout(function(){ joinExpertWs(ws, activeSid); }, 180);
+    };
+    ws.onmessage = function(evt){
+      var d;
+      try { d = JSON.parse(evt.data); } catch(e) { return; }
+      if(d.type && d.type.indexOf('rtc_') === 0) {
+        if(typeof window._handleRTCMessage === 'function') window._handleRTCMessage(d);
+        return;
+      }
+      handleExpertRealtimeMessage(d);
+    };
+    ws.onerror = function(){};
+    ws.onclose = function(){
+      if(window._obOwnerExpertWs === ws) window._obOwnerExpertWs = null;
+      if(isExpertDash()) wsReconnectTimer = setTimeout(function(){ connectExpertRealtime(currentSid() || null); }, 2500);
+    };
+    return ws;
+  }
+  function joinExpertWs(ws, sid){
+    if(!ws || ws.readyState !== 1 || !sid) return;
+    try { if(token()) ws.send(JSON.stringify({ type:'auth', token:token() })); } catch(e) {}
+    try { ws.send(JSON.stringify({ type:'join', session_id:sid })); } catch(e) {}
+    try { ws.send(JSON.stringify({ type:'join_session', sessionId:sid })); } catch(e) {}
+    ws._obOwnerSid = sid;
+  }
+  function handleExpertRealtimeMessage(d){
+    var type = d && d.type;
+    var sid = d.session_id || d.sessionId || (d.session && d.session.id) || '';
+    if(type === 'joined' && d.session) {
+      applyExpertSession(d.session, { forcePanel:false });
+      return;
+    }
+    if(type === 'session_started' && d.session) {
+      applyExpertSession(d.session, { forcePanel:false });
+      return;
+    }
+    if(type === 'session_request') {
+      showIncomingRequest(d);
+      return;
+    }
+    if(type === 'session_declined' || type === 'session_expired') {
+      if(!sid || sid === window._pendingSid || sid === window._obIncomingSessId) hideIncomingRequest();
+      if(type === 'session_expired') toastMsg('Session request expired.', 'err');
+      return;
+    }
+    if(type === 'session_ended') {
+      if(!sid || sid === currentSid()) handleSessionEnded(d.session || { id:sid });
+      return;
+    }
+    if(type === 'booking_update' || type === 'new_booking') {
+      if(routePanel() === 'bookings') setTimeout(function(){ loadBookingsFresh(true); }, 300);
+      return;
+    }
+    if(type === 'message' && sid && sid === currentSid() && d.content) {
+      var me = user().id || '';
+      if(d.sender_id !== me && typeof window._obAppendMsg === 'function') window._obAppendMsg('expert-chat-messages', d.content, false, d.ts || d.sent_at || Date.now());
+      return;
+    }
+    if(type === 'participant_joined' && currentSid()) {
+      setTimeout(function(){ syncExpertSession(currentSid(), { forcePanel:false }); }, 300);
+    }
+  }
+  function initials(name){
+    var parts = String(name || 'Client').match(/\b\w/g) || ['C'];
+    return parts.slice(0, 2).join('').toUpperCase();
+  }
+  function hideIncomingRequest(){
+    try { clearInterval(window._sessionRequestTimer); } catch(e) {}
+    window._sessionRequestTimer = null;
+    window._pendingSid = null;
+    window._obIncomingSessId = null;
+    ['session-request-overlay','session-request-sheet','ob-expert-incoming'].forEach(function(id){
+      var el = document.getElementById(id);
+      if(el) {
+        el.style.display = 'none';
+        el.classList.remove('show');
+      }
+    });
+  }
+  function showIncomingRequest(payload){
+    var sess = payload.session || payload || {};
+    var sid = sess.id || payload.session_id || payload.sessionId;
+    if(!sid || currentSid()) return;
+    var channel = String(sess.channel || payload.channel || 'chat').toLowerCase();
+    var client = payload.client || {};
+    var clientName = client.name || sess.client_name || 'Client';
+    window._pendingSid = sid;
+    window._obIncomingSessId = sid;
+    window._obPendingChannel = channel;
+    window.currentBookChannel = channel;
+    if(sess.rate_per_min != null) window._obPendingRate = parseFloat(sess.rate_per_min || 0) || 0;
+    if(typeof window.showSessionRequest === 'function') {
+      window.showSessionRequest({
+        clientName: clientName,
+        clientSub: channel + ' session',
+        initials: initials(clientName),
+        sessionType: channel,
+        rate: money(sess.rate_per_min || window._obPendingRate || 0) + '/min',
+        freeMin: parseInt(sess.free_minutes || 0, 10) > 0 ? (parseInt(sess.free_minutes || 0, 10) + ' min free') : 'No free minutes'
+      });
+    } else {
+      var overlay = document.getElementById('session-request-overlay');
+      if(overlay) overlay.style.display = 'flex';
+    }
+    var sheet = document.getElementById('session-request-sheet');
+    if(sheet) {
+      sheet.dataset.sessionId = sid;
+      sheet.style.display = '';
+    }
+    var overlayEl = document.getElementById('session-request-overlay');
+    if(overlayEl) overlayEl.dataset.sessionId = sid;
+    try { if(window.obShowSessionAlertPrimer) window.obShowSessionAlertPrimer(); } catch(e) {}
+    try { if(window.obPlaySessionAlertTone) window.obPlaySessionAlertTone(); } catch(e) {}
+    if(navigator.vibrate) {
+      try { navigator.vibrate([180, 80, 180]); } catch(e) {}
+    }
+  }
+  function acceptIncomingRequest(){
+    var sid = window._pendingSid || window._obIncomingSessId || (document.getElementById('session-request-sheet') || {}).dataset && document.getElementById('session-request-sheet').dataset.sessionId;
+    if(!sid) return Promise.resolve(null);
+    var channel = currentChannel();
+    return ensureMediaPermission(channel, 'expert').then(function(ok){
+      if(!ok) return null;
+      hideIncomingRequest();
+      return api('/api/sessions/' + encodeURIComponent(sid) + '/accept', { method:'POST', body:'{}' }).then(function(d){
+        var sess = d.session || { id:sid, channel:channel };
+        toastMsg('Session accepted. Opening Live Session...', 'ok');
+        return openExpertLivePanelOwner(sess.id || sid, { forcePanel:true, session:sess });
+      }).catch(function(e){
+        toastMsg(e.status === 410 ? 'This request expired. Ask the client to start again.' : (e.message || 'Could not accept session'), 'err');
+        return null;
+      });
+    });
+  }
+  function declineIncomingRequest(){
+    var sid = window._pendingSid || window._obIncomingSessId || (document.getElementById('session-request-sheet') || {}).dataset && document.getElementById('session-request-sheet').dataset.sessionId;
+    hideIncomingRequest();
+    if(!sid) return Promise.resolve(null);
+    return api('/api/sessions/' + encodeURIComponent(sid) + '/decline', { method:'POST', body:'{}' }).catch(function(){});
+  }
+  function loadBookingsFresh(force){
+    if(!isExpertDash() || !token()) return Promise.resolve([]);
+    var now = Date.now();
+    if(!force && bookingLoadInFlight) return bookingLoadInFlight;
+    if(!force && Array.isArray(window._expertBookings) && now - bookingLoadedAt < 2500) {
+      if(typeof window.renderBookings === 'function') window.renderBookings(window._expertBookings);
+      return Promise.resolve(window._expertBookings);
+    }
+    var list = document.getElementById('bookings-list');
+    var empty = document.getElementById('bookings-empty');
+    if(list && (!window._expertBookings || !window._expertBookings.length)) {
+      list.innerHTML = '<div style="text-align:center;padding:24px;color:var(--gray-400);">Loading bookings...</div>';
+      if(empty) empty.style.display = 'none';
+    }
+    bookingLoadInFlight = api('/api/bookings/me?ts=' + Date.now(), { cache:'no-store' }).then(function(d){
+      var bookings = d.bookings || d.data || [];
+      window._expertBookings = bookings;
+      bookingLoadedAt = Date.now();
+      if(typeof window.renderBookings === 'function') window.renderBookings(bookings);
+      return bookings;
+    }).catch(function(e){
+      if(e.status === 429) {
+        toastMsg('Too many booking refreshes. Keeping the current list and retrying shortly.', 'err');
+        setTimeout(function(){ loadBookingsFresh(true); }, 2000);
+      } else if(list && (!window._expertBookings || !window._expertBookings.length)) {
+        list.innerHTML = '<div style="text-align:center;padding:20px;color:#dc2626;">Failed to load bookings. Refresh once and try again.</div>';
+      }
+      return window._expertBookings || [];
+    }).finally(function(){ bookingLoadInFlight = null; });
+    return bookingLoadInFlight;
+  }
+  function bookingById(id){
+    var list = window._expertBookings || [];
+    for(var i = 0; i < list.length; i++) if(String(list[i].id) === String(id)) return list[i];
+    return null;
+  }
+  function resolveBooking(id){
+    var local = bookingById(id);
+    if(local) return Promise.resolve(local);
+    return loadBookingsFresh(true).then(function(list){
+      for(var i = 0; i < list.length; i++) if(String(list[i].id) === String(id)) return list[i];
+      return { id:id, channel:currentChannel() };
+    });
+  }
+  function recoverStartedBooking(id, booking){
+    return api('/api/bookings/' + encodeURIComponent(id) + '/join?ts=' + Date.now(), { cache:'no-store' }).then(function(d){
+      if(d && d.session && d.session.id) return d.session;
+      var notes = booking && booking.scheduled_date && booking.scheduled_time ? ('Scheduled booking: ' + booking.scheduled_date + ' ' + booking.scheduled_time) : '';
+      return api('/api/sessions?status=active&limit=10&ts=' + Date.now(), { cache:'no-store' }).then(function(active){
+        var list = active.sessions || active.data || [];
+        for(var i = 0; i < list.length; i++) {
+          var sess = list[i] || {};
+          if(notes && String(sess.notes || '') !== notes) continue;
+          if(booking && booking.channel && String(sess.channel || '').toLowerCase() !== String(booking.channel).toLowerCase()) continue;
+          if(sess.id) return sess;
+        }
+        return null;
+      });
+    }).catch(function(){ return null; });
+  }
+  function startBookingSessionOwner(bookingId){
+    if(!bookingId || !token()) {
+      toastMsg('Please log in again before starting this booking.', 'err');
+      return Promise.resolve(null);
+    }
+    if(bookingLocks[bookingId]) return Promise.resolve(null);
+    bookingLocks[bookingId] = true;
+    var clicked = (typeof event !== 'undefined' && event && event.target && event.target.closest) ? event.target.closest('button') : null;
+    if(clicked) {
+      clicked.disabled = true;
+      clicked.textContent = 'Starting...';
+    }
+    return resolveBooking(bookingId).then(function(booking){
+      var channel = String((booking && booking.channel) || currentChannel() || 'chat').toLowerCase();
+      if(['chat','voice','video'].indexOf(channel) < 0) channel = 'chat';
+      window._obPendingChannel = channel;
+      window.currentBookChannel = channel;
+      return ensureMediaPermission(channel, 'expert').then(function(ok){
+        if(!ok) return null;
+        toastMsg(channel === 'chat' ? 'Starting scheduled session...' : 'Starting session. Opening Live Session and connecting media...', 'ok');
+        return api('/api/bookings/' + encodeURIComponent(bookingId) + '/start', { method:'POST', body:'{}' }, 15000).then(function(d){
+          var sess = d.session || {};
+          if(!sess.id) throw new Error(d.error || 'No session returned');
+          return openExpertLivePanelOwner(sess.id, { forcePanel:true, session:sess });
+        }).catch(function(e){
+          return recoverStartedBooking(bookingId, booking).then(function(sess){
+            if(sess && sess.id) {
+              toastMsg('Session is already started. Opening Live Session now.', 'ok');
+              return openExpertLivePanelOwner(sess.id, { forcePanel:true, session:sess });
+            }
+            throw e;
+          });
+        });
+      });
+    }).catch(function(e){
+      toastMsg(e.status === 429 ? 'Too many requests. Wait a moment, then try again.' : (e.message || 'Failed to start booking'), 'err');
+      return null;
+    }).finally(function(){
+      if(clicked) {
+        clicked.disabled = false;
+        clicked.textContent = 'Start Session';
+      }
+      setTimeout(function(){ delete bookingLocks[bookingId]; }, 900);
+    });
+  }
+  function openExpertLivePanelOwner(sid, opts){
+    opts = opts || {};
+    if(!sid) return Promise.resolve(null);
+    window._sid = sid;
+    window._sessId = sid;
+    window._obActiveSessId = sid;
+    window._pendingSid = null;
+    window._obIncomingSessId = null;
+    connectExpertRealtime(sid);
+    setDashboardPanel('live-session', { force:true });
+    setText('live-sess-subtitle', 'Opening session...');
+    if(opts.session) applyExpertSession(opts.session, { forcePanel:true });
+    return syncExpertSession(sid, { forcePanel:true }).then(function(sess){
+      startSessionKeeper(sid);
+      return sess;
+    });
+  }
+  function applyExpertSession(sess, opts){
+    opts = opts || {};
+    if(!sess || !sess.id) return;
+    if(String(sess.status || '').toLowerCase() === 'ended') {
+      handleSessionEnded(sess);
+      return;
+    }
+    var channel = String(sess.channel || currentChannel() || 'chat').toLowerCase();
+    if(['chat','voice','video'].indexOf(channel) < 0) channel = 'chat';
+    var rate = parseFloat(sess.rate_per_min || sess.rate || window._obPendingRate || window._expertSessRate || 0) || 0;
+    var free = parseInt(sess.free_minutes != null ? sess.free_minutes : window._expertSessFreeMins || 0, 10) || 0;
+    var feePct = sess.platform_fee_pct != null ? parseFloat(sess.platform_fee_pct) : (sess.expert_plan === 'scale' ? 5 : (sess.expert_plan === 'pro' ? 8 : 12));
+    var cut = Math.max(0, 1 - (feePct / 100));
+    var clientName = sess.client_name || (window._obExpertSessionSticky && window._obExpertSessionSticky.clientName) || 'Client';
+
+    window._sid = sess.id;
+    window._sessId = sess.id;
+    window._obActiveSessId = sess.id;
+    window._obPendingChannel = channel;
+    window.currentBookChannel = channel;
+    window._expertSessRate = rate;
+    window._expertSessFreeMins = free;
+    window._expertSessCut = cut;
+    window._obExpertSessionSticky = {
+      sid:String(sess.id),
+      channel:channel,
+      status:sess.status || 'active',
+      clientName:clientName,
+      rate:rate,
+      freeMinutes:free,
+      cut:cut,
+      startedAt:parseInt(sess.started_at || 0, 10) || 0,
+      lastSeenAt:Date.now()
+    };
+    if(opts.forcePanel) setDashboardPanel('live-session', { force:true });
+    connectExpertRealtime(sess.id);
+    showMediaUi(channel);
+    setText('live-sess-subtitle', cap(channel) + ' session with ' + clientName);
+    setText('live-sess-rate', money(rate) + '/min');
+    setText('live-sess-cut', Math.round(cut * 100) + '%');
+    setText('live-client-name', clientName);
+    setText('live-client-name-side', clientName);
+    setText('live-client-sess-label', channel + ' session');
+    var status = document.getElementById('live-client-status');
+    if(status) {
+      status.textContent = 'Online';
+      status.style.cssText = 'font-size:12px;color:#22c55e;font-weight:700;';
+    }
+    var netRate = document.getElementById('live-net-rate') || document.getElementById('live-earn-rate');
+    if(netRate) netRate.textContent = money(rate * cut) + '/min';
+    var input = document.getElementById('expert-chat-input');
+    if(input) {
+      input.disabled = false;
+      input.placeholder = 'Type your message...';
+      input.style.cursor = '';
+      input.style.background = '';
+    }
+    if(sess.started_at) startStableTimer(sess);
+    else {
+      stopStableTimer(true);
+      setText('live-billing-status', MEDIA[channel] ? 'Waiting for both sides to connect. Billing has not started.' : 'Waiting for client to connect.');
+    }
+    if(MEDIA[channel]) startRtcRecovery(sess.id, channel);
+    if(document.getElementById('expert-chat-messages') && Array.isArray(sess.messages) && typeof window._obAppendMsg === 'function') {
+      document.getElementById('expert-chat-messages').innerHTML = '';
+      var me = user().id || '';
+      sess.messages.forEach(function(m){ window._obAppendMsg('expert-chat-messages', m.content, m.sender_id === me, m.created_at); });
+    }
+  }
+  function syncExpertSession(sid, opts){
+    opts = opts || {};
+    sid = sid || currentSid();
+    if(!sid || !token()) return Promise.resolve(null);
+    return api('/api/sessions/' + encodeURIComponent(sid) + '?ts=' + Date.now(), { cache:'no-store' }).then(function(d){
+      var sess = d.session || d || {};
+      if(!sess.id) sess.id = sid;
+      if(Array.isArray(d.messages)) sess.messages = d.messages;
+      applyExpertSession(sess, opts);
+      return sess;
+    }).catch(function(e){
+      if(e.status === 404 || e.status === 403) clearActiveSessionState();
+      return null;
+    });
+  }
+  function startSessionKeeper(sid){
+    if(sessionKeeper) clearInterval(sessionKeeper);
+    sessionKeeper = setInterval(function(){
+      var activeSid = sid || currentSid();
+      if(!activeSid) {
+        clearInterval(sessionKeeper);
+        sessionKeeper = null;
+        return;
+      }
+      syncExpertSession(activeSid, { forcePanel:false });
+    }, 2600);
+  }
+  function clearActiveSessionState(){
+    window._sid = null;
+    window._sessId = null;
+    window._obActiveSessId = null;
+    window._pendingSid = null;
+    window._obIncomingSessId = null;
+    window._obExpertSessionSticky = null;
+    try { if(window.OB_RTC && typeof window.OB_RTC.cleanup === 'function') window.OB_RTC.cleanup(); } catch(e) {}
+    if(sessionKeeper) {
+      clearInterval(sessionKeeper);
+      sessionKeeper = null;
+    }
+    stopStableTimer(true);
+  }
+  function handleSessionEnded(sess){
+    var sid = sess && (sess.id || sess.session_id || sess.sessionId);
+    if(sid && currentSid() && String(sid) !== String(currentSid())) return;
+    var earned = money(sess && (sess.expert_earned || sess.expertEarned || 0));
+    clearActiveSessionState();
+    setText('live-sess-subtitle', 'Client ended the session');
+    setText('expert-session-earnings', earned);
+    setText('expert-net-earnings', earned);
+    setText('live-client-status', 'Ended');
+    setText('live-billing-status', 'Session ended');
+    var input = document.getElementById('expert-chat-input');
+    if(input) {
+      input.disabled = true;
+      input.placeholder = 'Session ended';
+    }
+    setTimeout(function(){ if(routePanel() === 'bookings') loadBookingsFresh(true); }, 500);
+  }
+  function endExpertSessionOwner(){
+    var sid = currentSid();
+    if(!sid) {
+      toastMsg('No active session to end.', 'err');
+      return Promise.resolve(null);
+    }
+    return api('/api/sessions/' + encodeURIComponent(sid) + '/end', { method:'POST', body:'{}' }).then(function(d){
+      handleSessionEnded(d.session || { id:sid, expert_earned:d.expert_earned });
+      toastMsg('Session ended.', 'ok');
+      return d;
+    }).catch(function(e){
+      toastMsg(e.message || 'Failed to end session', 'err');
+      return null;
+    });
+  }
+  function updateBookingStatusOwner(id, status){
+    if(!id || bookingLocks[id + ':' + status]) return Promise.resolve(null);
+    bookingLocks[id + ':' + status] = true;
+    document.querySelectorAll('button[onclick*="' + String(id).replace(/"/g, '\\"') + '"]').forEach(function(btn){
+      btn.disabled = true;
+      btn.style.opacity = '.6';
+      btn.style.cursor = 'wait';
+    });
+    return api('/api/bookings/' + encodeURIComponent(id) + '/status', { method:'PUT', body:JSON.stringify({ status:status }) }).then(function(d){
+      if(Array.isArray(window._expertBookings)) {
+        window._expertBookings = window._expertBookings.map(function(b){ return String(b.id) === String(id) ? Object.assign({}, b, { status:status }) : b; });
+        if(typeof window.renderBookings === 'function') window.renderBookings(window._expertBookings);
+      }
+      toastMsg('Booking ' + status + '.', 'ok');
+      setTimeout(function(){ loadBookingsFresh(true); }, 700);
+      return d;
+    }).catch(function(e){
+      toastMsg(e.status === 429 ? 'Too many requests. Wait a moment, then try again.' : (e.message || 'Failed to update booking'), 'err');
+      return null;
+    }).finally(function(){
+      delete bookingLocks[id + ':' + status];
+      setTimeout(function(){ if(typeof window.renderBookings === 'function') window.renderBookings(window._expertBookings || []); }, 300);
+    });
+  }
+  function pollPendingRequests(){
+    if(!isExpertDash() || !token() || currentSid()) return;
+    var overlay = document.getElementById('session-request-overlay');
+    if(overlay && overlay.style.display && overlay.style.display !== 'none') return;
+    api('/api/sessions/pending?ts=' + Date.now(), { cache:'no-store' }, 9000).then(function(d){
+      var list = d.sessions || d.data || [];
+      if(list && list.length) showIncomingRequest({ type:'session_request', session:list[0] });
+    }).catch(function(){});
+  }
+  function restoreActiveIfLiveRoute(){
+    if(!isExpertDash() || currentSid() || routePanel() !== 'live-session') return;
+    api('/api/sessions?status=active&limit=5&ts=' + Date.now(), { cache:'no-store' }, 9000).then(function(d){
+      var list = d.sessions || d.data || [];
+      var chosen = null;
+      for(var i = 0; i < list.length; i++) {
+        var sess = list[i] || {};
+        if(!sess.id) continue;
+        if(String(sess.status || '').toLowerCase() !== 'active') continue;
+        chosen = sess;
+        break;
+      }
+      if(chosen) openExpertLivePanelOwner(chosen.id, { forcePanel:false, session:chosen });
+      else showNoActiveSession();
+    }).catch(function(){ showNoActiveSession(); });
+  }
+  function installOwner(){
+    clearLegacySessionIntervals();
+    window.dbNav = function(el, panel){ return setDashboardPanel(panel, { el:el }); };
+    window.loadExpertBookings = loadBookingsFresh;
+    window.updateBookingStatus = updateBookingStatusOwner;
+    window.startBookingSession = startBookingSessionOwner;
+    window.openExpertLivePanel = openExpertLivePanelOwner;
+    window.connectExpertWs = connectExpertRealtime;
+    window.acceptSessionRequest = acceptIncomingRequest;
+    window.declineSessionRequest = declineIncomingRequest;
+    window.obExpertAccept = acceptIncomingRequest;
+    window.obExpertDecline = declineIncomingRequest;
+    window.expertEndSession = endExpertSessionOwner;
+    window.startExpertSessionTimer = function(startedAt){
+      var sticky = window._obExpertSessionSticky || {};
+      if(startedAt) sticky.startedAt = startedAt;
+      if(sticky.sid) return startStableTimer({ id:sticky.sid, started_at:sticky.startedAt, rate_per_min:sticky.rate, free_minutes:sticky.freeMinutes, platform_fee_pct:Math.round((1 - (sticky.cut || .88)) * 100) });
+    };
+    window._obShowNoActiveExpertLiveSession = showNoActiveSession;
+    if(isExpertDash()) {
+      connectExpertRealtime(currentSid() || null);
+      if(!pendingPoller) pendingPoller = setInterval(pollPendingRequests, 3500);
+    }
+  }
+  function boot(){
+    installOwner();
+    if(isExpertDash()) {
+      var panel = routePanel();
+      if(panel) setDashboardPanel(panel);
+      if(panel === 'live-session') restoreActiveIfLiveRoute();
+      if(panel === 'bookings') loadBookingsFresh(true);
+    }
+  }
+
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
+  else boot();
+  [120, 450, 1000, 2200, 4200, 8000, 14000].forEach(function(ms){ setTimeout(installOwner, ms); });
+  var reapply = setInterval(installOwner, 900);
+  setTimeout(function(){
+    clearInterval(reapply);
+    setInterval(installOwner, 10000);
+  }, 180000);
+})();
+</script>
 </body>
 </html>

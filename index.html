@@ -27339,8 +27339,12 @@ window._handleRTCMessage=function(d){
   }
 
   function showNoActiveSession(){
+    var hadOwnerLive = !!window._obOwnerSessionLive;
     window._obOwnerSessionLive = false;
-    if(currentSid()) return;
+    if(currentSid() && hadOwnerLive) return;
+    window._sid = null;
+    window._sessId = null;
+    window._obActiveSessId = null;
     stopStableTimer(true);
     setText('live-sess-subtitle', 'No active client session');
     setText('live-client-name', 'Client');
@@ -27364,12 +27368,44 @@ window._handleRTCMessage=function(d){
   }
 
   function clearLegacySessionIntervals(){
-    ['_obStagingFlowHardeningReapply','_obStagingSessionConsistencyInterval','_obExpertMediaPanelKeeper'].forEach(function(name){
+    ['_obStagingFlowHardeningReapply','_obStagingSessionConsistencyInterval','_obExpertMediaPanelKeeper','_obStableExpertSessionKeeper','_obExpertSessionPoller','_expertSessionPoller'].forEach(function(name){
       if(window[name]) {
         try { clearInterval(window[name]); } catch(e) {}
         window[name] = null;
       }
     });
+  }
+  function installEndRedirectGuard(){
+    if(!window._obOwnerOriginalGoExpertSessionsPage && typeof window.goExpertSessionsPage === 'function') {
+      window._obOwnerOriginalGoExpertSessionsPage = window.goExpertSessionsPage;
+      window.goExpertSessionsPage = function(){
+        if(window._obStayOnLiveAfterEndUntil && Date.now() < window._obStayOnLiveAfterEndUntil && routePanel() === 'live-session') {
+          setDashboardPanel('live-session', { force:true });
+          return;
+        }
+        return window._obOwnerOriginalGoExpertSessionsPage.apply(this, arguments);
+      };
+    }
+    window._obHandleSessionConnectionFailure = function(sid, channel, reason, roleName){
+      if(sid && currentSid() && String(sid) !== String(currentSid())) return;
+      window._obStayOnLiveAfterEndUntil = Date.now() + 20000;
+      stopStableTimer(true);
+      if(isExpertDash()) setDashboardPanel('live-session', { force:true });
+      setText('live-sess-subtitle', reason === 'media_permission_failed' ? 'Camera or microphone permission was not granted' : 'Connection could not be restored');
+      setText('live-billing-status', 'Session ended safely so billing does not continue.');
+      setText('expert-session-earnings', '$0.00');
+      setText('expert-net-earnings', '$0.00');
+      var status = document.getElementById('live-client-status');
+      if(status) {
+        status.textContent = 'Ended';
+        status.style.cssText = 'font-size:12px;color:#dc2626;font-weight:800;';
+      }
+      var input = document.getElementById('expert-chat-input');
+      if(input) {
+        input.disabled = true;
+        input.placeholder = 'Session ended';
+      }
+    };
   }
   function liveStreamFor(channel){
     var pf = window._obPreflightMedia;
@@ -27713,6 +27749,8 @@ window._handleRTCMessage=function(d){
       clicked.disabled = true;
       clicked.textContent = 'Starting...';
     }
+    window._obAllowLiveTakeoverUntil = Date.now() + 20000;
+    window._obManualDashboardPanel = 'live-session';
     return resolveBooking(bookingId).then(function(booking){
       var channel = String((booking && booking.channel) || currentChannel() || 'chat').toLowerCase();
       if(['chat','voice','video'].indexOf(channel) < 0) channel = 'chat';
@@ -27755,6 +27793,8 @@ window._handleRTCMessage=function(d){
     window._obActiveSessId = sid;
     window._pendingSid = null;
     window._obIncomingSessId = null;
+    window._obAllowLiveTakeoverUntil = Date.now() + 20000;
+    window._obManualDashboardPanel = 'live-session';
     connectExpertRealtime(sid);
     setDashboardPanel('live-session', { force:true });
     setText('live-sess-subtitle', 'Opening session...');
@@ -27880,6 +27920,7 @@ window._handleRTCMessage=function(d){
     var sid = sess && (sess.id || sess.session_id || sess.sessionId);
     if(sid && currentSid() && String(sid) !== String(currentSid())) return;
     var earned = money(sess && (sess.expert_earned || sess.expertEarned || 0));
+    window._obStayOnLiveAfterEndUntil = Date.now() + 12000;
     clearActiveSessionState();
     setText('live-sess-subtitle', 'Client ended the session');
     setText('expert-session-earnings', earned);
@@ -27969,6 +28010,7 @@ window._handleRTCMessage=function(d){
   }
   function installOwner(){
     clearLegacySessionIntervals();
+    installEndRedirectGuard();
     window.dbNav = function(el, panel){ return setDashboardPanel(panel, { el:el }); };
     window.loadExpertBookings = loadBookingsFresh;
     window.updateBookingStatus = updateBookingStatusOwner;

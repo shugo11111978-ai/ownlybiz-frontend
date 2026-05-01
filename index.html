@@ -1736,7 +1736,11 @@ input[type=range]{width:100%;accent-color:var(--terra);}
 
 <script>
 /* === PLATFORM CONFIG LOADER === */
-window.OWNLY_API="https://ownlybiz-backend-production.up.railway.app";
+window.OWNLY_API=(function(){
+  var h=(location.hostname||'').toLowerCase();
+  var isStaging=h==='localhost'||h==='127.0.0.1'||h.endsWith('.vercel.app')||h.indexOf('git-staging')>=0;
+  return isStaging?'https://victorious-wisdom-production-a6b0.up.railway.app':'https://ownlybiz-backend-production.up.railway.app';
+})();
 (function(){
   fetch(window.OWNLY_API+"/api/config").then(function(r){return r.json();}).then(function(c){
     window.OWNLY_CONFIG=c;
@@ -1822,8 +1826,55 @@ if (!window.toast) {
   };
 }
 
-window.OWNLYBIZ_IS_STAGING=false;
-window._OB_BACKEND='https://ownlybiz-backend-production.up.railway.app';
+(function(){
+  var PROD_BACKEND = 'https://ownlybiz-backend-production.up.railway.app';
+  var STAGING_BACKEND = 'https://victorious-wisdom-production-a6b0.up.railway.app';
+  var PROD_WS = 'wss://ownlybiz-backend-production.up.railway.app';
+  var STAGING_WS = 'wss://victorious-wisdom-production-a6b0.up.railway.app';
+  function isStagingHost(){
+    var h = (location.hostname || '').toLowerCase();
+    return h === 'localhost' || h === '127.0.0.1' || h.endsWith('.vercel.app') || h.indexOf('git-staging') >= 0;
+  }
+  function rewrite(value, ws){
+    if(!window.OWNLYBIZ_IS_STAGING) return value;
+    var from = ws ? PROD_WS : PROD_BACKEND;
+    var to = ws ? STAGING_WS : STAGING_BACKEND;
+    return String(value || '').replace(from, to);
+  }
+  window.OWNLYBIZ_IS_STAGING = isStagingHost();
+  window.OWNLYBIZ_PROD_BACKEND = PROD_BACKEND;
+  window.OWNLYBIZ_STAGING_BACKEND = STAGING_BACKEND;
+  window._obApplyRuntimeBackend = function(){
+    window._OB_BACKEND = window.OWNLYBIZ_IS_STAGING ? STAGING_BACKEND : PROD_BACKEND;
+    window.OWNLYBIZ_API_URL = window.OWNLYBIZ_IS_STAGING ? STAGING_BACKEND : PROD_BACKEND;
+    window.OWNLY_API = window.OWNLYBIZ_API_URL;
+    window.OWNLYBIZ_WS_URL = window.OWNLYBIZ_IS_STAGING ? STAGING_WS : PROD_WS;
+  };
+  window._obApplyRuntimeBackend();
+  if(window.OWNLYBIZ_IS_STAGING && !window._obStagingBackendRewriteInstalled) {
+    var nativeFetch = window.fetch;
+    window.fetch = function(input, init){
+      if(input && typeof Request !== 'undefined' && input instanceof Request) {
+        var rewrittenUrl = rewrite(input.url, false);
+        if(rewrittenUrl !== input.url) input = new Request(rewrittenUrl, input);
+      } else if(typeof input === 'string' || input instanceof URL) {
+        input = rewrite(input, false);
+      }
+      return nativeFetch.call(this, input, init);
+    };
+    if(window.WebSocket) {
+      var NativeWebSocket = window.WebSocket;
+      var PatchedWebSocket = function(url, protocols){
+        var target = rewrite(url, true);
+        return protocols === undefined ? new NativeWebSocket(target) : new NativeWebSocket(target, protocols);
+      };
+      PatchedWebSocket.prototype = NativeWebSocket.prototype;
+      ['CONNECTING','OPEN','CLOSING','CLOSED'].forEach(function(k){ PatchedWebSocket[k] = NativeWebSocket[k]; });
+      window.WebSocket = PatchedWebSocket;
+    }
+    window._obStagingBackendRewriteInstalled = true;
+  }
+})();
 
 </script>
 

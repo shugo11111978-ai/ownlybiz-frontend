@@ -24250,5 +24250,567 @@ window._handleRTCMessage=function(d){
   setTimeout(function(){ if(publicExpertHost() && !hasExpertPayload()) showProfileLoadFallback(); }, 12000);
 })();
 </script>
+<script>
+(function(){
+  var PROD_API = 'https://ownlybiz-backend-production.up.railway.app';
+  var FALLBACK_STAGING_API = 'https://victorious-wisdom-production-a6b0.up.railway.app';
+  function apiBase(){
+    return String(window.OWNLY_API || window.OWNLYBIZ_API_URL || FALLBACK_STAGING_API).replace(/\/+$/, '');
+  }
+  function token(){
+    return sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || '';
+  }
+  function headers(json){
+    var h = json === false ? {} : {'Content-Type':'application/json'};
+    var t = token();
+    if(t) h.Authorization = 'Bearer ' + t;
+    return h;
+  }
+  async function obJson(path, opts){
+    opts = opts || {};
+    var body = opts.body;
+    if(body && typeof body !== 'string') body = JSON.stringify(body);
+    var r = await fetch(apiBase() + path, Object.assign({}, opts, {headers:Object.assign(headers(body !== undefined), opts.headers || {}), body:body}));
+    var d = await r.json().catch(function(){ return {}; });
+    if(!r.ok) {
+      var err = new Error(d.error || 'Request failed');
+      err.data = d;
+      throw err;
+    }
+    return d;
+  }
+  function toastOk(msg){ try { if(typeof toastMsg === 'function') toastMsg(msg,'ok'); else if(typeof toast === 'function') toast(msg); } catch(e) {} }
+  function toastErr(msg){ try { if(typeof toastMsg === 'function') toastMsg(msg,'err'); else if(typeof toast === 'function') toast(msg,'err'); else alert(msg); } catch(e) { alert(msg); } }
+  function money(n){ n = Number(n || 0); return '$' + n.toFixed(2); }
+  function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+
+  if(window.fetch && !window.fetch._obStagingApiGuard){
+    var originalFetch = window.fetch.bind(window);
+    window.fetch = function(input, init){
+      try {
+        var base = apiBase();
+        if(base && base !== PROD_API){
+          if(typeof input === 'string' && input.indexOf(PROD_API) === 0) input = base + input.slice(PROD_API.length);
+          else if(input && input.url && input.url.indexOf(PROD_API) === 0) input = new Request(base + input.url.slice(PROD_API.length), input);
+        }
+      } catch(e) {}
+      return originalFetch(input, init);
+    };
+    window.fetch._obStagingApiGuard = true;
+  }
+
+  var planDefaults = [
+    {id:'starter',name:'Starter',monthly_price:0,annual_price:0,platform_fee_pct:12,expert_keep_pct:88,enabled:true,description:'Free launch plan.'},
+    {id:'pro',name:'Pro',monthly_price:49,annual_price:470,platform_fee_pct:8,expert_keep_pct:92,enabled:true,description:'Lower session fee and growth tools.'},
+    {id:'scale',name:'Scale',monthly_price:99,annual_price:948,platform_fee_pct:5,expert_keep_pct:95,enabled:true,description:'Lowest session fee for scaling.'}
+  ];
+  var planState = {selected:'starter', interval:'monthly', plans:planDefaults, current:null};
+  window.obSignupPlanState = planState;
+
+  function plansById(plans){
+    return (plans || planDefaults).reduce(function(acc,p){ acc[p.id] = p; return acc; }, {});
+  }
+  function selectedPlan(){
+    return plansById(planState.plans)[planState.selected] || planDefaults[0];
+  }
+  async function loadPlans(){
+    try {
+      var d = await obJson('/api/billing/plans');
+      if(Array.isArray(d.plans) && d.plans.length) planState.plans = d.plans;
+    } catch(e) {
+      planState.plans = planDefaults;
+    }
+    return planState.plans;
+  }
+  async function loadBilling(){
+    var d = await obJson('/api/billing/me');
+    planState.plans = d.plans || planState.plans;
+    planState.current = d.current_plan || null;
+    return d;
+  }
+
+  function setSignupPlan(plan, interval){
+    planState.selected = plan || 'starter';
+    if(interval) planState.interval = interval;
+    try {
+      sessionStorage.setItem('ob_signup_plan', planState.selected);
+      sessionStorage.setItem('ob_signup_interval', planState.interval);
+    } catch(e) {}
+    document.querySelectorAll('[data-ob-signup-plan]').forEach(function(btn){
+      var on = btn.getAttribute('data-ob-signup-plan') === planState.selected;
+      btn.style.borderColor = on ? 'var(--terra)' : 'var(--gray-200)';
+      btn.style.background = on ? 'rgba(196,98,45,.08)' : 'var(--white)';
+    });
+    document.querySelectorAll('[data-ob-plan-interval]').forEach(function(btn){
+      var on = btn.getAttribute('data-ob-plan-interval') === planState.interval;
+      btn.style.background = on ? 'var(--brown)' : 'var(--cream)';
+      btn.style.color = on ? 'var(--cream)' : 'var(--brown)';
+    });
+    updateSignupCta();
+  }
+  window.obSetSignupPlan = setSignupPlan;
+
+  function updateSignupCta(){
+    var p = selectedPlan();
+    var btn = document.getElementById('ob-launch-plan-btn') || document.querySelector('#step-7 .btn.btn-primary');
+    if(btn) btn.textContent = p.id === 'starter' ? 'Launch on Starter ->' : 'Continue to secure checkout';
+    var hint = document.getElementById('ob-launch-plan-hint');
+    if(hint) hint.textContent = p.id === 'starter'
+      ? 'Starter is active immediately. You keep ' + Math.round(p.expert_keep_pct || 88) + '% of each paid session.'
+      : p.name + ' activates after Stripe confirms the subscription. You keep ' + Math.round(p.expert_keep_pct || 0) + '%.';
+  }
+
+  function renderSignupPlans(){
+    var step = document.getElementById('step-1');
+    if(!step || document.getElementById('ob-signup-plan-card')) return;
+    var savedPlan = sessionStorage.getItem('ob_signup_plan');
+    var savedInterval = sessionStorage.getItem('ob_signup_interval');
+    if(savedPlan) planState.selected = savedPlan;
+    if(savedInterval) planState.interval = savedInterval;
+    var card = document.createElement('div');
+    card.id = 'ob-signup-plan-card';
+    card.className = 'form-group';
+    card.style.cssText = 'margin-top:18px;';
+    var plansHtml = (planState.plans || planDefaults).filter(function(p){ return p.enabled !== false; }).map(function(p){
+      var price = p.id === 'starter' ? 'Free' : ('$' + Number(p.monthly_price || 0).toFixed(0) + '/mo');
+      return '<button type="button" data-ob-signup-plan="'+p.id+'" onclick="obSetSignupPlan(\''+p.id+'\')" style="border:1.5px solid var(--gray-200);border-radius:8px;background:var(--white);padding:12px;text-align:left;cursor:pointer;color:var(--brown);min-height:116px;">'
+        + '<div style="display:flex;justify-content:space-between;gap:8px;"><strong>'+esc(p.name)+'</strong><span style="color:var(--terra);font-weight:800;">'+price+'</span></div>'
+        + '<div style="font-size:12px;color:var(--gray-500);line-height:1.45;margin-top:8px;">'+esc(p.description || '')+'</div>'
+        + '<div style="font-size:12px;color:var(--sage);font-weight:700;margin-top:10px;">You keep '+Math.round(p.expert_keep_pct || (100 - (p.platform_fee_pct || 0)))+'%</div>'
+        + '</button>';
+    }).join('');
+    card.innerHTML = '<label class="form-label">Choose your Ownlybiz plan</label>'
+      + '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;" class="ob-signup-plan-grid">'+plansHtml+'</div>'
+      + '<div style="display:flex;gap:8px;margin-top:10px;"><button type="button" data-ob-plan-interval="monthly" onclick="obSetSignupPlan((window.obSignupPlanState&&window.obSignupPlanState.selected)||\'starter\',\'monthly\')" style="border:none;border-radius:8px;padding:8px 12px;cursor:pointer;font-weight:700;">Monthly</button><button type="button" data-ob-plan-interval="annual" onclick="obSetSignupPlan((window.obSignupPlanState&&window.obSignupPlanState.selected)||\'starter\',\'annual\')" style="border:none;border-radius:8px;padding:8px 12px;cursor:pointer;font-weight:700;">Annual</button></div>';
+    var nav = step.querySelector('.signup-nav');
+    if(nav && nav.parentNode) nav.parentNode.insertBefore(card, nav);
+    else step.appendChild(card);
+    setSignupPlan(planState.selected, planState.interval);
+  }
+
+  async function finishSignupLaunch(){
+    var p = selectedPlan();
+    if(p.id === 'starter'){
+      await obJson('/api/billing/starter', {method:'POST', body:{}});
+      if(typeof switchView === 'function') switchView(3);
+      if(window.OwnlyAPI && window.OwnlyAPI.loadExpertDashboard) setTimeout(function(){ window.OwnlyAPI.loadExpertDashboard(); }, 200);
+      return;
+    }
+    var d = await obJson('/api/billing/checkout', {method:'POST', body:{plan:p.id, interval:planState.interval}});
+    if(d.url) location.href = d.url;
+  }
+
+  function patchSignupLaunch(){
+    var btn = document.querySelector('#step-7 .btn.btn-primary');
+    if(!btn || btn.id === 'ob-launch-plan-btn') return;
+    btn.id = 'ob-launch-plan-btn';
+    btn.onclick = function(){
+      btn.disabled = true;
+      var old = btn.textContent;
+      btn.textContent = selectedPlan().id === 'starter' ? 'Opening dashboard...' : 'Opening checkout...';
+      finishSignupLaunch().catch(function(e){
+        toastErr(e.message || 'Could not continue');
+        btn.disabled = false;
+        btn.textContent = old;
+      });
+    };
+    var hint = document.createElement('div');
+    hint.id = 'ob-launch-plan-hint';
+    hint.style.cssText = 'font-size:12px;color:var(--gray-500);line-height:1.5;margin:10px auto 0;max-width:360px;';
+    btn.parentNode.insertBefore(hint, btn.nextSibling);
+    updateSignupCta();
+  }
+
+  function renderAdminPlanConfig(){
+    var panel = document.getElementById('admin-panel-fee-config');
+    if(!panel || document.getElementById('ob-admin-plan-config')) return;
+    var card = document.createElement('div');
+    card.className = 'admin-card';
+    card.id = 'ob-admin-plan-config';
+    card.style.marginTop = '20px';
+    card.innerHTML = '<div class="admin-card-title">Subscription Plans <span class="admin-card-title-sub">Stripe Price IDs by mode</span></div>'
+      + '<div id="ob-admin-plan-grid" style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;"></div>'
+      + '<div style="font-size:12px;color:rgba(246,241,233,.45);line-height:1.6;margin-top:14px;">Use Stripe Price IDs that begin with <code>price_</code>. Product IDs are intentionally rejected.</div>';
+    var first = panel.querySelector('.admin-card');
+    if(first && first.parentNode) first.parentNode.insertBefore(card, first.nextSibling);
+    var grid = card.querySelector('#ob-admin-plan-grid');
+    ['starter','pro','scale'].forEach(function(id){
+      var title = id.charAt(0).toUpperCase() + id.slice(1);
+      grid.insertAdjacentHTML('beforeend',
+        '<div class="platform-setting-block" data-admin-plan="'+id+'">'
+        + '<div class="ps-block-title" style="display:flex;align-items:center;justify-content:space-between;gap:8px;">'+title+'<label style="font-size:11px;color:rgba(246,241,233,.6);display:flex;align-items:center;gap:6px;"><input type="checkbox" id="plan-'+id+'-enabled"> Available</label></div>'
+        + adminInput(id,'name','Name','text') + adminInput(id,'description','Description','text')
+        + adminInput(id,'fee','Platform fee %','number') + adminInput(id,'monthly','Monthly price','number') + adminInput(id,'annual','Annual price','number')
+        + adminInput(id,'test-monthly','Test monthly Price ID','text') + adminInput(id,'test-annual','Test annual Price ID','text')
+        + adminInput(id,'live-monthly','Live monthly Price ID','text') + adminInput(id,'live-annual','Live annual Price ID','text')
+        + '</div>');
+    });
+  }
+  function adminInput(plan, key, label, type){
+    return '<div class="ps-row"><div class="ps-label">'+label+'</div><input type="'+type+'" id="plan-'+plan+'-'+key+'" class="admin-input" style="min-width:0;width:100%;"></div>';
+  }
+  function setInput(id, value){
+    var el = document.getElementById(id);
+    if(!el) return;
+    if(el.type === 'checkbox') el.checked = ['1','true','yes','on'].includes(String(value).toLowerCase());
+    else el.value = value == null ? '' : value;
+  }
+  function getInput(id){
+    var el = document.getElementById(id);
+    if(!el) return '';
+    return el.type === 'checkbox' ? (el.checked ? '1' : '0') : el.value;
+  }
+  function fillAdminPlanConfig(f){
+    renderAdminPlanConfig();
+    ['starter','pro','scale'].forEach(function(id){
+      setInput('plan-'+id+'-enabled', f['plan_'+id+'_enabled'] == null ? '1' : f['plan_'+id+'_enabled']);
+      setInput('plan-'+id+'-name', f['plan_'+id+'_name'] || (id === 'starter' ? 'Starter' : id.charAt(0).toUpperCase()+id.slice(1)));
+      setInput('plan-'+id+'-description', f['plan_'+id+'_description'] || '');
+      setInput('plan-'+id+'-fee', f['fee_'+id+'_pct']);
+      setInput('plan-'+id+'-monthly', f['price_'+id+'_monthly']);
+      setInput('plan-'+id+'-annual', f['price_'+id+'_annual']);
+      setInput('plan-'+id+'-test-monthly', f['plan_'+id+'_stripe_test_price_monthly']);
+      setInput('plan-'+id+'-test-annual', f['plan_'+id+'_stripe_test_price_annual']);
+      setInput('plan-'+id+'-live-monthly', f['plan_'+id+'_stripe_live_price_monthly']);
+      setInput('plan-'+id+'-live-annual', f['plan_'+id+'_stripe_live_price_annual']);
+    });
+  }
+  function collectAdminFees(){
+    var fees = {
+      platform_fee_chat:parseFloat((document.getElementById('fee-pct-chat')||{}).value || 20),
+      platform_fee_voice:parseFloat((document.getElementById('fee-pct-voice')||{}).value || 20),
+      platform_fee_video:parseFloat((document.getElementById('fee-pct-video')||{}).value || 20),
+      platform_fee_fixed:parseFloat((document.getElementById('fee-pct-pkg')||{}).value || 15),
+      fee_enterprise_pct:parseFloat((document.getElementById('fee-enterprise-pct')||{}).value || 3),
+      price_starter_trial:parseFloat((document.getElementById('price-starter-trial')||{}).value || 0)
+    };
+    ['starter','pro','scale'].forEach(function(id){
+      fees['plan_'+id+'_enabled'] = getInput('plan-'+id+'-enabled');
+      fees['plan_'+id+'_name'] = getInput('plan-'+id+'-name');
+      fees['plan_'+id+'_description'] = getInput('plan-'+id+'-description');
+      fees['fee_'+id+'_pct'] = parseFloat(getInput('plan-'+id+'-fee') || (id === 'starter' ? 12 : id === 'pro' ? 8 : 5));
+      fees['price_'+id+'_monthly'] = parseFloat(getInput('plan-'+id+'-monthly') || 0);
+      fees['price_'+id+'_annual'] = parseFloat(getInput('plan-'+id+'-annual') || 0);
+      fees['plan_'+id+'_stripe_test_price_monthly'] = getInput('plan-'+id+'-test-monthly').trim();
+      fees['plan_'+id+'_stripe_test_price_annual'] = getInput('plan-'+id+'-test-annual').trim();
+      fees['plan_'+id+'_stripe_live_price_monthly'] = getInput('plan-'+id+'-live-monthly').trim();
+      fees['plan_'+id+'_stripe_live_price_annual'] = getInput('plan-'+id+'-live-annual').trim();
+      var legacyFee = document.getElementById('fee-'+id+'-pct'); if(legacyFee) legacyFee.value = fees['fee_'+id+'_pct'];
+      var legacyMonthly = document.getElementById('price-'+id+'-monthly'); if(legacyMonthly) legacyMonthly.value = fees['price_'+id+'_monthly'];
+      var legacyAnnual = document.getElementById('price-'+id+'-annual'); if(legacyAnnual) legacyAnnual.value = fees['price_'+id+'_annual'];
+    });
+    return fees;
+  }
+
+  function renderDashboardPlanCard(d){
+    var panel = document.getElementById('db-panel-overview');
+    var content = panel && panel.querySelector('.db-content');
+    if(!content) return;
+    var card = document.getElementById('ob-dashboard-plan-card');
+    if(!card){
+      card = document.createElement('div');
+      card.id = 'ob-dashboard-plan-card';
+      card.style.cssText = 'background:var(--white);border:1px solid var(--gray-200);border-radius:12px;padding:16px 18px;margin-bottom:20px;display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;';
+      var banner = document.getElementById('payment-setup-banner');
+      content.insertBefore(card, banner ? banner.nextSibling : content.firstChild);
+    }
+    var p = d.current_plan || planState.current || planDefaults[0];
+    var connect = d.stripe_connect || {};
+    card.innerHTML = '<div><div style="font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:var(--gray-400);font-weight:800;">Ownlybiz plan</div>'
+      + '<div style="font-family:var(--font-head);font-size:22px;font-weight:800;color:var(--brown);margin-top:2px;">'+esc(p.name || 'Starter')+'</div>'
+      + '<div style="font-size:13px;color:var(--gray-500);margin-top:4px;">You keep <strong style="color:var(--sage);">'+Math.round(p.expert_keep_pct || 88)+'%</strong> of paid sessions. Stripe Connect: '+(connect.configured ? 'connected' : 'not connected')+'</div></div>'
+      + '<button class="btn btn-primary btn-sm" onclick="dbNav(document.querySelector(\'.db-nav-item[onclick*=payments]\'),\'payments\')">Manage / Upgrade Plan</button>';
+  }
+
+  function updateRatePreviewsWithPlan(plan){
+    plan = plan || planState.current || selectedPlan();
+    var fee = Number(plan.platform_fee_pct || (100 - Number(plan.expert_keep_pct || 88)) || 12);
+    var cut = Math.max(0, 1 - fee / 100);
+    ['chat','voice','video'].forEach(function(ch){
+      var input = document.getElementById('rate-'+ch);
+      var el = document.getElementById('rp-'+ch);
+      var rate = Number(input && input.value);
+      if(!el || !Number.isFinite(rate)) return;
+      var gross = rate * 60;
+      el.textContent = '60-min session: ~' + money(gross) + ' - You keep: ~' + money(gross * cut) + ' after ' + fee + '% fee';
+    });
+  }
+
+  function planSelectHtml(plans, currentId){
+    return '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;">' + plans.filter(function(p){ return p.enabled !== false; }).map(function(p){
+      var on = p.id === currentId;
+      return '<button type="button" class="ob-plan-btn" data-plan="'+p.id+'" onclick="obSelectPlan(\''+p.id+'\')" style="border:1.5px solid '+(on?'var(--terra)':'var(--gray-200)')+';border-radius:8px;padding:12px;background:'+(on?'rgba(196,98,45,.08)':'var(--white)')+';text-align:left;color:var(--brown);cursor:pointer;"><strong>'+esc(p.name)+'</strong><div style="font-size:11px;color:var(--gray-400);margin-top:3px;">Keep '+Math.round(p.expert_keep_pct || 0)+'%</div></button>';
+    }).join('') + '</div>';
+  }
+  window.obSelectPlan = function(plan){
+    planState.selected = plan === 'free' ? 'starter' : plan;
+    var hidden = document.getElementById('sfield-subscription-plan');
+    if(hidden) hidden.value = planState.selected;
+    document.querySelectorAll('.ob-plan-btn').forEach(function(b){
+      var on = b.getAttribute('data-plan') === planState.selected;
+      b.style.borderColor = on ? 'var(--terra)' : 'var(--gray-200)';
+      b.style.background = on ? 'rgba(196,98,45,.08)' : 'var(--white)';
+    });
+  };
+  window.obSetBillingInterval = function(interval){
+    planState.interval = interval || 'monthly';
+    var hidden = document.getElementById('sfield-plan-interval');
+    if(hidden) hidden.value = planState.interval;
+    document.querySelectorAll('[data-ob-billing-interval]').forEach(function(b){
+      var on = b.getAttribute('data-ob-billing-interval') === planState.interval;
+      b.style.background = on ? 'var(--brown)' : 'var(--cream)';
+      b.style.color = on ? 'var(--cream)' : 'var(--brown)';
+    });
+  };
+  function renderBillingManagement(d){
+    var p = d.current_plan || planDefaults[0];
+    var sub = d.subscription || {};
+    var plans = d.plans || planState.plans || planDefaults;
+    var card = document.getElementById('plan-settings-card');
+    if(card){
+      card.innerHTML = '<div><div class="settings-field-label">Ownlybiz Plan</div><div class="settings-field-sub">Subscription controls platform fee; Connect status controls client payouts.</div></div>'
+        + '<div style="flex:1;max-width:680px;">'
+        + '<div style="font-size:13px;color:var(--gray-500);margin-bottom:10px;">Current: <strong style="color:var(--brown);">'+esc(p.name)+'</strong> - you keep <strong style="color:var(--sage);">'+Math.round(p.expert_keep_pct || 88)+'%</strong>'+(sub.pending_plan ? ' - pending: '+esc(sub.pending_plan) : '')+'</div>'
+        + planSelectHtml(plans, p.id)
+        + '<div style="display:flex;gap:8px;margin:10px 0;"><button type="button" data-ob-billing-interval="monthly" onclick="obSetBillingInterval(\'monthly\')" style="border:none;border-radius:8px;padding:8px 12px;cursor:pointer;font-weight:700;">Monthly</button><button type="button" data-ob-billing-interval="annual" onclick="obSetBillingInterval(\'annual\')" style="border:none;border-radius:8px;padding:8px 12px;cursor:pointer;font-weight:700;">Annual</button></div>'
+        + '<input type="hidden" id="sfield-subscription-plan" value="'+esc(p.id || 'starter')+'"><input type="hidden" id="sfield-plan-interval" value="'+esc(planState.interval)+'">'
+        + '<div style="display:flex;gap:8px;flex-wrap:wrap;"><button class="btn btn-primary btn-sm" onclick="saveSettingsBlock(\'plan\')">Confirm Plan Change</button><button class="btn btn-sm" style="background:var(--cream);border:1px solid var(--gray-200);color:var(--brown);" onclick="obManageBillingPortal()">Manage Billing</button><span class="save-status" id="save-status-plan" style="align-self:center;"></span></div></div>';
+      window.obSelectPlan(p.id || 'starter');
+      window.obSetBillingInterval(planState.interval || sub.interval || 'monthly');
+    }
+    var payments = document.querySelector('#db-panel-payments .db-content');
+    if(payments && !document.getElementById('ob-payments-plan-card')){
+      var payCard = document.createElement('div');
+      payCard.id = 'ob-payments-plan-card';
+      payCard.className = 'pay-section';
+      payments.insertBefore(payCard, payments.children[1] || payments.firstChild);
+    }
+    var pay = document.getElementById('ob-payments-plan-card');
+    if(pay){
+      pay.innerHTML = '<div class="pay-section-title">Ownlybiz Subscription</div><div class="pay-section-sub">Current plan: <strong>'+esc(p.name)+'</strong>. You keep '+Math.round(p.expert_keep_pct || 88)+'% of each paid session.</div>'
+        + '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:14px;"><button class="btn btn-primary btn-sm" onclick="dbNav(document.querySelector(\'.db-nav-item[onclick*=settings]\'),\'settings\')">Change Plan</button><button class="btn btn-sm" style="background:var(--cream);border:1px solid var(--gray-200);color:var(--brown);" onclick="obManageBillingPortal()">Manage Billing</button></div>';
+    }
+    renderDashboardPlanCard(d);
+    updateRatePreviewsWithPlan(p);
+  }
+
+  window.obManageBillingPortal = async function(){
+    try {
+      if(!confirm('Open Stripe Billing Portal to manage your Ownlybiz subscription?')) return;
+      var d = await obJson('/api/billing/portal', {method:'POST', body:{}});
+      if(d.url) location.href = d.url;
+    } catch(e) { toastErr(e.message || 'Could not open billing portal'); }
+  };
+
+  async function handlePlanSave(){
+    var target = (document.getElementById('sfield-subscription-plan') || {}).value || planState.selected || 'starter';
+    var interval = (document.getElementById('sfield-plan-interval') || {}).value || planState.interval || 'monthly';
+    var current = (planState.current && planState.current.id) || 'starter';
+    if(!confirm('Confirm Ownlybiz plan change to ' + target + '?')) return;
+    var status = document.getElementById('save-status-plan');
+    if(status) { status.textContent = 'Working...'; status.style.color = 'var(--gray-400)'; }
+    if(target === 'starter'){
+      if(current === 'starter') await obJson('/api/billing/starter', {method:'POST', body:{}});
+      else await obJson('/api/billing/cancel', {method:'POST', body:{}});
+      toastOk(current === 'starter' ? 'Starter plan confirmed' : 'Paid plan cancellation requested');
+      if(status) { status.textContent = 'Saved'; status.style.color = 'var(--sage)'; }
+      refreshBillingUi();
+      return;
+    }
+    try {
+      var d = current === 'starter'
+        ? await obJson('/api/billing/checkout', {method:'POST', body:{plan:target, interval:interval}})
+        : await obJson('/api/billing/change', {method:'POST', body:{plan:target, interval:interval}});
+      if(d.url) location.href = d.url;
+      else {
+        toastOk('Plan change submitted. It will activate after Stripe confirms it.');
+        if(status) { status.textContent = 'Pending Stripe'; status.style.color = 'var(--terra)'; }
+        refreshBillingUi();
+      }
+    } catch(e) {
+      if(e.data && e.data.requires_checkout){
+        var c = await obJson('/api/billing/checkout', {method:'POST', body:{plan:target, interval:interval}});
+        if(c.url) location.href = c.url;
+        return;
+      }
+      throw e;
+    }
+  }
+
+  async function refreshBillingUi(){
+    if(!token()) return;
+    try {
+      var d = await loadBilling();
+      renderBillingManagement(d);
+    } catch(e) {}
+  }
+
+  var oldSaveSettings = window.saveSettingsBlock;
+  window.saveSettingsBlock = function(section){
+    if(section === 'plan'){
+      return handlePlanSave().catch(function(e){
+        var st = document.getElementById('save-status-plan');
+        if(st){ st.textContent = 'Error'; st.style.color = '#dc2626'; }
+        toastErr(e.message || 'Plan change failed');
+      });
+    }
+    if(oldSaveSettings) return oldSaveSettings.apply(this, arguments);
+  };
+
+  var oldAdminFeeLoad = window.loadAdminFeeConfig;
+  window.loadAdminFeeConfig = async function(){
+    renderAdminPlanConfig();
+    if(oldAdminFeeLoad) await oldAdminFeeLoad.apply(this, arguments);
+    try {
+      var d = await obJson('/api/admin/fees');
+      fillAdminPlanConfig(d.fees || d);
+    } catch(e) {}
+  };
+  window.saveAdminFees = async function(){
+    renderAdminPlanConfig();
+    try {
+      await obJson('/api/admin/fees', {method:'PUT', body:collectAdminFees()});
+      toastOk('Fee and plan configuration saved');
+      if(typeof window.loadAdminFeeConfig === 'function') window.loadAdminFeeConfig();
+    } catch(e) { toastErr(e.message || 'Could not save fee configuration'); }
+  };
+
+  function feePctFromSession(sess){
+    var snap = Number(sess && sess.platform_fee_pct);
+    if(Number.isFinite(snap) && snap >= 0) return snap;
+    var plan = String((sess && sess.expert_plan) || (planState.current && planState.current.id) || 'starter').toLowerCase();
+    if(plan === 'free') plan = 'starter';
+    var map = {starter:12, pro:8, scale:5};
+    var byId = plansById(planState.plans);
+    return byId[plan] ? Number(byId[plan].platform_fee_pct || map[plan] || 12) : (map[plan] || 12);
+  }
+  function applySessionCut(sess){
+    var fee = feePctFromSession(sess || {});
+    var cut = Math.max(0, 1 - fee / 100);
+    window._expertSessCut = parseFloat(cut.toFixed(4));
+    var cutEl = document.getElementById('live-sess-cut');
+    if(cutEl) cutEl.textContent = Math.round(cut * 100) + '%';
+    var earnRate = document.getElementById('live-earn-rate');
+    if(earnRate) earnRate.textContent = money((window._expertSessRate || Number(sess && sess.rate_per_min) || 0) * cut) + '/min';
+  }
+  async function loadSessionCut(sid){
+    if(!sid || !token()) return;
+    try {
+      var d = await obJson('/api/sessions/' + encodeURIComponent(sid));
+      var sess = d.session || d;
+      if(sess && sess.rate_per_min) window._expertSessRate = Number(sess.rate_per_min);
+      applySessionCut(sess);
+    } catch(e) {}
+  }
+  var oldOpenExpertLivePanel = window.openExpertLivePanel;
+  window.openExpertLivePanel = function(sid){
+    var ret = oldOpenExpertLivePanel ? oldOpenExpertLivePanel.apply(this, arguments) : undefined;
+    setTimeout(function(){ loadSessionCut(sid || window._sid || window._obActiveSessId); }, 350);
+    setTimeout(function(){ loadSessionCut(sid || window._sid || window._obActiveSessId); }, 1600);
+    return ret;
+  };
+
+  var oldAdjustFreeMin = window.adjustFreeMin;
+  window.adjustFreeMin = function(ch, delta){
+    if(delta === undefined){
+      var el = document.getElementById('free-min-val');
+      if(!el) return;
+      var v = parseInt(el.textContent || '0', 10) || 0;
+      v = Math.max(0, Math.min(10, v + Number(ch || 0)));
+      el.textContent = v;
+      return;
+    }
+    if(oldAdjustFreeMin) return oldAdjustFreeMin.apply(this, arguments);
+  };
+
+  function mediaChannel(){
+    var ch = (window.selectedChannel && window.selectedChannel.id) || window._obPendingChannel || window.currentBookChannel || '';
+    return String(ch || '').toLowerCase();
+  }
+  function readinessHtml(id, channel){
+    var copy = channel === 'voice' ? 'Enable your microphone before joining.' : 'Enable your camera and microphone before joining.';
+    return '<div id="'+id+'" data-ob-media-channel="'+esc(channel)+'" style="background:rgba(122,140,110,.09);border:1px solid rgba(122,140,110,.26);border-radius:12px;padding:14px;margin-bottom:16px;">'
+      + '<div style="font-weight:800;color:var(--brown);font-size:14px;margin-bottom:4px;">Camera and microphone check</div>'
+      + '<div id="'+id+'-status" style="font-size:13px;color:var(--gray-500);line-height:1.5;margin-bottom:10px;">'+copy+'</div>'
+      + '<button type="button" class="btn btn-sm" style="background:var(--sage);color:white;" onclick="obEnableClientMedia(\''+id+'\')">Enable before session</button>'
+      + '</div>';
+  }
+  window.obEnableClientMedia = async function(cardId){
+    var card = document.getElementById(cardId);
+    var status = document.getElementById(cardId + '-status');
+    var channel = (card && card.getAttribute('data-ob-media-channel')) || mediaChannel();
+    if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+      if(status) status.textContent = 'Media permissions are not available in this browser.';
+      return;
+    }
+    try {
+      var constraints = channel === 'voice' ? {audio:true, video:false} : {audio:true, video:true};
+      var stream = await navigator.mediaDevices.getUserMedia(constraints);
+      window._obClientMediaReadyStream = stream;
+      if(status) { status.textContent = 'Camera and microphone enabled'; status.style.color = 'var(--sage)'; status.style.fontWeight = '800'; }
+      var btn = card && card.querySelector('button');
+      if(btn) { btn.textContent = 'Enabled'; btn.disabled = true; btn.style.opacity = '.75'; }
+    } catch(e) {
+      if(status) { status.textContent = 'Permission was not enabled. You can still join and grant access when the session starts.'; status.style.color = '#b45309'; }
+    }
+  };
+  function renderPresessionMedia(){
+    var ch = mediaChannel();
+    var begin = document.getElementById('presess-begin-btn');
+    if(!begin) return;
+    var existing = document.getElementById('ob-client-media-ready-presess');
+    if(ch !== 'voice' && ch !== 'video') { if(existing) existing.remove(); return; }
+    if(existing) return;
+    begin.insertAdjacentHTML('beforebegin', readinessHtml('ob-client-media-ready-presess', ch));
+  }
+  var oldStartSessionScreen = window._startSessionScreen;
+  if(oldStartSessionScreen){
+    window._startSessionScreen = function(){
+      var ret = oldStartSessionScreen.apply(this, arguments);
+      setTimeout(renderPresessionMedia, 60);
+      return ret;
+    };
+  }
+  var oldPhoneGo = window.phoneGo;
+  if(oldPhoneGo){
+    window.phoneGo = function(screen){
+      var ret = oldPhoneGo.apply(this, arguments);
+      if(String(screen).toUpperCase() === 'PRESESS') setTimeout(renderPresessionMedia, 60);
+      return ret;
+    };
+  }
+  function renderBookingOverlayMedia(){
+    var ov = document.getElementById('booking-join-overlay');
+    if(!ov || ov.querySelector('#ob-client-media-ready-booking')) return;
+    var typeText = ov.textContent || '';
+    var channelMatch = typeText.match(/Type\s*(Chat|Voice|Video)/i);
+    var ch = channelMatch ? channelMatch[1].toLowerCase() : '';
+    if(ch !== 'voice' && ch !== 'video') return;
+    var box = ov.querySelector('div[style*="max-width"]');
+    if(!box) return;
+    var liveBtn = Array.from(ov.querySelectorAll('button')).find(function(b){ return /Join Session/i.test(b.textContent || ''); });
+    if(liveBtn) liveBtn.insertAdjacentHTML('beforebegin', readinessHtml('ob-client-media-ready-booking', ch));
+    else box.insertAdjacentHTML('beforeend', readinessHtml('ob-client-media-ready-booking', ch));
+  }
+  new MutationObserver(renderBookingOverlayMedia).observe(document.documentElement, {childList:true, subtree:true});
+
+  function boot(){
+    loadPlans().then(function(){ renderSignupPlans(); patchSignupLaunch(); updateSignupCta(); });
+    setTimeout(function(){ var free = document.getElementById('free-min-val'); if(free && free.textContent === '1') free.textContent = '0'; }, 400);
+    refreshBillingUi();
+    renderAdminPlanConfig();
+    renderPresessionMedia();
+    renderBookingOverlayMedia();
+  }
+  document.addEventListener('DOMContentLoaded', boot);
+  setTimeout(boot, 600);
+  setTimeout(boot, 1800);
+  setInterval(function(){
+    var role = '';
+    try { role = (JSON.parse(sessionStorage.getItem('ob_u') || '{}').role || '').toLowerCase(); } catch(e) {}
+    if((role === 'expert' || role === 'admin') && (document.querySelector('#view-3.active') || document.getElementById('plan-settings-card'))) refreshBillingUi();
+  }, 30000);
+})();
+</script>
 </body>
 </html>

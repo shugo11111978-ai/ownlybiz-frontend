@@ -19455,16 +19455,14 @@ window._handleRTCMessage=function(d){
 	  var criticalSendExpertMsg = window.sendExpertMsg;
 	  var criticalShowSessionRequest = window.showSessionRequest;
 	  var criticalAdminNav = window.adminNav;
-	  function reinstallCriticalWrappers(){
-	    if(window.saveExpertPricing !== saveRatesFromPricing) window.saveExpertPricing = saveRatesFromPricing;
-	    if(window.saveSettingsBlock !== criticalSaveSettingsBlock){
-	      _origSaveSettingsBlockCritical = window.saveSettingsBlock;
-	      window.saveSettingsBlock = criticalSaveSettingsBlock;
-	    }
-	    if(window.openClientChat !== criticalOpenClientChat){
-	      _origOpenClientChatCritical = window.openClientChat;
-	      window.openClientChat = criticalOpenClientChat;
-	    }
+		  function reinstallCriticalWrappers(){
+		    if(window.saveExpertPricing !== saveRatesFromPricing) window.saveExpertPricing = saveRatesFromPricing;
+		    // Later plan/settings routers own saveSettingsBlock. Reinstalling this
+		    // legacy wrapper after they load can make the wrappers call each other.
+		    if(window.openClientChat !== criticalOpenClientChat){
+		      _origOpenClientChatCritical = window.openClientChat;
+		      window.openClientChat = criticalOpenClientChat;
+		    }
 	    if(window.openExpertLivePanel !== criticalOpenExpertLivePanel){
 	      _origOpenExpertLivePanelCritical = window.openExpertLivePanel;
 	      window.openExpertLivePanel = criticalOpenExpertLivePanel;
@@ -19684,9 +19682,16 @@ window._handleRTCMessage=function(d){
   function scheduleDedupe(panelId){
     [30,160,420,900].forEach(function(ms){ setTimeout(function(){ dedupePanelMessages(panelId); }, ms); });
   }
-  function activeExpertSessionId(){
-    return String(window._obActiveSessId || window._sid || '');
-  }
+	  function activeExpertSessionId(){
+	    var sid = window._obActiveSessId || window._sid || '';
+	    if(!sid){
+	      try {
+	        var q = new URLSearchParams(location.search || '');
+	        sid = q.get('session') || q.get('session_id') || q.get('sid') || '';
+	      } catch(e) {}
+	    }
+	    return String(sid || '');
+	  }
   function prepareExpertMessagePanel(sessionId, opts){
     opts = opts || {};
     var box = document.getElementById('expert-chat-messages');
@@ -20279,14 +20284,22 @@ window._handleRTCMessage=function(d){
       return sess;
     }).catch(function(){});
   }
-  window.openExpertLivePanel = function(sid){
-    if(!sid) return;
-    window._sid = sid;
-    window._obActiveSessId = sid;
-    prepareExpertMessagePanel(sid, {force:true});
-    if(typeof dbNav === 'function') {
-      try { dbNav(document.querySelector('[onclick*="live-session"]'), 'live-session'); } catch(e) {}
-    }
+	  window.openExpertLivePanel = function(sid){
+	    if(!sid) return;
+	    window._sid = sid;
+	    window._obActiveSessId = sid;
+	    try { if(location.pathname.indexOf('/dash/') === 0) window._sessId = sid; } catch(e) {}
+	    try {
+	      var match = (location.pathname || '').match(/^\/dash\/([^/?#]+)/);
+	      if(match){
+	        var next = '/dash/' + match[1] + '/live-session?session=' + encodeURIComponent(sid);
+	        if((location.pathname || '') + (location.search || '') !== next) history.replaceState({obRoute:true}, '', next);
+	      }
+	    } catch(e) {}
+	    prepareExpertMessagePanel(sid, {force:true});
+	    if(typeof dbNav === 'function') {
+	      try { dbNav(document.querySelector('[onclick*="live-session"]'), 'live-session'); } catch(e) {}
+	    }
     ensureExpertWsJoined(sid);
     syncExpertSession(sid);
     setTimeout(function(){ syncExpertSession(sid); }, 900);
@@ -20300,10 +20313,10 @@ window._handleRTCMessage=function(d){
       syncExpertSession(sid);
     }, 2500);
   }
-  async function resolveExpertSessionId(){
-    var sid = window._sid || window._obActiveSessId || window._sessId;
-    if(sid) return sid;
-    var d = await api('/api/sessions?status=active&limit=5');
+	  async function resolveExpertSessionId(){
+	    var sid = activeExpertSessionId() || window._sessId;
+	    if(sid) return sid;
+	    var d = await api('/api/sessions?status=active&limit=5');
     var list = d.sessions || [];
     if(list[0] && list[0].id){
       window._sid = list[0].id;
@@ -22074,15 +22087,21 @@ window._handleRTCMessage=function(d){
 	      return false;
 	    });
 	  }
-	  window.obSaveSeoSettings = saveSeoSettings;
-	  var fallbackSaveSettingsBlock = null;
-	  function finalSaveSettingsBlock(section){
-	    if(section === 'pricing') return saveRates();
-	    if(section === 'seo' || section === 'website') return saveSeoSettings();
-	    if(fallbackSaveSettingsBlock && fallbackSaveSettingsBlock !== finalSaveSettingsBlock) {
-	      return fallbackSaveSettingsBlock.apply(this, arguments);
-	    }
-  }
+		  window.obSaveSeoSettings = saveSeoSettings;
+		  var fallbackSaveSettingsBlock = null;
+		  function finalSaveSettingsBlock(section){
+		    window._obSaveSettingsBlockDepth = (window._obSaveSettingsBlockDepth || 0) + 1;
+		    try {
+		      if(window._obSaveSettingsBlockDepth > 8) return Promise.resolve(false);
+		      if(section === 'pricing') return saveRates();
+		      if(section === 'seo' || section === 'website') return saveSeoSettings();
+		      if(fallbackSaveSettingsBlock && fallbackSaveSettingsBlock !== finalSaveSettingsBlock && fallbackSaveSettingsBlock !== window.saveSettingsBlock) {
+		        return fallbackSaveSettingsBlock.apply(this, arguments);
+		      }
+		    } finally {
+		      window._obSaveSettingsBlockDepth = Math.max(0, (window._obSaveSettingsBlockDepth || 1) - 1);
+		    }
+	  }
   function installSaveHandlers(){
     window.savePaymentSettings = saveRates;
     window.saveExpertPricing = saveRates;
@@ -23729,14 +23748,18 @@ window._handleRTCMessage=function(d){
     if(!slug) return '';
     return '/' + enc(slug) + (seg ? '/' + seg : '');
   }
-  function dashboardUrl(panel, blockId){
-    var slug = dashboardSlug();
-    if(!slug) return '';
-    panel = DASH_PANELS[panel] ? panel : 'overview';
-    var path = '/dash/' + enc(slug) + '/' + enc(panel);
-    if(panel === 'settings' && blockId && SETTINGS_TO_SEG[blockId]) path += '/' + enc(SETTINGS_TO_SEG[blockId]);
-    return path;
-  }
+	  function dashboardUrl(panel, blockId){
+	    var slug = dashboardSlug();
+	    if(!slug) return '';
+	    panel = DASH_PANELS[panel] ? panel : 'overview';
+	    var path = '/dash/' + enc(slug) + '/' + enc(panel);
+	    if(panel === 'settings' && blockId && SETTINGS_TO_SEG[blockId]) path += '/' + enc(SETTINGS_TO_SEG[blockId]);
+	    if(panel === 'live-session'){
+	      var sid = liveSessionParam() || clean(window._sid || window._obActiveSessId || window._sessId || '');
+	      if(sid) path += '?session=' + enc(sid);
+	    }
+	    return path;
+	  }
   function adminUrl(panel){
     panel = ADMIN_PANELS[panel] ? panel : 'dashboard';
     return panel === 'dashboard' ? '/admin/dashboard' : '/admin/' + enc(panel);
@@ -23750,10 +23773,16 @@ window._handleRTCMessage=function(d){
     }
     return null;
   }
-  function activeDashboardPanel(){
-    var active = document.querySelector('.db-tab-panel.active[id^="db-panel-"]');
-    return active ? active.id.replace('db-panel-', '') : '';
-  }
+	  function activeDashboardPanel(){
+	    var active = document.querySelector('.db-tab-panel.active[id^="db-panel-"]');
+	    return active ? active.id.replace('db-panel-', '') : '';
+	  }
+	  function queryValue(name){
+	    try { return new URLSearchParams(location.search || '').get(name) || ''; } catch(e) { return ''; }
+	  }
+	  function liveSessionParam(){
+	    return clean(queryValue('session') || queryValue('session_id') || queryValue('sid') || '');
+	  }
   function userRole(){
     try {
       var raw = sessionStorage.getItem('ob_u') || localStorage.getItem('ob_u') || '{}';
@@ -23811,10 +23840,16 @@ window._handleRTCMessage=function(d){
     safeShowExpertPage(route.page || 'home');
     loadExpertOnce(route.slug);
   }
-  function applyDashRoute(route){
-    if(route.slug) window._dashSlug = route.slug;
-	    if(userRole() !== 'expert' && userRole() !== 'admin'){
-	      try { sessionStorage.setItem('ob_next', location.pathname + location.search); } catch(e) {}
+	  function applyDashRoute(route){
+	    if(route.slug) window._dashSlug = route.slug;
+	    var routeSessionId = route.panel === 'live-session' ? liveSessionParam() : '';
+	    if(routeSessionId){
+	      window._sid = routeSessionId;
+	      window._obActiveSessId = routeSessionId;
+	      window._sessId = routeSessionId;
+	    }
+		    if(userRole() !== 'expert' && userRole() !== 'admin'){
+		      try { sessionStorage.setItem('ob_next', location.pathname + location.search); } catch(e) {}
 	      if(typeof window.switchView === 'function') window.switchView(1);
 	      if(typeof window.showMktPage === 'function') window.showMktPage('login');
 	      try { history.replaceState({obRoute:true}, '', '/login'); } catch(e) {}
@@ -23827,12 +23862,18 @@ window._handleRTCMessage=function(d){
     setTimeout(function(){
       var panel = route.panel || 'overview';
       if(typeof window.dbNav === 'function') window.dbNav(findByOnclick('.db-nav-item', panel), panel);
-      if(panel === 'settings' && route.settings && typeof window.settingsNav === 'function'){
-        var el = findByOnclick('.settings-nav-item', route.settings);
-        if(el) window.settingsNav(el, route.settings);
-      }
-    }, 80);
-  }
+	      if(panel === 'settings' && route.settings && typeof window.settingsNav === 'function'){
+	        var el = findByOnclick('.settings-nav-item', route.settings);
+	        if(el) window.settingsNav(el, route.settings);
+	      }
+	      if(panel === 'live-session'){
+	        var sid = liveSessionParam() || clean(window._sid || window._obActiveSessId || window._sessId || '');
+	        if(sid && typeof window.openExpertLivePanel === 'function') {
+	          setTimeout(function(){ window.openExpertLivePanel(sid); }, 80);
+	        }
+	      }
+	    }, 80);
+	  }
   function applyAdminRoute(route){
 	    if(userRole() !== 'admin'){
 	      try { sessionStorage.setItem('ob_next', location.pathname + location.search); } catch(e) {}
@@ -24637,27 +24678,30 @@ window._handleRTCMessage=function(d){
     }
   }
 
-  async function refreshBillingUi(){
-    if(!token()) return;
-    try {
-      var d = await loadBilling();
-      renderBillingManagement(d);
-    } catch(e) {}
-  }
+	  async function refreshBillingUi(){
+	    if(!token()) return;
+	    try {
+	      var d = await loadBilling();
+	      renderBillingManagement(d);
+	    } catch(e) {}
+	  }
+	  window.obHandlePlanSave = handlePlanSave;
+	  window.obRefreshBillingUi = refreshBillingUi;
 
-  var oldSaveSettings = window.saveSettingsBlock;
-  window.saveSettingsBlock = function(section){
-    if(section === 'plan'){
-      return handlePlanSave().catch(function(e){
+	  var oldSaveSettings = window.saveSettingsBlock;
+	  window.saveSettingsBlock = function(section){
+	    if(section === 'plan'){
+	      return handlePlanSave().catch(function(e){
         var st = document.getElementById('save-status-plan');
         if(st){ st.textContent = 'Error'; st.style.color = '#dc2626'; }
-        toastErr(e.message || 'Plan change failed');
-      });
-    }
-    if(oldSaveSettings) return oldSaveSettings.apply(this, arguments);
-  };
+	        toastErr(e.message || 'Plan change failed');
+	      });
+	    }
+	    if(oldSaveSettings && oldSaveSettings !== window.saveSettingsBlock && (window._obSaveSettingsBlockDepth || 0) < 8) return oldSaveSettings.apply(this, arguments);
+	  };
+	  window.saveSettingsBlock._obPlanSaveSettingsBlock = true;
 
-  var oldAdminFeeLoad = window.loadAdminFeeConfig;
+	  var oldAdminFeeLoad = window.loadAdminFeeConfig;
   window.loadAdminFeeConfig = async function(){
     renderAdminPlanConfig();
     if(oldAdminFeeLoad) await oldAdminFeeLoad.apply(this, arguments);
@@ -24702,15 +24746,21 @@ window._handleRTCMessage=function(d){
       applySessionCut(sess);
     } catch(e) {}
   }
-  var oldOpenExpertLivePanel = window.openExpertLivePanel;
-  window.openExpertLivePanel = function(sid){
-    var ret = oldOpenExpertLivePanel ? oldOpenExpertLivePanel.apply(this, arguments) : undefined;
-    setTimeout(function(){ loadSessionCut(sid || window._sid || window._obActiveSessId); }, 350);
-    setTimeout(function(){ loadSessionCut(sid || window._sid || window._obActiveSessId); }, 1600);
-    return ret;
-  };
+	  function installPlanAwareLivePanelWrapper(){
+	    if(!window.openExpertLivePanel || window.openExpertLivePanel._obPlanCutWrapped) return;
+	    var oldOpenExpertLivePanel = window.openExpertLivePanel;
+	    window.openExpertLivePanel = function(sid){
+	      var ret = oldOpenExpertLivePanel ? oldOpenExpertLivePanel.apply(this, arguments) : undefined;
+	      setTimeout(function(){ loadSessionCut(sid || window._sid || window._obActiveSessId); }, 350);
+	      setTimeout(function(){ loadSessionCut(sid || window._sid || window._obActiveSessId); }, 1600);
+	      return ret;
+	    };
+	    window.openExpertLivePanel._obPlanCutWrapped = true;
+	  }
+	  installPlanAwareLivePanelWrapper();
+	  [300, 1200, 3600, 7000, 13000].forEach(function(ms){ setTimeout(installPlanAwareLivePanelWrapper, ms); });
 
-  var oldAdjustFreeMin = window.adjustFreeMin;
+	  var oldAdjustFreeMin = window.adjustFreeMin;
   window.adjustFreeMin = function(ch, delta){
     if(delta === undefined){
       var el = document.getElementById('free-min-val');

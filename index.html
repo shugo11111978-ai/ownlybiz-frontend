@@ -941,6 +941,7 @@ input[type=range]{width:100%;accent-color:var(--terra);}
 .pay-section{background:var(--white);border-radius:var(--radius-lg);padding:28px;border:1px solid var(--gray-200);margin-bottom:24px;}
 #db-panel-payments.show-payment .pay-section[data-group="pricing"]{display:none!important;}
 #db-panel-payments.show-pricing .pay-section[data-group="payment"]{display:none!important;}
+#db-panel-payments.show-pricing #ob-payments-plan-card{display:none!important;}
 /* Coming Soon overlay */
 .coming-soon{position:relative;pointer-events:none;}
 .coming-soon::before{content:"";position:absolute;top:0;left:0;right:0;bottom:0;backdrop-filter:blur(1px);-webkit-backdrop-filter:blur(1px);background:rgba(246,241,233,0.15);z-index:5;border-radius:12px;}
@@ -3134,10 +3135,6 @@ if (!window.toast) {
                 <div>
                   <div style="font-weight:700;font-size:14px;color:var(--brown);" id="live-client-name">Client</div>
                   <div style="font-size:12px;color:#22c55e;font-weight:600;" id="live-client-status">● Online</div>
-                </div>
-                <div style="margin-left:auto;display:flex;gap:8px;">
-                  <button style="padding:6px 12px;border:1.5px solid var(--gray-200);border-radius:8px;background:none;font-size:12px;font-weight:600;cursor:pointer;color:var(--brown);">📞 Voice</button>
-                  <button style="padding:6px 12px;border:1.5px solid var(--gray-200);border-radius:8px;background:none;font-size:12px;font-weight:600;cursor:pointer;color:var(--brown);">📹 Video</button>
                 </div>
               </div>
               <div id="expert-chat-area">
@@ -16800,12 +16797,10 @@ window._obOpenClientChat = openClientChat;
       if(stripeCard) stripeCard.classList.add('connected');
       if(stripeBadge) { stripeBadge.textContent='Pending Verification ⚠️'; stripeBadge.className='pay-proc-badge'; stripeBadge.style.cssText='background:#fef3c7;color:#92400e;font-size:10px;padding:2px 8px;border-radius:100px;'; }
       if(stripeBtn) { stripeBtn.textContent='Complete Setup →'; stripeBtn.style.background='#f59e0b'; }
-      // Show requirements if any
-      if(d.requirements && d.requirements.length > 0){
-        var reqMsg = document.getElementById('stripe-req-msg');
-        if(!reqMsg){ reqMsg=document.createElement('div'); reqMsg.id='stripe-req-msg'; reqMsg.style.cssText='font-size:11px;color:#92400e;background:#fef3c7;padding:6px 10px;border-radius:6px;margin-top:6px;'; if(stripeCard)stripeCard.appendChild(reqMsg); }
-        reqMsg.textContent='⚠️ Action needed: ' + d.requirements.join(', ').replace(/_/g,' ');
-      }
+      var reqMsg = document.getElementById('stripe-req-msg');
+      if(!reqMsg){ reqMsg=document.createElement('div'); reqMsg.id='stripe-req-msg'; reqMsg.style.cssText='font-size:12px;color:#92400e;background:#fff7cc;padding:10px 12px;border-radius:8px;margin-top:10px;line-height:1.45;'; if(stripeCard)stripeCard.appendChild(reqMsg); }
+      reqMsg.textContent = d.setup_message || 'Stripe needs a few more details before client payouts can be enabled. Click Complete Setup to review and submit them securely in Stripe.';
+      if(d.requirements && d.requirements.length > 0) reqMsg.title = 'Required by Stripe: ' + d.requirements.join(', ');
     } else {
       // Not connected
       if(banner) banner.style.display='flex';
@@ -24520,7 +24515,7 @@ window._handleRTCMessage=function(d){
       return;
     }
     var d = await obJson('/api/billing/checkout', {method:'POST', body:{plan:p.id, interval:planState.interval, return_path:dashboardReturnPath('payments')}});
-    if(d.url) location.href = d.url;
+    if(d.url) redirectToStripe(d.url, 'Opening Stripe Checkout', 'Stripe will securely collect your subscription payment. Your paid plan activates after Stripe confirms the subscription.');
   }
 
   function patchSignupLaunch(){
@@ -24774,6 +24769,7 @@ window._handleRTCMessage=function(d){
     removeProfilePlanCard();
     renderDashboardPlanCard(d);
     updateRatePreviewsWithPlan(p);
+    applyCurrentPlanCut();
     window.obSelectPlan(p.id || 'starter');
     window.obSetBillingInterval(planState.interval || (d.subscription && d.subscription.interval) || 'monthly');
   }
@@ -24799,6 +24795,31 @@ window._handleRTCMessage=function(d){
     });
   }
 
+  function showStripeRedirectNotice(title, body){
+    var existing = document.getElementById('ob-stripe-redirect-notice');
+    if(existing) existing.remove();
+    var notice = document.createElement('div');
+    notice.id = 'ob-stripe-redirect-notice';
+    notice.className = 'ob-modal-backdrop';
+    notice.innerHTML = '<div class="ob-modal" role="dialog" aria-modal="true">'
+      + '<h3>'+esc(title || 'Opening Stripe')+'</h3>'
+      + '<p>'+esc(body || 'You are being sent to Stripe to finish this securely. You will return to your Ownlybiz dashboard when Stripe is done.')+'</p>'
+      + '<p style="background:var(--cream);border:1px solid var(--gray-200);border-radius:10px;padding:12px;margin-top:10px;">This happens outside Ownlybiz so payment and identity details stay protected by Stripe.</p>'
+      + '</div>';
+    document.body.appendChild(notice);
+  }
+  function hideStripeRedirectNotice(){
+    var existing = document.getElementById('ob-stripe-redirect-notice');
+    if(existing) existing.remove();
+  }
+  function redirectToStripe(url, title, body){
+    showStripeRedirectNotice(title, body);
+    setTimeout(function(){ window.location.assign(url); }, 180);
+  }
+  window.obShowStripeRedirectNotice = showStripeRedirectNotice;
+  window.obHideStripeRedirectNotice = hideStripeRedirectNotice;
+  window.obRedirectToStripe = redirectToStripe;
+
   window.obManageBillingPortal = async function(){
     try {
       var ok = await confirmModal({
@@ -24807,9 +24828,10 @@ window._handleRTCMessage=function(d){
         confirmText:'Open Stripe'
       });
       if(!ok) return;
+      showStripeRedirectNotice('Opening Stripe billing', 'Stripe will open a secure billing page where you can manage payment methods, invoices, and subscription details.');
       var d = await obJson('/api/billing/portal', {method:'POST', body:{return_path:dashboardReturnPath('payments')}});
-      if(d.url) location.href = d.url;
-    } catch(e) { toastErr(e.message || 'Could not open billing portal'); }
+      if(d.url) redirectToStripe(d.url, 'Opening Stripe billing', 'Stripe will open a secure billing page where you can manage payment methods, invoices, and subscription details.');
+    } catch(e) { hideStripeRedirectNotice(); toastErr(e.message || 'Could not open billing portal'); }
   };
 
   async function handlePlanSave(){
@@ -24851,7 +24873,7 @@ window._handleRTCMessage=function(d){
       var d = current === 'starter' || !hasStripeSubscription
         ? await obJson('/api/billing/checkout', {method:'POST', body:{plan:target, interval:interval, return_path:dashboardReturnPath('payments')}})
         : await obJson('/api/billing/change', {method:'POST', body:{plan:target, interval:interval}});
-      if(d.url) location.href = d.url;
+      if(d.url) redirectToStripe(d.url, 'Opening Stripe Checkout', 'Stripe will securely collect your subscription payment. The plan change activates only after Stripe confirms it.');
       else {
         toastOk('Plan change submitted. It will activate after Stripe confirms it.');
         if(status) { status.textContent = 'Pending Stripe'; status.style.color = 'var(--terra)'; }
@@ -24860,12 +24882,33 @@ window._handleRTCMessage=function(d){
     } catch(e) {
       if(e.data && e.data.requires_checkout){
         var c = await obJson('/api/billing/checkout', {method:'POST', body:{plan:target, interval:interval, return_path:dashboardReturnPath('payments')}});
-        if(c.url) location.href = c.url;
+        if(c.url) redirectToStripe(c.url, 'Opening Stripe Checkout', 'Stripe will securely collect your subscription payment. The plan change activates only after Stripe confirms it.');
         return;
       }
       throw e;
     }
   }
+
+  var previousOpenConnectorModal = window.openConnectorModal;
+  window.openConnectorModal = function(type){
+    if(String(type || '').toLowerCase() !== 'stripe'){
+      if(previousOpenConnectorModal) return previousOpenConnectorModal.apply(this, arguments);
+      toastErr((type || 'Provider') + ' is not supported yet');
+      return;
+    }
+    if(!token()){ toastErr('Please log in first.'); return; }
+    showStripeRedirectNotice('Opening Stripe Connect', 'Stripe will collect the business and identity details needed to enable client payments and payouts.');
+    var returnUrl = window.location.origin + dashboardReturnPath('payments');
+    return obJson('/api/experts/stripe/connect', {method:'POST', body:{return_url:returnUrl}})
+      .then(function(d){
+        if(d.url) return redirectToStripe(d.url, 'Opening Stripe Connect', 'Stripe will collect the business and identity details needed to enable client payments and payouts.');
+        throw new Error(d.error || 'Could not open Stripe Connect');
+      })
+      .catch(function(e){
+        hideStripeRedirectNotice();
+        toastErr(e.message || 'Could not open Stripe Connect');
+      });
+  };
 
 	  async function refreshBillingUi(){
 	    if(!token()) return;
@@ -24925,6 +24968,15 @@ window._handleRTCMessage=function(d){
     if(cutEl) cutEl.textContent = Math.round(cut * 100) + '%';
     var earnRate = document.getElementById('live-earn-rate');
     if(earnRate) earnRate.textContent = money((window._expertSessRate || Number(sess && sess.rate_per_min) || 0) * cut) + '/min';
+  }
+  function applyCurrentPlanCut(){
+    var sid = window._sid || window._obActiveSessId;
+    if(sid) { loadSessionCut(sid); return; }
+    var p = planState.current || selectedPlan();
+    if(!p) return;
+    var rateText = (document.getElementById('live-sess-rate') || {}).textContent || '';
+    var displayedRate = parseFloat(rateText.replace(/[^0-9.]/g,''));
+    applySessionCut({expert_plan:p.id || 'starter', platform_fee_pct:Number(p.platform_fee_pct || (100 - Number(p.expert_keep_pct || 88))), rate_per_min:window._expertSessRate || (Number.isFinite(displayedRate) ? displayedRate : 0)});
   }
   async function loadSessionCut(sid){
     if(!sid || !token()) return;

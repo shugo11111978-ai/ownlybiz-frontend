@@ -16409,13 +16409,22 @@ window._obOpenClientChat = openClientChat;
       if(notesEl) notesEl.value=sess.notes||sess.expert_notes||'';
       // Cut (platform fee) — fetch plan-based rate from public endpoint
       window._expertSessFreeMins=parseFloat(sess.free_minutes!=null?sess.free_minutes:(typeof freeMinutes!=='undefined'?freeMinutes.chat:0)||0);
-      window._expertSessCut=0.8; // default 80% until fetch resolves
-      var cutEl=document.getElementById('live-sess-cut');
-      if(cutEl) cutEl.textContent='80%';
-      var _plan=(sess.expert_plan||'starter').toLowerCase();
+	      var cutEl=document.getElementById('live-sess-cut');
+	      var _plan=(sess.expert_plan||'starter').toLowerCase();
+	      if(typeof window.obApplySessionCutImmediate === 'function') {
+	        window.obApplySessionCutImmediate(sess);
+	      } else {
+	        var _fallbackFee=(_plan==='scale'?5:(_plan==='pro'?8:12));
+	        var _fallbackCut=parseFloat((1-(_fallbackFee/100)).toFixed(4));
+	        window._expertSessCut=_fallbackCut;
+	        if(cutEl) cutEl.textContent=Math.round(_fallbackCut*100)+'%';
+	        var _fallbackEarnRateEl=document.getElementById('live-earn-rate');
+	        if(_fallbackEarnRateEl) _fallbackEarnRateEl.textContent='$'+(rate*_fallbackCut).toFixed(2)+'/min';
+	      }
       fetch(BASE+'/api/experts/platform-fees').then(function(r){return r.json();}).then(function(pf){
         var _planKey=_plan==='free'?'starter':_plan; // 'free' = Starter tier
-        var _feeRaw=parseFloat(pf['fee_'+_planKey+'_pct']||pf.fee_starter_pct||12);
+	        var _snapFeeRaw=parseFloat(sess.platform_fee_pct);
+	        var _feeRaw=Number.isFinite(_snapFeeRaw)?_snapFeeRaw:parseFloat(pf['fee_'+_planKey+'_pct']||pf.fee_starter_pct||12);
         var _fee=_feeRaw>1?_feeRaw/100:_feeRaw; // stored as 12, convert to 0.12
         var _cut=parseFloat((1-_fee).toFixed(4));
         window._expertSessCut=_cut;
@@ -16622,11 +16631,16 @@ window._obOpenClientChat = openClientChat;
             var sub=document.getElementById('live-sess-subtitle');if(sub)sub.textContent=(sess.channel||'Chat')+' session with '+(sess.client_name||'Client');
             var rateEl=document.getElementById('live-sess-rate');if(rateEl)rateEl.textContent='$'+(sess.rate_per_min||'?')+'/min';window._expertSessRate=parseFloat(sess.rate_per_min||3.5);
             // Fetch real platform fee for this expert's plan
-            var _sPlan2=(sess.expert_plan||'starter').toLowerCase();
-            var _sPKey=_sPlan2==='free'?'starter':_sPlan2;
-            window._expertSessFreeMins=parseFloat(sess.free_minutes||0);
-            window._expertSessCut=0.8; // default until fetch resolves
-            var _rtcCh=(sess.channel||'chat').toLowerCase();
+	            var _sPlan2=(sess.expert_plan||'starter').toLowerCase();
+	            var _sPKey=_sPlan2==='free'?'starter':_sPlan2;
+	            window._expertSessFreeMins=parseFloat(sess.free_minutes||0);
+	            if(typeof window.obApplySessionCutImmediate === 'function') {
+	              window.obApplySessionCutImmediate(sess);
+	            } else {
+	              var _sFallbackFee=(_sPKey==='scale'?5:(_sPKey==='pro'?8:12));
+	              window._expertSessCut=parseFloat((1-(_sFallbackFee/100)).toFixed(4));
+	            }
+	            var _rtcCh=(sess.channel||'chat').toLowerCase();
             // === Reset expert panel for every new session ===
             if(window.OB_RTC&&window.OB_RTC.isActive()){console.log('[ACCEPT] Cleaning up previous RTC');if(typeof window.OB_RTC.cleanup==='function')window.OB_RTC.cleanup();else window.OB_RTC.end();}
             if(typeof window._obResetExpertLiveSessionUI==='function'){
@@ -16677,10 +16691,12 @@ window._obOpenClientChat = openClientChat;
               };
               _rtcWs.onerror=function(){if(_dEl)_dEl.innerHTML+='<div>WS ERROR</div>';};
               _rtcWs.onclose=function(){if(_dEl)_dEl.innerHTML+='<div>WS CLOSED</div>';};
-            }
-            var cutEl=document.getElementById('live-sess-cut');
-            if(cutEl) cutEl.textContent=Math.round(window._expertSessCut*100)+'%';
-            fetch('https://ownlybiz-backend-production.up.railway.app/api/experts/platform-fees').then(function(r){return r.json();}).then(function(pf){var _fr=parseFloat(pf['fee_'+_sPKey+'_pct']||pf.fee_starter_pct||12);var _f=_fr>1?_fr/100:_fr;var _c=parseFloat((1-_f).toFixed(4));window._expertSessCut=_c;if(cutEl)cutEl.textContent=Math.round(_c*100)+'%';var erEl=document.getElementById('live-earn-rate');if(erEl)erEl.textContent='$'+((window._expertSessRate||3.5)*_c).toFixed(2)+'/min';}).catch(function(){});
+	            }
+	            var cutEl=document.getElementById('live-sess-cut');
+	            if(cutEl) cutEl.textContent=Math.round(window._expertSessCut*100)+'%';
+	            var _erPrimeEl=document.getElementById('live-earn-rate');
+	            if(_erPrimeEl) _erPrimeEl.textContent='$'+((window._expertSessRate||3.5)*window._expertSessCut).toFixed(2)+'/min';
+	            fetch('https://ownlybiz-backend-production.up.railway.app/api/experts/platform-fees').then(function(r){return r.json();}).then(function(pf){var _snapFr=parseFloat(sess.platform_fee_pct);var _fr=Number.isFinite(_snapFr)?_snapFr:parseFloat(pf['fee_'+_sPKey+'_pct']||pf.fee_starter_pct||12);var _f=_fr>1?_fr/100:_fr;var _c=parseFloat((1-_f).toFixed(4));window._expertSessCut=_c;if(cutEl)cutEl.textContent=Math.round(_c*100)+'%';var erEl=document.getElementById('live-earn-rate');if(erEl)erEl.textContent='$'+((window._expertSessRate||3.5)*_c).toFixed(2)+'/min';}).catch(function(){});
             var cnEl=document.getElementById('live-client-name');if(cnEl)cnEl.textContent=sess.client_name||'Client';
             // Reset timer
             if(typeof _expertSessSeconds!=='undefined'){window._expertSessSeconds=0;}
@@ -16804,9 +16820,9 @@ window._obOpenClientChat = openClientChat;
       if(stripeBadge) { stripeBadge.textContent='Connected ✓'; stripeBadge.className='pay-proc-badge badge-connected'; }
       if(stripeBtn) stripeBtn.textContent='✓ Configure';
       syncSettingsStripe('Connected for client payments and payouts', 'Manage Stripe');
-    } else if(d.pending || d.stripe_account_id){
-      // Account exists but pending verification
-      if(banner) { banner.style.display=''; banner.classList.remove('ob-pay-needs-setup'); banner.dataset.obStripeStatus='pending'; }
+	    } else if(d.pending || d.stripe_account_id){
+	      // Account exists but pending verification
+	      if(banner) { banner.style.display=''; banner.classList.add('ob-pay-needs-setup'); banner.dataset.obStripeStatus='pending'; }
       if(badge) { badge.textContent='● Stripe Pending Verification'; badge.style.color='#f59e0b'; }
       if(stripeCard) stripeCard.classList.add('connected');
       if(stripeBadge) { stripeBadge.textContent='Pending Verification ⚠️'; stripeBadge.className='pay-proc-badge'; stripeBadge.style.cssText='background:#fef3c7;color:#92400e;font-size:10px;padding:2px 8px;border-radius:100px;'; }
@@ -22389,13 +22405,13 @@ window._handleRTCMessage=function(d){
     banner.style.display = '';
     banner.classList.remove('ob-pay-needs-setup');
     if(!d || d.error) { banner.dataset.obStripeStatus = 'unknown'; return; }
-    if(!d.connected && !d.pending && !d.stripe_account_id) {
-      banner.classList.add('ob-pay-needs-setup');
-      banner.dataset.obStripeStatus = 'needs_setup';
-    } else {
-      banner.dataset.obStripeStatus = d.connected ? 'connected' : 'pending';
-    }
-  }
+	    if(!d.connected) {
+	      banner.classList.add('ob-pay-needs-setup');
+	      banner.dataset.obStripeStatus = (d.pending || d.stripe_account_id) ? 'pending' : 'needs_setup';
+	    } else {
+	      banner.dataset.obStripeStatus = 'connected';
+	    }
+	  }
   function wrapPaymentStatus(){
     var update = window.updateStripeUI;
     if(update && !update._obProductionExperienceWrapped){
@@ -22407,12 +22423,15 @@ window._handleRTCMessage=function(d){
       window.updateStripeUI._obProductionExperienceWrapped = true;
     }
   }
-  function refreshPaymentStatus(){
-    var banner = document.getElementById('payment-setup-banner');
-    if(banner) { banner.style.display = ''; banner.classList.remove('ob-pay-needs-setup'); banner.dataset.obStripeStatus = 'loading'; }
-    if(!token()) return;
-    api('/experts/stripe/status').then(function(d){
-      if(typeof window.updateStripeUI === 'function') window.updateStripeUI(d);
+	  function refreshPaymentStatus(){
+	    var banner = document.getElementById('payment-setup-banner');
+	    if(banner) {
+	      banner.style.display = '';
+	      if(!banner.dataset.obStripeStatus) banner.dataset.obStripeStatus = 'loading';
+	    }
+	    if(!token()) return;
+	    api('/experts/stripe/status').then(function(d){
+	      if(typeof window.updateStripeUI === 'function') window.updateStripeUI(d);
       else setPaymentBanner(d);
     }).catch(function(){ setPaymentBanner(null); });
   }
@@ -24409,36 +24428,102 @@ window._handleRTCMessage=function(d){
     window.fetch._obStagingApiGuard = true;
   }
 
-  var planDefaults = [
-    {id:'starter',name:'Starter',monthly_price:0,annual_price:0,platform_fee_pct:12,expert_keep_pct:88,enabled:true,description:'Free launch plan.'},
-    {id:'pro',name:'Pro',monthly_price:49,annual_price:470,platform_fee_pct:8,expert_keep_pct:92,enabled:true,description:'Lower session fee and growth tools.'},
-    {id:'scale',name:'Scale',monthly_price:99,annual_price:948,platform_fee_pct:5,expert_keep_pct:95,enabled:true,description:'Lowest session fee for scaling.'}
-  ];
-  var planState = {selected:'starter', interval:'monthly', plans:planDefaults, current:null};
-  window.obSignupPlanState = planState;
+	  var planDefaults = [
+	    {id:'starter',name:'Starter',monthly_price:0,annual_price:0,platform_fee_pct:12,expert_keep_pct:88,enabled:true,description:'Free launch plan.'},
+	    {id:'pro',name:'Pro',monthly_price:49,annual_price:470,platform_fee_pct:8,expert_keep_pct:92,enabled:true,description:'Lower session fee and growth tools.'},
+	    {id:'scale',name:'Scale',monthly_price:99,annual_price:948,platform_fee_pct:5,expert_keep_pct:95,enabled:true,description:'Lowest session fee for scaling.'}
+	  ];
+	  var planState = {selected:'starter', interval:'monthly', plans:planDefaults, current:null};
+	  var BILLING_CACHE_KEY = 'ob_billing_snapshot_v1';
+	  window.obSignupPlanState = planState;
 
-  function plansById(plans){
-    return (plans || planDefaults).reduce(function(acc,p){ acc[p.id] = p; return acc; }, {});
-  }
-  function selectedPlan(){
-    return plansById(planState.plans)[planState.selected] || planDefaults[0];
-  }
-  async function loadPlans(){
-    try {
-      var d = await obJson('/api/billing/plans');
-      if(Array.isArray(d.plans) && d.plans.length) planState.plans = d.plans;
+	  function plansById(plans){
+	    return (plans || planDefaults).reduce(function(acc,p){ acc[p.id] = p; return acc; }, {});
+	  }
+	  function selectedPlan(){
+	    return plansById(planState.plans)[planState.selected] || planDefaults[0];
+	  }
+	  function normalizePlanId(id){
+	    id = String(id || 'starter').toLowerCase();
+	    return id === 'free' ? 'starter' : id;
+	  }
+	  function readJsonStore(key){
+	    var raw = '';
+	    try { raw = sessionStorage.getItem(key) || localStorage.getItem(key) || ''; } catch(e) {}
+	    if(!raw) return null;
+	    try { return JSON.parse(raw); } catch(e) { return null; }
+	  }
+	  function readUserSnapshot(){
+	    return readJsonStore('ob_u') || {};
+	  }
+	  function currentPlanIdFromUser(){
+	    var u = readUserSnapshot();
+	    return normalizePlanId(u.subscription_plan || u.plan || u.current_plan || (u.expert && (u.expert.subscription_plan || u.expert.plan)) || 'starter');
+	  }
+	  function cachePlanFromId(id){
+	    return plansById(planState.plans || planDefaults)[normalizePlanId(id)] || plansById(planDefaults)[normalizePlanId(id)] || planDefaults[0];
+	  }
+	  function readBillingSnapshot(){
+	    var d = readJsonStore(BILLING_CACHE_KEY);
+	    if(d && d.current_plan){
+	      planState.plans = d.plans || planState.plans || planDefaults;
+	      planState.current = d.current_plan;
+	      planState.billing = d;
+	      return d;
+	    }
+	    var p = cachePlanFromId(currentPlanIdFromUser());
+	    return {current_plan:p, plans:planState.plans || planDefaults, subscription:{status:'active'}, stripe_connect:{}};
+	  }
+	  function writeBillingSnapshot(d){
+	    if(!d || !d.current_plan) return d;
+	    d.cached_at = Date.now();
+	    try {
+	      sessionStorage.setItem(BILLING_CACHE_KEY, JSON.stringify(d));
+	      localStorage.setItem(BILLING_CACHE_KEY, JSON.stringify(d));
+	    } catch(e) {}
+	    try {
+	      var u = readUserSnapshot();
+	      u.subscription_plan = normalizePlanId(d.current_plan.id);
+	      u.plan = normalizePlanId(d.current_plan.id);
+	      u.current_plan = normalizePlanId(d.current_plan.id);
+	      if(d.stripe_connect) {
+	        u.stripe_connect_configured = !!d.stripe_connect.configured;
+	        u.stripe_connect_pending = !!(d.stripe_connect.pending || d.stripe_connect.account_id);
+	      }
+	      sessionStorage.setItem('ob_u', JSON.stringify(u));
+	      localStorage.setItem('ob_u', JSON.stringify(u));
+	    } catch(e) {}
+	    return d;
+	  }
+	  function mergeStripeStatusIntoBillingCache(d){
+	    if(!d) return;
+	    var cached = readBillingSnapshot();
+	    cached.stripe_connect = Object.assign({}, cached.stripe_connect || {}, {
+	      configured:!!d.connected,
+	      connected:!!d.connected,
+	      pending:!!d.pending || !!d.stripe_account_id,
+	      account_id:d.stripe_account_id || (cached.stripe_connect && cached.stripe_connect.account_id) || ''
+	    });
+	    writeBillingSnapshot(cached);
+	    renderDashboardBillingShell();
+	  }
+	  async function loadPlans(){
+	    try {
+	      var d = await obJson('/api/billing/plans');
+	      if(Array.isArray(d.plans) && d.plans.length) planState.plans = d.plans;
     } catch(e) {
       planState.plans = planDefaults;
     }
     return planState.plans;
   }
-  async function loadBilling(){
-    var d = await obJson('/api/billing/me');
-    planState.plans = d.plans || planState.plans;
-    planState.current = d.current_plan || null;
-    planState.billing = d;
-    return d;
-  }
+	  async function loadBilling(){
+	    var d = await obJson('/api/billing/me');
+	    planState.plans = d.plans || planState.plans;
+	    planState.current = d.current_plan || null;
+	    planState.billing = d;
+	    writeBillingSnapshot(d);
+	    return d;
+	  }
 
   function setSignupPlan(plan, interval){
     planState.selected = plan || 'starter';
@@ -24649,27 +24734,52 @@ window._handleRTCMessage=function(d){
     return fees;
   }
 
-  function renderDashboardPlanCard(d){
-    var panel = document.getElementById('db-panel-overview');
-    var content = panel && panel.querySelector('.db-content');
-    if(!content) return;
-    var card = document.getElementById('ob-dashboard-plan-card');
-    if(!card){
-      card = document.createElement('div');
-      card.id = 'ob-dashboard-plan-card';
-      card.style.cssText = 'background:var(--white);border:1px solid var(--gray-200);border-radius:12px;padding:16px 18px;margin-bottom:20px;display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;';
+	  function renderDashboardPlanCard(d){
+	    var panel = document.getElementById('db-panel-overview');
+	    var content = panel && panel.querySelector('.db-content');
+	    if(!content) return;
+	    d = d || readBillingSnapshot();
+	    var card = document.getElementById('ob-dashboard-plan-card');
+	    if(!card){
+	      card = document.createElement('div');
+	      card.id = 'ob-dashboard-plan-card';
+	      card.style.cssText = 'background:var(--white);border:1px solid var(--gray-200);border-radius:12px;padding:16px 18px;margin-bottom:20px;display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;';
       var banner = document.getElementById('payment-setup-banner');
       content.insertBefore(card, banner ? banner.nextSibling : content.firstChild);
     }
     var p = d.current_plan || planState.current || planDefaults[0];
     var connect = d.stripe_connect || {};
-    card.innerHTML = '<div><div style="font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:var(--gray-400);font-weight:800;">Ownlybiz plan</div>'
-      + '<div style="font-family:var(--font-head);font-size:22px;font-weight:800;color:var(--brown);margin-top:2px;">'+esc(p.name || 'Starter')+'</div>'
-      + '<div style="font-size:13px;color:var(--gray-500);margin-top:4px;">You keep <strong style="color:var(--sage);">'+Math.round(p.expert_keep_pct || 88)+'%</strong> of paid sessions. Stripe Connect: '+(connect.configured ? 'connected' : 'not connected')+'</div></div>'
-      + '<button class="btn btn-primary btn-sm" onclick="dbNav(document.querySelector(\'.db-nav-item[onclick*=payments]\'),\'payments\')">Manage / Upgrade Plan</button>';
-  }
+	    card.innerHTML = '<div><div style="font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:var(--gray-400);font-weight:800;">Ownlybiz plan</div>'
+	      + '<div style="font-family:var(--font-head);font-size:22px;font-weight:800;color:var(--brown);margin-top:2px;">'+esc(p.name || 'Starter')+'</div>'
+	      + '<div style="font-size:13px;color:var(--gray-500);margin-top:4px;">You keep <strong style="color:var(--sage);">'+Math.round(p.expert_keep_pct || 88)+'%</strong> of paid sessions. Stripe Connect: '+(connect.configured ? 'connected' : 'not connected')+'</div></div>'
+	      + '<button class="btn btn-primary btn-sm" onclick="dbNav(document.querySelector(\'.db-nav-item[onclick*=payments]\'),\'payments\')">Manage / Upgrade Plan</button>';
+	  }
+	  function syncDashboardPaymentBannerFromBilling(d){
+	    var banner = document.getElementById('payment-setup-banner');
+	    if(!banner) return;
+	    d = d || readBillingSnapshot();
+	    var connect = d.stripe_connect || {};
+	    banner.style.display = '';
+	    banner.classList.remove('ob-pay-needs-setup');
+	    if(connect.configured || connect.connected) {
+	      banner.dataset.obStripeStatus = 'connected';
+	    } else if(connect.pending || connect.account_id) {
+	      banner.classList.add('ob-pay-needs-setup');
+	      banner.dataset.obStripeStatus = 'pending';
+	    } else {
+	      banner.classList.add('ob-pay-needs-setup');
+	      banner.dataset.obStripeStatus = 'needs_setup';
+	    }
+	  }
+	  function renderDashboardBillingShell(){
+	    if(!token()) return;
+	    var d = planState.billing || readBillingSnapshot();
+	    renderDashboardPlanCard(d);
+	    syncDashboardPaymentBannerFromBilling(d);
+	    applyCurrentPlanCut();
+	  }
 
-  function updateRatePreviewsWithPlan(plan){
+	  function updateRatePreviewsWithPlan(plan){
     plan = plan || planState.current || selectedPlan();
     var fee = Number(plan.platform_fee_pct || (100 - Number(plan.expert_keep_pct || 88)) || 12);
     var cut = Math.max(0, 1 - fee / 100);
@@ -24772,8 +24882,9 @@ window._handleRTCMessage=function(d){
     var old = document.getElementById('plan-settings-card');
     if(old && profile && profile.contains(old)) old.remove();
   }
-  function renderBillingManagement(d){
-    var p = d.current_plan || planDefaults[0];
+	  function renderBillingManagement(d){
+	    writeBillingSnapshot(d);
+	    var p = d.current_plan || planDefaults[0];
     var connect = d.stripe_connect || {};
     var payments = document.querySelector('#db-panel-payments .db-content');
     if(payments && !document.getElementById('ob-payments-plan-card')){
@@ -24970,11 +25081,11 @@ window._handleRTCMessage=function(d){
   }, true);
 
   var previousOpenConnectorModal = window.openConnectorModal;
-  window.openConnectorModal = function(type){
-    if(String(type || '').toLowerCase() !== 'stripe'){
-      if(previousOpenConnectorModal) return previousOpenConnectorModal.apply(this, arguments);
-      toastErr((type || 'Provider') + ' is not supported yet');
-      return;
+	  window.openConnectorModal = function(type){
+	    if(String(type || '').toLowerCase() !== 'stripe'){
+	      if(previousOpenConnectorModal) return previousOpenConnectorModal.apply(this, arguments);
+	      toastErr((type || 'Provider') + ' is not supported yet');
+	      return;
     }
     if(!token()){ toastErr('Please log in first.'); return; }
     showStripeRedirectNotice('Opening Stripe Connect', 'Stripe will collect the business and identity details needed to enable client payments and payouts.');
@@ -24987,16 +25098,54 @@ window._handleRTCMessage=function(d){
       .catch(function(e){
         hideStripeRedirectNotice();
         toastErr(e.message || 'Could not open Stripe Connect');
-      });
-  };
+	      });
+	  };
 
-	  async function refreshBillingUi(){
-	    if(!token()) return;
-	    try {
-	      var d = await loadBilling();
-	      renderBillingManagement(d);
-	    } catch(e) {}
+	  function installBillingFirstPaintWrappers(){
+	    var stripeUpdater = window.updateStripeUI;
+	    if(stripeUpdater && !window._obBillingCacheUpdateStripeWrapped){
+	      window.updateStripeUI = function(d){
+	        if(d) mergeStripeStatusIntoBillingCache(d);
+	        var ret = stripeUpdater.apply(this, arguments);
+	        renderDashboardBillingShell();
+	        return ret;
+	      };
+	      window.updateStripeUI._obBillingCacheWrapped = true;
+	      window.updateStripeUI._obProductionExperienceWrapped = !!stripeUpdater._obProductionExperienceWrapped;
+	      window._obBillingCacheUpdateStripeWrapped = true;
+	    }
+	    var oldDashboard = window.loadExpertDashboard || (window.OwnlyAPI && window.OwnlyAPI.loadExpertDashboard);
+	    if(oldDashboard && !oldDashboard._obBillingFirstPaintWrapped){
+	      window.loadExpertDashboard = function(){
+	        renderDashboardBillingShell();
+	        var ret = oldDashboard.apply(this, arguments);
+	        setTimeout(renderDashboardBillingShell, 80);
+	        setTimeout(renderDashboardBillingShell, 350);
+	        return ret;
+	      };
+	      window.loadExpertDashboard._obBillingFirstPaintWrapped = true;
+	      if(window.OwnlyAPI) window.OwnlyAPI.loadExpertDashboard = window.loadExpertDashboard;
+	    }
+	    var oldNav = window.dbNav;
+	    if(oldNav && !oldNav._obBillingFirstPaintWrapped){
+	      window.dbNav = function(el, panel){
+	        if(panel === 'overview' || panel === 'live-session') renderDashboardBillingShell();
+	        var ret = oldNav.apply(this, arguments);
+	        if(panel === 'overview' || panel === 'live-session') setTimeout(renderDashboardBillingShell, 80);
+	        return ret;
+	      };
+	      window.dbNav._obBillingFirstPaintWrapped = true;
+	    }
 	  }
+
+		  async function refreshBillingUi(){
+		    if(!token()) return;
+		    try {
+		      renderDashboardBillingShell();
+		      var d = await loadBilling();
+		      renderBillingManagement(d);
+		    } catch(e) {}
+		  }
 	  window.obHandlePlanSave = handlePlanSave;
 	  window.obRefreshBillingUi = refreshBillingUi;
 
@@ -25027,32 +25176,34 @@ window._handleRTCMessage=function(d){
     } catch(e) { toastErr(e.message || 'Could not save fee configuration'); }
   };
 
-  function feePctFromSession(sess){
-    var snap = Number(sess && sess.platform_fee_pct);
-    if(Number.isFinite(snap) && snap >= 0) return snap;
-    var plan = String((sess && sess.expert_plan) || (planState.current && planState.current.id) || 'starter').toLowerCase();
-    if(plan === 'free') plan = 'starter';
-    var map = {starter:12, pro:8, scale:5};
-    var byId = plansById(planState.plans);
-    return byId[plan] ? Number(byId[plan].platform_fee_pct || map[plan] || 12) : (map[plan] || 12);
-  }
-  function applySessionCut(sess){
-    var fee = feePctFromSession(sess || {});
+	  function feePctFromSession(sess){
+	    var snap = Number(sess && sess.platform_fee_pct);
+	    if(Number.isFinite(snap) && snap >= 0) return snap;
+	    var cached = planState.billing || readBillingSnapshot();
+	    var plan = normalizePlanId((sess && (sess.expert_plan || sess.plan)) || (planState.current && planState.current.id) || (cached.current_plan && cached.current_plan.id) || currentPlanIdFromUser());
+	    var map = {starter:12, pro:8, scale:5};
+	    var byId = plansById((cached && cached.plans) || planState.plans || planDefaults);
+	    return byId[plan] ? Number(byId[plan].platform_fee_pct || map[plan] || 12) : (map[plan] || 12);
+	  }
+	  function applySessionCut(sess){
+	    var fee = feePctFromSession(sess || {});
     var cut = Math.max(0, 1 - fee / 100);
     window._expertSessCut = parseFloat(cut.toFixed(4));
     var cutEl = document.getElementById('live-sess-cut');
     if(cutEl) cutEl.textContent = Math.round(cut * 100) + '%';
-    var earnRate = document.getElementById('live-earn-rate');
-    if(earnRate) earnRate.textContent = money((window._expertSessRate || Number(sess && sess.rate_per_min) || 0) * cut) + '/min';
-  }
-  function applyCurrentPlanCut(){
-    var sid = window._sid || window._obActiveSessId;
-    if(sid) { loadSessionCut(sid); return; }
-    var p = planState.current || selectedPlan();
-    if(!p) return;
-    var rateText = (document.getElementById('live-sess-rate') || {}).textContent || '';
-    var displayedRate = parseFloat(rateText.replace(/[^0-9.]/g,''));
-    applySessionCut({expert_plan:p.id || 'starter', platform_fee_pct:Number(p.platform_fee_pct || (100 - Number(p.expert_keep_pct || 88))), rate_per_min:window._expertSessRate || (Number.isFinite(displayedRate) ? displayedRate : 0)});
+	    var earnRate = document.getElementById('live-earn-rate');
+	    if(earnRate) earnRate.textContent = money((window._expertSessRate || Number(sess && sess.rate_per_min) || 0) * cut) + '/min';
+	  }
+	  window.obApplySessionCutImmediate = applySessionCut;
+	  function applyCurrentPlanCut(){
+	    var sid = window._sid || window._obActiveSessId;
+	    if(sid) { loadSessionCut(sid); return; }
+	    var cached = planState.billing || readBillingSnapshot();
+	    var p = (cached && cached.current_plan) || planState.current || selectedPlan();
+	    if(!p) return;
+	    var rateText = (document.getElementById('live-sess-rate') || {}).textContent || '';
+	    var displayedRate = parseFloat(rateText.replace(/[^0-9.]/g,''));
+	    applySessionCut({expert_plan:p.id || 'starter', platform_fee_pct:Number(p.platform_fee_pct || (100 - Number(p.expert_keep_pct || 88))), rate_per_min:window._expertSessRate || (Number.isFinite(displayedRate) ? displayedRate : 0)});
   }
   async function loadSessionCut(sid){
     if(!sid || !token()) return;
@@ -25207,11 +25358,13 @@ window._handleRTCMessage=function(d){
     }, 2200);
   }
 
-  function boot(){
-    handleBillingReturnNotice();
-    loadPlans().then(function(){ renderSignupPlans(); patchSignupLaunch(); updateSignupCta(); });
-    setTimeout(function(){ var free = document.getElementById('free-min-val'); if(free && free.textContent === '1') free.textContent = '0'; }, 400);
-    refreshBillingUi();
+	  function boot(){
+	    installBillingFirstPaintWrappers();
+	    renderDashboardBillingShell();
+	    handleBillingReturnNotice();
+	    loadPlans().then(function(){ renderSignupPlans(); patchSignupLaunch(); updateSignupCta(); });
+	    setTimeout(function(){ var free = document.getElementById('free-min-val'); if(free && free.textContent === '1') free.textContent = '0'; }, 400);
+	    refreshBillingUi();
     renderAdminPlanConfig();
     renderPresessionMedia();
     renderBookingOverlayMedia();

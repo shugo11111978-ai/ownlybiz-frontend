@@ -454,6 +454,12 @@ input,textarea,select{font-family:var(--font-body)}
 .ob-modal h3{font-family:var(--font-head);font-size:24px;margin:0 0 8px;color:var(--brown);}
 .ob-modal p{font-size:14px;line-height:1.6;color:var(--gray-500);margin:0 0 14px;}
 .ob-modal-actions{display:flex;justify-content:flex-end;gap:10px;flex-wrap:wrap;margin-top:18px;}
+.ob-stripe-modal{max-width:480px;padding:28px;border-radius:16px;overflow:hidden;position:relative;}
+.ob-stripe-icon{width:48px;height:48px;border-radius:14px;background:linear-gradient(135deg,#635bff,#8b7dff);color:#fff;display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:900;margin-bottom:14px;box-shadow:0 12px 28px rgba(99,91,255,.25);}
+.ob-stripe-progress{height:8px;border-radius:999px;background:var(--cream);border:1px solid var(--gray-200);overflow:hidden;margin:16px 0 10px;}
+.ob-stripe-progress-fill{height:100%;width:46%;border-radius:999px;background:linear-gradient(90deg,var(--terra),#f4b26d,var(--terra));background-size:200% 100%;animation:obStripeProgress 1.1s ease-in-out infinite;}
+.ob-stripe-step{font-size:12px;font-weight:700;color:var(--terra);letter-spacing:.02em;}
+@keyframes obStripeProgress{0%{transform:translateX(-65%);background-position:0 0;}100%{transform:translateX(230%);background-position:200% 0;}}
 .ob-expert-media-card{background:rgba(122,140,110,.09);border:1px solid rgba(122,140,110,.26);border-radius:12px;padding:14px 16px;margin-bottom:18px;display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;}
 .ob-expert-media-title{font-weight:800;color:var(--brown);font-size:14px;margin-bottom:3px;}
 .ob-expert-media-status{font-size:13px;color:var(--gray-500);line-height:1.45;}
@@ -4539,12 +4545,12 @@ if (!window.toast) {
 	              </div>
 
 	              <!-- ══════════════════ BILLING & PAYOUTS ══════════════════ -->
-              <div class="settings-block coming-soon" id="sblock-billing" style="display:none;">
+              <div class="settings-block" id="sblock-billing" style="display:none;">
                 <div class="settings-block-title">Billing & Payouts</div>
                 <div class="settings-block-desc">Manage how you receive earnings and your billing information.</div>
 
                 <!-- Stripe connect status -->
-                <div style="background:linear-gradient(135deg,rgba(99,91,255,.06),rgba(99,91,255,.03));border:1.5px solid rgba(99,91,255,.2);border-radius:14px;padding:18px 20px;margin-bottom:24px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+                <div style="background:linear-gradient(135deg,rgba(99,91,255,.06),rgba(99,91,255,.03));border:1.5px solid rgba(99,91,255,.2);border-radius:14px;padding:18px 20px;margin-bottom:24px;display:none;align-items:center;gap:14px;flex-wrap:wrap;">
                   <div style="width:44px;height:44px;background:#635bff;border-radius:11px;display:flex;align-items:center;justify-content:center;font-size:22px;flex-shrink:0;">💳</div>
                   <div style="flex:1;">
                     <div style="font-weight:700;font-size:15px;color:var(--brown);">Stripe Connect — Active</div>
@@ -16782,32 +16788,43 @@ window._obOpenClientChat = openClientChat;
     var stripeCard = document.querySelector('.pay-processor[onclick*="stripe"]') || document.querySelector('.pay-processor.connected');
     var stripeBadge = stripeCard ? stripeCard.querySelector('.pay-proc-badge') : null;
     var stripeBtn = stripeCard ? stripeCard.querySelector('button') : null;
+    function syncSettingsStripe(label, actionText){
+      var card = document.getElementById('ob-settings-stripe-connect-card');
+      if(!card) return;
+      card.innerHTML = '<div><div class="settings-field-label">Stripe Connect</div><div class="settings-field-sub">'+label+'. Ownlybiz subscription billing stays separate from client payouts.</div></div>'
+        + '<button type="button" class="btn btn-primary btn-sm" onclick="openConnectorModal(\'stripe\')">'+actionText+' -></button>';
+    }
 
     if(d.connected){
       // Fully connected
-      if(banner) banner.style.display='none';
+      if(banner) { banner.style.display=''; banner.classList.remove('ob-pay-needs-setup'); banner.dataset.obStripeStatus='connected'; }
+      var oldReqMsg = document.getElementById('stripe-req-msg'); if(oldReqMsg) oldReqMsg.remove();
       if(badge) { badge.textContent='● Stripe Connected'; badge.style.color='#22c55e'; }
       if(stripeCard) stripeCard.classList.add('connected');
       if(stripeBadge) { stripeBadge.textContent='Connected ✓'; stripeBadge.className='pay-proc-badge badge-connected'; }
       if(stripeBtn) stripeBtn.textContent='✓ Configure';
+      syncSettingsStripe('Connected for client payments and payouts', 'Manage Stripe');
     } else if(d.pending || d.stripe_account_id){
       // Account exists but pending verification
-      if(banner) banner.style.display='none'; // hide "connect payment" banner
+      if(banner) { banner.style.display=''; banner.classList.remove('ob-pay-needs-setup'); banner.dataset.obStripeStatus='pending'; }
       if(badge) { badge.textContent='● Stripe Pending Verification'; badge.style.color='#f59e0b'; }
       if(stripeCard) stripeCard.classList.add('connected');
       if(stripeBadge) { stripeBadge.textContent='Pending Verification ⚠️'; stripeBadge.className='pay-proc-badge'; stripeBadge.style.cssText='background:#fef3c7;color:#92400e;font-size:10px;padding:2px 8px;border-radius:100px;'; }
       if(stripeBtn) { stripeBtn.textContent='Complete Setup →'; stripeBtn.style.background='#f59e0b'; }
+      syncSettingsStripe('Stripe needs a few more details before client payments and payouts are enabled', 'Complete Stripe Setup');
       var reqMsg = document.getElementById('stripe-req-msg');
       if(!reqMsg){ reqMsg=document.createElement('div'); reqMsg.id='stripe-req-msg'; reqMsg.style.cssText='font-size:12px;color:#92400e;background:#fff7cc;padding:10px 12px;border-radius:8px;margin-top:10px;line-height:1.45;'; if(stripeCard)stripeCard.appendChild(reqMsg); }
       reqMsg.textContent = d.setup_message || 'Stripe needs a few more details before client payouts can be enabled. Click Complete Setup to review and submit them securely in Stripe.';
       if(d.requirements && d.requirements.length > 0) reqMsg.title = 'Required by Stripe: ' + d.requirements.join(', ');
     } else {
       // Not connected
-      if(banner) banner.style.display='flex';
+      if(banner) { banner.style.display=''; banner.classList.add('ob-pay-needs-setup'); banner.dataset.obStripeStatus='needs_setup'; }
+      var staleReqMsg = document.getElementById('stripe-req-msg'); if(staleReqMsg) staleReqMsg.remove();
       if(badge) { badge.textContent='● Stripe Not Connected'; badge.style.color='#ef4444'; }
       if(stripeCard) stripeCard.classList.remove('connected');
       if(stripeBadge) { stripeBadge.textContent='Not Connected'; stripeBadge.className='pay-proc-badge badge-disconnected'; }
       if(stripeBtn) stripeBtn.textContent='Connect →';
+      syncSettingsStripe('Not connected yet', 'Connect Stripe');
     }
   }
 
@@ -22369,10 +22386,14 @@ window._handleRTCMessage=function(d){
   function setPaymentBanner(d){
     var banner = document.getElementById('payment-setup-banner');
     if(!banner) return;
+    banner.style.display = '';
     banner.classList.remove('ob-pay-needs-setup');
-    if(!d || d.error) return;
+    if(!d || d.error) { banner.dataset.obStripeStatus = 'unknown'; return; }
     if(!d.connected && !d.pending && !d.stripe_account_id) {
       banner.classList.add('ob-pay-needs-setup');
+      banner.dataset.obStripeStatus = 'needs_setup';
+    } else {
+      banner.dataset.obStripeStatus = d.connected ? 'connected' : 'pending';
     }
   }
   function wrapPaymentStatus(){
@@ -22388,7 +22409,7 @@ window._handleRTCMessage=function(d){
   }
   function refreshPaymentStatus(){
     var banner = document.getElementById('payment-setup-banner');
-    if(banner) banner.classList.remove('ob-pay-needs-setup');
+    if(banner) { banner.style.display = ''; banner.classList.remove('ob-pay-needs-setup'); banner.dataset.obStripeStatus = 'loading'; }
     if(!token()) return;
     api('/experts/stripe/status').then(function(d){
       if(typeof window.updateStripeUI === 'function') window.updateStripeUI(d);
@@ -24498,10 +24519,19 @@ window._handleRTCMessage=function(d){
     try { u = JSON.parse(sessionStorage.getItem('ob_u') || localStorage.getItem('ob_u') || '{}'); } catch(e) {}
     return (window._dashSlug || window._myExpertSlug || window._currentSignupSlug || u.slug || u.expert_slug || '').toString().trim();
   }
+  function activeDashboardPanel(){
+    var active = document.querySelector('.db-tab-panel.active');
+    var id = active && active.id ? active.id.replace(/^db-panel-/,'') : '';
+    return id || '';
+  }
   function dashboardReturnPath(panel){
-    panel = panel || 'payments';
+    panel = panel || activeDashboardPanel() || 'payments';
     var path = location.pathname || '';
-    if(path.indexOf('/dash/') === 0) return path;
+    if(path.indexOf('/dash/') === 0) {
+      var parts = path.split('/').filter(Boolean);
+      var slugFromPath = parts[1] || currentExpertSlug();
+      return slugFromPath ? '/dash/' + encodeURIComponent(slugFromPath) + '/' + panel : path;
+    }
     var slug = currentExpertSlug();
     return slug ? '/dash/' + encodeURIComponent(slug) + '/' + panel : '/dash';
   }
@@ -24514,8 +24544,7 @@ window._handleRTCMessage=function(d){
       if(window.OwnlyAPI && window.OwnlyAPI.loadExpertDashboard) setTimeout(function(){ window.OwnlyAPI.loadExpertDashboard(); }, 200);
       return;
     }
-    var d = await obJson('/api/billing/checkout', {method:'POST', body:{plan:p.id, interval:planState.interval, return_path:dashboardReturnPath('payments')}});
-    if(d.url) redirectToStripe(d.url, 'Opening Stripe Checkout', 'Stripe will securely collect your subscription payment. Your paid plan activates after Stripe confirms the subscription.');
+    await openSubscriptionCheckout(p.id, planState.interval, 'signup');
   }
 
   function patchSignupLaunch(){
@@ -24674,8 +24703,8 @@ window._handleRTCMessage=function(d){
     }).join('') + '</div>';
   }
   function updatePlanActionHint(){
-    var target = (document.getElementById('sfield-subscription-plan') || {}).value || planState.selected || 'starter';
-    var interval = (document.getElementById('sfield-plan-interval') || {}).value || planState.interval || 'monthly';
+    var target = planState.selected || 'starter';
+    var interval = planState.interval || 'monthly';
     var current = (planState.current && planState.current.id) || 'starter';
     var p = planById(target);
     document.querySelectorAll('.ob-plan-action-hint').forEach(function(el){
@@ -24683,14 +24712,13 @@ window._handleRTCMessage=function(d){
       else if(target === 'starter') el.textContent = current === 'starter' ? 'Starter is active now. You keep ' + Math.round(p.expert_keep_pct || 88) + '% of paid sessions.' : 'Starter begins after your paid subscription is cancelled in Stripe.';
       else el.textContent = p.name + ' ' + interval + ' opens secure Stripe Checkout if no active subscription is on file.';
     });
-    document.querySelectorAll('#ob-plan-confirm-btn').forEach(function(btn){
+    document.querySelectorAll('.ob-plan-confirm-btn,#ob-plan-confirm-btn').forEach(function(btn){
       btn.textContent = target === 'starter' ? 'Confirm Starter' : (current === 'starter' ? 'Continue to secure checkout' : 'Confirm Plan Change');
     });
   }
   window.obSelectPlan = function(plan){
     planState.selected = plan === 'free' ? 'starter' : plan;
-    var hidden = document.getElementById('sfield-subscription-plan');
-    if(hidden) hidden.value = planState.selected;
+    document.querySelectorAll('[data-ob-plan-hidden]').forEach(function(hidden){ hidden.value = planState.selected; });
     document.querySelectorAll('.ob-plan-btn').forEach(function(b){
       var on = b.getAttribute('data-plan') === planState.selected;
       b.classList.toggle('active', on);
@@ -24701,8 +24729,7 @@ window._handleRTCMessage=function(d){
   };
   window.obSetBillingInterval = function(interval){
     planState.interval = interval || 'monthly';
-    var hidden = document.getElementById('sfield-plan-interval');
-    if(hidden) hidden.value = planState.interval;
+    document.querySelectorAll('[data-ob-plan-interval-hidden]').forEach(function(hidden){ hidden.value = planState.interval; });
     document.querySelectorAll('[data-ob-billing-interval]').forEach(function(b){
       var on = b.getAttribute('data-ob-billing-interval') === planState.interval;
       b.classList.toggle('active', on);
@@ -24715,7 +24742,8 @@ window._handleRTCMessage=function(d){
     });
     updatePlanActionHint();
   };
-  function planManagementHtml(d){
+  function planManagementHtml(d, context){
+    context = context || 'payments';
     var p = d.current_plan || planDefaults[0];
     var sub = d.subscription || {};
     var plans = d.plans || planState.plans || planDefaults;
@@ -24735,8 +24763,8 @@ window._handleRTCMessage=function(d){
       + '</div>'
       + planCardsHtml(plans, p.id || 'starter', interval)
       + '<div class="ob-plan-interval-group"><button type="button" class="ob-plan-interval-btn" data-ob-billing-interval="monthly" onclick="obSetBillingInterval(\'monthly\')">Monthly</button><button type="button" class="ob-plan-interval-btn" data-ob-billing-interval="annual" onclick="obSetBillingInterval(\'annual\')">Annual</button></div>'
-      + '<input type="hidden" id="sfield-subscription-plan" value="'+esc(p.id || 'starter')+'"><input type="hidden" id="sfield-plan-interval" value="'+esc(interval)+'">'
-      + '<div class="ob-plan-actions"><button class="btn btn-primary btn-sm" id="ob-plan-confirm-btn" onclick="saveSettingsBlock(\'plan\')">Confirm Plan Change</button><span class="save-status" id="save-status-plan"></span></div>'
+      + '<input type="hidden" data-ob-plan-hidden="1" id="sfield-subscription-plan-'+esc(context)+'" value="'+esc(p.id || 'starter')+'"><input type="hidden" data-ob-plan-interval-hidden="1" id="sfield-plan-interval-'+esc(context)+'" value="'+esc(interval)+'">'
+      + '<div class="ob-plan-actions"><button type="button" class="btn btn-primary btn-sm ob-plan-confirm-btn" id="ob-plan-confirm-btn-'+esc(context)+'" onclick="obSubmitPlanChange()">Confirm Plan Change</button><span class="save-status ob-plan-save-status" id="save-status-plan-'+esc(context)+'"></span></div>'
       + '<div class="ob-plan-action-hint"></div>';
   }
   function removeProfilePlanCard(){
@@ -24746,6 +24774,7 @@ window._handleRTCMessage=function(d){
   }
   function renderBillingManagement(d){
     var p = d.current_plan || planDefaults[0];
+    var connect = d.stripe_connect || {};
     var payments = document.querySelector('#db-panel-payments .db-content');
     if(payments && !document.getElementById('ob-payments-plan-card')){
       var payCard = document.createElement('div');
@@ -24754,17 +24783,35 @@ window._handleRTCMessage=function(d){
       payments.insertBefore(payCard, payments.children[1] || payments.firstChild);
     }
     var pay = document.getElementById('ob-payments-plan-card');
-    if(pay) pay.innerHTML = planManagementHtml(d);
+    if(pay) pay.innerHTML = planManagementHtml(d, 'payments');
     var billingBlock = document.getElementById('sblock-billing');
-    var settingsMirror = document.getElementById('ob-settings-billing-plan-shortcut');
-    if(billingBlock && !settingsMirror){
-      settingsMirror = document.createElement('div');
-      settingsMirror.id = 'ob-settings-billing-plan-shortcut';
-      settingsMirror.style.cssText = 'border:1.5px solid var(--gray-200);border-radius:12px;padding:16px;margin-bottom:20px;background:var(--white);display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap;';
-      billingBlock.insertBefore(settingsMirror, billingBlock.children[2] || billingBlock.firstChild);
+    if(billingBlock){
+      billingBlock.classList.remove('coming-soon');
+      var legacyStripe = Array.from(billingBlock.children).find(function(el){
+        return el.id !== 'ob-settings-stripe-connect-card' && (el.getAttribute('style') || '').indexOf('rgba(99,91,255') >= 0;
+      });
+      if(legacyStripe) legacyStripe.style.display = 'none';
     }
-    if(settingsMirror){
-      settingsMirror.innerHTML = '<div><div class="settings-field-label">Ownlybiz subscription</div><div class="settings-field-sub">Current plan: <strong>'+esc(p.name || 'Starter')+'</strong>. Change plans from Payments so subscription and payout setup stay together.</div></div><button class="btn btn-primary btn-sm" onclick="dbNav(document.querySelector(\'.db-nav-item[onclick*=payments]\'),\'payments\')">Open Payments</button>';
+    var settingsPlan = document.getElementById('ob-settings-billing-plan-card');
+    if(billingBlock && !settingsPlan){
+      settingsPlan = document.createElement('div');
+      settingsPlan.id = 'ob-settings-billing-plan-card';
+      settingsPlan.className = 'ob-plan-console';
+      billingBlock.insertBefore(settingsPlan, billingBlock.children[2] || billingBlock.firstChild);
+    }
+    if(settingsPlan) settingsPlan.innerHTML = planManagementHtml(d, 'settings');
+    var settingsStripe = document.getElementById('ob-settings-stripe-connect-card');
+    if(billingBlock && !settingsStripe){
+      settingsStripe = document.createElement('div');
+      settingsStripe.id = 'ob-settings-stripe-connect-card';
+      settingsStripe.style.cssText = 'border:1.5px solid var(--gray-200);border-radius:12px;padding:18px 20px;margin-bottom:20px;background:var(--white);display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;';
+      billingBlock.insertBefore(settingsStripe, settingsPlan ? settingsPlan.nextSibling : (billingBlock.children[2] || billingBlock.firstChild));
+    }
+    if(settingsStripe){
+      var connectLabel = connect.account_id ? 'Stripe account created. Finish setup to enable client payments and payouts' : 'Not connected yet';
+      var connectAction = connect.account_id ? 'Complete Stripe Setup' : 'Connect Stripe';
+      settingsStripe.innerHTML = '<div><div class="settings-field-label">Stripe Connect</div><div class="settings-field-sub">'+esc(connectLabel)+'. Ownlybiz subscription billing stays separate from client payouts.</div></div>'
+        + '<button type="button" class="btn btn-primary btn-sm" onclick="openConnectorModal(\'stripe\')">'+esc(connectAction)+' -></button>';
     }
     removeProfilePlanCard();
     renderDashboardPlanCard(d);
@@ -24801,10 +24848,13 @@ window._handleRTCMessage=function(d){
     var notice = document.createElement('div');
     notice.id = 'ob-stripe-redirect-notice';
     notice.className = 'ob-modal-backdrop';
-    notice.innerHTML = '<div class="ob-modal" role="dialog" aria-modal="true">'
+    notice.innerHTML = '<div class="ob-modal ob-stripe-modal" role="dialog" aria-modal="true">'
+      + '<div class="ob-stripe-icon">S</div>'
       + '<h3>'+esc(title || 'Opening Stripe')+'</h3>'
       + '<p>'+esc(body || 'You are being sent to Stripe to finish this securely. You will return to your Ownlybiz dashboard when Stripe is done.')+'</p>'
-      + '<p style="background:var(--cream);border:1px solid var(--gray-200);border-radius:10px;padding:12px;margin-top:10px;">This happens outside Ownlybiz so payment and identity details stay protected by Stripe.</p>'
+      + '<div class="ob-stripe-progress" aria-hidden="true"><div class="ob-stripe-progress-fill"></div></div>'
+      + '<div class="ob-stripe-step">Preparing your secure Stripe page...</div>'
+      + '<p style="background:var(--cream);border:1px solid var(--gray-200);border-radius:10px;padding:12px;margin-top:14px;">This opens outside Ownlybiz so payment and identity details stay protected by Stripe.</p>'
       + '</div>';
     document.body.appendChild(notice);
   }
@@ -24814,11 +24864,30 @@ window._handleRTCMessage=function(d){
   }
   function redirectToStripe(url, title, body){
     showStripeRedirectNotice(title, body);
-    setTimeout(function(){ window.location.assign(url); }, 180);
+    var step = document.querySelector('#ob-stripe-redirect-notice .ob-stripe-step');
+    if(step) step.textContent = 'Sending you to Stripe now...';
+    setTimeout(function(){ window.location.assign(url); }, 260);
   }
   window.obShowStripeRedirectNotice = showStripeRedirectNotice;
   window.obHideStripeRedirectNotice = hideStripeRedirectNotice;
   window.obRedirectToStripe = redirectToStripe;
+
+  async function openSubscriptionCheckout(plan, interval, source){
+    var p = planById(plan);
+    showStripeRedirectNotice('Preparing Stripe Checkout', 'Ownlybiz is creating a secure checkout for ' + (p.name || plan) + '. Your plan activates only after Stripe confirms the subscription.');
+    try {
+      var d = await obJson('/api/billing/checkout', {method:'POST', body:{plan:plan, interval:interval || planState.interval || 'monthly', return_path:dashboardReturnPath(source === 'signup' ? 'payments' : activeDashboardPanel() || 'payments')}});
+      if(d.url) {
+        redirectToStripe(d.url, 'Opening Stripe Checkout', 'Stripe will securely collect your subscription payment. Your paid plan activates after Stripe confirms the subscription.');
+        return d;
+      }
+      throw new Error(d.error || 'Stripe did not return a checkout link.');
+    } catch(e) {
+      hideStripeRedirectNotice();
+      throw e;
+    }
+  }
+  window.obOpenSubscriptionCheckout = openSubscriptionCheckout;
 
   window.obManageBillingPortal = async function(){
     try {
@@ -24835,8 +24904,8 @@ window._handleRTCMessage=function(d){
   };
 
   async function handlePlanSave(){
-    var target = (document.getElementById('sfield-subscription-plan') || {}).value || planState.selected || 'starter';
-    var interval = (document.getElementById('sfield-plan-interval') || {}).value || planState.interval || 'monthly';
+    var target = planState.selected || 'starter';
+    var interval = planState.interval || 'monthly';
     var current = (planState.current && planState.current.id) || 'starter';
     var billing = planState.billing || {};
     var sub = billing.subscription || {};
@@ -24859,35 +24928,46 @@ window._handleRTCMessage=function(d){
       confirmText: needsCheckout ? 'Continue to secure checkout' : 'Yes, confirm'
     });
     if(!ok) return;
-    var status = document.getElementById('save-status-plan');
-    if(status) { status.textContent = needsCheckout ? 'Opening Stripe...' : 'Working...'; status.style.color = 'var(--gray-400)'; }
+    var statusEls = document.querySelectorAll('.ob-plan-save-status,#save-status-plan');
+    statusEls.forEach(function(status){ status.textContent = needsCheckout ? 'Opening Stripe...' : 'Working...'; status.style.color = 'var(--gray-400)'; });
     if(target === 'starter'){
       if(current === 'starter') await obJson('/api/billing/starter', {method:'POST', body:{}});
       else await obJson('/api/billing/cancel', {method:'POST', body:{}});
       toastOk(current === 'starter' ? 'Starter plan confirmed' : 'Paid plan cancellation requested');
-      if(status) { status.textContent = 'Saved'; status.style.color = 'var(--sage)'; }
+      statusEls.forEach(function(status){ status.textContent = 'Saved'; status.style.color = 'var(--sage)'; });
       refreshBillingUi();
       return;
     }
     try {
-      var d = current === 'starter' || !hasStripeSubscription
-        ? await obJson('/api/billing/checkout', {method:'POST', body:{plan:target, interval:interval, return_path:dashboardReturnPath('payments')}})
-        : await obJson('/api/billing/change', {method:'POST', body:{plan:target, interval:interval}});
-      if(d.url) redirectToStripe(d.url, 'Opening Stripe Checkout', 'Stripe will securely collect your subscription payment. The plan change activates only after Stripe confirms it.');
-      else {
-        toastOk('Plan change submitted. It will activate after Stripe confirms it.');
-        if(status) { status.textContent = 'Pending Stripe'; status.style.color = 'var(--terra)'; }
-        refreshBillingUi();
+      if(current === 'starter' || !hasStripeSubscription) {
+        await openSubscriptionCheckout(target, interval, 'plan');
+        return;
       }
+      await obJson('/api/billing/change', {method:'POST', body:{plan:target, interval:interval}});
+      toastOk('Plan change submitted. It will activate after Stripe confirms it.');
+      statusEls.forEach(function(status){ status.textContent = 'Pending Stripe'; status.style.color = 'var(--terra)'; });
+      refreshBillingUi();
     } catch(e) {
       if(e.data && e.data.requires_checkout){
-        var c = await obJson('/api/billing/checkout', {method:'POST', body:{plan:target, interval:interval, return_path:dashboardReturnPath('payments')}});
-        if(c.url) redirectToStripe(c.url, 'Opening Stripe Checkout', 'Stripe will securely collect your subscription payment. The plan change activates only after Stripe confirms it.');
+        await openSubscriptionCheckout(target, interval, 'plan');
         return;
       }
       throw e;
     }
   }
+  window.obSubmitPlanChange = function(){
+    return handlePlanSave().catch(function(e){
+      document.querySelectorAll('.ob-plan-save-status,#save-status-plan').forEach(function(st){ st.textContent = 'Error'; st.style.color = '#dc2626'; });
+      toastErr(e.message || 'Plan change failed');
+    });
+  };
+  document.addEventListener('click', function(e){
+    var btn = e.target && e.target.closest && e.target.closest('.ob-plan-confirm-btn');
+    if(!btn) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    window.obSubmitPlanChange();
+  }, true);
 
   var previousOpenConnectorModal = window.openConnectorModal;
   window.openConnectorModal = function(type){
@@ -24898,7 +24978,7 @@ window._handleRTCMessage=function(d){
     }
     if(!token()){ toastErr('Please log in first.'); return; }
     showStripeRedirectNotice('Opening Stripe Connect', 'Stripe will collect the business and identity details needed to enable client payments and payouts.');
-    var returnUrl = window.location.origin + dashboardReturnPath('payments');
+    var returnUrl = window.location.origin + dashboardReturnPath(activeDashboardPanel() || 'payments');
     return obJson('/api/experts/stripe/connect', {method:'POST', body:{return_url:returnUrl}})
       .then(function(d){
         if(d.url) return redirectToStripe(d.url, 'Opening Stripe Connect', 'Stripe will collect the business and identity details needed to enable client payments and payouts.');
@@ -24923,11 +25003,7 @@ window._handleRTCMessage=function(d){
 	  var oldSaveSettings = window.saveSettingsBlock;
 	  window.saveSettingsBlock = function(section){
 	    if(section === 'plan'){
-	      return handlePlanSave().catch(function(e){
-        var st = document.getElementById('save-status-plan');
-        if(st){ st.textContent = 'Error'; st.style.color = '#dc2626'; }
-	        toastErr(e.message || 'Plan change failed');
-	      });
+	      return window.obSubmitPlanChange();
 	    }
 	    if(oldSaveSettings && oldSaveSettings !== window.saveSettingsBlock && (window._obSaveSettingsBlockDepth || 0) < 8) return oldSaveSettings.apply(this, arguments);
 	  };

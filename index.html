@@ -2011,7 +2011,7 @@ if (!window.toast) {
         <div class="model-card"><div class="model-card-icon">🏛️</div><h3>Independent Practice</h3><p>You are an independent professional, not an Ownlybiz employee or contractor. Ownlybiz provides infrastructure only.</p></div>
         <div class="model-card"><div class="model-card-icon">⚖️</div><h3>Legal Clarity</h3><p>You accept full responsibility for your services, credentials, and compliance. Clients are hiring you — not Ownlybiz.</p></div>
         <div class="model-card"><div class="model-card-icon">💳</div><h3>Direct Payments</h3><p>Connect your own Stripe Connect or PayPal Business account. Client payments flow directly to you, minus a transparent platform fee.</p></div>
-        <div class="model-card"><div class="model-card-icon">⏱️</div><h3>Free Minutes: Your Tool</h3><p>Offer 0–10 free intro minutes per session type. Clients experience your value first. You control the offer — you absorb the cost.</p></div>
+        <div class="model-card"><div class="model-card-icon">⏱️</div><h3>Free Minutes: Your Tool</h3><p>Pro can offer up to 5 free intro minutes, Scale up to 10, and only for a client's first session with you.</p></div>
       </div>
     </div>
   </section>
@@ -2795,13 +2795,13 @@ if (!window.toast) {
           </div>
         </div>
         <div class="form-group">
-          <label class="form-label">Free Intro Minutes (0–10)</label>
+          <label class="form-label">Free Intro Minutes (plan-capped)</label>
           <div class="rate-stepper">
             <button onclick="adjustFreeMin(-1)">−</button>
             <div class="rate-stepper-val" id="free-min-val">1</div>
             <button onclick="adjustFreeMin(1)">+</button>
           </div>
-          <p style="font-size:12px;color:var(--gray-400);margin-top:6px;">Clients get this many free minutes before billing starts. This is your marketing cost.</p>
+          <p style="font-size:12px;color:var(--gray-400);margin-top:6px;">Free intro minutes are capped by plan and only apply to first-time clients.</p>
         </div>
         <div class="form-group">
           <label class="form-label">Active Channels</label>
@@ -24363,10 +24363,21 @@ window._handleRTCMessage=function(d){
 	    {id:'starter',name:'Starter',monthly_price:0,annual_price:0,platform_fee_pct:12,expert_keep_pct:88,enabled:true,description:'Free launch plan.'},
 	    {id:'pro',name:'Pro',monthly_price:49,annual_price:470,platform_fee_pct:8,expert_keep_pct:92,enabled:true,description:'Lower session fee and growth tools.'},
 	    {id:'scale',name:'Scale',monthly_price:99,annual_price:948,platform_fee_pct:5,expert_keep_pct:95,enabled:true,description:'Lowest session fee for scaling.'}
-	  ];
-	  var planState = {selected:'starter', interval:'monthly', plans:planDefaults, current:null};
-	  var BILLING_CACHE_KEY = 'ob_billing_snapshot_v1';
-	  window.obSignupPlanState = planState;
+		  ];
+		  var planState = {selected:'starter', interval:'monthly', plans:planDefaults, current:null};
+		  var BILLING_CACHE_KEY = 'ob_billing_snapshot_v1';
+		  var BILLING_CACHE_MAX_AGE_MS = 60 * 1000;
+		  var adminFeeSnapshot = null;
+		  var ADMIN_PLAN_DEFAULTS = {
+		    starter:{fee:12,monthly:0,annual:0},
+		    pro:{fee:8,monthly:49,annual:470},
+		    scale:{fee:5,monthly:99,annual:948}
+		  };
+		  var ADMIN_TEST_PRICE_IDS = {
+		    pro:{monthly:'price_1TRQrb3Siu0UQe1N0OQCzG10',annual:'price_1TRZH03Siu0UQe1Nr6bFitWA'},
+		    scale:{monthly:'price_1TRZIV3Siu0UQe1Nm0fMrw4I',annual:'price_1TRZIt3Siu0UQe1NAJ2kPEJ0'}
+		  };
+		  window.obSignupPlanState = planState;
 
 	  function plansById(plans){
 	    return (plans || planDefaults).reduce(function(acc,p){ acc[p.id] = p; return acc; }, {});
@@ -24394,14 +24405,17 @@ window._handleRTCMessage=function(d){
 	  function cachePlanFromId(id){
 	    return plansById(planState.plans || planDefaults)[normalizePlanId(id)] || plansById(planDefaults)[normalizePlanId(id)] || planDefaults[0];
 	  }
-	  function readBillingSnapshot(){
-	    var d = readJsonStore(BILLING_CACHE_KEY);
-	    if(d && d.current_plan){
-	      planState.plans = d.plans || planState.plans || planDefaults;
-	      planState.current = d.current_plan;
-	      planState.billing = d;
-	      return d;
-	    }
+		  function readBillingSnapshot(){
+		    var d = readJsonStore(BILLING_CACHE_KEY);
+		    if(d && d.current_plan){
+		      if(d.cached_at && Date.now() - Number(d.cached_at) > BILLING_CACHE_MAX_AGE_MS) d = null;
+		    }
+		    if(d && d.current_plan){
+		      planState.plans = d.plans || planState.plans || planDefaults;
+		      planState.current = d.current_plan;
+		      planState.billing = d;
+		      return d;
+		    }
 	    var p = cachePlanFromId(currentPlanIdFromUser());
 	    return {current_plan:p, plans:planState.plans || planDefaults, subscription:{status:'active'}, stripe_connect:{}};
 	  }
@@ -24586,14 +24600,17 @@ window._handleRTCMessage=function(d){
 
   function renderAdminPlanConfig(){
     var panel = document.getElementById('admin-panel-fee-config');
-    if(!panel || document.getElementById('ob-admin-plan-config')) return;
+    if(!panel) return;
+    ensureAdminFeeSaveBar();
+    if(document.getElementById('ob-admin-plan-config')) return;
     var card = document.createElement('div');
     card.className = 'admin-card';
     card.id = 'ob-admin-plan-config';
     card.style.marginTop = '20px';
-    card.innerHTML = '<div class="admin-card-title">Subscription Plans <span class="admin-card-title-sub">Stripe Price IDs by mode</span></div>'
+    card.innerHTML = '<div class="ob-admin-plan-head"><div class="admin-card-title">Subscription Plans <span class="admin-card-title-sub">Prices, fees, and Stripe Price IDs</span></div>'
+      + '<div class="ob-admin-mode-toggle" role="group" aria-label="Stripe Price ID mode"><button type="button" data-ob-admin-price-mode="test" onclick="obSetAdminPriceMode(\'test\')">Test</button><button type="button" data-ob-admin-price-mode="live" onclick="obSetAdminPriceMode(\'live\')">Live</button></div></div>'
       + '<div id="ob-admin-plan-grid" style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;"></div>'
-      + '<div style="font-size:12px;color:rgba(246,241,233,.45);line-height:1.6;margin-top:14px;">Use Stripe Price IDs that begin with <code>price_</code>. Product IDs are intentionally rejected.</div>';
+      + '<div style="font-size:12px;color:rgba(246,241,233,.45);line-height:1.6;margin-top:14px;">Use Stripe Price IDs that begin with <code>price_</code>. Product IDs are intentionally rejected. The Test/Live toggle only changes which Stripe fields are shown; the single save button applies to all settings on this page.</div>';
     var first = panel.querySelector('.admin-card');
     if(first && first.parentNode) first.parentNode.insertBefore(card, first.nextSibling);
     var grid = card.querySelector('#ob-admin-plan-grid');
@@ -24601,16 +24618,46 @@ window._handleRTCMessage=function(d){
       var title = id.charAt(0).toUpperCase() + id.slice(1);
       grid.insertAdjacentHTML('beforeend',
         '<div class="platform-setting-block" data-admin-plan="'+id+'">'
-        + '<div class="ps-block-title" style="display:flex;align-items:center;justify-content:space-between;gap:8px;">'+title+'<label style="font-size:11px;color:rgba(246,241,233,.6);display:flex;align-items:center;gap:6px;"><input type="checkbox" id="plan-'+id+'-enabled"> Available</label></div>'
+	        + '<div class="ps-block-title" style="display:flex;align-items:center;justify-content:space-between;gap:8px;">'+title+'<label style="font-size:11px;color:rgba(246,241,233,.6);display:flex;align-items:center;gap:6px;"><input type="checkbox" id="plan-'+id+'-enabled" checked> Available</label></div>'
         + adminInput(id,'name','Name','text') + adminInput(id,'description','Description','text')
         + adminInput(id,'fee','Platform fee %','number') + adminInput(id,'monthly','Monthly price','number') + adminInput(id,'annual','Annual price','number')
-        + adminInput(id,'test-monthly','Test monthly Price ID','text') + adminInput(id,'test-annual','Test annual Price ID','text')
-        + adminInput(id,'live-monthly','Live monthly Price ID','text') + adminInput(id,'live-annual','Live annual Price ID','text')
+        + (id === 'starter'
+          ? '<div class="ob-admin-free-note">Starter is free. No Stripe subscription Price ID is needed.</div>'
+          : adminInput(id,'test-monthly','Test monthly Price ID','text','test') + adminInput(id,'test-annual','Test annual Price ID','text','test')
+            + adminInput(id,'live-monthly','Live monthly Price ID','text','live') + adminInput(id,'live-annual','Live annual Price ID','text','live'))
         + '</div>');
     });
+    obSetAdminPriceMode(window._obAdminPriceMode || 'test');
   }
-  function adminInput(plan, key, label, type){
-    return '<div class="ps-row"><div class="ps-label">'+label+'</div><input type="'+type+'" id="plan-'+plan+'-'+key+'" class="admin-input" style="min-width:0;width:100%;"></div>';
+  function ensureAdminFeeSaveBar(){
+    var panel = document.getElementById('admin-panel-fee-config');
+    var content = panel && panel.querySelector('.admin-content');
+    if(!content) return;
+    Array.from(panel.querySelectorAll('button[onclick="saveAdminFees()"]')).forEach(function(btn){
+      if(btn.id !== 'ob-admin-save-all-fees') btn.style.display = 'none';
+    });
+    if(document.getElementById('ob-admin-fee-save-bar')) return;
+    var bar = document.createElement('div');
+    bar.id = 'ob-admin-fee-save-bar';
+    bar.className = 'ob-admin-fee-save-bar';
+    bar.innerHTML = '<div><div class="ob-admin-save-title">Fee and subscription settings</div><div class="ob-admin-save-sub">One save applies to platform fees, plan prices, availability, and Stripe Price IDs.</div></div><button id="ob-admin-save-all-fees" type="button" onclick="saveAdminFees()">Save all settings</button>';
+    content.insertBefore(bar, content.firstChild);
+  }
+  function adminInput(plan, key, label, type, mode){
+    var cls = mode ? ' ps-row ob-price-mode-row ob-price-mode-'+mode : 'ps-row';
+    return '<div class="'+cls+'"><div class="ps-label">'+label+'</div><input type="'+type+'" id="plan-'+plan+'-'+key+'" class="admin-input" style="min-width:0;width:100%;"></div>';
+  }
+  window.obSetAdminPriceMode = function(mode){
+    mode = mode === 'live' ? 'live' : 'test';
+    window._obAdminPriceMode = mode;
+    document.querySelectorAll('[data-ob-admin-price-mode]').forEach(function(btn){
+      var on = btn.getAttribute('data-ob-admin-price-mode') === mode;
+      btn.classList.toggle('active', on);
+      btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+    document.querySelectorAll('.ob-price-mode-row').forEach(function(row){
+      row.style.display = row.classList.contains('ob-price-mode-' + mode) ? 'flex' : 'none';
+    });
   }
   function setInput(id, value){
     var el = document.getElementById(id);
@@ -24623,41 +24670,69 @@ window._handleRTCMessage=function(d){
     if(!el) return '';
     return el.type === 'checkbox' ? (el.checked ? '1' : '0') : el.value;
   }
-  function fillAdminPlanConfig(f){
-    renderAdminPlanConfig();
-    ['starter','pro','scale'].forEach(function(id){
-      setInput('plan-'+id+'-enabled', f['plan_'+id+'_enabled'] == null ? '1' : f['plan_'+id+'_enabled']);
-      setInput('plan-'+id+'-name', f['plan_'+id+'_name'] || (id === 'starter' ? 'Starter' : id.charAt(0).toUpperCase()+id.slice(1)));
-      setInput('plan-'+id+'-description', f['plan_'+id+'_description'] || '');
-      setInput('plan-'+id+'-fee', f['fee_'+id+'_pct']);
-      setInput('plan-'+id+'-monthly', f['price_'+id+'_monthly']);
-      setInput('plan-'+id+'-annual', f['price_'+id+'_annual']);
-      setInput('plan-'+id+'-test-monthly', f['plan_'+id+'_stripe_test_price_monthly']);
-      setInput('plan-'+id+'-test-annual', f['plan_'+id+'_stripe_test_price_annual']);
-      setInput('plan-'+id+'-live-monthly', f['plan_'+id+'_stripe_live_price_monthly']);
-      setInput('plan-'+id+'-live-annual', f['plan_'+id+'_stripe_live_price_annual']);
-    });
-  }
-  function collectAdminFees(){
-    var fees = {
+	  function fillAdminPlanConfig(f){
+	    renderAdminPlanConfig();
+	    adminFeeSnapshot = Object.assign({}, f || {});
+	    ['starter','pro','scale'].forEach(function(id){
+	      var testDefaults = ADMIN_TEST_PRICE_IDS[id] || {};
+	      setInput('plan-'+id+'-enabled', f['plan_'+id+'_enabled'] == null ? '1' : f['plan_'+id+'_enabled']);
+	      setInput('plan-'+id+'-name', f['plan_'+id+'_name'] || (id === 'starter' ? 'Starter' : id.charAt(0).toUpperCase()+id.slice(1)));
+	      setInput('plan-'+id+'-description', f['plan_'+id+'_description'] || '');
+	      setInput('plan-'+id+'-fee', positiveNumber(f['fee_'+id+'_pct'], ADMIN_PLAN_DEFAULTS[id].fee, true));
+	      setInput('plan-'+id+'-monthly', positiveNumber(f['price_'+id+'_monthly'], ADMIN_PLAN_DEFAULTS[id].monthly, id === 'starter'));
+	      setInput('plan-'+id+'-annual', positiveNumber(f['price_'+id+'_annual'], ADMIN_PLAN_DEFAULTS[id].annual, id === 'starter'));
+	      setInput('plan-'+id+'-test-monthly', f['plan_'+id+'_stripe_test_price_monthly'] || f['plan_'+id+'_stripe_test_price_id_monthly'] || testDefaults.monthly || '');
+	      setInput('plan-'+id+'-test-annual', f['plan_'+id+'_stripe_test_price_annual'] || f['plan_'+id+'_stripe_test_price_id_annual'] || testDefaults.annual || '');
+	      setInput('plan-'+id+'-live-monthly', f['plan_'+id+'_stripe_live_price_monthly'] || f['plan_'+id+'_stripe_live_price_id_monthly']);
+	      setInput('plan-'+id+'-live-annual', f['plan_'+id+'_stripe_live_price_annual'] || f['plan_'+id+'_stripe_live_price_id_annual']);
+	    });
+	    obSetAdminPriceMode(window._obAdminPriceMode || 'test');
+	  }
+	  function positiveNumber(value, fallback, allowZero){
+	    var n = parseFloat(value);
+	    if(Number.isFinite(n) && (allowZero ? n >= 0 : n > 0)) return n;
+	    return fallback;
+	  }
+	  function adminFallback(key, fallback){
+	    return adminFeeSnapshot && adminFeeSnapshot[key] != null && adminFeeSnapshot[key] !== '' ? adminFeeSnapshot[key] : fallback;
+	  }
+	  function nonBlankInput(id, fallbackKey, fallback){
+	    var value = getInput(id);
+	    if(String(value || '').trim() !== '') return value;
+	    return adminFallback(fallbackKey, fallback);
+	  }
+	  function numberInputWithFallback(inputId, fallbackKey, fallback, allowZero){
+	    var value = getInput(inputId);
+	    var n = parseFloat(value);
+	    if(Number.isFinite(n) && (allowZero ? n >= 0 : n > 0)) return n;
+	    var legacy = document.getElementById(fallbackKey.replace(/_/g, '-'));
+	    if(legacy){
+	      n = parseFloat(legacy.value);
+	      if(Number.isFinite(n) && (allowZero ? n >= 0 : n > 0)) return n;
+	    }
+	    return positiveNumber(adminFallback(fallbackKey, fallback), fallback, allowZero);
+	  }
+	  function collectAdminFees(){
+	    var fees = {
       platform_fee_chat:parseFloat((document.getElementById('fee-pct-chat')||{}).value || 20),
       platform_fee_voice:parseFloat((document.getElementById('fee-pct-voice')||{}).value || 20),
       platform_fee_video:parseFloat((document.getElementById('fee-pct-video')||{}).value || 20),
       platform_fee_fixed:parseFloat((document.getElementById('fee-pct-pkg')||{}).value || 15),
       fee_enterprise_pct:parseFloat((document.getElementById('fee-enterprise-pct')||{}).value || 3),
       price_starter_trial:parseFloat((document.getElementById('price-starter-trial')||{}).value || 0)
-    };
-    ['starter','pro','scale'].forEach(function(id){
-      fees['plan_'+id+'_enabled'] = getInput('plan-'+id+'-enabled');
-      fees['plan_'+id+'_name'] = getInput('plan-'+id+'-name');
-      fees['plan_'+id+'_description'] = getInput('plan-'+id+'-description');
-      fees['fee_'+id+'_pct'] = parseFloat(getInput('plan-'+id+'-fee') || (id === 'starter' ? 12 : id === 'pro' ? 8 : 5));
-      fees['price_'+id+'_monthly'] = parseFloat(getInput('plan-'+id+'-monthly') || 0);
-      fees['price_'+id+'_annual'] = parseFloat(getInput('plan-'+id+'-annual') || 0);
-      fees['plan_'+id+'_stripe_test_price_monthly'] = getInput('plan-'+id+'-test-monthly').trim();
-      fees['plan_'+id+'_stripe_test_price_annual'] = getInput('plan-'+id+'-test-annual').trim();
-      fees['plan_'+id+'_stripe_live_price_monthly'] = getInput('plan-'+id+'-live-monthly').trim();
-      fees['plan_'+id+'_stripe_live_price_annual'] = getInput('plan-'+id+'-live-annual').trim();
+	    };
+	    ['starter','pro','scale'].forEach(function(id){
+	      var testDefaults = ADMIN_TEST_PRICE_IDS[id] || {};
+	      fees['plan_'+id+'_enabled'] = getInput('plan-'+id+'-enabled');
+	      fees['plan_'+id+'_name'] = nonBlankInput('plan-'+id+'-name', 'plan_'+id+'_name', id === 'starter' ? 'Starter' : id.charAt(0).toUpperCase()+id.slice(1));
+	      fees['plan_'+id+'_description'] = nonBlankInput('plan-'+id+'-description', 'plan_'+id+'_description', '');
+	      fees['fee_'+id+'_pct'] = numberInputWithFallback('plan-'+id+'-fee', 'fee_'+id+'_pct', ADMIN_PLAN_DEFAULTS[id].fee, true);
+	      fees['price_'+id+'_monthly'] = numberInputWithFallback('plan-'+id+'-monthly', 'price_'+id+'_monthly', ADMIN_PLAN_DEFAULTS[id].monthly, id === 'starter');
+	      fees['price_'+id+'_annual'] = numberInputWithFallback('plan-'+id+'-annual', 'price_'+id+'_annual', ADMIN_PLAN_DEFAULTS[id].annual, id === 'starter');
+	      fees['plan_'+id+'_stripe_test_price_monthly'] = String(nonBlankInput('plan-'+id+'-test-monthly', 'plan_'+id+'_stripe_test_price_monthly', adminFallback('plan_'+id+'_stripe_test_price_id_monthly', testDefaults.monthly || ''))).trim();
+	      fees['plan_'+id+'_stripe_test_price_annual'] = String(nonBlankInput('plan-'+id+'-test-annual', 'plan_'+id+'_stripe_test_price_annual', adminFallback('plan_'+id+'_stripe_test_price_id_annual', testDefaults.annual || ''))).trim();
+	      fees['plan_'+id+'_stripe_live_price_monthly'] = String(nonBlankInput('plan-'+id+'-live-monthly', 'plan_'+id+'_stripe_live_price_monthly', adminFallback('plan_'+id+'_stripe_live_price_id_monthly', ''))).trim();
+	      fees['plan_'+id+'_stripe_live_price_annual'] = String(nonBlankInput('plan-'+id+'-live-annual', 'plan_'+id+'_stripe_live_price_annual', adminFallback('plan_'+id+'_stripe_live_price_id_annual', ''))).trim();
       var legacyFee = document.getElementById('fee-'+id+'-pct'); if(legacyFee) legacyFee.value = fees['fee_'+id+'_pct'];
       var legacyMonthly = document.getElementById('price-'+id+'-monthly'); if(legacyMonthly) legacyMonthly.value = fees['price_'+id+'_monthly'];
       var legacyAnnual = document.getElementById('price-'+id+'-annual'); if(legacyAnnual) legacyAnnual.value = fees['price_'+id+'_annual'];
@@ -24678,11 +24753,12 @@ window._handleRTCMessage=function(d){
       var banner = document.getElementById('payment-setup-banner');
       content.insertBefore(card, banner ? banner.nextSibling : content.firstChild);
     }
-    var p = d.current_plan || planState.current || planDefaults[0];
-    var connect = d.stripe_connect || {};
-	    card.innerHTML = '<div><div style="font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:var(--gray-400);font-weight:800;">Ownlybiz plan</div>'
-	      + '<div style="font-family:var(--font-head);font-size:22px;font-weight:800;color:var(--brown);margin-top:2px;">'+esc(p.name || 'Starter')+'</div>'
-	      + '<div style="font-size:13px;color:var(--gray-500);margin-top:4px;">You keep <strong style="color:var(--sage);">'+Math.round(p.expert_keep_pct || 88)+'%</strong> of paid sessions. Stripe Connect: '+(connect.configured ? 'connected' : 'not connected')+'</div></div>'
+	    var p = d.current_plan || planState.current || planDefaults[0];
+	    var connect = d.stripe_connect || {};
+	    var connectText = (connect.configured || connect.connected) ? 'connected' : ((connect.pending || connect.account_id) ? 'setup pending' : 'not connected');
+		    card.innerHTML = '<div><div style="font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:var(--gray-400);font-weight:800;">Ownlybiz plan</div>'
+		      + '<div style="font-family:var(--font-head);font-size:22px;font-weight:800;color:var(--brown);margin-top:2px;">'+esc(p.name || 'Starter')+'</div>'
+		      + '<div style="font-size:13px;color:var(--gray-500);margin-top:4px;">You keep <strong style="color:var(--sage);">'+Math.round(p.expert_keep_pct || 88)+'%</strong> of paid sessions. Stripe Connect: '+connectText+'</div></div>'
 	      + '<button class="btn btn-primary btn-sm" onclick="dbNav(document.querySelector(\'.db-nav-item[onclick*=payments]\'),\'payments\')">Manage / Upgrade Plan</button>';
 	  }
 	  function syncDashboardPaymentBannerFromBilling(d){
@@ -24785,11 +24861,12 @@ window._handleRTCMessage=function(d){
   };
   function planManagementHtml(d, context){
     context = context || 'payments';
-    var p = d.current_plan || planDefaults[0];
-    var sub = d.subscription || {};
-    var plans = d.plans || planState.plans || planDefaults;
-    var connect = d.stripe_connect || {};
-    var interval = sub.interval || planState.interval || 'monthly';
+	    var p = d.current_plan || planDefaults[0];
+	    var sub = d.subscription || {};
+	    var plans = d.plans || planState.plans || planDefaults;
+	    var connect = d.stripe_connect || {};
+	    var connectStatus = (connect.configured || connect.connected) ? 'Connected for client payouts' : ((connect.pending || connect.account_id) ? 'Stripe setup pending' : 'Not connected for client payouts');
+	    var interval = sub.interval || planState.interval || 'monthly';
     planState.selected = p.id || 'starter';
     planState.interval = interval;
     var pending = sub.pending_plan ? '<div class="ob-plan-status-pill"><strong>Pending change</strong><span>'+esc(sub.pending_plan)+' '+esc(sub.pending_interval || '')+'</span></div>' : '';
@@ -24799,7 +24876,7 @@ window._handleRTCMessage=function(d){
       + '</div>'
       + '<div class="ob-plan-status-grid">'
       + '<div class="ob-plan-status-pill"><strong>Subscription</strong><span>'+esc(p.name || 'Starter')+' · '+esc(sub.status || 'active')+' · you keep '+Math.round(p.expert_keep_pct || 88)+'%</span></div>'
-      + '<div class="ob-plan-status-pill"><strong>Stripe Connect</strong><span>'+(connect.configured ? 'Connected for client payouts' : 'Not connected for client payouts')+'</span></div>'
+	      + '<div class="ob-plan-status-pill"><strong>Stripe Connect</strong><span>'+connectStatus+'</span></div>'
       + pending
       + '</div>'
       + planCardsHtml(plans, p.id || 'starter', interval)
@@ -25100,11 +25177,15 @@ window._handleRTCMessage=function(d){
   };
   window.saveAdminFees = async function(){
     renderAdminPlanConfig();
+    var btn = document.getElementById('ob-admin-save-all-fees');
+    var oldText = btn && btn.textContent;
+    if(btn){ btn.disabled = true; btn.textContent = 'Saving...'; }
     try {
       await obJson('/api/admin/fees', {method:'PUT', body:collectAdminFees()});
       toastOk('Fee and plan configuration saved');
       if(typeof window.loadAdminFeeConfig === 'function') window.loadAdminFeeConfig();
     } catch(e) { toastErr(e.message || 'Could not save fee configuration'); }
+    finally { if(btn){ btn.disabled = false; btn.textContent = oldText || 'Save all settings'; } }
   };
 
 	  function feePctFromSession(sess){
@@ -25270,7 +25351,7 @@ window._handleRTCMessage=function(d){
     var status = q.get('billing');
     if(!status) return;
     window._obBillingReturnHandled = true;
-    if(status === 'success') toastOk('Stripe checkout complete. Your plan updates after Stripe confirms the subscription.');
+    if(status === 'success') toastOk('Stripe checkout complete. Finalizing your plan with Stripe...');
     else if(status === 'cancelled') toastErr('Checkout cancelled. Your current plan is unchanged.');
     else if(status === 'portal') toastOk('Returned from Stripe billing.');
     setTimeout(function(){
@@ -25279,6 +25360,8 @@ window._handleRTCMessage=function(d){
       }
       refreshBillingUi();
     }, 250);
+    setTimeout(refreshBillingUi, 1800);
+    setTimeout(refreshBillingUi, 5000);
     setTimeout(function(){
       try {
         var clean = new URL(location.href);
@@ -25308,6 +25391,246 @@ window._handleRTCMessage=function(d){
     try { role = (JSON.parse(sessionStorage.getItem('ob_u') || '{}').role || '').toLowerCase(); } catch(e) {}
     if((role === 'expert' || role === 'admin') && (document.querySelector('#view-3.active') || document.getElementById('ob-payments-plan-card'))) refreshBillingUi();
   }, 30000);
+})();
+</script>
+<style>
+  .ob-free-minute-policy-note{
+    display:flex;
+    align-items:flex-start;
+    gap:10px;
+    background:rgba(122,140,110,.09);
+    border:1px solid rgba(122,140,110,.24);
+    border-radius:10px;
+    padding:12px 14px;
+    margin:10px 0 4px;
+    color:var(--brown);
+    font-size:13px;
+    line-height:1.5;
+  }
+  .ob-free-minute-policy-note strong{display:block;font-size:14px;margin-bottom:2px;}
+  .free-mins-row.ob-free-disabled{opacity:.62;}
+  .free-mins-row.ob-free-disabled .rate-btn{pointer-events:none;opacity:.45;}
+  .free-mins-row .rate-btn[disabled]{pointer-events:none;opacity:.45;}
+  .ob-plan-free-line{font-size:12px;color:var(--sage);font-weight:800;margin-top:8px;}
+  .ob-admin-fee-save-bar{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:16px;
+    background:rgba(196,98,45,.12);
+    border:1px solid rgba(196,98,45,.35);
+    border-radius:14px;
+    padding:16px 20px;
+    margin-bottom:20px;
+  }
+  .ob-admin-save-title{font-weight:800;color:rgba(246,241,233,.95);font-size:15px;}
+  .ob-admin-save-sub{color:rgba(246,241,233,.55);font-size:12px;line-height:1.5;margin-top:3px;}
+  #ob-admin-save-all-fees{
+    background:var(--terra);
+    color:white;
+    border:none;
+    border-radius:10px;
+    padding:12px 18px;
+    font-weight:800;
+    cursor:pointer;
+    white-space:nowrap;
+  }
+  #ob-admin-save-all-fees:disabled{opacity:.65;cursor:wait;}
+  .ob-admin-plan-head{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:16px;}
+  .ob-admin-mode-toggle{display:inline-flex;border:1px solid rgba(246,241,233,.16);border-radius:10px;overflow:hidden;background:rgba(246,241,233,.04);}
+  .ob-admin-mode-toggle button{border:0;background:transparent;color:rgba(246,241,233,.65);padding:9px 16px;font-weight:800;cursor:pointer;}
+  .ob-admin-mode-toggle button.active{background:var(--terra);color:white;}
+  .ob-admin-free-note{font-size:12px;line-height:1.5;color:rgba(246,241,233,.55);background:rgba(246,241,233,.045);border:1px solid rgba(246,241,233,.1);border-radius:10px;padding:12px;margin-top:10px;}
+  @media (max-width: 760px){
+    .ob-admin-fee-save-bar{align-items:flex-start;flex-direction:column;}
+    #ob-admin-save-all-fees{width:100%;}
+  }
+</style>
+<script>
+(function(){
+  var LIMITS = {starter:0, pro:5, scale:10};
+  var CHANNELS = ['chat','voice','video'];
+
+  function normPlan(plan){
+    plan = String(plan || '').trim().toLowerCase();
+    if(plan === 'free') return 'starter';
+    return LIMITS.hasOwnProperty(plan) ? plan : '';
+  }
+  function intVal(value){
+    var n = parseInt(value, 10);
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  }
+  function readJson(key){
+    var raw = '';
+    try { raw = sessionStorage.getItem(key) || localStorage.getItem(key) || ''; } catch(e) {}
+    if(!raw) return null;
+    try { return JSON.parse(raw); } catch(e) { return null; }
+  }
+  function knownPlan(){
+    var plan = normPlan(window._obFreeMinutePlan);
+    if(plan) return plan;
+    var billing = readJson('ob_billing_snapshot_v1');
+    plan = normPlan(billing && billing.current_plan && billing.current_plan.id);
+    if(plan) return plan;
+    var user = readJson('ob_u') || {};
+    plan = normPlan(user.subscription_plan || user.plan || user.current_plan || (user.expert && (user.expert.subscription_plan || user.expert.plan)));
+    if(plan) return plan;
+    plan = normPlan(window._currentExpert && (window._currentExpert.subscription_plan || window._currentExpert.plan));
+    return plan || 'starter';
+  }
+  function limitForPlan(plan){
+    plan = normPlan(plan) || 'starter';
+    return LIMITS[plan] || 0;
+  }
+  function clamp(value, plan){
+    return Math.min(intVal(value), limitForPlan(plan));
+  }
+  function valueOf(el){
+    if(!el) return 0;
+    return intVal(('value' in el) ? el.value : el.textContent);
+  }
+  function writeEl(id, value){
+    var el = document.getElementById(id);
+    if(!el) return;
+    if('value' in el) el.value = String(value);
+    else el.textContent = String(value);
+  }
+  function policyCopy(plan, limit){
+    if(plan === 'pro') return 'Pro includes up to 5 free intro minutes for a new client only. Returning clients are billed from minute one.';
+    if(plan === 'scale') return 'Scale includes up to 10 free intro minutes for a new client only. Returning clients are billed from minute one.';
+    return 'Free intro minutes are available on Pro and Scale. Starter experts can still offer paid sessions, but no free intro minutes are applied.';
+  }
+  function ensurePolicyNote(plan, limit){
+    var title = Array.from(document.querySelectorAll('.pay-section-title')).find(function(el){
+      return /Free Minutes/i.test(el.textContent || '');
+    });
+    var section = title && title.closest ? title.closest('.pay-section') : null;
+    if(!section) return;
+    var note = document.getElementById('ob-free-minute-policy-note');
+    if(!note){
+      note = document.createElement('div');
+      note.id = 'ob-free-minute-policy-note';
+      note.className = 'ob-free-minute-policy-note';
+      var sub = section.querySelector('.pay-section-sub');
+      if(sub && sub.parentNode) sub.parentNode.insertBefore(note, sub.nextSibling);
+      else section.insertBefore(note, section.firstChild);
+    }
+    note.innerHTML = '<span aria-hidden="true">✓</span><span><strong>Free intro policy</strong>' + policyCopy(plan, limit) + '</span>';
+    var sub = section.querySelector('.pay-section-sub');
+    if(sub) sub.textContent = 'Free intro minutes are only for first-time clients and are capped by your Ownlybiz plan.';
+    Array.from(section.querySelectorAll('.free-mins-row')).forEach(function(row){
+      if(/Repeat Client Free Minutes/i.test(row.textContent || '')) row.style.display = 'none';
+    });
+  }
+  function setFreeState(plan){
+    plan = normPlan(plan) || knownPlan();
+    var limit = limitForPlan(plan);
+    ensurePolicyNote(plan, limit);
+    CHANNELS.forEach(function(ch){
+      var val = clamp(valueOf(document.getElementById('fm-' + ch)) || valueOf(document.getElementById('free-min-' + ch)) || (window.freeMinutes && window.freeMinutes[ch]), plan);
+      writeEl('fm-' + ch, val);
+      writeEl('free-min-' + ch, val);
+      if(ch === 'chat') writeEl('sfield-free-min', val);
+      if(window.freeMinutes && typeof window.freeMinutes === 'object') window.freeMinutes[ch] = val;
+      var fm = document.getElementById('fm-' + ch);
+      var row = fm && fm.closest ? fm.closest('.free-mins-row') : null;
+      if(row){
+        row.classList.toggle('ob-free-disabled', limit <= 0);
+        Array.from(row.querySelectorAll('button')).forEach(function(btn){
+          btn.disabled = limit <= 0;
+          btn.title = limit <= 0 ? 'Upgrade to Pro or Scale to offer free intro minutes' : 'Limit: ' + limit + ' minutes for new clients only';
+        });
+        var desc = row.querySelector('.free-mins-desc');
+        if(desc) desc.textContent = limit <= 0 ? 'Available on Pro and Scale for new clients only' : 'Up to ' + limit + ' minutes for new clients only';
+      }
+    });
+    if(typeof window.obRefreshSessionStartModes === 'function') {
+      try { window.obRefreshSessionStartModes(); } catch(e) {}
+    }
+  }
+  function clampRatePayload(rates){
+    rates = rates || {};
+    var plan = normPlan(rates.free_minute_plan) || knownPlan();
+    if(rates.free_minute_plan) window._obFreeMinutePlan = plan;
+    rates.chat_free_min = clamp(rates.chat_free_min != null ? rates.chat_free_min : rates.free_minutes, plan);
+    rates.voice_free_min = clamp(rates.voice_free_min, plan);
+    rates.video_free_min = clamp(rates.video_free_min, plan);
+    rates.free_minutes = rates.chat_free_min;
+    rates.free_minute_limit = limitForPlan(plan);
+    rates.free_minute_plan = plan;
+    rates.free_minutes_new_clients_only = true;
+    return rates;
+  }
+  function enhancePlanCards(){
+    document.querySelectorAll('[data-ob-signup-plan], [data-ob-billing-plan]').forEach(function(card){
+      var plan = normPlan(card.getAttribute('data-ob-signup-plan') || card.getAttribute('data-ob-billing-plan'));
+      if(!plan || card.querySelector('.ob-plan-free-line')) return;
+      var limit = limitForPlan(plan);
+      var line = document.createElement('div');
+      line.className = 'ob-plan-free-line';
+      line.textContent = limit > 0 ? 'Free intro: up to ' + limit + ' min for new clients' : 'Free intro: paid plans only';
+      card.appendChild(line);
+    });
+  }
+  var oldAdjust = window.adjustFreeMin;
+  window.adjustFreeMin = function(ch, delta){
+    var plan = knownPlan();
+    var limit = limitForPlan(plan);
+    if(delta === undefined){
+      var single = document.getElementById('free-min-val');
+      if(single){
+        single.textContent = String(clamp(valueOf(single) + Number(ch || 0), plan));
+      }
+      return;
+    }
+    ch = String(ch || '').toLowerCase();
+    if(CHANNELS.indexOf(ch) === -1 && oldAdjust) {
+      var ret = oldAdjust.apply(this, arguments);
+      setFreeState(plan);
+      return ret;
+    }
+    if(limit <= 0) {
+      setFreeState(plan);
+      if(typeof window.toastMsg === 'function') window.toastMsg('Free intro minutes are available on Pro and Scale.', 'err');
+      return;
+    }
+    var el = document.getElementById('fm-' + ch);
+    if(el) el.textContent = String(clamp(valueOf(el) + Number(delta || 0), plan));
+    setFreeState(plan);
+  };
+  if(window.obSyncRateControls && !window.obSyncRateControls._obFreePolicyWrapped){
+    var oldSync = window.obSyncRateControls;
+    window.obSyncRateControls = function(rates){
+      rates = clampRatePayload(Object.assign({}, rates || {}));
+      var ret = oldSync.call(this, rates);
+      setFreeState(rates.free_minute_plan);
+      enhancePlanCards();
+      return ret;
+    };
+    window.obSyncRateControls._obFreePolicyWrapped = true;
+  }
+  if(!window.fetch._obFreePolicyWrapped){
+    var oldFetch = window.fetch;
+    window.fetch = function(input, init){
+      try {
+        var url = typeof input === 'string' ? input : (input && input.url) || '';
+        if(init && init.body && /\/api\/(?:experts|expert-payments)\/rates(?:\?|$)|\/api\/admin\/experts\/[^/]+\/rates(?:\?|$)/.test(url)){
+          var body = typeof init.body === 'string' ? JSON.parse(init.body) : init.body;
+          if(body && typeof body === 'object'){
+            init = Object.assign({}, init, { body: JSON.stringify(clampRatePayload(body)) });
+          }
+        }
+      } catch(e) {}
+      return oldFetch.call(this, input, init);
+    };
+    window.fetch._obFreePolicyWrapped = true;
+  }
+  function bootFreePolicy(){
+    setFreeState(knownPlan());
+    enhancePlanCards();
+  }
+  document.addEventListener('DOMContentLoaded', bootFreePolicy);
+  [200, 800, 1800, 4000].forEach(function(ms){ setTimeout(bootFreePolicy, ms); });
 })();
 </script>
 </body>

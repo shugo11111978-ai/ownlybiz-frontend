@@ -2056,7 +2056,7 @@ if (!window.toast) {
         <div class="model-card"><div class="model-card-icon">🏛️</div><h3>Independent Practice</h3><p>You are an independent professional, not an Ownlybiz employee or contractor. Ownlybiz provides infrastructure only.</p></div>
         <div class="model-card"><div class="model-card-icon">⚖️</div><h3>Legal Clarity</h3><p>You accept full responsibility for your services, credentials, and compliance. Clients are hiring you — not Ownlybiz.</p></div>
         <div class="model-card"><div class="model-card-icon">💳</div><h3>Direct Payments</h3><p>Connect your own Stripe Connect or PayPal Business account. Client payments flow directly to you, minus a transparent platform fee.</p></div>
-        <div class="model-card"><div class="model-card-icon">⏱️</div><h3>Free Minutes: Your Tool</h3><p>Offer 0–10 free intro minutes per session type. Clients experience your value first. You control the offer — you absorb the cost.</p></div>
+        <div class="model-card"><div class="model-card-icon">⏱️</div><h3>Free Minutes: Your Tool</h3><p>Pro can offer up to 5 free intro minutes, Scale up to 10, and only for a client's first session with you.</p></div>
       </div>
     </div>
   </section>
@@ -2840,13 +2840,13 @@ if (!window.toast) {
           </div>
         </div>
         <div class="form-group">
-          <label class="form-label">Free Intro Minutes (0–10)</label>
+          <label class="form-label">Free Intro Minutes (plan-capped)</label>
           <div class="rate-stepper">
             <button onclick="adjustFreeMin(-1)">−</button>
             <div class="rate-stepper-val" id="free-min-val">1</div>
             <button onclick="adjustFreeMin(1)">+</button>
           </div>
-          <p style="font-size:12px;color:var(--gray-400);margin-top:6px;">Clients get this many free minutes before billing starts. This is your marketing cost.</p>
+          <p style="font-size:12px;color:var(--gray-400);margin-top:6px;">Free intro minutes are capped by plan and only apply to first-time clients.</p>
         </div>
         <div class="form-group">
           <label class="form-label">Active Channels</label>
@@ -25395,6 +25395,213 @@ window._handleRTCMessage=function(d){
     try { role = (JSON.parse(sessionStorage.getItem('ob_u') || '{}').role || '').toLowerCase(); } catch(e) {}
     if((role === 'expert' || role === 'admin') && (document.querySelector('#view-3.active') || document.getElementById('ob-payments-plan-card'))) refreshBillingUi();
   }, 30000);
+})();
+</script>
+<style>
+  .ob-free-minute-policy-note{
+    display:flex;
+    align-items:flex-start;
+    gap:10px;
+    background:rgba(122,140,110,.09);
+    border:1px solid rgba(122,140,110,.24);
+    border-radius:10px;
+    padding:12px 14px;
+    margin:10px 0 4px;
+    color:var(--brown);
+    font-size:13px;
+    line-height:1.5;
+  }
+  .ob-free-minute-policy-note strong{display:block;font-size:14px;margin-bottom:2px;}
+  .free-mins-row.ob-free-disabled{opacity:.62;}
+  .free-mins-row.ob-free-disabled .rate-btn{pointer-events:none;opacity:.45;}
+  .free-mins-row .rate-btn[disabled]{pointer-events:none;opacity:.45;}
+  .ob-plan-free-line{font-size:12px;color:var(--sage);font-weight:800;margin-top:8px;}
+</style>
+<script>
+(function(){
+  var LIMITS = {starter:0, pro:5, scale:10};
+  var CHANNELS = ['chat','voice','video'];
+
+  function normPlan(plan){
+    plan = String(plan || '').trim().toLowerCase();
+    if(plan === 'free') return 'starter';
+    return LIMITS.hasOwnProperty(plan) ? plan : '';
+  }
+  function intVal(value){
+    var n = parseInt(value, 10);
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  }
+  function readJson(key){
+    var raw = '';
+    try { raw = sessionStorage.getItem(key) || localStorage.getItem(key) || ''; } catch(e) {}
+    if(!raw) return null;
+    try { return JSON.parse(raw); } catch(e) { return null; }
+  }
+  function knownPlan(){
+    var plan = normPlan(window._obFreeMinutePlan);
+    if(plan) return plan;
+    var billing = readJson('ob_billing_snapshot_v1');
+    plan = normPlan(billing && billing.current_plan && billing.current_plan.id);
+    if(plan) return plan;
+    var user = readJson('ob_u') || {};
+    plan = normPlan(user.subscription_plan || user.plan || user.current_plan || (user.expert && (user.expert.subscription_plan || user.expert.plan)));
+    if(plan) return plan;
+    plan = normPlan(window._currentExpert && (window._currentExpert.subscription_plan || window._currentExpert.plan));
+    return plan || 'starter';
+  }
+  function limitForPlan(plan){
+    plan = normPlan(plan) || 'starter';
+    return LIMITS[plan] || 0;
+  }
+  function clamp(value, plan){
+    return Math.min(intVal(value), limitForPlan(plan));
+  }
+  function valueOf(el){
+    if(!el) return 0;
+    return intVal(('value' in el) ? el.value : el.textContent);
+  }
+  function writeEl(id, value){
+    var el = document.getElementById(id);
+    if(!el) return;
+    if('value' in el) el.value = String(value);
+    else el.textContent = String(value);
+  }
+  function policyCopy(plan, limit){
+    if(plan === 'pro') return 'Pro includes up to 5 free intro minutes for a new client only. Returning clients are billed from minute one.';
+    if(plan === 'scale') return 'Scale includes up to 10 free intro minutes for a new client only. Returning clients are billed from minute one.';
+    return 'Free intro minutes are available on Pro and Scale. Starter experts can still offer paid sessions, but no free intro minutes are applied.';
+  }
+  function ensurePolicyNote(plan, limit){
+    var title = Array.from(document.querySelectorAll('.pay-section-title')).find(function(el){
+      return /Free Minutes/i.test(el.textContent || '');
+    });
+    var section = title && title.closest ? title.closest('.pay-section') : null;
+    if(!section) return;
+    var note = document.getElementById('ob-free-minute-policy-note');
+    if(!note){
+      note = document.createElement('div');
+      note.id = 'ob-free-minute-policy-note';
+      note.className = 'ob-free-minute-policy-note';
+      var sub = section.querySelector('.pay-section-sub');
+      if(sub && sub.parentNode) sub.parentNode.insertBefore(note, sub.nextSibling);
+      else section.insertBefore(note, section.firstChild);
+    }
+    note.innerHTML = '<span aria-hidden="true">✓</span><span><strong>Free intro policy</strong>' + policyCopy(plan, limit) + '</span>';
+    var sub = section.querySelector('.pay-section-sub');
+    if(sub) sub.textContent = 'Free intro minutes are only for first-time clients and are capped by your Ownlybiz plan.';
+    Array.from(section.querySelectorAll('.free-mins-row')).forEach(function(row){
+      if(/Repeat Client Free Minutes/i.test(row.textContent || '')) row.style.display = 'none';
+    });
+  }
+  function setFreeState(plan){
+    plan = normPlan(plan) || knownPlan();
+    var limit = limitForPlan(plan);
+    ensurePolicyNote(plan, limit);
+    CHANNELS.forEach(function(ch){
+      var val = clamp(valueOf(document.getElementById('fm-' + ch)) || valueOf(document.getElementById('free-min-' + ch)) || (window.freeMinutes && window.freeMinutes[ch]), plan);
+      writeEl('fm-' + ch, val);
+      writeEl('free-min-' + ch, val);
+      if(ch === 'chat') writeEl('sfield-free-min', val);
+      if(window.freeMinutes && typeof window.freeMinutes === 'object') window.freeMinutes[ch] = val;
+      var fm = document.getElementById('fm-' + ch);
+      var row = fm && fm.closest ? fm.closest('.free-mins-row') : null;
+      if(row){
+        row.classList.toggle('ob-free-disabled', limit <= 0);
+        Array.from(row.querySelectorAll('button')).forEach(function(btn){
+          btn.disabled = limit <= 0;
+          btn.title = limit <= 0 ? 'Upgrade to Pro or Scale to offer free intro minutes' : 'Limit: ' + limit + ' minutes for new clients only';
+        });
+        var desc = row.querySelector('.free-mins-desc');
+        if(desc) desc.textContent = limit <= 0 ? 'Available on Pro and Scale for new clients only' : 'Up to ' + limit + ' minutes for new clients only';
+      }
+    });
+    if(typeof window.obRefreshSessionStartModes === 'function') {
+      try { window.obRefreshSessionStartModes(); } catch(e) {}
+    }
+  }
+  function clampRatePayload(rates){
+    rates = rates || {};
+    var plan = normPlan(rates.free_minute_plan) || knownPlan();
+    if(rates.free_minute_plan) window._obFreeMinutePlan = plan;
+    rates.chat_free_min = clamp(rates.chat_free_min != null ? rates.chat_free_min : rates.free_minutes, plan);
+    rates.voice_free_min = clamp(rates.voice_free_min, plan);
+    rates.video_free_min = clamp(rates.video_free_min, plan);
+    rates.free_minutes = rates.chat_free_min;
+    rates.free_minute_limit = limitForPlan(plan);
+    rates.free_minute_plan = plan;
+    rates.free_minutes_new_clients_only = true;
+    return rates;
+  }
+  function enhancePlanCards(){
+    document.querySelectorAll('[data-ob-signup-plan], [data-ob-billing-plan]').forEach(function(card){
+      var plan = normPlan(card.getAttribute('data-ob-signup-plan') || card.getAttribute('data-ob-billing-plan'));
+      if(!plan || card.querySelector('.ob-plan-free-line')) return;
+      var limit = limitForPlan(plan);
+      var line = document.createElement('div');
+      line.className = 'ob-plan-free-line';
+      line.textContent = limit > 0 ? 'Free intro: up to ' + limit + ' min for new clients' : 'Free intro: paid plans only';
+      card.appendChild(line);
+    });
+  }
+  var oldAdjust = window.adjustFreeMin;
+  window.adjustFreeMin = function(ch, delta){
+    var plan = knownPlan();
+    var limit = limitForPlan(plan);
+    if(delta === undefined){
+      var single = document.getElementById('free-min-val');
+      if(single){
+        single.textContent = String(clamp(valueOf(single) + Number(ch || 0), plan));
+      }
+      return;
+    }
+    ch = String(ch || '').toLowerCase();
+    if(CHANNELS.indexOf(ch) === -1 && oldAdjust) {
+      var ret = oldAdjust.apply(this, arguments);
+      setFreeState(plan);
+      return ret;
+    }
+    if(limit <= 0) {
+      setFreeState(plan);
+      if(typeof window.toastMsg === 'function') window.toastMsg('Free intro minutes are available on Pro and Scale.', 'err');
+      return;
+    }
+    var el = document.getElementById('fm-' + ch);
+    if(el) el.textContent = String(clamp(valueOf(el) + Number(delta || 0), plan));
+    setFreeState(plan);
+  };
+  if(window.obSyncRateControls && !window.obSyncRateControls._obFreePolicyWrapped){
+    var oldSync = window.obSyncRateControls;
+    window.obSyncRateControls = function(rates){
+      rates = clampRatePayload(Object.assign({}, rates || {}));
+      var ret = oldSync.call(this, rates);
+      setFreeState(rates.free_minute_plan);
+      enhancePlanCards();
+      return ret;
+    };
+    window.obSyncRateControls._obFreePolicyWrapped = true;
+  }
+  if(!window.fetch._obFreePolicyWrapped){
+    var oldFetch = window.fetch;
+    window.fetch = function(input, init){
+      try {
+        var url = typeof input === 'string' ? input : (input && input.url) || '';
+        if(init && init.body && /\/api\/(?:experts|expert-payments)\/rates(?:\?|$)|\/api\/admin\/experts\/[^/]+\/rates(?:\?|$)/.test(url)){
+          var body = typeof init.body === 'string' ? JSON.parse(init.body) : init.body;
+          if(body && typeof body === 'object'){
+            init = Object.assign({}, init, { body: JSON.stringify(clampRatePayload(body)) });
+          }
+        }
+      } catch(e) {}
+      return oldFetch.call(this, input, init);
+    };
+    window.fetch._obFreePolicyWrapped = true;
+  }
+  function bootFreePolicy(){
+    setFreeState(knownPlan());
+    enhancePlanCards();
+  }
+  document.addEventListener('DOMContentLoaded', bootFreePolicy);
+  [200, 800, 1800, 4000].forEach(function(ms){ setTimeout(bootFreePolicy, ms); });
 })();
 </script>
 </body>

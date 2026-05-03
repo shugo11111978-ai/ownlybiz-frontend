@@ -12223,6 +12223,7 @@ async function savePaymentConfig() {
       if(typeof updateFeeDisplay==='function') updateFeeDisplay();
     } catch {}
   }
+  window.loadAdminFeeConfig = loadAdminFeeConfig;
 
 	  /* ── Admin platform settings ──────────────────────── */
 	  async function loadAdminSettings() {
@@ -12345,7 +12346,7 @@ async function savePaymentConfig() {
     _origAdminNav?.(el,panel);
     if(!READY||!Auth.isAdmin) return;
     setTimeout(()=>{
-	      const map={dashboard:loadAdminDashboard,experts:loadAdminExperts,revenue:loadAdminRevenue,analytics:loadAdminAnalytics,moderation:loadAdminModeration,support:loadAdminSupport,promotions:loadAdminPromotions,payouts:loadAdminPayouts,'fee-config':loadAdminFeeConfig,'platform-settings':loadAdminSettings};
+	      const map={dashboard:loadAdminDashboard,experts:loadAdminExperts,revenue:loadAdminRevenue,analytics:loadAdminAnalytics,moderation:loadAdminModeration,support:loadAdminSupport,promotions:loadAdminPromotions,payouts:loadAdminPayouts,'fee-config':function(){ return (window.loadAdminFeeConfig||loadAdminFeeConfig)(); },'platform-settings':loadAdminSettings};
       map[panel]?.();
     },120);
   };
@@ -12377,7 +12378,7 @@ async function savePaymentConfig() {
   ══════════════════════════════════════════════════════ */
   window.OwnlyAPI = {
     Auth, WS, api,
-	    loadExpertDashboard, loadAdminDashboard, loadAdminExperts, loadAdminAnalytics, loadAdminSettings, loadExpertWebsite,
+	    loadExpertDashboard, loadAdminDashboard, loadAdminExperts, loadAdminAnalytics, loadAdminFeeConfig, loadAdminSettings, loadExpertWebsite,
     delPackage: async id=>{ try{ await api('DELETE',`/experts/me/packages/${id}`); loadPackages(); toast('Package removed'); }catch(err){ toast(err.message,'err'); } },
     adminViewExpert: (slug) => window.adminViewExpert(slug),
     adminViewExpertDashboard: (id,slug,name) => window.adminViewExpertDashboard(id,slug,name),
@@ -24627,6 +24628,7 @@ window._handleRTCMessage=function(d){
             + adminInput(id,'live-monthly','Live monthly Price ID','text','live') + adminInput(id,'live-annual','Live annual Price ID','text','live'))
         + '</div>');
     });
+    wireAdminPriceIdInputs(card);
     obSetAdminPriceMode(window._obAdminPriceMode || 'test');
   }
   function ensureAdminFeeSaveBar(){
@@ -24645,7 +24647,23 @@ window._handleRTCMessage=function(d){
   }
   function adminInput(plan, key, label, type, mode){
     var cls = mode ? ' ps-row ob-price-mode-row ob-price-mode-'+mode : 'ps-row';
-    return '<div class="'+cls+'"><div class="ps-label">'+label+'</div><input type="'+type+'" id="plan-'+plan+'-'+key+'" class="admin-input" style="min-width:0;width:100%;"></div>';
+    var attrs = mode
+      ? ' data-ob-price-id-input="1" inputmode="text" autocomplete="off" autocapitalize="none" spellcheck="false" style="min-width:0;width:100%;font-family:monospace;"'
+      : ' style="min-width:0;width:100%;"';
+    return '<div class="'+cls+'"><div class="ps-label">'+label+'</div><input type="'+type+'" id="plan-'+plan+'-'+key+'" class="admin-input"'+attrs+'></div>';
+  }
+  function wireAdminPriceIdInputs(root){
+    Array.from((root || document).querySelectorAll('input[data-ob-price-id-input]')).forEach(function(input){
+      if(input.type !== 'text') input.type = 'text';
+      input.inputMode = 'text';
+      input.autocomplete = 'off';
+      input.autocapitalize = 'none';
+      input.spellcheck = false;
+      if(input._obPriceIdTextReady) return;
+      input._obPriceIdTextReady = true;
+      input.addEventListener('keydown', function(e){ e.stopPropagation(); }, true);
+      input.addEventListener('beforeinput', function(e){ e.stopPropagation(); }, true);
+    });
   }
   window.obSetAdminPriceMode = function(mode){
     mode = mode === 'live' ? 'live' : 'test';
@@ -24686,6 +24704,7 @@ window._handleRTCMessage=function(d){
 	      setInput('plan-'+id+'-live-monthly', f['plan_'+id+'_stripe_live_price_monthly'] || f['plan_'+id+'_stripe_live_price_id_monthly']);
 	      setInput('plan-'+id+'-live-annual', f['plan_'+id+'_stripe_live_price_annual'] || f['plan_'+id+'_stripe_live_price_id_annual']);
 	    });
+	    wireAdminPriceIdInputs(document.getElementById('ob-admin-plan-config') || document);
 	    obSetAdminPriceMode(window._obAdminPriceMode || 'test');
 	  }
 	  function positiveNumber(value, fallback, allowZero){
@@ -25175,6 +25194,7 @@ window._handleRTCMessage=function(d){
       fillAdminPlanConfig(d.fees || d);
     } catch(e) {}
   };
+  if(window.OwnlyAPI) window.OwnlyAPI.loadAdminFeeConfig = window.loadAdminFeeConfig;
   window.saveAdminFees = async function(){
     renderAdminPlanConfig();
     var btn = document.getElementById('ob-admin-save-all-fees');

@@ -5498,6 +5498,10 @@ if (!window.toast) {
           <div id="bov-pay-explainer" style="background:rgba(122,140,110,.07);border:1px solid rgba(122,140,110,.2);border-radius:10px;padding:12px 14px;margin-bottom:18px;font-size:12px;color:var(--brown);line-height:1.6;">
             🔐 Your card is <strong>authorized but not charged</strong> until your session ends. You only pay for the exact minutes you use.
           </div>
+          <div id="bov-wallet-section" style="display:none;margin-bottom:16px;">
+            <div id="bov-wallet-button"></div>
+            <div style="display:flex;align-items:center;gap:10px;margin-top:12px;color:var(--gray-400);font-size:11px;text-transform:uppercase;letter-spacing:.08em;"><span style="height:1px;background:var(--gray-200);flex:1;"></span>or use card<span style="height:1px;background:var(--gray-200);flex:1;"></span></div>
+          </div>
           <!-- Stripe card element -->
           <label style="font-size:12px;font-weight:600;color:#6b7280;margin-bottom:4px;display:block;">Card details</label>
           <div id="bov-card-element" style="background:#fff;border:2px solid #d1d5db;border-radius:10px;padding:4px 12px;margin-bottom:16px;font-size:14px;min-height:56px;pointer-events:all;position:relative;z-index:10;cursor:text;"></div>
@@ -8601,6 +8605,7 @@ function openBookingOverlay(channelId) {
               card.mount('#bov-card-element');
               window._bovCardElement = card;
               window._bovStripe = stripe;
+              if (window._obMountBovWallet) window._obMountBovWallet(stripe);
             }
           }).catch(function(){});
       }, 500);
@@ -8800,6 +8805,7 @@ async function bovAuthorize() {
         mountEl.innerHTML = '';
         cardEl.mount('#bov-card-element');
         window._bovCardElement = cardEl;
+        if (window._obMountBovWallet) window._obMountBovWallet(stripeInst);
         // Need to wait a tick for Stripe to initialize
       }
 
@@ -8820,6 +8826,9 @@ async function bovAuthorize() {
           } else {
             // Card saved — store payment method id and proceed
             window._bovPaymentMethodId = result.setupIntent.payment_method;
+            if (window._obSaveDefaultPaymentMethod && result.setupIntent.payment_method) {
+              window._obSaveDefaultPaymentMethod(result.setupIntent.payment_method).catch(function(){});
+            }
             if (btn) { btn.textContent = 'Card authorized ✓'; }
             // Show connecting state — mark payment as authorized for future sessions
             localStorage.setItem('ob_hpm','1');
@@ -11892,6 +11901,7 @@ async function savePaymentConfig() {
               _card.mount('#bov-card-element');
               window._bovCardElement=_card;
               window._bovStripe=_stripe;
+              if (window._obMountBovWallet) window._obMountBovWallet(_stripe);
               console.log('[BOV] Card mounted after signup, iframe h='+(_mount.querySelector('iframe')?.getBoundingClientRect().height));
             }
           } catch(e){ console.error('[BOV] Card mount error:',e); }
@@ -17073,6 +17083,7 @@ function mountBflCardElement() {
               hidePostalCode: true
             });
             _bflCardElement.mount('#bfl-card-element');
+            if (window._obMountBflWallet) window._obMountBflWallet(_bflStripe);
             _bflCardElement.on('ready', function() { _bflCardReady = true; });
             _bflCardElement.on('change', function(e) {
               var err = document.getElementById('bfl-card-error');
@@ -17095,6 +17106,7 @@ function mountBflCardElement() {
         hidePostalCode: true
       });
       _bflCardElement.mount('#bfl-card-element');
+      if (window._obMountBflWallet) window._obMountBflWallet(_bflStripe);
       _bflCardElement.on('ready', function() { _bflCardReady = true; });
     }
   } catch(e) { console.warn('Stripe init error:', e); }
@@ -17141,6 +17153,9 @@ window.submitBookForLater = function() {
   // STEP B: Save card
   authPromise.then(function(auth) {
     btn.textContent = 'Saving card...';
+    if (window._bflWalletPaymentSaved && (!window._bflWalletPaymentSavedToken || window._bflWalletPaymentSavedToken === auth.token)) {
+      return { auth: auth, cardSaved: true };
+    }
     // Block if Stripe is configured but card not filled in
     if (_bflStripeConfigured === true) {
       if (!_bflStripe || !_bflCardElement) {
@@ -17162,6 +17177,9 @@ window.submitBookForLater = function() {
         if (!d.client_secret) { return { auth: auth, cardSaved: false }; }
         return _bflStripe.confirmCardSetup(d.client_secret, { payment_method: { card: _bflCardElement } }).then(function(result) {
           if (result.error) { var ce = document.getElementById('bfl-card-error'); if (ce) { ce.textContent = result.error.message; ce.style.display = 'block'; } throw new Error('card_error'); }
+          if (window._obSaveDefaultPaymentMethod && result.setupIntent && result.setupIntent.payment_method) {
+            window._obSaveDefaultPaymentMethod(result.setupIntent.payment_method, auth.token).catch(function(){});
+          }
           var sv = document.getElementById('bfl-card-saved'); if (sv) sv.style.display = 'block';
           return { auth: auth, cardSaved: true };
         });
@@ -18002,6 +18020,10 @@ function loadClientSessions() {
       <div id="bfl-card-section" style="margin-bottom:16px;">
         <label style="font-size:12px;font-weight:700;color:var(--brown);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:8px;">Payment Card</label>
         <div style="font-size:12px;color:var(--gray-400);margin-bottom:10px;">Your card will be saved for the session. You won't be charged until the session starts.</div>
+        <div id="bfl-wallet-section" style="display:none;margin-bottom:12px;">
+          <div id="bfl-wallet-button"></div>
+          <div style="display:flex;align-items:center;gap:10px;margin-top:10px;color:var(--gray-400);font-size:10px;text-transform:uppercase;letter-spacing:.08em;"><span style="height:1px;background:var(--gray-200);flex:1;"></span>or use card<span style="height:1px;background:var(--gray-200);flex:1;"></span></div>
+        </div>
         <div id="bfl-card-element" style="padding:12px 14px;border:1.5px solid var(--gray-200);border-radius:10px;background:var(--white);min-height:20px;"><div style="color:var(--gray-400);font-size:13px;" id="bfl-card-loading">Loading payment form...</div></div>
         <div id="bfl-card-error" style="display:none;color:#dc2626;font-size:12px;margin-top:6px;font-weight:600;"></div>
         <div id="bfl-card-saved" style="display:none;background:rgba(34,197,94,.08);border-radius:8px;padding:8px 12px;margin-top:8px;font-size:12px;color:#15803d;font-weight:600;">✓ Card saved securely</div>
@@ -24526,6 +24548,7 @@ window._handleRTCMessage=function(d){
 	    try {
 	      var d = await obJson('/api/billing/plans');
 	      if(Array.isArray(d.plans) && d.plans.length) planState.plans = d.plans;
+	      planState.starterRequiresApproval = !!d.starter_requires_approval;
     } catch(e) {
       planState.plans = planDefaults;
     }
@@ -24577,7 +24600,7 @@ window._handleRTCMessage=function(d){
     if(btn) btn.textContent = p.id === 'starter' ? 'Launch on Starter ->' : 'Continue to secure checkout';
     var hint = document.getElementById('ob-launch-plan-hint');
     if(hint) hint.textContent = p.id === 'starter'
-      ? 'Starter is active immediately. You keep ' + Math.round(p.expert_keep_pct || 88) + '% of each paid session.'
+      ? (planState.starterRequiresApproval ? 'Starter launches after admin approval. We will email you when your dashboard is ready.' : 'Starter is active immediately. You keep ' + Math.round(p.expert_keep_pct || 88) + '% of each paid session.')
       : p.name + ' activates after Stripe confirms the subscription. You keep ' + Math.round(p.expert_keep_pct || 0) + '%.';
     var checkline = document.getElementById('launch-plan-checkline');
     if(checkline) checkline.textContent = p.id === 'starter' ? 'Free to start — no credit card required' : 'Secure Stripe subscription before plan activation';
@@ -24639,12 +24662,39 @@ window._handleRTCMessage=function(d){
   async function finishSignupLaunch(){
     var p = selectedPlan();
     if(p.id === 'starter'){
-      await obJson('/api/billing/starter', {method:'POST', body:{}});
+      var d = await obJson('/api/billing/starter', {method:'POST', body:{source:'signup'}});
+      if(d && d.pending_approval){
+        renderStarterPendingApproval(d.message);
+        return;
+      }
       if(typeof switchView === 'function') switchView(3);
       if(window.OwnlyAPI && window.OwnlyAPI.loadExpertDashboard) setTimeout(function(){ window.OwnlyAPI.loadExpertDashboard(); }, 200);
       return;
     }
     await openSubscriptionCheckout(p.id, planState.interval, 'signup');
+  }
+
+  function renderStarterPendingApproval(message){
+    try {
+      sessionStorage.removeItem('ob_t');
+      sessionStorage.removeItem('ob_u');
+      localStorage.removeItem('ob_client_token');
+    } catch(e) {}
+    var step = document.getElementById('step-7');
+    if(!step) {
+      if(typeof toastMsg === 'function') toastMsg(message || 'Starter account submitted for approval.', 'ok');
+      return;
+    }
+    step.innerHTML = '<div style="text-align:center;max-width:560px;margin:0 auto;padding:20px 0;">'
+      + '<div style="font-size:58px;margin-bottom:14px;">✓</div>'
+      + '<h2 style="font-family:var(--font-head);font-size:30px;color:var(--brown);margin:0 0 10px;">Submitted for approval</h2>'
+      + '<p style="font-size:15px;color:var(--gray-500);line-height:1.7;margin:0 auto 22px;max-width:460px;">' + esc(message || 'Your Starter account is waiting for admin approval. We will email you as soon as it is approved.') + '</p>'
+      + '<div style="background:rgba(122,140,110,.08);border:1px solid rgba(122,140,110,.22);border-radius:14px;padding:16px;text-align:left;margin:0 auto 22px;max-width:440px;">'
+      + '<div style="font-weight:800;color:var(--brown);margin-bottom:6px;">What happens next</div>'
+      + '<div style="font-size:13px;color:var(--gray-500);line-height:1.6;">An Ownlybiz admin reviews Starter applications manually. After approval, you will receive an email and can sign in to your expert dashboard.</div>'
+      + '</div>'
+      + '<button class="btn btn-primary" style="padding:14px 28px;" onclick="switchView(1)">Back to Ownlybiz</button>'
+      + '</div>';
   }
 
   function patchSignupLaunch(){
@@ -24654,7 +24704,7 @@ window._handleRTCMessage=function(d){
     btn.onclick = function(){
       btn.disabled = true;
       var old = btn.textContent;
-      btn.textContent = selectedPlan().id === 'starter' ? 'Opening dashboard...' : 'Opening checkout...';
+      btn.textContent = selectedPlan().id === 'starter' ? 'Submitting...' : 'Opening checkout...';
       finishSignupLaunch().catch(function(e){
         toastErr(e.message || 'Could not continue');
         btn.disabled = false;
@@ -25761,6 +25811,353 @@ window._handleRTCMessage=function(d){
   }
   document.addEventListener('DOMContentLoaded', bootFreePolicy);
   [200, 800, 1800, 4000].forEach(function(ms){ setTimeout(bootFreePolicy, ms); });
+})();
+</script>
+<script>
+(function(){
+  if(window._obClientWalletGoogleApprovalInstalled) return;
+  window._obClientWalletGoogleApprovalInstalled = true;
+
+  function apiBase(){
+    return window.OWNLYBIZ_API_URL || window._OB_BACKEND || 'https://ownlybiz-backend-production.up.railway.app';
+  }
+  function token(explicit){
+    return explicit || sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || localStorage.getItem('ob_client_token') || '';
+  }
+  function toastLocal(msg, type){
+    if(typeof window.toastMsg === 'function') return window.toastMsg(msg, type || 'ok');
+    if(typeof window.toast === 'function') return window.toast(msg, type === 'err' ? 'err' : 'ok');
+  }
+  function esc(value){
+    var d = document.createElement('div');
+    d.textContent = value == null ? '' : String(value);
+    return d.innerHTML;
+  }
+  function saveClientAuth(d){
+    if(!d || !d.token) return;
+    sessionStorage.setItem('ob_t', d.token);
+    localStorage.setItem('ob_t', d.token);
+    localStorage.setItem('ob_client_token', d.token);
+    if(d.user){
+      sessionStorage.setItem('ob_u', JSON.stringify(d.user));
+      localStorage.setItem('ob_u', JSON.stringify(d.user));
+    }
+    window.clientLoggedIn = true;
+    if(typeof window.setClientToken === 'function') window.setClientToken(d.token);
+    if(typeof window.checkClientAuth === 'function') setTimeout(window.checkClientAuth, 250);
+    if(typeof window._linkClientToCurrentExpert === 'function') window._linkClientToCurrentExpert();
+  }
+  window._obSaveDefaultPaymentMethod = async function(paymentMethodId, explicitToken){
+    if(paymentMethodId && typeof paymentMethodId === 'object') paymentMethodId = paymentMethodId.id;
+    if(!paymentMethodId) return null;
+    var t = token(explicitToken);
+    if(!t) return null;
+    var r = await fetch(apiBase() + '/api/payments/methods/default', {
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer ' + t},
+      body:JSON.stringify({payment_method:paymentMethodId})
+    });
+    var d = await r.json().catch(function(){ return {}; });
+    if(!r.ok) throw new Error(d.error || 'Could not save payment method');
+    return d;
+  };
+
+  async function createSetupIntent(explicitToken){
+    var r = await fetch(apiBase() + '/api/payments/methods/setup', {
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer ' + token(explicitToken)}
+    });
+    var d = await r.json().catch(function(){ return {}; });
+    if(!r.ok || !d.client_secret) throw new Error(d.error || 'Could not initialize wallet payment');
+    return d.client_secret;
+  }
+
+  function mountWallet(stripe, opts){
+    if(!stripe || !stripe.paymentRequest || !opts || !opts.buttonId || !opts.sectionId) return;
+    var section = document.getElementById(opts.sectionId);
+    var mount = document.getElementById(opts.buttonId);
+    if(!section || !mount || mount._obWalletMounted) return;
+    var paymentRequest;
+    try {
+      paymentRequest = stripe.paymentRequest({
+        country:'US',
+        currency:'usd',
+        total:{label:'Save payment method', amount:0},
+        requestPayerName:true,
+        requestPayerEmail:true
+      });
+    } catch(e) { return; }
+    paymentRequest.canMakePayment().then(function(result){
+      if(!result) return;
+      section.style.display = 'block';
+      var elements = stripe.elements();
+      var button = elements.create('paymentRequestButton', {
+        paymentRequest:paymentRequest,
+        style:{paymentRequestButton:{type:'default', theme:'dark', height:'44px'}}
+      });
+      mount.innerHTML = '';
+      button.mount('#' + opts.buttonId);
+      mount._obWalletMounted = true;
+      paymentRequest.on('paymentmethod', function(ev){
+        (async function(){
+          try {
+            var clientSecret = await createSetupIntent(opts.token && opts.token());
+            var result = await stripe.confirmCardSetup(clientSecret, {payment_method:ev.paymentMethod.id}, {handleActions:false});
+            if(result.error) {
+              ev.complete('fail');
+              throw new Error(result.error.message);
+            }
+            ev.complete('success');
+            if(result.setupIntent && result.setupIntent.status === 'requires_action') {
+              result = await stripe.confirmCardSetup(clientSecret);
+              if(result.error) throw new Error(result.error.message);
+            }
+            var pm = (result.setupIntent && result.setupIntent.payment_method) || ev.paymentMethod.id;
+            await window._obSaveDefaultPaymentMethod(pm, opts.token && opts.token());
+            if(typeof opts.onSuccess === 'function') opts.onSuccess(pm);
+          } catch(err) {
+            try { ev.complete('fail'); } catch(e) {}
+            var errEl = opts.errorId && document.getElementById(opts.errorId);
+            if(errEl){ errEl.textContent = err.message || 'Wallet authorization failed'; errEl.style.display = 'block'; }
+            toastLocal(err.message || 'Wallet authorization failed', 'err');
+          }
+        })();
+      });
+    }).catch(function(){});
+  }
+
+  window._obMountBovWallet = function(stripe){
+    mountWallet(stripe || window._bovStripe, {
+      sectionId:'bov-wallet-section',
+      buttonId:'bov-wallet-button',
+      errorId:'bov-card-error',
+      token:function(){ return token(); },
+      onSuccess:function(pm){
+        window._bovPaymentMethodId = pm;
+        localStorage.setItem('ob_hpm','1');
+        var btn = document.getElementById('bov-pay-btn');
+        if(btn) btn.textContent = 'Payment authorized ✓';
+        if(typeof window._bovGoStep === 'function') window._bovGoStep(3);
+        var badge = document.getElementById('bov-step-pay-badge');
+        var conn = document.getElementById('bov-step-conn-badge');
+        if(badge){ badge.style.background = '#dcfce7'; badge.style.color = '#166534'; }
+        setTimeout(function(){
+          if(conn){ conn.style.background = '#dcfce7'; conn.style.color = '#166534'; conn.textContent = '✓ Connected'; }
+          setTimeout(function(){ if(typeof window._launchSession === 'function') window._launchSession(true); }, 500);
+        }, 500);
+      }
+    });
+  };
+  window._obMountBflWallet = function(stripe){
+    mountWallet(stripe || window._bflStripe, {
+      sectionId:'bfl-wallet-section',
+      buttonId:'bfl-wallet-button',
+      errorId:'bfl-card-error',
+      token:function(){ return window._bflClientToken || token(); },
+      onSuccess:function(){
+        window._bflWalletPaymentSaved = true;
+        window._bflWalletPaymentSavedToken = window._bflClientToken || token();
+        var saved = document.getElementById('bfl-card-saved');
+        if(saved){ saved.textContent = '✓ Payment method saved securely'; saved.style.display = 'block'; }
+      }
+    });
+  };
+
+  var googleReady = null;
+  async function getGoogleConfig(){
+    var r = await fetch(apiBase() + '/api/auth/google-config');
+    return r.json();
+  }
+  function loadGoogleScript(){
+    if(googleReady) return googleReady;
+    googleReady = new Promise(function(resolve, reject){
+      if(window.google && window.google.accounts && window.google.accounts.id) return resolve();
+      var s = document.createElement('script');
+      s.src = 'https://accounts.google.com/gsi/client';
+      s.async = true;
+      s.defer = true;
+      s.onload = function(){ resolve(); };
+      s.onerror = function(){ reject(new Error('Google sign-in could not load')); };
+      document.head.appendChild(s);
+    });
+    return googleReady;
+  }
+  async function handleGoogleCredential(response){
+    var r = await fetch(apiBase() + '/api/auth/google/client', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({credential:response && response.credential})
+    });
+    var d = await r.json().catch(function(){ return {}; });
+    if(!r.ok) throw new Error(d.error || 'Google sign-in failed');
+    saveClientAuth(d);
+    if(document.getElementById('booking-overlay') && document.getElementById('booking-overlay').style.display !== 'none' && typeof window._bovGoStep === 'function') {
+      window._bovGoStep(2);
+      if(window._bovStripe && window._obMountBovWallet) window._obMountBovWallet(window._bovStripe);
+    }
+    if(document.getElementById('bfl-step-3') && document.getElementById('bfl-step-3').style.display !== 'none') {
+      window._bflClientToken = d.token;
+      if(typeof window.mountBflCardElement === 'function') window.mountBflCardElement();
+      var logged = document.getElementById('bfl-logged-in');
+      var name = document.getElementById('bfl-logged-name');
+      if(name) name.textContent = d.user && (d.user.name || d.user.email) || 'Google client';
+      if(logged) logged.style.display = 'block';
+    }
+    toastLocal('Signed in with Google');
+  }
+  function replaceGoogleButtons(clientId){
+    var roots = ['#booking-overlay', '#client-login-gate', '#screen-PKG-LOGIN', '#bfl-step-3'];
+    roots.forEach(function(rootSel){
+      var root = document.querySelector(rootSel);
+      if(!root) return;
+      Array.from(root.querySelectorAll('button')).forEach(function(btn){
+        if(btn._obGoogleReplaced || !/continue with google/i.test(btn.textContent || '')) return;
+        var wrap = document.createElement('div');
+        wrap.className = 'ob-google-client-signin';
+        wrap.style.cssText = 'display:flex;justify-content:center;margin:8px 0;';
+        btn.parentNode.replaceChild(wrap, btn);
+        btn._obGoogleReplaced = true;
+        window.google.accounts.id.renderButton(wrap, {
+          type:'standard',
+          theme:'outline',
+          size:'large',
+          width: Math.min(360, Math.max(240, wrap.parentNode ? wrap.parentNode.clientWidth || 320 : 320)),
+          text:'continue_with'
+        });
+      });
+    });
+  }
+  async function bootGoogleClientSignIn(){
+    try {
+      var cfg = await getGoogleConfig();
+      if(!cfg || !cfg.configured || !cfg.client_id) return;
+      await loadGoogleScript();
+      window.google.accounts.id.initialize({
+        client_id:cfg.client_id,
+        callback:function(response){ handleGoogleCredential(response).catch(function(err){ toastLocal(err.message || 'Google sign-in failed', 'err'); }); }
+      });
+      replaceGoogleButtons(cfg.client_id);
+    } catch(e) {}
+  }
+  document.addEventListener('DOMContentLoaded', bootGoogleClientSignIn);
+  [800, 1800, 3500].forEach(function(ms){ setTimeout(bootGoogleClientSignIn, ms); });
+  var mo = new MutationObserver(function(){ if(window.google && window.google.accounts) replaceGoogleButtons(); });
+  document.addEventListener('DOMContentLoaded', function(){ try { mo.observe(document.body, {childList:true, subtree:true}); } catch(e) {} });
+
+  function renderApprovalControl(enabled){
+    return '<div class="admin-card" id="ob-starter-approval-card" style="margin-bottom:16px;padding:18px 20px;display:flex;align-items:center;gap:16px;justify-content:space-between;">'
+      + '<div><div style="font-weight:800;color:rgba(246,241,233,.95);font-size:15px;">Starter signup approval</div>'
+      + '<div style="font-size:12px;color:rgba(246,241,233,.52);line-height:1.5;margin-top:4px;">When enabled, new Starter experts wait for admin approval before dashboard access. Pro and Scale stay automatic after Stripe confirmation.</div></div>'
+      + '<label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:12px;font-weight:800;color:rgba(246,241,233,.75);white-space:nowrap;">'
+      + '<input type="checkbox" id="ob-starter-approval-toggle" ' + (enabled ? 'checked' : '') + ' onchange="obSaveStarterApprovalSetting(this.checked)"> Require approval</label>'
+      + '</div>';
+  }
+  window.obSaveStarterApprovalSetting = async function(enabled){
+    try {
+      var t = sessionStorage.getItem('ob_t') || '';
+      var r = await fetch(apiBase() + '/api/admin/settings', {
+        method:'PUT',
+        headers:{'Content-Type':'application/json','Authorization':'Bearer ' + t},
+        body:JSON.stringify({ctrl_starter_manual_approval:!!enabled})
+      });
+      var d = await r.json().catch(function(){ return {}; });
+      if(!r.ok) throw new Error(d.error || 'Could not save approval setting');
+      toastLocal(enabled ? 'Starter approval enabled' : 'Starter approval disabled');
+    } catch(err) {
+      toastLocal(err.message || 'Could not save approval setting', 'err');
+      var cb = document.getElementById('ob-starter-approval-toggle');
+      if(cb) cb.checked = !enabled;
+    }
+  };
+  async function fetchApprovalEnabled(){
+    try {
+      var t = sessionStorage.getItem('ob_t') || '';
+      var r = await fetch(apiBase() + '/api/admin/settings', {headers:{'Authorization':'Bearer ' + t}});
+      var d = await r.json();
+      return !!(d.settings && d.settings.ctrl_starter_manual_approval !== false && d.settings.ctrl_starter_manual_approval !== '0');
+    } catch(e) { return true; }
+  }
+  function statusForExpert(e){
+    var approval = String(e.approval_status || '').toLowerCase();
+    if(approval === 'pending') return '<span style="color:#f59e0b;font-weight:700;">Review needed</span>';
+    if(!e.is_active) return '<span style="color:#f87171;font-weight:700;">Suspended</span>';
+    return '<span style="color:#22c55e;font-weight:700;">Live</span>';
+  }
+  async function renderAdminExpertsEnhanced(){
+    var enabled = await fetchApprovalEnabled();
+    fetch(apiBase() + '/api/admin/experts?limit=100', {headers:{Authorization:'Bearer ' + (sessionStorage.getItem('ob_t') || '')}})
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        var experts = d.experts || [];
+        var rows = experts.map(function(e){
+          var pending = String(e.approval_status || '').toLowerCase() === 'pending';
+          var approve = pending || !Number(e.is_active) ? '<button class="admin-action-btn" onclick="adminApproveExpert(\'' + String(e.id || '').replace(/'/g,'\\\'') + '\')">Approve</button> ' : '';
+          var suspend = Number(e.is_active) ? '<button class="admin-action-btn" onclick="OwnlyAPI.adminToggleExpert(\'' + String(e.id || '').replace(/'/g,'\\\'') + '\',false)">Suspend</button> ' : '';
+          return '<tr><td style="padding:12px;">' + esc(e.name || 'Expert') + '<div style="font-size:11px;color:#888;">' + esc(e.slug || '') + '</div></td>'
+            + '<td>' + esc(e.email || '') + '</td><td style="text-align:center;">' + (e.session_count || 0) + '</td>'
+            + '<td style="text-align:center;">' + (typeof money === 'function' ? money(e.total_revenue || 0) : ('$' + Number(e.total_revenue || 0).toFixed(2))) + '</td>'
+            + '<td style="text-align:center;">' + esc(e.subscription_plan || 'starter') + '</td><td style="text-align:center;">' + statusForExpert(e) + '</td>'
+            + '<td style="text-align:center;">' + approve + '<button class="admin-action-btn ob-admin-view-expert" data-id="' + esc(e.id || '') + '" data-slug="' + esc(e.slug || '') + '" data-name="' + esc(e.name || '') + '">View</button> ' + suspend + '</td></tr>';
+        }).join('');
+        if(typeof window.setAdminPanelContent === 'function') {
+          window.setAdminPanelContent('experts', renderApprovalControl(enabled) + '<div class="admin-card"><table class="experts-table" style="width:100%;"><thead><tr><th>Expert</th><th>Email</th><th>Sessions</th><th>Revenue</th><th>Plan</th><th>Status</th><th>Actions</th></tr></thead><tbody>' + (rows || '<tr><td colspan="7" style="padding:32px;text-align:center;color:#888;">No experts yet</td></tr>') + '</tbody></table></div>');
+        } else {
+          var root = document.getElementById('admin-panel-experts');
+          if(root){
+            var c = root.querySelector('.admin-content') || root;
+            c.innerHTML = renderApprovalControl(enabled) + '<div class="admin-card"><table class="experts-table" style="width:100%;"><thead><tr><th>Expert</th><th>Email</th><th>Sessions</th><th>Revenue</th><th>Plan</th><th>Status</th><th>Actions</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+          }
+        }
+      })
+      .catch(function(err){ toastLocal(err.message || 'Could not load experts', 'err'); });
+  }
+  var oldAdminNav = window.adminNav;
+  window.adminNav = function(el, panel){
+    if(panel === 'experts'){
+      document.querySelectorAll('.admin-nav-item').forEach(function(i){ i.classList.remove('active'); });
+      if(el) el.classList.add('active');
+      document.querySelectorAll('.admin-tab-panel').forEach(function(p){ p.classList.remove('active'); });
+      var target = document.getElementById('admin-panel-experts');
+      if(target) target.classList.add('active');
+      var title = document.getElementById('admin-page-title');
+      if(title) title.textContent = 'Expert Management';
+      renderAdminExpertsEnhanced();
+      return;
+    }
+    if(oldAdminNav) return oldAdminNav.apply(this, arguments);
+  };
+  window.obRenderAdminExpertsEnhanced = renderAdminExpertsEnhanced;
+  window.loadAdminExperts = renderAdminExpertsEnhanced;
+  if(window.OwnlyAPI) window.OwnlyAPI.loadAdminExperts = renderAdminExpertsEnhanced;
+
+  async function enhanceGoogleSettingsPanel(){
+    var panel = document.getElementById('admin-panel-platform-settings');
+    if(!panel || document.getElementById('ob-google-client-config')) return;
+    var c = panel.querySelector('.admin-content') || panel;
+    var card = document.createElement('div');
+    card.className = 'admin-card';
+    card.id = 'ob-google-client-config';
+    card.innerHTML = '<div class="admin-card-title">Client Google Sign-In <span class="admin-card-title-sub">Expert websites</span></div>'
+      + '<div style="font-size:12px;color:rgba(246,241,233,.55);line-height:1.6;margin-bottom:12px;">Add the Google OAuth Client ID used by client signup on expert websites. Leave blank to hide Google sign-in and keep email signup as the fallback.</div>'
+      + '<label class="ps-label" for="google_client_id" style="display:block;margin-bottom:6px;">Google OAuth Client ID</label>'
+      + '<input class="admin-input" id="google_client_id" name="google_client_id" placeholder="000000000000-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.apps.googleusercontent.com" style="width:100%;">';
+    c.insertBefore(card, c.firstChild);
+    try {
+      var t = sessionStorage.getItem('ob_t') || '';
+      var r = await fetch(apiBase() + '/api/admin/settings', {headers:{Authorization:'Bearer ' + t}});
+      var d = await r.json();
+      var input = document.getElementById('google_client_id');
+      if(input && d.settings && d.settings.google_client_id) input.value = d.settings.google_client_id;
+    } catch(e) {}
+  }
+  var oldLoadSettings = window.loadAdminSettings;
+  window.loadAdminSettings = async function(){
+    var ret;
+    if(oldLoadSettings) ret = await oldLoadSettings.apply(this, arguments);
+    await enhanceGoogleSettingsPanel();
+    return ret;
+  };
+  if(window.OwnlyAPI) window.OwnlyAPI.loadAdminSettings = window.loadAdminSettings;
 })();
 </script>
 </body>

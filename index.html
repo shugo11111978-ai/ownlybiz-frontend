@@ -24437,6 +24437,15 @@ window._handleRTCMessage=function(d){
 		  var BILLING_CACHE_KEY = 'ob_billing_snapshot_v1';
 		  var BILLING_CACHE_MAX_AGE_MS = 60 * 1000;
 		  var adminFeeSnapshot = null;
+		  var ADMIN_PLAN_DEFAULTS = {
+		    starter:{fee:12,monthly:0,annual:0},
+		    pro:{fee:8,monthly:49,annual:470},
+		    scale:{fee:5,monthly:99,annual:948}
+		  };
+		  var ADMIN_TEST_PRICE_IDS = {
+		    pro:{monthly:'price_1TRQrb3Siu0UQe1N0OQCzG10',annual:'price_1TRZH03Siu0UQe1Nr6bFitWA'},
+		    scale:{monthly:'price_1TRZIV3Siu0UQe1Nm0fMrw4I',annual:'price_1TRZIt3Siu0UQe1NAJ2kPEJ0'}
+		  };
 		  window.obSignupPlanState = planState;
 
 	  function plansById(plans){
@@ -24660,14 +24669,17 @@ window._handleRTCMessage=function(d){
 
   function renderAdminPlanConfig(){
     var panel = document.getElementById('admin-panel-fee-config');
-    if(!panel || document.getElementById('ob-admin-plan-config')) return;
+    if(!panel) return;
+    ensureAdminFeeSaveBar();
+    if(document.getElementById('ob-admin-plan-config')) return;
     var card = document.createElement('div');
     card.className = 'admin-card';
     card.id = 'ob-admin-plan-config';
     card.style.marginTop = '20px';
-    card.innerHTML = '<div class="admin-card-title">Subscription Plans <span class="admin-card-title-sub">Stripe Price IDs by mode</span></div>'
+    card.innerHTML = '<div class="ob-admin-plan-head"><div class="admin-card-title">Subscription Plans <span class="admin-card-title-sub">Prices, fees, and Stripe Price IDs</span></div>'
+      + '<div class="ob-admin-mode-toggle" role="group" aria-label="Stripe Price ID mode"><button type="button" data-ob-admin-price-mode="test" onclick="obSetAdminPriceMode(\'test\')">Test</button><button type="button" data-ob-admin-price-mode="live" onclick="obSetAdminPriceMode(\'live\')">Live</button></div></div>'
       + '<div id="ob-admin-plan-grid" style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;"></div>'
-      + '<div style="font-size:12px;color:rgba(246,241,233,.45);line-height:1.6;margin-top:14px;">Use Stripe Price IDs that begin with <code>price_</code>. Product IDs are intentionally rejected.</div>';
+      + '<div style="font-size:12px;color:rgba(246,241,233,.45);line-height:1.6;margin-top:14px;">Use Stripe Price IDs that begin with <code>price_</code>. Product IDs are intentionally rejected. The Test/Live toggle only changes which Stripe fields are shown; the single save button applies to all settings on this page.</div>';
     var first = panel.querySelector('.admin-card');
     if(first && first.parentNode) first.parentNode.insertBefore(card, first.nextSibling);
     var grid = card.querySelector('#ob-admin-plan-grid');
@@ -24678,13 +24690,43 @@ window._handleRTCMessage=function(d){
 	        + '<div class="ps-block-title" style="display:flex;align-items:center;justify-content:space-between;gap:8px;">'+title+'<label style="font-size:11px;color:rgba(246,241,233,.6);display:flex;align-items:center;gap:6px;"><input type="checkbox" id="plan-'+id+'-enabled" checked> Available</label></div>'
         + adminInput(id,'name','Name','text') + adminInput(id,'description','Description','text')
         + adminInput(id,'fee','Platform fee %','number') + adminInput(id,'monthly','Monthly price','number') + adminInput(id,'annual','Annual price','number')
-        + adminInput(id,'test-monthly','Test monthly Price ID','text') + adminInput(id,'test-annual','Test annual Price ID','text')
-        + adminInput(id,'live-monthly','Live monthly Price ID','text') + adminInput(id,'live-annual','Live annual Price ID','text')
+        + (id === 'starter'
+          ? '<div class="ob-admin-free-note">Starter is free. No Stripe subscription Price ID is needed.</div>'
+          : adminInput(id,'test-monthly','Test monthly Price ID','text','test') + adminInput(id,'test-annual','Test annual Price ID','text','test')
+            + adminInput(id,'live-monthly','Live monthly Price ID','text','live') + adminInput(id,'live-annual','Live annual Price ID','text','live'))
         + '</div>');
     });
+    obSetAdminPriceMode(window._obAdminPriceMode || 'test');
   }
-  function adminInput(plan, key, label, type){
-    return '<div class="ps-row"><div class="ps-label">'+label+'</div><input type="'+type+'" id="plan-'+plan+'-'+key+'" class="admin-input" style="min-width:0;width:100%;"></div>';
+  function ensureAdminFeeSaveBar(){
+    var panel = document.getElementById('admin-panel-fee-config');
+    var content = panel && panel.querySelector('.admin-content');
+    if(!content) return;
+    Array.from(panel.querySelectorAll('button[onclick="saveAdminFees()"]')).forEach(function(btn){
+      if(btn.id !== 'ob-admin-save-all-fees') btn.style.display = 'none';
+    });
+    if(document.getElementById('ob-admin-fee-save-bar')) return;
+    var bar = document.createElement('div');
+    bar.id = 'ob-admin-fee-save-bar';
+    bar.className = 'ob-admin-fee-save-bar';
+    bar.innerHTML = '<div><div class="ob-admin-save-title">Fee and subscription settings</div><div class="ob-admin-save-sub">One save applies to platform fees, plan prices, availability, and Stripe Price IDs.</div></div><button id="ob-admin-save-all-fees" type="button" onclick="saveAdminFees()">Save all settings</button>';
+    content.insertBefore(bar, content.firstChild);
+  }
+  function adminInput(plan, key, label, type, mode){
+    var cls = mode ? ' ps-row ob-price-mode-row ob-price-mode-'+mode : 'ps-row';
+    return '<div class="'+cls+'"><div class="ps-label">'+label+'</div><input type="'+type+'" id="plan-'+plan+'-'+key+'" class="admin-input" style="min-width:0;width:100%;"></div>';
+  }
+  window.obSetAdminPriceMode = function(mode){
+    mode = mode === 'live' ? 'live' : 'test';
+    window._obAdminPriceMode = mode;
+    document.querySelectorAll('[data-ob-admin-price-mode]').forEach(function(btn){
+      var on = btn.getAttribute('data-ob-admin-price-mode') === mode;
+      btn.classList.toggle('active', on);
+      btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+    document.querySelectorAll('.ob-price-mode-row').forEach(function(row){
+      row.style.display = row.classList.contains('ob-price-mode-' + mode) ? 'flex' : 'none';
+    });
   }
   function setInput(id, value){
     var el = document.getElementById(id);
@@ -24701,17 +24743,24 @@ window._handleRTCMessage=function(d){
 	    renderAdminPlanConfig();
 	    adminFeeSnapshot = Object.assign({}, f || {});
 	    ['starter','pro','scale'].forEach(function(id){
+	      var testDefaults = ADMIN_TEST_PRICE_IDS[id] || {};
 	      setInput('plan-'+id+'-enabled', f['plan_'+id+'_enabled'] == null ? '1' : f['plan_'+id+'_enabled']);
 	      setInput('plan-'+id+'-name', f['plan_'+id+'_name'] || (id === 'starter' ? 'Starter' : id.charAt(0).toUpperCase()+id.slice(1)));
 	      setInput('plan-'+id+'-description', f['plan_'+id+'_description'] || '');
-	      setInput('plan-'+id+'-fee', f['fee_'+id+'_pct']);
-	      setInput('plan-'+id+'-monthly', f['price_'+id+'_monthly']);
-	      setInput('plan-'+id+'-annual', f['price_'+id+'_annual']);
-	      setInput('plan-'+id+'-test-monthly', f['plan_'+id+'_stripe_test_price_monthly'] || f['plan_'+id+'_stripe_test_price_id_monthly']);
-	      setInput('plan-'+id+'-test-annual', f['plan_'+id+'_stripe_test_price_annual'] || f['plan_'+id+'_stripe_test_price_id_annual']);
+	      setInput('plan-'+id+'-fee', positiveNumber(f['fee_'+id+'_pct'], ADMIN_PLAN_DEFAULTS[id].fee, true));
+	      setInput('plan-'+id+'-monthly', positiveNumber(f['price_'+id+'_monthly'], ADMIN_PLAN_DEFAULTS[id].monthly, id === 'starter'));
+	      setInput('plan-'+id+'-annual', positiveNumber(f['price_'+id+'_annual'], ADMIN_PLAN_DEFAULTS[id].annual, id === 'starter'));
+	      setInput('plan-'+id+'-test-monthly', f['plan_'+id+'_stripe_test_price_monthly'] || f['plan_'+id+'_stripe_test_price_id_monthly'] || testDefaults.monthly || '');
+	      setInput('plan-'+id+'-test-annual', f['plan_'+id+'_stripe_test_price_annual'] || f['plan_'+id+'_stripe_test_price_id_annual'] || testDefaults.annual || '');
 	      setInput('plan-'+id+'-live-monthly', f['plan_'+id+'_stripe_live_price_monthly'] || f['plan_'+id+'_stripe_live_price_id_monthly']);
 	      setInput('plan-'+id+'-live-annual', f['plan_'+id+'_stripe_live_price_annual'] || f['plan_'+id+'_stripe_live_price_id_annual']);
 	    });
+	    obSetAdminPriceMode(window._obAdminPriceMode || 'test');
+	  }
+	  function positiveNumber(value, fallback, allowZero){
+	    var n = parseFloat(value);
+	    if(Number.isFinite(n) && (allowZero ? n >= 0 : n > 0)) return n;
+	    return fallback;
 	  }
 	  function adminFallback(key, fallback){
 	    return adminFeeSnapshot && adminFeeSnapshot[key] != null && adminFeeSnapshot[key] !== '' ? adminFeeSnapshot[key] : fallback;
@@ -24720,6 +24769,17 @@ window._handleRTCMessage=function(d){
 	    var value = getInput(id);
 	    if(String(value || '').trim() !== '') return value;
 	    return adminFallback(fallbackKey, fallback);
+	  }
+	  function numberInputWithFallback(inputId, fallbackKey, fallback, allowZero){
+	    var value = getInput(inputId);
+	    var n = parseFloat(value);
+	    if(Number.isFinite(n) && (allowZero ? n >= 0 : n > 0)) return n;
+	    var legacy = document.getElementById(fallbackKey.replace(/_/g, '-'));
+	    if(legacy){
+	      n = parseFloat(legacy.value);
+	      if(Number.isFinite(n) && (allowZero ? n >= 0 : n > 0)) return n;
+	    }
+	    return positiveNumber(adminFallback(fallbackKey, fallback), fallback, allowZero);
 	  }
 	  function collectAdminFees(){
 	    var fees = {
@@ -24731,14 +24791,15 @@ window._handleRTCMessage=function(d){
       price_starter_trial:parseFloat((document.getElementById('price-starter-trial')||{}).value || 0)
 	    };
 	    ['starter','pro','scale'].forEach(function(id){
+	      var testDefaults = ADMIN_TEST_PRICE_IDS[id] || {};
 	      fees['plan_'+id+'_enabled'] = getInput('plan-'+id+'-enabled');
 	      fees['plan_'+id+'_name'] = nonBlankInput('plan-'+id+'-name', 'plan_'+id+'_name', id === 'starter' ? 'Starter' : id.charAt(0).toUpperCase()+id.slice(1));
 	      fees['plan_'+id+'_description'] = nonBlankInput('plan-'+id+'-description', 'plan_'+id+'_description', '');
-	      fees['fee_'+id+'_pct'] = parseFloat(nonBlankInput('plan-'+id+'-fee', 'fee_'+id+'_pct', id === 'starter' ? 12 : id === 'pro' ? 8 : 5));
-	      fees['price_'+id+'_monthly'] = parseFloat(nonBlankInput('plan-'+id+'-monthly', 'price_'+id+'_monthly', 0));
-	      fees['price_'+id+'_annual'] = parseFloat(nonBlankInput('plan-'+id+'-annual', 'price_'+id+'_annual', 0));
-	      fees['plan_'+id+'_stripe_test_price_monthly'] = String(nonBlankInput('plan-'+id+'-test-monthly', 'plan_'+id+'_stripe_test_price_monthly', adminFallback('plan_'+id+'_stripe_test_price_id_monthly', ''))).trim();
-	      fees['plan_'+id+'_stripe_test_price_annual'] = String(nonBlankInput('plan-'+id+'-test-annual', 'plan_'+id+'_stripe_test_price_annual', adminFallback('plan_'+id+'_stripe_test_price_id_annual', ''))).trim();
+	      fees['fee_'+id+'_pct'] = numberInputWithFallback('plan-'+id+'-fee', 'fee_'+id+'_pct', ADMIN_PLAN_DEFAULTS[id].fee, true);
+	      fees['price_'+id+'_monthly'] = numberInputWithFallback('plan-'+id+'-monthly', 'price_'+id+'_monthly', ADMIN_PLAN_DEFAULTS[id].monthly, id === 'starter');
+	      fees['price_'+id+'_annual'] = numberInputWithFallback('plan-'+id+'-annual', 'price_'+id+'_annual', ADMIN_PLAN_DEFAULTS[id].annual, id === 'starter');
+	      fees['plan_'+id+'_stripe_test_price_monthly'] = String(nonBlankInput('plan-'+id+'-test-monthly', 'plan_'+id+'_stripe_test_price_monthly', adminFallback('plan_'+id+'_stripe_test_price_id_monthly', testDefaults.monthly || ''))).trim();
+	      fees['plan_'+id+'_stripe_test_price_annual'] = String(nonBlankInput('plan-'+id+'-test-annual', 'plan_'+id+'_stripe_test_price_annual', adminFallback('plan_'+id+'_stripe_test_price_id_annual', testDefaults.annual || ''))).trim();
 	      fees['plan_'+id+'_stripe_live_price_monthly'] = String(nonBlankInput('plan-'+id+'-live-monthly', 'plan_'+id+'_stripe_live_price_monthly', adminFallback('plan_'+id+'_stripe_live_price_id_monthly', ''))).trim();
 	      fees['plan_'+id+'_stripe_live_price_annual'] = String(nonBlankInput('plan-'+id+'-live-annual', 'plan_'+id+'_stripe_live_price_annual', adminFallback('plan_'+id+'_stripe_live_price_id_annual', ''))).trim();
       var legacyFee = document.getElementById('fee-'+id+'-pct'); if(legacyFee) legacyFee.value = fees['fee_'+id+'_pct'];
@@ -25185,11 +25246,15 @@ window._handleRTCMessage=function(d){
   };
   window.saveAdminFees = async function(){
     renderAdminPlanConfig();
+    var btn = document.getElementById('ob-admin-save-all-fees');
+    var oldText = btn && btn.textContent;
+    if(btn){ btn.disabled = true; btn.textContent = 'Saving...'; }
     try {
       await obJson('/api/admin/fees', {method:'PUT', body:collectAdminFees()});
       toastOk('Fee and plan configuration saved');
       if(typeof window.loadAdminFeeConfig === 'function') window.loadAdminFeeConfig();
     } catch(e) { toastErr(e.message || 'Could not save fee configuration'); }
+    finally { if(btn){ btn.disabled = false; btn.textContent = oldText || 'Save all settings'; } }
   };
 
 	  function feePctFromSession(sess){
@@ -25416,6 +25481,39 @@ window._handleRTCMessage=function(d){
   .free-mins-row.ob-free-disabled .rate-btn{pointer-events:none;opacity:.45;}
   .free-mins-row .rate-btn[disabled]{pointer-events:none;opacity:.45;}
   .ob-plan-free-line{font-size:12px;color:var(--sage);font-weight:800;margin-top:8px;}
+  .ob-admin-fee-save-bar{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:16px;
+    background:rgba(196,98,45,.12);
+    border:1px solid rgba(196,98,45,.35);
+    border-radius:14px;
+    padding:16px 20px;
+    margin-bottom:20px;
+  }
+  .ob-admin-save-title{font-weight:800;color:rgba(246,241,233,.95);font-size:15px;}
+  .ob-admin-save-sub{color:rgba(246,241,233,.55);font-size:12px;line-height:1.5;margin-top:3px;}
+  #ob-admin-save-all-fees{
+    background:var(--terra);
+    color:white;
+    border:none;
+    border-radius:10px;
+    padding:12px 18px;
+    font-weight:800;
+    cursor:pointer;
+    white-space:nowrap;
+  }
+  #ob-admin-save-all-fees:disabled{opacity:.65;cursor:wait;}
+  .ob-admin-plan-head{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:16px;}
+  .ob-admin-mode-toggle{display:inline-flex;border:1px solid rgba(246,241,233,.16);border-radius:10px;overflow:hidden;background:rgba(246,241,233,.04);}
+  .ob-admin-mode-toggle button{border:0;background:transparent;color:rgba(246,241,233,.65);padding:9px 16px;font-weight:800;cursor:pointer;}
+  .ob-admin-mode-toggle button.active{background:var(--terra);color:white;}
+  .ob-admin-free-note{font-size:12px;line-height:1.5;color:rgba(246,241,233,.55);background:rgba(246,241,233,.045);border:1px solid rgba(246,241,233,.1);border-radius:10px;padding:12px;margin-top:10px;}
+  @media (max-width: 760px){
+    .ob-admin-fee-save-bar{align-items:flex-start;flex-direction:column;}
+    #ob-admin-save-all-fees{width:100%;}
+  }
 </style>
 <script>
 (function(){

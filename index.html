@@ -2615,11 +2615,7 @@ if (!window.toast) {
         <div class="mkt-logo" style="margin-bottom:24px;display:inline-block;">Own<span>lybiz</span></div>
         <h2 style="font-family:var(--font-head);font-size:28px;color:var(--brown);margin-bottom:6px;">Welcome back</h2>
         <p style="font-size:14px;color:var(--gray-400);margin-bottom:28px;">Sign in to your expert dashboard</p>
-        <div class="sso-buttons" style="margin-bottom:16px;">
-          <button class="sso-btn" onclick="toast('Google login coming soon! Please use email & password for now.','err')" style="opacity:.6;cursor:not-allowed;">🌐 Continue with Google <span style="font-size:10px;background:rgba(196,98,45,.2);padding:2px 6px;border-radius:6px;margin-left:4px;">Soon</span></button>
-          <button class="sso-btn" onclick="toast('Apple login coming soon! Please use email & password for now.','err')" style="opacity:.6;cursor:not-allowed;">⬛ Continue with Apple <span style="font-size:10px;background:rgba(196,98,45,.2);padding:2px 6px;border-radius:6px;margin-left:4px;">Soon</span></button>
-        </div>
-        <div class="divider-line"><span>or email</span></div>
+        <div style="font-size:12px;color:var(--gray-400);margin-bottom:16px;">Sign in with email.</div>
         <input type="email" class="form-input" id="mkt-login-email" placeholder="your@email.com" style="margin-bottom:12px;">
         <input type="password" class="form-input" id="mkt-login-pass" placeholder="Password" style="margin-bottom:16px;">
         <button class="btn btn-primary" id="mkt-login-btn" style="width:100%;" onclick="handleMarketingLogin()">Sign In →</button>
@@ -25777,11 +25773,33 @@ window._handleRTCMessage=function(d){
     return d.client_secret;
   }
 
+  var clientPaymentConfigPromise = null;
+  function clientPaymentConfig(){
+    if(clientPaymentConfigPromise) return clientPaymentConfigPromise;
+    clientPaymentConfigPromise = fetch(apiBase() + '/api/config')
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        var p = d && d.client_payments || {};
+        return {
+          apple_pay_enabled: ['1','true','yes','on', true].indexOf(p.apple_pay_enabled) >= 0,
+          google_pay_enabled: ['1','true','yes','on', true].indexOf(p.google_pay_enabled) >= 0
+        };
+      })
+      .catch(function(){ return {apple_pay_enabled:false, google_pay_enabled:false}; });
+    return clientPaymentConfigPromise;
+  }
+  function walletAllowed(result, cfg){
+    if(!result || !cfg) return false;
+    return !!((cfg.apple_pay_enabled && result.applePay) || (cfg.google_pay_enabled && result.googlePay));
+  }
+
   function mountWallet(stripe, opts){
     if(!stripe || !stripe.paymentRequest || !opts || !opts.buttonId || !opts.sectionId) return;
     var section = document.getElementById(opts.sectionId);
     var mount = document.getElementById(opts.buttonId);
     if(!section || !mount || mount._obWalletMounted) return;
+    clientPaymentConfig().then(function(cfg){
+      if(!cfg.apple_pay_enabled && !cfg.google_pay_enabled) return;
     var paymentRequest;
     try {
       paymentRequest = stripe.paymentRequest({
@@ -25793,7 +25811,7 @@ window._handleRTCMessage=function(d){
       });
     } catch(e) { return; }
     paymentRequest.canMakePayment().then(function(result){
-      if(!result) return;
+      if(!walletAllowed(result, cfg)) return;
       section.style.display = 'block';
       var elements = stripe.elements();
       var button = elements.create('paymentRequestButton', {
@@ -25829,6 +25847,7 @@ window._handleRTCMessage=function(d){
         })();
       });
     }).catch(function(){});
+    });
   }
 
   window._obMountBovWallet = function(stripe){
@@ -25903,23 +25922,6 @@ window._handleRTCMessage=function(d){
     });
     updateClientSsoGroups();
   }
-  function showClientProviderSetup(provider, message){
-    var label = provider === 'google' ? 'Google' : 'Apple';
-    Array.from(document.querySelectorAll('[data-ob-client-provider="' + provider + '"]')).forEach(function(btn){
-      btn.style.display = '';
-      btn.disabled = false;
-      btn.textContent = 'Continue with ' + label;
-      btn.onclick = function(){
-        toastLocal(message || (label + ' sign-in is not configured on staging yet.'), 'err');
-      };
-    });
-    updateClientSsoGroups();
-  }
-  function showMissingProviderSetupOnThisHost(){
-    var h = String(window.location.hostname || '');
-    return h === 'localhost' || h === '127.0.0.1' || /\.vercel\.app$/i.test(h);
-  }
-
   var googleReady = null;
   async function getGoogleConfig(){
     var r = await fetch(apiBase() + '/api/auth/google-config');
@@ -25977,11 +25979,7 @@ window._handleRTCMessage=function(d){
     try {
       var cfg = await getGoogleConfig();
       if(!cfg || !cfg.configured || !cfg.client_id) {
-        if(showMissingProviderSetupOnThisHost()) {
-          showClientProviderSetup('google', 'Google sign-in needs a Google OAuth Client ID saved in Admin > Platform Settings > Client Social Sign-In for this staging domain.');
-        } else {
-          hideClientProvider('google');
-        }
+        hideClientProvider('google');
         return;
       }
       await loadGoogleScript();
@@ -25991,11 +25989,7 @@ window._handleRTCMessage=function(d){
       });
       replaceGoogleButtons(cfg.client_id);
     } catch(e) {
-      if(showMissingProviderSetupOnThisHost()) {
-        showClientProviderSetup('google', e && e.message || 'Google sign-in could not load. Email signup still works.');
-      } else {
-        hideClientProvider('google');
-      }
+      hideClientProvider('google');
     }
   }
 
@@ -26050,11 +26044,7 @@ window._handleRTCMessage=function(d){
     try {
       var cfg = await getAppleConfig();
       if(!cfg || !cfg.configured || !cfg.client_id) {
-        if(showMissingProviderSetupOnThisHost()) {
-          showClientProviderSetup('apple', 'Apple sign-in needs an Apple Services ID saved in Admin > Platform Settings > Client Social Sign-In for this staging domain.');
-        } else {
-          hideClientProvider('apple');
-        }
+        hideClientProvider('apple');
         return;
       }
       Array.from(document.querySelectorAll('[data-ob-client-provider="apple"]')).forEach(function(btn){
@@ -26069,11 +26059,7 @@ window._handleRTCMessage=function(d){
       });
       updateClientSsoGroups();
     } catch(e) {
-      if(showMissingProviderSetupOnThisHost()) {
-        showClientProviderSetup('apple', e && e.message || 'Apple sign-in could not load. Email signup still works.');
-      } else {
-        hideClientProvider('apple');
-      }
+      hideClientProvider('apple');
     }
   }
   function bootClientAuthProviders(){
@@ -26182,25 +26168,49 @@ window._handleRTCMessage=function(d){
     var card = document.createElement('div');
     card.className = 'admin-card';
     card.id = 'ob-google-client-config';
-    card.innerHTML = '<div class="admin-card-title">Client Social Sign-In <span class="admin-card-title-sub">Expert websites</span></div>'
-      + '<div style="font-size:12px;color:rgba(246,241,233,.55);line-height:1.6;margin-bottom:12px;">Add OAuth client IDs used by client signup on expert websites. Google/Apple become fully functional once the provider client ID is saved and this domain is authorized in the provider console.</div>'
+    card.innerHTML = '<div class="admin-card-title">Client Signup & Wallets <span class="admin-card-title-sub">Expert websites</span></div>'
+      + '<div style="font-size:12px;color:rgba(246,241,233,.55);line-height:1.6;margin-bottom:16px;">These controls only expose working provider flows. Leave a toggle off until the matching external provider setup is complete.</div>'
+      + '<div class="platform-settings-grid">'
+      + '<div class="platform-setting-block">'
+      + '<div class="ps-block-title">Google Client Signup</div>'
+      + '<div class="ps-row"><div><div class="ps-label">Show Google signup</div><div style="font-size:11px;color:rgba(246,241,233,.45);line-height:1.45;">Visible only when enabled and a valid OAuth Client ID is saved.</div></div><label class="toggle-sm"><input type="checkbox" id="client_google_signin_enabled" name="client_google_signin_enabled"><div class="toggle-sm-track"></div><div class="toggle-sm-thumb"></div></label></div>'
       + '<label class="ps-label" for="google_client_id" style="display:block;margin-bottom:6px;">Google OAuth Client ID</label>'
-      + '<input class="admin-input" id="google_client_id" name="google_client_id" placeholder="000000000000-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.apps.googleusercontent.com" style="width:100%;margin-bottom:12px;">'
+      + '<input class="admin-input" id="google_client_id" name="google_client_id" placeholder="000000000000-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx.apps.googleusercontent.com" style="width:100%;margin-bottom:10px;">'
+      + '<div style="font-size:11px;color:rgba(246,241,233,.48);line-height:1.55;">Create a Web OAuth client in Google Cloud, add this staging domain under Authorized JavaScript origins, then paste the Client ID here.</div>'
+      + '<a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener" style="display:inline-block;margin-top:10px;color:#f4a261;font-size:12px;font-weight:700;">Open Google OAuth credentials -></a>'
+      + '</div>'
+      + '<div class="platform-setting-block">'
+      + '<div class="ps-block-title">Apple Client Signup</div>'
+      + '<div class="ps-row"><div><div class="ps-label">Show Apple signup</div><div style="font-size:11px;color:rgba(246,241,233,.45);line-height:1.45;">Visible only when enabled and Apple Services ID is saved.</div></div><label class="toggle-sm"><input type="checkbox" id="client_apple_signin_enabled" name="client_apple_signin_enabled"><div class="toggle-sm-track"></div><div class="toggle-sm-thumb"></div></label></div>'
       + '<label class="ps-label" for="apple_client_id" style="display:block;margin-bottom:6px;">Apple Services ID</label>'
-      + '<input class="admin-input" id="apple_client_id" name="apple_client_id" placeholder="com.ownlybiz.clientsignin" style="width:100%;margin-bottom:12px;">'
+      + '<input class="admin-input" id="apple_client_id" name="apple_client_id" placeholder="com.ownlybiz.clientsignin" style="width:100%;margin-bottom:10px;">'
       + '<label class="ps-label" for="apple_redirect_uri" style="display:block;margin-bottom:6px;">Apple Redirect URI</label>'
-      + '<input class="admin-input" id="apple_redirect_uri" name="apple_redirect_uri" placeholder="https://your-domain.com" style="width:100%;">';
+      + '<input class="admin-input" id="apple_redirect_uri" name="apple_redirect_uri" placeholder="https://your-staging-domain.vercel.app" style="width:100%;margin-bottom:10px;">'
+      + '<div style="font-size:11px;color:rgba(246,241,233,.48);line-height:1.55;">Create an Apple Services ID, enable Sign in with Apple, add the redirect URI, then paste the Services ID here.</div>'
+      + '<a href="https://developer.apple.com/account/resources/identifiers/list/serviceId" target="_blank" rel="noopener" style="display:inline-block;margin-top:10px;color:#f4a261;font-size:12px;font-weight:700;">Open Apple Services IDs -></a>'
+      + '</div>'
+      + '<div class="platform-setting-block">'
+      + '<div class="ps-block-title">Client Express Checkout</div>'
+      + '<div class="ps-row"><div><div class="ps-label">Apple Pay</div><div style="font-size:11px;color:rgba(246,241,233,.45);line-height:1.45;">Requires Stripe Apple Pay web-domain verification for every live domain.</div></div><label class="toggle-sm"><input type="checkbox" id="client_apple_pay_enabled" name="client_apple_pay_enabled"><div class="toggle-sm-track"></div><div class="toggle-sm-thumb"></div></label></div>'
+      + '<div class="ps-row"><div><div class="ps-label">Google Pay</div><div style="font-size:11px;color:rgba(246,241,233,.45);line-height:1.45;">Requires Google Pay enabled in Stripe and a supported browser/device.</div></div><label class="toggle-sm"><input type="checkbox" id="client_google_pay_enabled" name="client_google_pay_enabled"><div class="toggle-sm-track"></div><div class="toggle-sm-thumb"></div></label></div>'
+      + '<div style="font-size:11px;color:rgba(246,241,233,.48);line-height:1.55;">Ownlybiz only shows these wallet buttons when the toggle is on and Stripe confirms the browser can use Apple Pay or Google Pay. Link-only buttons are hidden.</div>'
+      + '<div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:10px;"><a href="https://docs.stripe.com/apple-pay?platform=web" target="_blank" rel="noopener" style="color:#f4a261;font-size:12px;font-weight:700;">Stripe Apple Pay setup -></a><a href="https://docs.stripe.com/google-pay" target="_blank" rel="noopener" style="color:#f4a261;font-size:12px;font-weight:700;">Stripe Google Pay setup -></a><a href="https://dashboard.stripe.com/settings/payment_methods" target="_blank" rel="noopener" style="color:#f4a261;font-size:12px;font-weight:700;">Stripe payment methods -></a></div>'
+      + '</div>'
+      + '</div>';
     c.insertBefore(card, c.firstChild);
     try {
       var t = sessionStorage.getItem('ob_t') || '';
       var r = await fetch(apiBase() + '/api/admin/settings', {headers:{Authorization:'Bearer ' + t}});
       var d = await r.json();
-      var input = document.getElementById('google_client_id');
-      if(input && d.settings && d.settings.google_client_id) input.value = d.settings.google_client_id;
-      var appleId = document.getElementById('apple_client_id');
-      if(appleId && d.settings && d.settings.apple_client_id) appleId.value = d.settings.apple_client_id;
-      var appleRedirect = document.getElementById('apple_redirect_uri');
-      if(appleRedirect && d.settings && d.settings.apple_redirect_uri) appleRedirect.value = d.settings.apple_redirect_uri;
+      var settings = d.settings || {};
+      ['google_client_id','apple_client_id','apple_redirect_uri'].forEach(function(key){
+        var el = document.getElementById(key);
+        if(el && settings[key] !== undefined) el.value = settings[key];
+      });
+      ['client_google_signin_enabled','client_apple_signin_enabled','client_apple_pay_enabled','client_google_pay_enabled'].forEach(function(key){
+        var el = document.getElementById(key);
+        if(el) el.checked = ['1','true','yes','on'].indexOf(String(settings[key] || '').toLowerCase()) >= 0;
+      });
     } catch(e) {}
   }
   var oldLoadSettings = window.loadAdminSettings;

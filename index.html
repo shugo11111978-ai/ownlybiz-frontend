@@ -26068,6 +26068,27 @@ window._handleRTCMessage=function(d){
   window.loadAdminExperts = renderAdminExpertsEnhanced;
   if(window.OwnlyAPI) window.OwnlyAPI.loadAdminExperts = renderAdminExpertsEnhanced;
 
+  window.obSyncStripePaymentDomains = async function(){
+    var status = document.getElementById('ob-stripe-domain-sync-status');
+    try {
+      if(status) status.textContent = 'Syncing approved expert domains...';
+      var t = sessionStorage.getItem('ob_t') || '';
+      var r = await fetch(apiBase() + '/api/admin/stripe-payment-domains/sync', {
+        method:'POST',
+        headers:{'Content-Type':'application/json','Authorization':'Bearer ' + t},
+        body:JSON.stringify({limit:500})
+      });
+      var d = await r.json().catch(function(){ return {}; });
+      if(!r.ok) throw new Error(d.error || 'Domain sync failed');
+      var count = d.expert_count || 0;
+      if(status) status.textContent = 'Synced domains for ' + count + ' approved experts.';
+      toastLocal('Stripe domain sync completed');
+    } catch(err) {
+      if(status) status.textContent = err.message || 'Domain sync failed';
+      toastLocal(err.message || 'Domain sync failed', 'err');
+    }
+  };
+
   async function enhanceGoogleSettingsPanel(){
     var panel = document.getElementById('admin-panel-platform-settings');
     if(!panel || document.getElementById('ob-google-client-config')) return;
@@ -26100,7 +26121,9 @@ window._handleRTCMessage=function(d){
       + '<div class="ps-block-title">Client Express Checkout</div>'
       + '<div class="ps-row"><div><div class="ps-label">Apple Pay</div><div style="font-size:11px;color:rgba(246,241,233,.45);line-height:1.45;">Requires Stripe Apple Pay web-domain verification for every live domain.</div></div><label class="toggle-sm"><input type="checkbox" id="client_apple_pay_enabled" name="client_apple_pay_enabled"><div class="toggle-sm-track"></div><div class="toggle-sm-thumb"></div></label></div>'
       + '<div class="ps-row"><div><div class="ps-label">Google Pay</div><div style="font-size:11px;color:rgba(246,241,233,.45);line-height:1.45;">Requires Google Pay enabled in Stripe and a supported browser/device.</div></div><label class="toggle-sm"><input type="checkbox" id="client_google_pay_enabled" name="client_google_pay_enabled"><div class="toggle-sm-track"></div><div class="toggle-sm-thumb"></div></label></div>'
-      + '<div style="font-size:11px;color:rgba(246,241,233,.48);line-height:1.55;">Ownlybiz only shows these wallet buttons when the toggle is on and Stripe confirms the browser can use Apple Pay or Google Pay. Link-only buttons are hidden.</div>'
+      + '<div class="ps-row"><div><div class="ps-label">Auto-register expert domains in Stripe</div><div style="font-size:11px;color:rgba(246,241,233,.45);line-height:1.45;">Automatically adds approved expert subdomains and custom domains to Stripe Payment Method Domains.</div></div><label class="toggle-sm"><input type="checkbox" id="client_payment_domain_auto_register_enabled" name="client_payment_domain_auto_register_enabled"><div class="toggle-sm-track"></div><div class="toggle-sm-thumb"></div></label></div>'
+      + '<div style="font-size:11px;color:rgba(246,241,233,.48);line-height:1.55;">Ownlybiz only shows these wallet buttons when the toggle is on and Stripe confirms the browser can use Apple Pay or Google Pay. Domain registration runs in the active Stripe mode and never replaces the card flow.</div>'
+      + '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px;"><button type="button" class="admin-action-btn" onclick="obSyncStripePaymentDomains()">Sync current expert domains</button><span id="ob-stripe-domain-sync-status" style="font-size:11px;color:rgba(246,241,233,.48);"></span></div>'
       + '<div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:10px;"><a href="https://docs.stripe.com/apple-pay?platform=web" target="_blank" rel="noopener" style="color:#f4a261;font-size:12px;font-weight:700;">Stripe Apple Pay setup -></a><a href="https://docs.stripe.com/google-pay" target="_blank" rel="noopener" style="color:#f4a261;font-size:12px;font-weight:700;">Stripe Google Pay setup -></a><a href="https://dashboard.stripe.com/settings/payment_methods" target="_blank" rel="noopener" style="color:#f4a261;font-size:12px;font-weight:700;">Stripe payment methods -></a></div>'
       + '</div>'
       + '</div>';
@@ -26114,7 +26137,7 @@ window._handleRTCMessage=function(d){
         var el = document.getElementById(key);
         if(el && settings[key] !== undefined) el.value = settings[key];
       });
-      ['client_google_signin_enabled','client_apple_signin_enabled','client_apple_pay_enabled','client_google_pay_enabled'].forEach(function(key){
+      ['client_google_signin_enabled','client_apple_signin_enabled','client_apple_pay_enabled','client_google_pay_enabled','client_payment_domain_auto_register_enabled'].forEach(function(key){
         var el = document.getElementById(key);
         if(el) el.checked = ['1','true','yes','on'].indexOf(String(settings[key] || '').toLowerCase()) >= 0;
       });

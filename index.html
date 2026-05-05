@@ -10827,9 +10827,40 @@ async function savePaymentConfig() {
 
         // Save to sessionStorage + unified client token
         sessionStorage.setItem('ob_t', d.token);
-        try { localStorage.setItem('ob_client_token', d.token); } catch(e) {}
+        try {
+          localStorage.setItem('ob_t', d.token);
+          localStorage.setItem('ob_client_token', d.token);
+        } catch(e) {}
         if (typeof checkClientAuth === 'function') setTimeout(checkClientAuth, 500);
         sessionStorage.setItem('ob_u', JSON.stringify(d.user));
+        try { localStorage.setItem('ob_u', JSON.stringify(d.user)); } catch(e) {}
+
+        if (d.user && d.user.role === 'expert') {
+          try {
+            var billingResp = await fetch(BASE + '/api/billing/me', {
+              headers: { 'Authorization': 'Bearer ' + d.token }
+            });
+            var billingData = await billingResp.json();
+            if (billingResp.ok && billingData && billingData.current_plan) {
+              billingData.cached_at = Date.now();
+              billingData.cache_user_id = d.user.id || '';
+              d.user.subscription_plan = billingData.current_plan.id;
+              d.user.plan = billingData.current_plan.id;
+              d.user.current_plan = billingData.current_plan.id;
+              sessionStorage.setItem('ob_billing_snapshot_v1', JSON.stringify(billingData));
+              sessionStorage.setItem('ob_u', JSON.stringify(d.user));
+              try {
+                localStorage.setItem('ob_billing_snapshot_v1', JSON.stringify(billingData));
+                localStorage.setItem('ob_u', JSON.stringify(d.user));
+              } catch(e) {}
+            }
+          } catch(e) {
+            try {
+              sessionStorage.removeItem('ob_billing_snapshot_v1');
+              localStorage.removeItem('ob_billing_snapshot_v1');
+            } catch(ignore) {}
+          }
+        }
 
         // Backend is clearly alive since login worked - tell api.js it's READY
         // This unblocks loadAdminDashboard etc.
@@ -24746,7 +24777,9 @@ window._handleRTCMessage=function(d){
 		  function readBillingSnapshot(){
 		    var d = readJsonStore(BILLING_CACHE_KEY);
 		    if(d && d.current_plan){
-		      if(d.cached_at && Date.now() - Number(d.cached_at) > BILLING_CACHE_MAX_AGE_MS) d = null;
+		      var u = readUserSnapshot();
+		      var owner = d.cache_user_id || '';
+		      if((owner && u.id && owner !== u.id) || !d.cached_at || Date.now() - Number(d.cached_at) > BILLING_CACHE_MAX_AGE_MS) d = null;
 		    }
 		    if(d && d.current_plan){
 		      planState.plans = d.plans || planState.plans || planDefaults;
@@ -24761,11 +24794,8 @@ window._handleRTCMessage=function(d){
 	    if(!d || !d.current_plan) return d;
 	    d.cached_at = Date.now();
 	    try {
-	      sessionStorage.setItem(BILLING_CACHE_KEY, JSON.stringify(d));
-	      localStorage.setItem(BILLING_CACHE_KEY, JSON.stringify(d));
-	    } catch(e) {}
-	    try {
 	      var u = readUserSnapshot();
+	      d.cache_user_id = u.id || '';
 	      u.subscription_plan = normalizePlanId(d.current_plan.id);
 	      u.plan = normalizePlanId(d.current_plan.id);
 	      u.current_plan = normalizePlanId(d.current_plan.id);
@@ -24773,6 +24803,8 @@ window._handleRTCMessage=function(d){
 	        u.stripe_connect_configured = !!d.stripe_connect.configured;
 	        u.stripe_connect_pending = !!(d.stripe_connect.pending || d.stripe_connect.account_id);
 	      }
+	      sessionStorage.setItem(BILLING_CACHE_KEY, JSON.stringify(d));
+	      localStorage.setItem(BILLING_CACHE_KEY, JSON.stringify(d));
 	      sessionStorage.setItem('ob_u', JSON.stringify(u));
 	      localStorage.setItem('ob_u', JSON.stringify(u));
 	    } catch(e) {}

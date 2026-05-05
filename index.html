@@ -3429,7 +3429,7 @@ if (!window.toast) {
                 </div>
               <!-- Expert input bar -->
               <div style="padding:12px 16px;border-top:1px solid var(--gray-200);display:flex;gap:10px;align-items:center;">
-                <input type="text" id="expert-chat-input" placeholder="Type your message..." style="flex:1;border:1.5px solid var(--gray-200);border-radius:10px;padding:10px 14px;font-size:13px;font-family:var(--font-body);outline:none;" onkeydown="if(event.key==='Enter')sendExpertMsg()">
+                <input type="text" id="expert-chat-input" placeholder="Message the client..." style="flex:1;border:1.5px solid var(--gray-200);border-radius:10px;padding:10px 14px;font-size:13px;font-family:var(--font-body);outline:none;" onkeydown="if(event.key==='Enter')sendExpertMsg()">
                 <button onclick="sendExpertMsg()" style="width:38px;height:38px;border-radius:10px;background:var(--terra);border:none;color:white;font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;">↑</button>
               </div>
               </div>
@@ -18378,13 +18378,27 @@ window.OB_RTC = (function(){
     }).catch(function(){});
   }
   function _endForConnectionIssue(reason){
+    reason = reason || 'rtc_connection_failed';
+    if(reason !== 'media_permission_failed'){
+      try{_send({type:'rtc_failed',session_id:sid,channel:ch,reason:reason,transient:true});}catch(e){}
+      try{if(typeof window._obHandleSessionConnectionFailure==='function')window._obHandleSessionConnectionFailure(sid,ch,reason,_role);}catch(e){}
+      if(pc && pc.signalingState !== 'closed'){
+        try{_tryIceRestart(reason);}catch(e){}
+        if(_connectionIssueTimer)clearTimeout(_connectionIssueTimer);
+        _connectionIssueTimer=setTimeout(function(){
+          if(!pc || _hasStableTransport()) return;
+          try{if(typeof window._obHandleSessionConnectionFailure==='function')window._obHandleSessionConnectionFailure(sid,ch,reason,_role);}catch(e){}
+        }, Math.max(RTC_TIMEOUTS.reconnectMs, 15000));
+      }
+      return;
+    }
     if(_endingForIssue)return;
     _endingForIssue=true;
     var failedSid=sid, failedChannel=ch;
     _clearConnectionTimers();
-    try{_send({type:'rtc_failed',session_id:failedSid,channel:failedChannel,reason:reason||'rtc_connection_failed'});}catch(e){}
-    try{if(typeof window._obHandleSessionConnectionFailure==='function')window._obHandleSessionConnectionFailure(failedSid,failedChannel,reason||'rtc_connection_failed',_role);}catch(e){}
-    _fallbackEndSession(failedSid, reason||'rtc_connection_failed');
+    try{_send({type:'rtc_failed',session_id:failedSid,channel:failedChannel,reason:reason});}catch(e){}
+    try{if(typeof window._obHandleSessionConnectionFailure==='function')window._obHandleSessionConnectionFailure(failedSid,failedChannel,reason,_role);}catch(e){}
+    _fallbackEndSession(failedSid, reason);
     cleanup();
   }
   function _scheduleConnectionIssue(reason, delay){
@@ -18527,12 +18541,17 @@ window.OB_RTC = (function(){
       console.log('[RTC] '+label+': '+state);
       if(typeof _dbg==='function')_dbg(label+': '+state);
       var el=document.getElementById('rtc-status');if(el){
-        var m={new:'Initializing...',connecting:'Connecting...',connected:'\u{2705} Connected',disconnected:'Reconnecting...',failed:'Connection Failed',closed:'Ended'};
+        var m={new:'Initializing...',connecting:'Connecting...',connected:'\u{2705} Connected',completed:'\u{2705} Connected',disconnected:'Reconnecting...',failed:'Trying to reconnect...',closed:'Call closed'};
         el.textContent=m[state]||state;
       }
       var el2=document.getElementById('b3-rtc-status');if(el2){
-        var m2={new:'Initializing...',connecting:'Connecting...',connected:'\u{2705} Connected',disconnected:'Reconnecting...',failed:'Failed',closed:'Ended'};
+        var m2={new:'Initializing...',connecting:'Connecting...',connected:'\u{2705} Connected',completed:'\u{2705} Connected',disconnected:'Reconnecting...',failed:'Trying to reconnect...',closed:'Call closed'};
         el2.textContent=m2[state]||state;
+      }
+      if(state==='connected'||state==='completed'){
+        try{if(typeof window._obClearSessionConnectionIssue==='function')window._obClearSessionConnectionIssue(sid,ch,_role);}catch(e){}
+      }else if(state==='disconnected'||state==='failed'||state==='checking'){
+        try{if(typeof window._obShowSessionConnectionIssue==='function')window._obShowSessionConnectionIssue(sid,ch,state,_role);}catch(e){}
       }
     }
     pc.onconnectionstatechange=function(){
@@ -19864,12 +19883,21 @@ window._handleRTCMessage=function(d){
   window._clientTimerFn = function(startedAt){ startClientTimer(startedAt, window._obClientSessionSnapshot || {}); };
   window._obRtcConnected = function(sid, ch){
     if(sid && sid !== window._obActiveSessId && sid !== window._sid && sid !== window._sessId) return;
+    if(typeof window._obClearSessionConnectionIssue === 'function') window._obClearSessionConnectionIssue(sid, ch, role());
     setText('rtc-status', '\u2705 Connected');
     setText('b3-rtc-status', '\u2705 Connected');
     setText('live-billing-status', 'Media connected - waiting for billing confirmation');
   };
   window._obHandleSessionConnectionFailure = function(sid, ch, reason, roleName){
     if(sid && sid !== window._obActiveSessId && sid !== window._sid && sid !== window._sessId) return;
+    if(reason !== 'media_permission_failed'){
+      if(typeof window._obShowSessionConnectionIssue === 'function') window._obShowSessionConnectionIssue(sid, ch, reason, roleName || role());
+      setText('rtc-status', 'Trying to reconnect...');
+      setText('b3-rtc-status', 'Trying to reconnect...');
+      setText('a4-session-rate', 'Connection interrupted - trying to reconnect');
+      setText('live-billing-status', 'Connection interrupted - trying to reconnect');
+      return;
+    }
     var message = reason === 'media_permission_failed'
       ? 'Camera/microphone permission failed. Session ended so billing stops.'
       : 'Connection could not be restored. Session ended so billing stops.';
@@ -20039,7 +20067,7 @@ window._handleRTCMessage=function(d){
       status.style.cssText = 'font-size:12px;color:var(--gray-400);font-weight:700;';
     }
     var input = document.getElementById('expert-chat-input');
-    if(input){ input.disabled = true; input.placeholder = 'No active session'; }
+    if(input){ input.disabled = true; input.placeholder = 'Waiting for an active client session'; }
   };
   function applyClientReceipt(sess){
     sess = sess || {};
@@ -20191,6 +20219,17 @@ window._handleRTCMessage=function(d){
         appendPanelMessage('paid-chat-messages', d, false);
         handled = true;
       }
+    }
+    if(d.type === 'typing' && (!sid || sid === window._obActiveSessId || sid === window._sid || sid === window._sessId)){
+      var typingId = (roleName === 'expert' || (typeof role === 'function' && role() === 'expert')) ? 'expert-typing-indicator' : 'ob-client-typing';
+      var typingEl = document.getElementById(typingId);
+      if(typingEl && d.sender_id !== myId()){
+        typingEl.textContent = 'typing...';
+        if(typingEl.parentNode) typingEl.parentNode.appendChild(typingEl);
+        clearTimeout(typingEl._t);
+        typingEl._t = setTimeout(function(){ typingEl.textContent = ''; }, 1800);
+      }
+      handled = true;
     }
     if(d.type === 'session_ended' && (!sid || sid === window._obActiveSessId || sid === window._sid || sid === window._sessId)){
       var sess = d.session || {};
@@ -20446,7 +20485,7 @@ window._handleRTCMessage=function(d){
     var input = document.getElementById('expert-chat-input');
     if(input){
       input.disabled = false;
-      input.placeholder = 'Type your message...';
+      input.placeholder = 'Message the client...';
       input.style.background = '';
       input.style.cursor = '';
     }
@@ -27455,7 +27494,7 @@ body{
     var box = document.createElement('div');
     box.className = 'ob-v3-dash-command';
     box.id = 'ob-v3-dash-command';
-    box.innerHTML = '<div class="ob-v3-command-card"><div class="ob-v3-pill" style="display:inline-flex;padding:6px 12px;font-size:10px;text-transform:uppercase;">Command center</div><h3>Everything important stays above the fold.</h3><p>Plan, payout readiness, live session status, and next actions sit together so experts know what to do before clients arrive.</p><div class="ob-v3-command-actions"><button class="btn btn-primary btn-sm" type="button" id="ob-v3-open-payments">Billing & payouts</button><button class="btn btn-secondary btn-sm" type="button" id="ob-v3-open-live">Open live room</button></div></div>'
+    box.innerHTML = '<div class="ob-v3-command-card"><div class="ob-v3-pill" style="display:inline-flex;padding:6px 12px;font-size:10px;text-transform:uppercase;">Practice command</div><h3>Ready for the next client.</h3><p>Billing, payout setup, live-room status, and plan details stay together so experts can prepare before a session starts.</p><div class="ob-v3-command-actions"><button class="btn btn-primary btn-sm" type="button" id="ob-v3-open-payments">Billing & payouts</button><button class="btn btn-secondary btn-sm" type="button" id="ob-v3-open-live">Open live room</button></div></div>'
       + '<div class="ob-v3-command-card"><div class="ob-v3-command-metrics"><div><strong id="ob-v3-keep-rate">88%</strong><span>Current keep rate</span></div><div><strong>3</strong><span>Session types</span></div><div><strong>Stripe</strong><span>Payout rail</span></div><div><strong>Ready</strong><span>Client flow</span></div></div></div>';
     if(kpis) content.insertBefore(box, kpis);
     else content.insertBefore(box, content.firstChild);
@@ -28336,8 +28375,8 @@ body:has(#view-2.active) .privacy-consent.active{
       };
       mount.insertBefore(btn, mount.firstChild);
     });
-    var stored = 'light';
-    try { stored = localStorage.getItem('ob_ui_theme') || 'light'; } catch(e) {}
+    var stored = 'dark';
+    try { stored = localStorage.getItem('ob_ui_theme') || 'dark'; } catch(e) {}
     applyUiTheme(stored);
   }
   function wrap(name, wrapper){
@@ -29307,6 +29346,507 @@ body.ob-ui-light #live-session-notes:focus{
           enhanceVoiceViz();
         });
       }).observe(document.body, {childList:true, subtree:true});
+    } catch(e) {}
+  });
+})();
+</script>
+<style id="ownlybiz-v3-stage-polish-20260505">
+/* Staging-only polish: readable light mode, aligned client session states, and non-emoji public-site icons. */
+body.ob-ui-light #view-3{
+  --lime-readable:#4F6219;
+  --status-readable:#245B26;
+}
+body.ob-ui-light #view-3 .ob-v3-pill,
+body.ob-ui-light .view-panel.active .ob-v3-pill,
+body.ob-ui-light #view-3 .ob-v3-command-card .ob-v3-pill,
+body.ob-ui-light #view-3 .ob-v3-command-metrics strong,
+body.ob-ui-light #view-3 [style*="var(--lime)"],
+body.ob-ui-light #view-3 [style*="color:#C8FF3D"],
+body.ob-ui-light #view-3 [style*="color: #C8FF3D"]{
+  color:var(--lime-readable)!important;
+}
+body.ob-ui-light #view-3 .ob-v3-command-metrics div{
+  background:#FFFDF8!important;
+  border-color:#DCCDBB!important;
+}
+body.ob-ui-light #view-3 .ob-v3-command-metrics span,
+body.ob-ui-light #view-3 .ob-v3-command-card p,
+body.ob-ui-light #view-3 .kpi-sub,
+body.ob-ui-light #view-3 .kpi-label{
+  color:#5F554D!important;
+}
+body.ob-ui-light #view-3 .ob-v3-command-card{
+  background:linear-gradient(135deg,rgba(255,107,71,.10),rgba(79,98,25,.07)),#FFFDF8!important;
+  border-color:#DCCDBB!important;
+}
+body.ob-ui-light #view-3 ::placeholder,
+body.ob-ui-light #db-panel-live-session ::placeholder{
+  color:#71665D!important;
+  opacity:1!important;
+}
+body.ob-ui-dark #view-3 ::placeholder,
+body.ob-ui-dark #db-panel-live-session ::placeholder{
+  color:rgba(250,247,242,.58)!important;
+  opacity:1!important;
+}
+body.ob-ui-light #db-panel-live-session #expert-rtc-area > div{
+  background:
+    radial-gradient(circle at 50% 8%,rgba(255,107,71,.18),transparent 26%),
+    linear-gradient(150deg,#FFFDF8,#F4EADF)!important;
+  border-color:#DCCDBB!important;
+  box-shadow:0 24px 70px rgba(42,28,18,.10)!important;
+}
+body.ob-ui-light #expert-rtc-channel{
+  color:#241A15!important;
+}
+body.ob-ui-light #rtc-status,
+body.ob-ui-light #b3-rtc-status{
+  color:#5F554D!important;
+}
+body.ob-ui-light #expert-rtc-video-box{
+  background:
+    radial-gradient(circle at 50% 36%,rgba(255,107,71,.24),transparent 38%),
+    linear-gradient(145deg,#4A2517,#17110D)!important;
+  border:1px solid rgba(255,107,71,.28)!important;
+  box-shadow:0 22px 60px rgba(42,28,18,.18)!important;
+  border-radius:24px!important;
+  padding:10px!important;
+}
+body.ob-ui-light #expert-rtc-video-box video{
+  border-radius:18px!important;
+  background:#1A100B!important;
+}
+body.ob-ui-light #rtc-mute-btn,
+body.ob-ui-light #rtc-cam-btn{
+  background:#FFFDF8!important;
+  color:#241A15!important;
+  border:1.5px solid #CBBBA7!important;
+  opacity:1!important;
+  box-shadow:0 8px 22px rgba(42,28,18,.08)!important;
+}
+body.ob-ui-light #rtc-mute-btn[disabled],
+body.ob-ui-light #rtc-cam-btn[disabled]{
+  background:#E8DED2!important;
+  color:#5F554D!important;
+  opacity:.86!important;
+}
+body.ob-ui-light #view-5 .v-ctrl.default,
+body.ob-ui-light #view-5 .vid-ctrl{
+  background:#FFFDF8!important;
+  color:#241A15!important;
+  border-color:#D8CBBB!important;
+}
+body.ob-ui-light #view-5 .video-screen{
+  background:linear-gradient(180deg,#F7F1E8,#17110D 22%,#0B0908)!important;
+}
+body.ob-ui-light #view-5 .video-remote{
+  background:
+    radial-gradient(circle at 50% 32%,rgba(255,107,71,.18),transparent 34%),
+    linear-gradient(145deg,#4A2517,#17110D)!important;
+}
+.ob-connection-note{
+  display:flex;
+  align-items:flex-start;
+  gap:10px;
+  margin:10px 0 14px;
+  padding:12px 14px;
+  border-radius:16px;
+  border:1px solid rgba(255,107,71,.32);
+  background:linear-gradient(135deg,rgba(255,107,71,.13),rgba(255,253,248,.72));
+  color:#241A15;
+  font-size:13px;
+  line-height:1.45;
+  font-weight:700;
+  box-shadow:0 14px 34px rgba(42,28,18,.08);
+}
+.ob-connection-note::before{
+  content:"";
+  width:10px;
+  height:10px;
+  margin-top:4px;
+  flex:0 0 auto;
+  border-radius:999px;
+  background:#FF6B47;
+  box-shadow:0 0 0 0 rgba(255,107,71,.46);
+  animation:obReconnectPulse 1.25s ease-in-out infinite;
+}
+body.ob-ui-dark .ob-connection-note,
+#view-5 .ob-connection-note{
+  background:linear-gradient(135deg,rgba(255,107,71,.18),rgba(11,9,8,.76));
+  color:#FAF7F2;
+  border-color:rgba(255,107,71,.36);
+}
+@keyframes obReconnectPulse{
+  0%{box-shadow:0 0 0 0 rgba(255,107,71,.46);}
+  70%{box-shadow:0 0 0 10px rgba(255,107,71,0);}
+  100%{box-shadow:0 0 0 0 rgba(255,107,71,0);}
+}
+#view-4 .expert-photo,
+#view-4 .about-photo{
+  font-size:0!important;
+}
+#view-4 .expert-photo .ob-avatar-initials,
+#view-4 .about-photo .ob-avatar-initials,
+#view-4 #expert-photo-emoji,
+#view-4 .about-photo-emoji{
+  display:flex!important;
+  align-items:center!important;
+  justify-content:center!important;
+  width:100%!important;
+  height:100%!important;
+  color:var(--ob-site-action-text,#0B0908)!important;
+  font-family:var(--font-body)!important;
+  font-size:clamp(42px,7vw,76px)!important;
+  font-weight:900!important;
+  letter-spacing:0!important;
+}
+#view-4 .expert-photo img[style*="display: block"] + #expert-photo-emoji,
+#view-4 .about-photo img[style*="display: block"] + .about-photo-emoji{
+  display:none!important;
+}
+#view-4 .service-mini-icon,
+#view-4 .service-big-icon,
+#view-4 .stype-btn-icon,
+#view-5 .service-option-icon,
+#bov-channel-icon,
+#view-5 #vid-placeholder,
+#view-5 .ob-video-placeholder,
+#view-5 .voice-avatar,
+#view-5 .v-ctrl,
+#view-5 .vid-ctrl,
+#screen-PRESESS #presess-channel-icon{
+  font-size:0!important;
+}
+#screen-PRESESS #presess-channel-icon::before,
+#bov-channel-icon::before,
+#view-4 .service-mini-icon::before,
+#view-4 .service-big-icon::before,
+#view-4 .stype-btn-icon::before,
+#view-5 .service-option-icon::before{
+  content:attr(data-ob-line-icon);
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  min-width:38px;
+  height:38px;
+  padding:0 8px;
+  border-radius:14px;
+  background:var(--ob-site-action,#C4622D);
+  color:var(--ob-site-action-text,#0B0908);
+  font-family:var(--font-mono);
+  font-size:11px;
+  font-weight:900;
+  letter-spacing:0;
+}
+#screen-PRESESS #presess-channel-icon::before{background:#8A3A1D;color:#FFFDF8;}
+#bov-channel-icon::before{background:#8A3A1D;color:#FFFDF8;}
+#view-5 #vid-placeholder::before{
+  content:attr(data-ob-line-icon);
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  width:112px;
+  height:112px;
+  border-radius:36px;
+  background:linear-gradient(135deg,#FFB15F,#8A3A1D);
+  color:#FFFDF8;
+  font-family:var(--font-body);
+  font-size:34px;
+  font-weight:900;
+  letter-spacing:0;
+  box-shadow:0 22px 60px rgba(42,28,18,.20);
+}
+#view-5 .ob-video-placeholder::before{
+  content:attr(data-ob-line-icon);
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  width:96px;
+  height:96px;
+  border-radius:32px;
+  background:linear-gradient(135deg,#FFB15F,#8A3A1D);
+  color:#FFFDF8;
+  font-family:var(--font-body);
+  font-size:30px;
+  font-weight:900;
+  letter-spacing:0;
+}
+#view-5 .voice-avatar{
+  background:radial-gradient(circle at 42% 38%,#FFB15F,#FF6B47 48%,#8A3A1D 100%)!important;
+}
+#view-5 .v-ctrl[data-ob-line-icon]::before,
+#view-5 .vid-ctrl[data-ob-line-icon]::before{
+  content:attr(data-ob-line-icon);
+  font-family:var(--font-mono);
+  font-size:10px;
+  font-weight:900;
+  letter-spacing:0;
+}
+#view-4 .ob-line-mini{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  width:26px;
+  height:26px;
+  border-radius:9px;
+  margin-right:8px;
+  background:var(--ob-site-action,#C4622D);
+  color:var(--ob-site-action-text,#0B0908);
+  font-family:var(--font-mono);
+  font-size:9px;
+  font-weight:900;
+}
+#screen-PRESESS{
+  background:#F7F1E8!important;
+}
+#screen-PRESESS .phone-topbar{
+  background:linear-gradient(135deg,#17110D,#2B1810)!important;
+  min-height:56px;
+}
+#screen-PRESESS .phone-topbar button{
+  color:#D8CBBB!important;
+}
+#screen-PRESESS > div:nth-child(2){
+  background:linear-gradient(180deg,#F7F1E8,#EFE5D8)!important;
+}
+#screen-PRESESS [style*="background:rgba(196,98,45,.08)"]{
+  background:#FFF7ED!important;
+  border-color:#EBCDBA!important;
+}
+#screen-PRESESS [style*="background:var(--cream)"]{
+  background:#FFFDF8!important;
+  border-color:#E1D6C8!important;
+  box-shadow:0 12px 28px rgba(42,28,18,.06);
+}
+#screen-PRESESS #presess-paid-note,
+#screen-PRESESS #presess-free-note{
+  font-size:14px!important;
+  border-radius:16px!important;
+  padding:14px 16px!important;
+}
+#screen-PRESESS #presess-begin-btn{
+  border-radius:999px!important;
+  min-height:56px!important;
+  font-weight:900!important;
+  box-shadow:0 14px 34px rgba(196,98,45,.22)!important;
+}
+#paid-chat-messages,
+#free-chat-messages,
+#expert-chat-messages{
+  display:flex!important;
+  flex-direction:column!important;
+  gap:8px!important;
+}
+#ob-client-typing,
+#expert-typing-indicator,
+#typing-indicator{
+  order:9999!important;
+  flex:0 0 auto!important;
+  margin:8px 12px 4px!important;
+}
+#expert-typing-indicator{
+  align-self:flex-start!important;
+}
+#ob-client-typing{
+  align-self:flex-start!important;
+  position:relative!important;
+  bottom:auto!important;
+  margin-top:auto!important;
+  z-index:4!important;
+}
+#expert-typing-indicator{
+  margin-top:auto!important;
+}
+</style>
+<script id="ownlybiz-v3-stage-polish-20260505">
+(function(){
+  function ready(fn){
+    if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fn, {once:true});
+    else fn();
+  }
+  function text(el, value){ if(el) el.textContent = value; }
+  function initials(){
+    var source = (window._currentExpert && (window._currentExpert.name || window._currentExpert.display_name)) || document.querySelector('#view-4 .expert-hero-name')?.textContent || 'Expert';
+    var letters = String(source || 'Expert').match(/\b[A-Za-z0-9]/g) || ['E'];
+    return letters.slice(0,2).join('').toUpperCase();
+  }
+  function channelToken(label){
+    label = String(label || '').toLowerCase();
+    if(label.indexOf('voice') >= 0) return 'VO';
+    if(label.indexOf('video') >= 0) return 'VI';
+    if(label.indexOf('30') >= 0 || label.indexOf('fixed') >= 0) return 'FX';
+    if(label.indexOf('60') >= 0) return '60';
+    if(label.indexOf('written') >= 0 || label.indexOf('brief') >= 0) return 'WR';
+    if(label.indexOf('package') >= 0) return 'PK';
+    return 'CH';
+  }
+  function stripEmoji(value){
+    return String(value || '').replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu,'').replace(/\s{2,}/g,' ').trim();
+  }
+  function clearTextNodes(el){
+    if(!el) return;
+    Array.prototype.slice.call(el.childNodes).forEach(function(node){
+      if(node.nodeType === 3) node.nodeValue = '';
+    });
+  }
+  function ensureInitialAvatar(){
+    var value = initials();
+    var hero = document.getElementById('expert-photo-emoji');
+    var about = document.querySelector('#view-4 .about-photo-emoji');
+    [hero, about].forEach(function(el){
+      if(!el) return;
+      var img = el.parentElement && el.parentElement.querySelector('img');
+      if(img && img.style.display === 'block') return;
+      el.classList.add('ob-avatar-initials');
+      el.textContent = value;
+      el.setAttribute('aria-label', value + ' initials');
+    });
+  }
+  function installLineIcons(){
+    document.querySelectorAll('#view-4 .stype-btn').forEach(function(card){
+      var icon = card.querySelector('.stype-btn-icon');
+      if(icon){ icon.setAttribute('data-ob-line-icon', channelToken(card.textContent)); icon.textContent = ''; }
+    });
+    document.querySelectorAll('#view-4 .service-mini, #view-4 .service-big').forEach(function(card){
+      var icon = card.querySelector('.service-mini-icon,.service-big-icon');
+      if(icon){ icon.setAttribute('data-ob-line-icon', channelToken(card.textContent)); icon.textContent = ''; }
+    });
+    document.querySelectorAll('#view-5 .service-option').forEach(function(card){
+      var icon = card.querySelector('.service-option-icon');
+      if(icon){ icon.setAttribute('data-ob-line-icon', channelToken(card.textContent)); icon.textContent = ''; }
+    });
+    var presessIcon = document.getElementById('presess-channel-icon');
+    if(presessIcon){
+      presessIcon.setAttribute('data-ob-line-icon', channelToken((document.getElementById('presess-type') || {}).textContent || presessIcon.textContent));
+      presessIcon.textContent = '';
+    }
+    var bovIcon = document.getElementById('bov-channel-icon');
+    if(bovIcon){
+      bovIcon.setAttribute('data-ob-line-icon', channelToken((document.getElementById('bov-channel-name') || {}).textContent || bovIcon.textContent));
+      bovIcon.textContent = '';
+    }
+    var vidPlaceholder = document.getElementById('vid-placeholder');
+    if(vidPlaceholder){
+      vidPlaceholder.setAttribute('data-ob-line-icon', initials());
+      vidPlaceholder.textContent = '';
+    }
+    document.querySelectorAll('#view-5 .video-remote > span:not(#vid-placeholder)').forEach(function(el){
+      el.classList.add('ob-video-placeholder');
+      el.setAttribute('data-ob-line-icon', initials());
+      el.textContent = '';
+    });
+    document.querySelectorAll('#view-5 .voice-avatar').forEach(function(el){
+      clearTextNodes(el);
+      el.setAttribute('aria-label','Live voice session');
+    });
+    document.querySelectorAll('#view-5 .v-ctrl, #view-5 .vid-ctrl').forEach(function(ctrl){
+      var raw = ctrl.textContent || ctrl.getAttribute('title') || '';
+      var token = /end|📵/i.test(raw) ? 'END' : /cam|📹/i.test(raw) ? 'CAM' : /speaker|🔊/i.test(raw) ? 'SPK' : 'MIC';
+      ctrl.setAttribute('data-ob-line-icon', token);
+      ctrl.setAttribute('aria-label', token === 'END' ? 'End call' : token === 'CAM' ? 'Camera' : token === 'SPK' ? 'Speaker' : 'Microphone');
+      ctrl.textContent = '';
+    });
+    document.querySelectorAll('#view-5 button, #bfl-overlay button, #booking-overlay button, #view-4 button, #view-5 .free-timer-text, #view-5 #a3-voice-free-label, #view-5 .paywall-title, #view-5 .conf-icon').forEach(function(el){
+      if(el.querySelector && el.querySelector('[data-ob-line-icon],.ob-line-mini')) return;
+      var clean = stripEmoji(el.textContent);
+      if(clean && clean !== el.textContent.trim()) el.textContent = clean;
+    });
+    document.querySelectorAll('#view-4 button').forEach(function(btn){
+      if(/(?:Schedule|Book) for Later/i.test(btn.textContent || '') && !btn.querySelector('.ob-line-mini')){
+        btn.textContent = /Book for Later/i.test(btn.textContent || '') ? 'Book for Later' : 'Schedule for Later';
+        var mini = document.createElement('span');
+        mini.className = 'ob-line-mini';
+        mini.textContent = 'SC';
+        btn.insertBefore(mini, btn.firstChild);
+      }
+    });
+    ['ew-hero-cta','bottom-cta-btn'].forEach(function(id){
+      var el = document.getElementById(id);
+      if(el) el.textContent = (el.textContent || '').replace(/^[^\w]+/,'').trim();
+    });
+    var status = document.getElementById('hero-status-badge');
+    if(status) status.textContent = (status.textContent || '').replace(/[🟢🔴⚪]\s*/g,'').trim();
+    var liveCopy = document.querySelector('#book-permin-panel > div:first-child');
+    if(liveCopy) liveCopy.textContent = 'Connect now - no scheduling needed';
+  }
+  function polishPreSession(){
+    var freeNote = document.getElementById('presess-free-note');
+    var paidNote = document.getElementById('presess-paid-note');
+    if(freeNote && !freeNote.dataset.obPolished){
+      freeNote.dataset.obPolished = '1';
+      freeNote.innerHTML = '<strong>Intro minutes active.</strong> Your first <strong id="presess-free-mins">' + ((document.getElementById('presess-free-mins') || {}).textContent || 'minutes') + '</strong> are included. Billing starts only after intro time is complete.';
+    }
+    if(paidNote && !paidNote.dataset.obPolished){
+      paidNote.dataset.obPolished = '1';
+      paidNote.innerHTML = '<strong>Billing starts when the session begins.</strong> You can end any time and only pay for time used.';
+    }
+    var title = document.getElementById('presess-title');
+    if(title && /Expert/i.test(title.textContent || '') && window._currentExpert && window._currentExpert.name){
+      title.textContent = title.textContent.replace('Expert', window._currentExpert.name);
+    }
+    var input = document.getElementById('expert-chat-input');
+    if(input && (input.placeholder === 'Type your message...' || input.placeholder === 'Session ended')) input.placeholder = 'Message the client...';
+  }
+  function ensureConnectionNote(target, id, message){
+    if(!target) return null;
+    var note = document.getElementById(id);
+    if(!note){
+      note = document.createElement('div');
+      note.id = id;
+      note.className = 'ob-connection-note';
+      if(target.firstChild) target.insertBefore(note, target.firstChild);
+      else target.appendChild(note);
+    }
+    note.textContent = message;
+    return note;
+  }
+  function activeClientScreen(){
+    return document.querySelector('#view-5 .phone-screen.active') || document.getElementById('screen-A4') || document.getElementById('screen-B3') || document.getElementById('screen-VID');
+  }
+  window._obShowSessionConnectionIssue = function(sid, ch, reason, roleName){
+    var msg = 'Connection interrupted. Trying to reconnect - keep this page open. If the session is ended deliberately, the receipt will appear automatically.';
+    if(roleName === 'expert' || (typeof role === 'function' && role() === 'expert')){
+      var rtc = document.getElementById('expert-rtc-area');
+      var parent = rtc && rtc.parentNode;
+      ensureConnectionNote(parent, 'ob-expert-connection-note', msg);
+    } else {
+      ensureConnectionNote(activeClientScreen(), 'ob-client-connection-note', msg);
+    }
+    var input = document.getElementById('expert-chat-input');
+    if(input && !input.disabled && input.placeholder === 'Session ended') input.placeholder = 'Message the client...';
+  };
+  window._obClearSessionConnectionIssue = function(){
+    ['ob-expert-connection-note','ob-client-connection-note'].forEach(function(id){
+      var el = document.getElementById(id);
+      if(el && el.parentNode) el.parentNode.removeChild(el);
+    });
+  };
+  function placeTypingIndicators(){
+    var paid = document.getElementById('paid-chat-messages');
+    var clientTyping = document.getElementById('ob-client-typing');
+    if(paid && clientTyping && clientTyping.parentNode !== paid) paid.appendChild(clientTyping);
+    if(paid && clientTyping) paid.appendChild(clientTyping);
+    var expert = document.getElementById('expert-chat-messages');
+    var expertTyping = document.getElementById('expert-typing-indicator');
+    if(expert && expertTyping && expertTyping.parentNode !== expert) expert.appendChild(expertTyping);
+    if(expert && expertTyping) expert.appendChild(expertTyping);
+  }
+  function run(){
+    ensureInitialAvatar();
+    installLineIcons();
+    polishPreSession();
+    placeTypingIndicators();
+  }
+  ready(function(){
+    run();
+    [200,700,1500,3000].forEach(function(ms){ setTimeout(run, ms); });
+    try {
+      var pending = false;
+      new MutationObserver(function(){
+        if(pending) return;
+        pending = true;
+        requestAnimationFrame(function(){ pending = false; run(); });
+      }).observe(document.body, {childList:true, subtree:true, characterData:true});
     } catch(e) {}
   });
 })();

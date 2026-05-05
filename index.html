@@ -3239,17 +3239,17 @@ if (!window.toast) {
           <div class="signup-step-title" style="font-size:32px;">Choose your launch plan</div>
           <p style="color:var(--gray-400);margin-bottom:20px;">Your expert practice is ready. Pick how Ownlybiz should power your sessions.</p>
           <div style="margin-bottom:20px;">
-            <div style="font-size:12px;font-weight:600;color:var(--gray-400);text-transform:uppercase;letter-spacing:.7px;margin-bottom:10px;">Your website is live at</div>
+            <div style="font-size:12px;font-weight:600;color:var(--gray-400);text-transform:uppercase;letter-spacing:.7px;margin-bottom:10px;">Your website address</div>
             <div style="display:flex;align-items:center;gap:0;border:2px solid var(--terra);border-radius:12px;overflow:hidden;background:var(--white);max-width:420px;margin:0 auto;">
               <span style="padding:14px 14px;background:var(--cream);border-right:1.5px solid var(--gray-200);font-size:18px;">🌐</span>
               <span id="launch-url-slug" style="padding:14px 16px;font-size:15px;font-weight:700;color:var(--brown);flex:1;word-break:break-all;"><span id="launch-url-display">your-name.ownlybiz.com</span></span>
               <button style="padding:14px 16px;border:none;background:var(--terra);color:white;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap;" onclick="var u='https://'+(document.getElementById('launch-url-display')||{textContent:''}).textContent;if(navigator.clipboard&&u.length>8)navigator.clipboard.writeText(u);this.textContent='✓ Copied!';">Copy Link</button>
             </div>
-            <div style="font-size:12px;color:var(--sage);margin-top:8px;font-weight:600;">✓ Subdomain active</div>
+            <div style="font-size:12px;color:var(--sage);margin-top:8px;font-weight:600;">✓ Address reserved</div>
           </div>
           <ul class="launch-checklist">
             <li>Expert website published</li>
-            <li>Subdomain active</li>
+            <li>Website address reserved</li>
             <li>Services & rates configured</li>
             <li>Availability set</li>
             <li>Independent Professional ToS accepted</li>
@@ -27783,6 +27783,17 @@ body.ob-ui-dark .ob-ui-theme-toggle{
 #view-4.ob-site-theme-dark .expert-site-links a.active{
   color:var(--lime)!important;
 }
+#view-4.ob-expert-unavailable .expert-site-links,
+#view-4.ob-expert-unavailable #nav-cta-group,
+#view-4.ob-expert-unavailable #client-nav-area{
+  display:none!important;
+}
+#view-4.ob-expert-unavailable .expert-site-nav{
+  justify-content:center!important;
+}
+#view-4.ob-expert-unavailable .expert-page:not(#ep-home){
+  display:none!important;
+}
 #view-4 .expert-hero{
   background:
     radial-gradient(circle at 72% 18%,rgba(200,255,61,.24),transparent 34%),
@@ -28243,6 +28254,60 @@ body:has(#view-2.active) .privacy-consent.active{
       }
     });
   }
+  function publicExpertSlug(value){
+    var slug = String(value || '').trim().replace(/^\/+|\/+$/g,'').split('/')[0] || '';
+    if(!slug || slug === 'expert-slug') {
+      var path = location.pathname.replace(/^\/+|\/+$/g,'');
+      slug = path.split('/')[0] || '';
+    }
+    if(['','signup','login','admin','dash','dashboard','pricing','features','how','contact','blog'].indexOf(slug) >= 0) return '';
+    return /^[a-z0-9][a-z0-9-]{1,62}$/i.test(slug) ? slug : '';
+  }
+  function restoreExpertHomeShell(){
+    var view = document.getElementById('view-4');
+    var home = document.getElementById('ep-home');
+    if(view) view.classList.remove('ob-expert-unavailable');
+    if(home && home.dataset.obOriginalHtml){
+      home.innerHTML = home.dataset.obOriginalHtml;
+      delete home.dataset.obOriginalHtml;
+    }
+  }
+  function showExpertUnavailable(slug){
+    var view = document.getElementById('view-4');
+    var home = document.getElementById('ep-home');
+    if(!view || !home) return;
+    if(!home.dataset.obOriginalHtml) home.dataset.obOriginalHtml = home.innerHTML;
+    view.classList.add('ob-expert-unavailable','ob-site-theme-light');
+    view.classList.remove('ob-site-theme-dark');
+    document.querySelectorAll('#view-4 .expert-page').forEach(function(page){
+      page.classList.toggle('active', page.id === 'ep-home');
+    });
+    home.innerHTML =
+      '<div style="min-height:calc(100vh - 84px);display:flex;align-items:center;justify-content:center;text-align:center;padding:72px 22px;background:#F7F1E8;color:#241A15;">' +
+        '<div style="max-width:520px;background:#FFFDF8;border:1px solid #E1D6C8;border-radius:24px;padding:34px 28px;box-shadow:0 18px 60px rgba(42,28,18,.08);">' +
+          '<div style="font-family:var(--font-head);font-size:32px;line-height:1.1;margin-bottom:12px;">This expert site is not available yet</div>' +
+          '<p style="color:#5F554D;line-height:1.65;margin:0 0 22px;">' + esc(slug ? slug + '.ownlybiz.com is reserved, but it is not published yet.' : 'This expert profile is not published yet.') + '</p>' +
+          '<a href="/" style="display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:0 18px;border-radius:999px;background:#C4622D;color:white;font-weight:800;text-decoration:none;">Back to Ownlybiz</a>' +
+        '</div>' +
+      '</div>';
+    if(typeof window._markRouteReady === 'function') window._markRouteReady('public');
+  }
+  function verifyPublicExpertAvailability(slug){
+    slug = publicExpertSlug(slug);
+    if(!slug) return;
+    var api = window.OWNLY_API || window.OWNLYBIZ_API_URL || '';
+    if(!api) return;
+    fetch(api.replace(/\/+$/,'') + '/api/experts/' + encodeURIComponent(slug), {cache:'no-store'})
+      .then(function(r){
+        if(!r.ok) throw new Error('unavailable');
+        return r.json();
+      })
+      .then(function(d){
+        var e = d && (d.expert || d);
+        if(!e || !e.slug) throw new Error('unavailable');
+      })
+      .catch(function(){ showExpertUnavailable(slug); });
+  }
   function applyUiTheme(theme){
     var t = theme === 'dark' ? 'dark' : 'light';
     document.body.classList.toggle('ob-ui-dark', t === 'dark');
@@ -28288,6 +28353,7 @@ body:has(#view-2.active) .privacy-consent.active{
     });
     wrap('_applyExpertWebsite', function(old){
       return function(data){
+        restoreExpertHomeShell();
         var result = old.apply(this, arguments);
         applyPublicDesign(data || window._websiteData || {});
         return result;
@@ -28297,6 +28363,14 @@ body:has(#view-2.active) .privacy-consent.active{
       return function(page){
         var result = old.apply(this, arguments);
         setTimeout(function(){ applyPublicDesign(window._currentExpert || window._websiteData || {}); }, 20);
+        return result;
+      };
+    });
+    wrap('loadExpertWebsite', function(old){
+      return function(slug){
+        var resolved = publicExpertSlug(slug);
+        var result = old.apply(this, arguments);
+        if(resolved) setTimeout(function(){ verifyPublicExpertAvailability(resolved); }, 80);
         return result;
       };
     });

@@ -8952,22 +8952,26 @@ async function bovAuthorize() {
           } else {
             // Card saved — store payment method id and proceed
             window._bovPaymentMethodId = result.setupIntent.payment_method;
-            if (window._obSaveDefaultPaymentMethod && result.setupIntent.payment_method) {
-              window._obSaveDefaultPaymentMethod(result.setupIntent.payment_method).catch(function(){});
-            }
-            if (btn) { btn.textContent = 'Card authorized ✓'; }
-            // Show connecting state — mark payment as authorized for future sessions
-            localStorage.setItem('ob_hpm','1');
-            _bovGoStep(3);
-            var badge = document.getElementById('bov-step-pay-badge');
-            var conn  = document.getElementById('bov-step-conn-badge');
-            if (badge) { badge.style.background = '#dcfce7'; badge.style.color = '#166534'; }
-            setTimeout(function() {
-              if (conn) { conn.style.background = '#dcfce7'; conn.style.color = '#166534'; conn.textContent = '✓ Connected'; }
-              setTimeout(function() { _launchSession(true); }, 700);
-            }, 800);
+            var saveDefault = window._obSaveDefaultPaymentMethod && result.setupIntent.payment_method
+              ? window._obSaveDefaultPaymentMethod(result.setupIntent.payment_method, t)
+              : Promise.resolve();
+            saveDefault.then(function(){
+              if (btn) { btn.textContent = 'Card authorized ✓'; }
+              // Show connecting state — mark payment as authorized for future sessions
+              localStorage.setItem('ob_hpm','1');
+              _bovGoStep(3);
+              var badge = document.getElementById('bov-step-pay-badge');
+              var conn  = document.getElementById('bov-step-conn-badge');
+              if (badge) { badge.style.background = '#dcfce7'; badge.style.color = '#166534'; }
+              setTimeout(function() {
+                if (conn) { conn.style.background = '#dcfce7'; conn.style.color = '#166534'; conn.textContent = '✓ Connected'; }
+                setTimeout(function() { _launchSession(true); }, 700);
+              }, 800);
+            }).catch(function(e){
+              showErr((e && e.message) || 'Could not save payment method. Please try again.');
+            });
           }
-        });
+        }).catch(function(e){ showErr((e && e.message) || 'Payment timed out. Please try again.'); });
       })
       .catch(function(){ showErr('Network error. Please try again.'); });
     })
@@ -17318,11 +17322,13 @@ window.submitBookForLater = function() {
         if (!d.client_secret) { return { auth: auth, cardSaved: false }; }
         return _bflStripe.confirmCardSetup(d.client_secret, { payment_method: { card: _bflCardElement } }).then(function(result) {
           if (result.error) { var ce = document.getElementById('bfl-card-error'); if (ce) { ce.textContent = result.error.message; ce.style.display = 'block'; } throw new Error('card_error'); }
-          if (window._obSaveDefaultPaymentMethod && result.setupIntent && result.setupIntent.payment_method) {
-            window._obSaveDefaultPaymentMethod(result.setupIntent.payment_method, auth.token).catch(function(){});
-          }
-          var sv = document.getElementById('bfl-card-saved'); if (sv) sv.style.display = 'block';
-          return { auth: auth, cardSaved: true };
+          var saveDefault = window._obSaveDefaultPaymentMethod && result.setupIntent && result.setupIntent.payment_method
+            ? window._obSaveDefaultPaymentMethod(result.setupIntent.payment_method, auth.token)
+            : Promise.resolve();
+          return saveDefault.then(function(){
+            var sv = document.getElementById('bfl-card-saved'); if (sv) sv.style.display = 'block';
+            return { auth: auth, cardSaved: true };
+          });
         });
       }).catch(function(e) { if (e.message === 'card_error') throw e;
       // If Stripe is configured, card errors are fatal

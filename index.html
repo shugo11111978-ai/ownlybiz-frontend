@@ -30460,7 +30460,76 @@ body.ob-ui-dark .ob-connection-note,
     }
   }
 
+  function textOf(el){
+    return (el && el.textContent ? el.textContent : '').replace(/\s+/g, ' ').trim();
+  }
+
+  function actionTargetFromEvent(e){
+    var candidates = [];
+    try {
+      if(e && typeof e.composedPath === 'function') candidates = e.composedPath();
+    } catch(err) {
+      candidates = [];
+    }
+    if(e && e.target) candidates.unshift(e.target);
+    try {
+      if(e && document.elementFromPoint && typeof e.clientX === 'number' && typeof e.clientY === 'number') {
+        var pointed = document.elementFromPoint(e.clientX, e.clientY);
+        if(pointed) candidates.push(pointed);
+      }
+    } catch(err) {}
+
+    for(var i=0;i<candidates.length;i++){
+      var node = candidates[i];
+      if(!node || node === window || node === document) continue;
+      if(node.nodeType === 3) node = node.parentElement;
+      if(!node || node.nodeType !== 1) continue;
+      if(node.matches && node.matches('button,a,[role="button"],[onclick]')) return node;
+      if(node.closest) {
+        var closest = node.closest('button,a,[role="button"],[onclick]');
+        if(closest) return closest;
+      }
+    }
+    return null;
+  }
+
+  function isPrimaryCtaTarget(target){
+    if(!target) return false;
+    var onclick = target.getAttribute('onclick') || '';
+    return target.id === 'hero-primary-btn' || onclick.indexOf('handleExpertCTA') >= 0;
+  }
+
+  function isBookLaterTarget(target){
+    if(!target) return false;
+    var onclick = target.getAttribute('onclick') || '';
+    var text = textOf(target);
+    return target.id === 'hero-book-later-btn' ||
+      (onclick.indexOf('openBookLaterModal') >= 0 && /Book for Later|Schedule for Later/i.test(text));
+  }
+
+  function installBookLaterHitTargetStyle(){
+    var id = 'ob-public-entrypoint-hit-target-style';
+    if(document.getElementById(id)) return;
+    var style = document.createElement('style');
+    style.id = id;
+    style.textContent = [
+      '#view-4 #hero-book-later-btn,',
+      '#view-4 button[onclick*="openBookLaterModal"]{',
+      '  touch-action:manipulation;',
+      '  -webkit-user-select:none;',
+      '  user-select:none;',
+      '}',
+      '#view-4 #hero-book-later-btn *,',
+      '#view-4 button[onclick*="openBookLaterModal"] *{',
+      '  pointer-events:none!important;',
+      '}'
+    ].join('\n');
+    document.head.appendChild(style);
+  }
+
   function install(){
+    installBookLaterHitTargetStyle();
+
     if(!window.__obPublicEntrypointFetchHotfix && typeof window.fetch === 'function'){
       window.__obPublicEntrypointFetchHotfix = true;
       var nativeFetch = window.fetch;
@@ -30500,22 +30569,34 @@ body.ob-ui-dark .ob-connection-note,
 
     if(!window.__obPublicEntrypointClickHotfix){
       window.__obPublicEntrypointClickHotfix = true;
+      var lastBookLaterAt = 0;
+      var openFromBookLaterEvent = function(e){
+        var target = actionTargetFromEvent(e);
+        if(!target || !document.getElementById('view-4') || !isBookLaterTarget(target)) return false;
+        var now = Date.now();
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        if(now - lastBookLaterAt > 450) {
+          lastBookLaterAt = now;
+          openBookLaterSafely();
+        }
+        return true;
+      };
+
+      ['pointerup','mouseup','touchend'].forEach(function(type){
+        document.addEventListener(type, openFromBookLaterEvent, true);
+      });
+
       document.addEventListener('click', function(e){
-        var target = e.target && e.target.closest ? e.target.closest('button,a') : null;
+        var target = actionTargetFromEvent(e);
         if(!target || !document.getElementById('view-4')) return;
-        var text = (target.textContent || '').replace(/\s+/g, ' ').trim();
-        var onclick = target.getAttribute('onclick') || '';
-        if(target.id === 'hero-primary-btn' || onclick.indexOf('handleExpertCTA') >= 0){
+        if(isPrimaryCtaTarget(target)){
           e.preventDefault();
           e.stopImmediatePropagation();
           routeToExpertBook();
           return;
         }
-        if(target.id === 'hero-book-later-btn' || (onclick.indexOf('openBookLaterModal') >= 0 && /Book for Later|Schedule for Later/i.test(text))){
-          e.preventDefault();
-          e.stopImmediatePropagation();
-          openBookLaterSafely();
-        }
+        openFromBookLaterEvent(e);
       }, true);
     }
 

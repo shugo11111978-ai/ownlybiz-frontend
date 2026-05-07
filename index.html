@@ -20190,6 +20190,33 @@ window._handleRTCMessage=function(d){
       }
     }
   }
+  function showSessionConnectionStatus(d, roleName){
+    d = d || {};
+    var sid = d.session_id || d.sessionId || (d.session && d.session.id) || '';
+    var activeSid = window._obActiveSessId || window._sid || window._sessId || '';
+    if(activeSid && sid && sid !== activeSid) return true;
+    var billingStarted = d.billing_started === true || (d.session && d.session.started_at);
+    var status = d.type === 'session_connection_waiting'
+      ? (billingStarted ? 'Connection interrupted - trying to reconnect' : 'Still connecting - billing has not started')
+      : 'Connection interrupted - trying to reconnect';
+    setText('rtc-status', status);
+    setText('b3-rtc-status', status);
+    setText('a4-session-rate', status);
+    setText('live-billing-status', status);
+    if(roleName === 'expert' || role() === 'expert'){
+      var badge = document.getElementById('live-client-status');
+      if(badge){
+        badge.textContent = d.type === 'session_connection_waiting' ? 'Connecting' : 'Reconnecting';
+        badge.style.cssText = 'font-size:12px;color:#f59e0b;font-weight:700;';
+      }
+      var sub = document.getElementById('live-sess-subtitle');
+      if(sub && d.type === 'session_connection_waiting') sub.textContent = 'Waiting for both sides to connect. Billing has not started.';
+    }
+    if(typeof window._obShowSessionConnectionIssue === 'function' && d.type !== 'session_connection_waiting'){
+      window._obShowSessionConnectionIssue(sid, d.channel || window._obPendingChannel || 'video', d.reason || d.type, roleName || role());
+    }
+    return true;
+  }
 
   function showLiveSessionRequestFromWs(d){
     d = d || {};
@@ -20269,6 +20296,9 @@ window._handleRTCMessage=function(d){
     try { d = typeof evt === 'string' ? JSON.parse(evt) : JSON.parse(evt.data); } catch(e) { return false; }
     var sid = d.session_id || d.sessionId || (d.session && d.session.id);
     var handled = false;
+    if(d.type === 'session_connection_waiting' || d.type === 'session_connection_recovering' || d.type === 'participant_reconnecting'){
+      return showSessionConnectionStatus(d, roleName);
+    }
     if(d.type && d.type.indexOf('rtc_') === 0 && typeof window._handleRTCMessage === 'function'){ window._handleRTCMessage(d); return true; }
     if(d.type === 'joined'){
       var joinedSid = sid || d.session_id || d.sessionId || (d.session && d.session.id) || '';
@@ -20906,7 +20936,15 @@ window._handleRTCMessage=function(d){
       schedulePendingRequestVisible();
     }).catch(function(){});
   }
-  [1200, 5000, 10000].forEach(function(ms){ setTimeout(pollPendingLiveRequestsFallback, ms); });
+  [1200, 3500, 7000, 12000].forEach(function(ms){ setTimeout(pollPendingLiveRequestsFallback, ms); });
+  if(window._obPendingLiveRequestPoller) clearInterval(window._obPendingLiveRequestPoller);
+  window._obPendingLiveRequestPoller = setInterval(function(){
+    if(role() !== 'expert' || document.hidden) return;
+    pollPendingLiveRequestsFallback();
+  }, 3500);
+  document.addEventListener('visibilitychange', function(){
+    if(!document.hidden) setTimeout(pollPendingLiveRequestsFallback, 250);
+  });
   async function resolvePendingSessionForAccept(){
     var sid = window._pendingSid || requestSidFromDom() || window._obIncomingSessId;
     if(sid) return sid;

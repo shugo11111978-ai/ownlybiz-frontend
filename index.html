@@ -2180,6 +2180,14 @@ if (!window.toast) {
 	    var h = (location.hostname || '').toLowerCase();
 	    return h === 'localhost' || h === '127.0.0.1' || h.endsWith('.vercel.app') || h.indexOf('git-staging') >= 0;
 	  }
+	  function stagingPaymentBypassAllowed(){
+	    var h = (location.hostname || '').toLowerCase();
+	    return window.OWNLYBIZ_IS_STAGING === true
+	      && (h === 'localhost' || h === '127.0.0.1' || h.indexOf('git-staging') !== -1 || h.indexOf('vercel.app') !== -1)
+	      && h !== 'ownlybiz.com'
+	      && h !== 'www.ownlybiz.com'
+	      && h !== 'ownlybiz.vercel.app';
+	  }
 	  function rewrite(value, ws){
 	    if(!window.OWNLYBIZ_IS_STAGING) return value;
 	    var from = ws ? PROD_WS : PROD_BACKEND;
@@ -2195,6 +2203,8 @@ if (!window.toast) {
 	    window.OWNLY_API = window.OWNLYBIZ_API_URL;
 	    window.OWNLYBIZ_WS_URL = window.OWNLYBIZ_IS_STAGING ? STAGING_WS : PROD_WS;
 	  };
+	  window.obStagingPaymentBypassAllowed = stagingPaymentBypassAllowed;
+	  window.stagingPaymentBypassAllowed = stagingPaymentBypassAllowed;
 	  window._obApplyRuntimeBackend();
 	  if(window.OWNLYBIZ_IS_STAGING && !window._obStagingBackendRewriteInstalled) {
 	    var nativeFetch = window.fetch;
@@ -8541,7 +8551,7 @@ function confirmBooking(){
     return;
   }
   // Block if expert hasn't configured payments (only when explicitly false)
-  if(window._currentExpert && window._currentExpert.payments_enabled === false){
+  if(window._currentExpert && window._currentExpert.payments_enabled === false && !(window.obStagingPaymentBypassAllowed && window.obStagingPaymentBypassAllowed())){
     alert('This expert is not accepting payments yet. Please try again later.');
     return;
   }
@@ -8685,6 +8695,30 @@ function updateBookPerminFreeCopy(channel){
   if(note) note.style.display = fm > 0 ? 'inline' : 'none';
 }
 
+function bovStagingPaymentBypassAllowed() {
+  return typeof window.obStagingPaymentBypassAllowed === 'function'
+    ? window.obStagingPaymentBypassAllowed()
+    : false;
+}
+
+function applyBovStagingPaymentBypassUi() {
+  if (!bovStagingPaymentBypassAllowed()) return false;
+  var title = document.getElementById('bov-pay-title');
+  var expl = document.getElementById('bov-pay-explainer');
+  var wallet = document.getElementById('bov-wallet-section');
+  var card = document.getElementById('bov-card-element');
+  var err = document.getElementById('bov-card-error');
+  var btn = document.getElementById('bov-pay-btn');
+  if (title) title.textContent = 'Staging payment bypass';
+  if (expl) expl.innerHTML = 'Staging payment bypass is enabled. No Stripe card, wallet, SetupIntent, or charge is required for this test session.';
+  if (wallet) wallet.style.display = 'none';
+  if (card) card.style.display = 'none';
+  if (err) err.style.display = 'none';
+  if (btn) btn.textContent = 'Start Session ->';
+  try { localStorage.setItem('ob_hpm','1'); } catch(e) {}
+  return true;
+}
+
 // ===== BOOKING OVERLAY (expert website) =====
 function openBookingOverlay(channelId) {
   // Clear stale session state from previous sessions
@@ -8777,6 +8811,7 @@ function openBookingOverlay(channelId) {
         _bovGoStep(2); // show payment (card saved on Stripe, just needs auth)
       // Mount Stripe card element when step 2 is shown
       setTimeout(function() {
+        if (applyBovStagingPaymentBypassUi()) return;
         var BASE2 = 'https://ownlybiz-backend-production.up.railway.app';
         var t2 = sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || '';
         if (!t2) return;
@@ -8805,6 +8840,7 @@ function openBookingOverlay(channelId) {
     } else {
       // Free minutes path — still require payment overlay
       _bovGoStep(2);
+      applyBovStagingPaymentBypassUi();
     }
   } else {
     _bovGoStep(1);
@@ -8869,6 +8905,7 @@ function _bovGoStep(n) {
       if (expl) expl.innerHTML = '🔐 Your card is <strong>authorized but not charged</strong> until your session ends. You only pay for the exact minutes you use. Stop any time.';
       if (payBtn) payBtn.textContent = 'Authorize & Start Session →';
     }
+    applyBovStagingPaymentBypassUi();
   }
 }
 
@@ -8955,12 +8992,9 @@ async function bovAuthorize() {
   if (!t) { showErr('Please log in first.'); return; }
 
   function stagingPaymentBypassAllowed() {
-    var host = window.location.hostname;
-    return window.OWNLYBIZ_IS_STAGING === true
-      && (host === 'localhost' || host === '127.0.0.1' || host.indexOf('git-staging') !== -1 || host.indexOf('vercel.app') !== -1)
-      && host !== 'ownlybiz.com'
-      && host !== 'www.ownlybiz.com'
-      && host !== 'ownlybiz.vercel.app';
+    return typeof window.obStagingPaymentBypassAllowed === 'function'
+      ? window.obStagingPaymentBypassAllowed()
+      : false;
   }
 
   if (stagingPaymentBypassAllowed()) {
@@ -12076,6 +12110,7 @@ async function savePaymentConfig() {
         // Mount Stripe card element after step 2 shows
         setTimeout(async function() {
           try {
+            if (typeof applyBovStagingPaymentBypassUi === 'function' && applyBovStagingPaymentBypassUi()) return;
             var _BASE='https://ownlybiz-backend-production.up.railway.app';
             var _tok=sessionStorage.getItem('ob_t')||localStorage.getItem('ob_t')||'';
             if(!_tok||typeof Stripe==='undefined') return;
@@ -17150,6 +17185,28 @@ var _bflCardReady = false;
 var _bflCardComplete = false;
 var _bflStripeConfigured = null;
 
+function bflStagingPaymentBypassAllowed() {
+  return typeof window.obStagingPaymentBypassAllowed === 'function'
+    ? window.obStagingPaymentBypassAllowed()
+    : false;
+}
+
+function bflApplyStagingPaymentBypassUi() {
+  if (!bflStagingPaymentBypassAllowed()) return false;
+  var cardSection = document.getElementById('bfl-card-section');
+  var saved = document.getElementById('bfl-card-saved');
+  var err = document.getElementById('bfl-card-error');
+  if (cardSection) cardSection.style.display = 'none';
+  if (err) err.style.display = 'none';
+  if (saved) {
+    saved.textContent = 'Staging payment bypass enabled';
+    saved.style.display = 'block';
+  }
+  _bflStripeConfigured = false;
+  _bflCardComplete = true;
+  return true;
+}
+
 window.openBookLaterModal = function() {
   var ov = document.getElementById('bfl-overlay');
   if (ov) { ov.style.display = 'flex'; document.body.style.overflow = 'hidden'; }
@@ -17213,7 +17270,7 @@ window.bflGoStep = function(n) {
     var fm = typeof freeMinutes === 'object' ? (parseInt(freeMinutes[_bflChannel], 10) || 0) : 0;
     if (freeRow) freeRow.style.display = fm > 0 ? 'flex' : 'none';
     if (freeVal && fm > 0) freeVal.textContent = fm + ' minute' + (fm === 1 ? '' : 's') + ' included';
-    if (typeof mountBflCardElement === 'function') mountBflCardElement();
+    if (!bflApplyStagingPaymentBypassUi() && typeof mountBflCardElement === 'function') mountBflCardElement();
   }
 };
 
@@ -17261,7 +17318,7 @@ window.loadBookingSlots = function() {
   if (!slug) return;
   grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:16px;color:var(--gray-400);font-size:13px;">Loading...</div>';
   noSlots.style.display = 'none';
-  fetch('https://ownlybiz-backend-production.up.railway.app/api/bookings/slots/' + slug + '?date=' + dp.value)
+  fetch((window.OWNLYBIZ_API_URL || window._OB_BACKEND || 'https://ownlybiz-backend-production.up.railway.app') + '/api/bookings/slots/' + slug + '?date=' + dp.value)
     .then(function(r) { return r.json(); })
     .then(function(d) {
       if (!d.slots || d.slots.length === 0) { grid.innerHTML = ''; noSlots.style.display = 'block'; return; }
@@ -17279,11 +17336,12 @@ function mountBflCardElement() {
   var cardDiv = document.getElementById('bfl-card-element');
   var cardSection = document.getElementById('bfl-card-section');
   if (!cardDiv || !cardSection) return;
+  if (bflApplyStagingPaymentBypassUi()) return;
   if (_bflCardElement) return;
   try {
     var pk = window._stripePk || '';
     if (!pk) {
-      fetch('https://ownlybiz-backend-production.up.railway.app/api/payments/config')
+      fetch((window.OWNLYBIZ_API_URL || window._OB_BACKEND || 'https://ownlybiz-backend-production.up.railway.app') + '/api/payments/config')
         .then(function(r) { return r.json(); })
         .then(function(d) {
           if (d.publishable_key) {
@@ -17331,7 +17389,7 @@ window.submitBookForLater = function() {
   var status = document.getElementById('bfl-status');
   var authErr = document.getElementById('bfl-auth-error');
   if (authErr) authErr.style.display = 'none';
-  var BASE = 'https://ownlybiz-backend-production.up.railway.app';
+  var BASE = window.OWNLYBIZ_API_URL || window._OB_BACKEND || 'https://ownlybiz-backend-production.up.railway.app';
   var slug = window._currentExpert ? window._currentExpert.slug : '';
   if (!slug) { var h = window.location.hostname; var pts = h.split('.'); if (pts.length >= 3 && pts[1] === 'ownlybiz') slug = pts[0]; }
   if (!_bflSelectedDate || !_bflSelectedTime) { alert('Please select a date and time.'); return; }
@@ -17366,6 +17424,10 @@ window.submitBookForLater = function() {
   // STEP B: Save card
   authPromise.then(function(auth) {
     btn.textContent = 'Saving card...';
+    if (bflStagingPaymentBypassAllowed()) {
+      try { localStorage.setItem('ob_hpm','1'); } catch(e) {}
+      return { auth: auth, cardSaved: true, stagingBypass: true };
+    }
     if (window._bflWalletPaymentSaved && (!window._bflWalletPaymentSavedToken || window._bflWalletPaymentSavedToken === auth.token)) {
       return { auth: auth, cardSaved: true };
     }

@@ -31064,5 +31064,185 @@ body.ob-ui-dark .ob-connection-note,
   }catch(e){}
 })();
 </script>
+<style>
+#ob-ops-launcher{display:none;position:fixed;right:18px;bottom:18px;z-index:99998;border:1px solid rgba(255,255,255,.22);background:#07130f;color:#ecfff8;border-radius:999px;padding:12px 16px;font:800 13px/1.1 var(--font-body,Arial,sans-serif);box-shadow:0 18px 50px rgba(0,0,0,.36);cursor:pointer;gap:9px;align-items:center}
+#ob-ops-launcher.show{display:flex}
+#ob-ops-launcher .dot{width:10px;height:10px;border-radius:50%;background:#22c55e;box-shadow:0 0 16px #22c55e}
+#ob-ops-launcher.warn .dot{background:#f59e0b;box-shadow:0 0 16px #f59e0b}
+#ob-ops-launcher.crit .dot{background:#ef4444;box-shadow:0 0 16px #ef4444}
+#ob-ops-panel{display:none;position:fixed;inset:16px;z-index:99999;background:linear-gradient(135deg,#06110d 0%,#0f1f18 48%,#1b1208 100%);color:#f5fff9;border:1px solid rgba(255,255,255,.14);border-radius:26px;box-shadow:0 30px 90px rgba(0,0,0,.55);overflow:hidden;font-family:var(--font-body,Arial,sans-serif)}
+#ob-ops-panel.show{display:flex;flex-direction:column}
+.ob-ops-head{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px 22px;border-bottom:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.045)}
+.ob-ops-title{font-size:20px;font-weight:900;letter-spacing:-.02em}
+.ob-ops-sub{font-size:12px;color:rgba(245,255,249,.65);margin-top:4px}
+.ob-ops-actions{display:flex;gap:10px;align-items:center}
+.ob-ops-btn{border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.08);color:#f5fff9;border-radius:12px;padding:10px 13px;font-weight:800;cursor:pointer}
+.ob-ops-btn.primary{background:#41b883;color:#06110d;border-color:#41b883}
+.ob-ops-body{padding:18px;overflow:auto}
+.ob-ops-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:14px}
+.ob-ops-card{background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.12);border-radius:18px;padding:14px;min-height:92px}
+.ob-ops-label{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:rgba(245,255,249,.58);font-weight:900}
+.ob-ops-value{font-size:28px;font-weight:950;margin-top:8px;letter-spacing:-.04em}
+.ob-ops-note{font-size:12px;color:rgba(245,255,249,.68);margin-top:5px}
+.ob-ops-section{background:rgba(255,255,255,.055);border:1px solid rgba(255,255,255,.105);border-radius:20px;padding:15px;margin-top:14px}
+.ob-ops-section h3{margin:0 0 12px;font-size:15px;letter-spacing:-.01em}
+.ob-ops-table{width:100%;border-collapse:collapse;font-size:12px}
+.ob-ops-table th{text-align:left;color:rgba(245,255,249,.55);font-size:10px;text-transform:uppercase;letter-spacing:.08em;padding:9px;border-bottom:1px solid rgba(255,255,255,.1)}
+.ob-ops-table td{padding:9px;border-bottom:1px solid rgba(255,255,255,.07);vertical-align:top}
+.ob-pill{display:inline-flex;border-radius:999px;padding:4px 8px;font-size:11px;font-weight:900;background:rgba(255,255,255,.12)}
+.ob-pill.ok{background:rgba(34,197,94,.18);color:#86efac}
+.ob-pill.warning{background:rgba(245,158,11,.18);color:#fcd34d}
+.ob-pill.critical{background:rgba(239,68,68,.18);color:#fca5a5}
+.ob-ops-two{display:grid;grid-template-columns:1.2fr .8fr;gap:14px}
+.ob-ops-empty{padding:18px;border:1px dashed rgba(255,255,255,.16);border-radius:16px;color:rgba(245,255,249,.58);font-size:13px}
+@media(max-width:900px){#ob-ops-panel{inset:8px;border-radius:18px}.ob-ops-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.ob-ops-two{grid-template-columns:1fr}.ob-ops-head{align-items:flex-start;flex-direction:column}.ob-ops-actions{width:100%;justify-content:space-between}}
+</style>
+<button id="ob-ops-launcher" type="button" onclick="window.obOpenOpsDashboard&&window.obOpenOpsDashboard()"><span class="dot"></span><span>Ops Monitor</span><span id="ob-ops-launcher-count"></span></button>
+<div id="ob-ops-panel" role="dialog" aria-modal="true" aria-label="Ownlybiz Ops Monitor">
+  <div class="ob-ops-head">
+    <div>
+      <div class="ob-ops-title">Ownlybiz Ops Monitor</div>
+      <div class="ob-ops-sub" id="ob-ops-updated">Live production telemetry for experts, clients, sessions, storage, and API health.</div>
+    </div>
+    <div class="ob-ops-actions">
+      <button class="ob-ops-btn" type="button" onclick="window.obRefreshOpsDashboard&&window.obRefreshOpsDashboard()">Refresh</button>
+      <button class="ob-ops-btn primary" type="button" onclick="window.obCloseOpsDashboard&&window.obCloseOpsDashboard()">Close</button>
+    </div>
+  </div>
+  <div class="ob-ops-body" id="ob-ops-body"><div class="ob-ops-empty">Loading live telemetry...</div></div>
+</div>
+<script>
+(function(){
+  if(window.__obOpsMonitorInstalled) return;
+  window.__obOpsMonitorInstalled = true;
+  var panel = document.getElementById('ob-ops-panel');
+  var body = document.getElementById('ob-ops-body');
+  var launcher = document.getElementById('ob-ops-launcher');
+  var launcherCount = document.getElementById('ob-ops-launcher-count');
+  var updated = document.getElementById('ob-ops-updated');
+  var lastCriticalCount = 0;
+  function token(){ return sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || ''; }
+  function role(){ try { return (JSON.parse(sessionStorage.getItem('ob_u') || localStorage.getItem('ob_u') || '{}').role || '').toLowerCase(); } catch(e){ return ''; } }
+  function base(){
+    var b = '';
+    try { b = window.BASE || BASE || ''; } catch(e) {}
+    return (b || 'https://ownlybiz-backend-production.up.railway.app').replace(/\/+$/,'');
+  }
+  function esc(v){ return String(v == null ? '' : v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
+  function num(v){ v = Number(v || 0); return Number.isFinite(v) ? v : 0; }
+  function fmt(v,suffix){ return (Math.round(num(v)*100)/100).toLocaleString() + (suffix || ''); }
+  function pill(status){ var s = status || 'ok'; return '<span class="ob-pill '+esc(s)+'">'+esc(s.toUpperCase())+'</span>'; }
+  async function fetchOverview(){
+    var res = await fetch(base() + '/api/admin/observability/overview', { headers:{ Authorization:'Bearer ' + token(), 'Content-Type':'application/json' } });
+    var data = await res.json().catch(function(){ return {}; });
+    if(!res.ok) throw new Error(data.error || ('Ops API failed: ' + res.status));
+    return data;
+  }
+  function card(label,value,note,cls){
+    return '<div class="ob-ops-card '+(cls||'')+'"><div class="ob-ops-label">'+esc(label)+'</div><div class="ob-ops-value">'+esc(value)+'</div><div class="ob-ops-note">'+esc(note||'')+'</div></div>';
+  }
+  function renderAlerts(alerts){
+    if(!alerts || !alerts.length) return '<div class="ob-ops-empty">No active alerts right now.</div>';
+    return '<table class="ob-ops-table"><thead><tr><th>Severity</th><th>Alert</th><th>Detail</th><th>Time</th></tr></thead><tbody>' + alerts.map(function(a){
+      return '<tr><td>'+pill(a.severity)+'</td><td><b>'+esc(a.title)+'</b></td><td>'+esc(a.detail)+'</td><td>'+esc(a.at||'')+'</td></tr>';
+    }).join('') + '</tbody></table>';
+  }
+  function renderRoutes(routes){
+    if(!routes || !routes.length) return '<div class="ob-ops-empty">No route samples collected yet.</div>';
+    return '<table class="ob-ops-table"><thead><tr><th>Route</th><th>Count</th><th>P95</th><th>Avg</th><th>Last</th><th>Status</th></tr></thead><tbody>' + routes.slice(0,12).map(function(r){
+      return '<tr><td>'+esc(r.route)+'</td><td>'+fmt(r.count)+'</td><td>'+fmt(r.p95_ms,'ms')+'</td><td>'+fmt(r.avg_ms,'ms')+'</td><td>'+fmt(r.last_duration_ms,'ms')+'</td><td>'+esc(r.last_status_code||'')+'</td></tr>';
+    }).join('') + '</tbody></table>';
+  }
+  function renderAssets(assets){
+    if(!assets || !assets.missing_count) return '<div class="ob-ops-empty">No broken upload references detected in the current scan.</div>';
+    return '<table class="ob-ops-table"><thead><tr><th>Expert</th><th>Field</th><th>Missing URL</th></tr></thead><tbody>' + (assets.examples||[]).map(function(a){
+      return '<tr><td>'+esc(a.name || a.slug || a.owner_id)+'</td><td>'+esc(a.field)+'</td><td>'+esc(a.url)+'</td></tr>';
+    }).join('') + '</tbody></table>';
+  }
+  function renderProblems(items){
+    if(!items || !items.length) return '<div class="ob-ops-empty">No recent 4xx/5xx problem requests in memory.</div>';
+    return '<table class="ob-ops-table"><thead><tr><th>Status</th><th>Route</th><th>Duration</th><th>At</th></tr></thead><tbody>' + items.slice(0,12).map(function(i){
+      return '<tr><td>'+esc(i.status_code)+'</td><td>'+esc(i.route)+'</td><td>'+fmt(i.duration_ms,'ms')+'</td><td>'+esc(i.at||'')+'</td></tr>';
+    }).join('') + '</tbody></table>';
+  }
+  function notifyIfNeeded(data){
+    var critical = num(data.summary && data.summary.critical_alerts);
+    if(critical > lastCriticalCount && 'Notification' in window && Notification.permission === 'granted'){
+      try { new Notification('Ownlybiz production alert', { body: critical + ' critical alert(s) active in Ops Monitor.', tag:'ownlybiz-ops-alert' }); } catch(e) {}
+    }
+    lastCriticalCount = critical;
+  }
+  function render(data){
+    var s = data.summary || {};
+    var http = data.http || {};
+    var sys = data.system || {};
+    var mem = sys.memory || {};
+    var ev = sys.event_loop || {};
+    var bus = data.business || {};
+    var sessions = bus.sessions || {};
+    var users = bus.users || {};
+    var storage = data.storage || {};
+    var assetStore = storage.assets || {};
+    var rt = (data.realtime && data.realtime.websocket) || {};
+    var cluster = rt.cluster || {};
+    var state = data.status || 'ok';
+    if(launcher){
+      launcher.classList.add('show');
+      launcher.classList.toggle('warn', state === 'warning');
+      launcher.classList.toggle('crit', state === 'critical');
+      if(launcherCount) launcherCount.textContent = s.active_alerts ? '(' + s.active_alerts + ')' : '';
+    }
+    if(updated) updated.textContent = 'Last updated ' + (data.generated_at || new Date().toISOString()) + ' - status: ' + state.toUpperCase();
+    body.innerHTML =
+      '<div class="ob-ops-grid">' +
+        card('System status', state.toUpperCase(), s.active_alerts + ' active alerts') +
+        card('API p95', fmt(s.api_p95_ms,'ms'), 'Error rate ' + fmt(s.api_error_rate_pct,'%') + ', 429s ' + fmt(s.api_429_count)) +
+        card('Sessions now', fmt(s.active_sessions), fmt(s.pending_sessions) + ' pending requests') +
+        card('Realtime users', fmt(s.connected_users), 'Sockets ' + fmt(cluster.cluster_total_sockets || rt.total_sockets)) +
+        card('Broken assets', fmt(s.broken_assets), 'Scanned upload references') +
+        card('Heap used', fmt(mem.heap_used_pct,'%'), fmt(mem.heap_used_mb,' MB') + ' / ' + fmt(mem.heap_total_mb,' MB')) +
+        card('Event loop p95', fmt(ev.p95_ms,'ms'), 'Max ' + fmt(ev.max_ms,'ms')) +
+        card('Asset storage', assetStore.durable ? 'DURABLE' : 'RISK', assetStore.upload_dir || '') +
+      '</div>' +
+      '<div class="ob-ops-two">' +
+        '<div class="ob-ops-section"><h3>Active alerts</h3>'+renderAlerts(data.alerts || [])+'</div>' +
+        '<div class="ob-ops-section"><h3>Core live signals</h3>' +
+          '<table class="ob-ops-table"><tbody>' +
+          '<tr><td>Database</td><td>'+pill((data.database && data.database.primary && data.database.primary.ok) ? 'ok' : 'critical')+'</td></tr>' +
+          '<tr><td>Realtime bus</td><td>'+pill(data.realtime && data.realtime.status || 'unknown')+'</td></tr>' +
+          '<tr><td>Experts active / total</td><td>'+fmt(users.experts_active)+' / '+fmt(users.experts_total)+'</td></tr>' +
+          '<tr><td>Clients total</td><td>'+fmt(users.clients_total)+'</td></tr>' +
+          '<tr><td>Sessions last 15m</td><td>'+fmt(sessions.sessions_15m)+'</td></tr>' +
+          '<tr><td>Payment failures 24h</td><td>'+fmt(sessions.payment_failures_24h)+'</td></tr>' +
+          '<tr><td>Stale active sessions</td><td>'+fmt(sessions.stale_active_sessions)+'</td></tr>' +
+          '</tbody></table></div>' +
+      '</div>' +
+      '<div class="ob-ops-section"><h3>Hot API routes</h3>'+renderRoutes(http.hottest_routes || [])+'</div>' +
+      '<div class="ob-ops-two">' +
+        '<div class="ob-ops-section"><h3>Recent problem requests</h3>'+renderProblems(http.recent_problem_requests || [])+'</div>' +
+        '<div class="ob-ops-section"><h3>Broken uploaded assets</h3>'+renderAssets(data.assets || {})+'</div>' +
+      '</div>';
+    notifyIfNeeded(data);
+  }
+  async function refresh(){
+    if(role() !== 'admin') return;
+    if(launcher) launcher.classList.add('show');
+    try { render(await fetchOverview()); }
+    catch(e){ if(body) body.innerHTML = '<div class="ob-ops-empty">Ops monitor failed: '+esc(e.message)+'</div>'; }
+  }
+  window.obOpenOpsDashboard = function(){ if(panel) panel.classList.add('show'); refresh(); };
+  window.obCloseOpsDashboard = function(){ if(panel) panel.classList.remove('show'); };
+  window.obRefreshOpsDashboard = refresh;
+  function boot(){
+    if(role() !== 'admin') return;
+    if(launcher) launcher.classList.add('show');
+    refresh();
+    if(window.__obOpsRefreshTimer) clearInterval(window.__obOpsRefreshTimer);
+    window.__obOpsRefreshTimer = setInterval(refresh, 15000);
+  }
+  [500,1800,4500].forEach(function(ms){ setTimeout(boot, ms); });
+  window.addEventListener('storage', function(e){ if(e.key === 'ob_u') setTimeout(boot, 200); });
+})();
+</script>
 </body>
 </html>

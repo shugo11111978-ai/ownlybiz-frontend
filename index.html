@@ -10988,13 +10988,6 @@ async function savePaymentConfig() {
 	        if(typeof closeBookingOverlay==='function') closeBookingOverlay();
 	        break; }
       case 'session_ended': {
-        var endedSid = d.session?.id || d.sessionId || d.session_id;
-        var activeSid = window._obActiveSessId || window._sid || window._obPendingSessId || window._pendingSid;
-        if(!endedSid){
-          if(!activeSid) break;
-          endedSid = activeSid;
-        }
-        if(activeSid && endedSid !== activeSid) break;
         window._sid=null; window._expertSessActive=false;
         window._obActiveSessId=null;window._obPendingSessId=null;window._pendingSid=null;window._obIncomingSessId=null;
         if(window.OB_RTC&&typeof window.OB_RTC.cleanup==='function')window.OB_RTC.cleanup();
@@ -16381,13 +16374,7 @@ body.expert-page #mob-cta-bar{display:none!important;}
 function openClientChat(sid){
   if(window._obClientChatOpened===sid){console.log('[OCC] Already opened for '+sid);return;}
   window._obClientChatOpened=sid;
-  if(window.OB_RTC&&window.OB_RTC.isActive&&window.OB_RTC.isActive()){
-    var _activeRtcSid = window.OB_RTC.getSid ? window.OB_RTC.getSid() : '';
-    if(!_activeRtcSid || _activeRtcSid !== sid){
-      if(typeof window.OB_RTC.cleanup === 'function') window.OB_RTC.cleanup();
-      else if(typeof window._obHardStopSessionMedia === 'function') window._obHardStopSessionMedia();
-    }
-  }
+  if(window.OB_RTC&&window.OB_RTC.isActive())window.OB_RTC.end();
   _sessId=sid;window._obActiveSessId=sid;
   // Hide booking overlay and waiting overlay
   var _bo=document.getElementById('booking-overlay');if(_bo){_bo.style.display='none';document.body.style.overflow='';}
@@ -16718,13 +16705,7 @@ window._obOpenClientChat = openClientChat;
         var s=sessions[0];
         // Only show if session is less than 10 minutes old
         var age=(Date.now()/1000)-(s.created_at||0);
-        if(s.id!==window._obIncomingSessId && !window._sid && !window._obActiveSessId && age<30 && (!(window._lastSessionEndedAt||parseFloat(localStorage.getItem('ob_lastSessionEnded')||'0'))||(s.created_at||0)>(window._lastSessionEndedAt||parseFloat(localStorage.getItem('ob_lastSessionEnded')||'0')))){
-          console.log('[POLL] pending session '+s.id+' fallback - showing request from poll');
-          if(typeof showLiveSessionRequestFromWs === 'function' && s && s.id){
-            window._pendingSid = s.id;
-            showLiveSessionRequestFromWs({type:'session_request', session:s, client:{name:s.client_name || 'Client'}, channel:s.channel || 'chat'});
-            if(typeof schedulePendingRequestVisible === 'function') schedulePendingRequestVisible();
-          }
+        if(s.id!==window._obIncomingSessId&&!window._sid&&!window._obActiveSessId&&age<30&&(!(window._lastSessionEndedAt||parseFloat(localStorage.getItem('ob_lastSessionEnded')||'0'))||(s.created_at||0)>(window._lastSessionEndedAt||parseFloat(localStorage.getItem('ob_lastSessionEnded')||'0')))){console.log('[POLL] pending session '+s.id+' found — waiting for real-time WS session_request to trigger popup');
         } else if(age>=600){/* stale, ignore */}
       }
       else if(sessions.length===0&&!window._sid&&!window._pendingSid&&!window._obIncomingSessId&&!window._obRequestVisibleSid){var sro=document.getElementById('session-request-overlay');if(sro&&sro.style.display==='flex'){sro.style.display='none';var srs=document.getElementById('session-request-sheet');if(srs)srs.style.display='none';}}
@@ -16918,9 +16899,8 @@ window._obOpenClientChat = openClientChat;
     window._obPendingSessId=null;window._obActiveSessId=null;
     var t=tok();if(!t)return;var role=myRole();
     if(role==='expert'){expertPoll();_pollTimer=setInterval(expertPoll,8000);}
-    setTimeout(hookWS,250);
-    if(role==='expert')setTimeout(fixExpertDashboard,400);
-    setTimeout(function(){var ws=window._obWs||window._obClientWs;if(ws&&ws.readyState<=1){var orig=ws.onmessage;ws.onmessage=function(evt){if(orig)orig.call(ws,evt);try{handleWsMsg(JSON.parse(evt.data));}catch(e){}};console.log('[v5] WS hooked');}},900);
+    setTimeout(hookWS,1200);if(role==='expert')setTimeout(fixExpertDashboard,1500);
+    setTimeout(function(){var ws=window._obWs||window._obClientWs;if(ws&&ws.readyState<=1){var orig=ws.onmessage;ws.onmessage=function(evt){if(orig)orig.call(ws,evt);try{handleWsMsg(JSON.parse(evt.data));}catch(e){}};console.log('[v5] WS hooked');}},2500);
     // Hook client WS after 2s so api-v2 has time to connect
     setTimeout(function(){
       var ws=window._obWs||window._obClientWs;
@@ -16932,7 +16912,7 @@ window._obOpenClientChat = openClientChat;
         };
         console.log('[v5] WS hooked role='+role);
       }
-    },1400);
+    },2000);
   }
   // Expose sendPaidMsg globally from inside IIFE (has access to BASE, hdr, appendMsg)
   window.sendPaidMsg=function(){
@@ -17662,8 +17642,6 @@ function joinActiveBookingSession(sessionId, expertId, channel) {
             }
           }
           if (d.type === 'session_ended') {
-            var _endedSid = d.sessionId || d.session_id || (d.session && d.session.id);
-            if(_endedSid && _endedSid !== sessionId) return;
             // Update receipt with real session data
             var _s = d.session || {};
             var _dur = Math.floor((_s.duration_secs || 0) / 60);
@@ -18722,13 +18700,10 @@ window.OB_RTC = (function(){
 
 	  function end(){
 	    console.log('[RTC] Ending');
-	    if(window._obRtcEndInFlightAt && Date.now() - window._obRtcEndInFlightAt < 1800) return;
-	    window._obRtcEndInFlightAt = Date.now();
-	    var endingSid = sid;
 	    window._obSessionEnding=true;
 	    window._obSessionEndingAt=Date.now();
 	    try{if(typeof window._obClearSessionConnectionIssue==='function')window._obClearSessionConnectionIssue();}catch(e){}
-	    if(endingSid) _send({type:'rtc_end',session_id:endingSid,deliberate:true,ended_by:_role});
+	    _send({type:'rtc_end',session_id:sid,deliberate:true,ended_by:_role});
 	    cleanup();
 	  }
   function cleanup(){
@@ -20194,7 +20169,6 @@ window._handleRTCMessage=function(d){
     pauseClientTimers(sess);
     if(typeof phoneGo === 'function') phoneGo('A5');
   }
-  window._obApplyClientReceipt = applyClientReceipt;
   function handleSessionStarted(d){
     var sid = d.session_id || d.sessionId || (d.session && d.session.id) || window._obActiveSessId;
     var started = d.started_at || (d.session && d.session.started_at);
@@ -20344,12 +20318,7 @@ window._handleRTCMessage=function(d){
       }
       handled = true;
     }
-    if(d.type === 'session_ended'){
-      var endedSid = sid;
-      if(!endedSid){
-        endedSid = window._obActiveSessId || window._sid || window._sessId;
-      }
-      if(!endedSid || (endedSid !== window._obActiveSessId && endedSid !== window._sid && endedSid !== window._sessId)) return handled;
+    if(d.type === 'session_ended' && (!sid || sid === window._obActiveSessId || sid === window._sid || sid === window._sessId)){
       var sess = d.session || {};
       if(roleName === 'expert') applyExpertEnded(sess, 'client');
       else applyClientReceipt(sess);
@@ -20573,14 +20542,10 @@ window._handleRTCMessage=function(d){
       applyClientReceipt(window._obClientEndingSnapshot || {});
       return false;
     }
-    var endRequest = api('/api/sessions/' + encodeURIComponent(sid) + '/end', {method:'POST', body:'{}'}).then(function(d){
+    window._obClientEndingPromise = api('/api/sessions/' + encodeURIComponent(sid) + '/end', {method:'POST', body:'{}'}).then(function(d){
       applyClientReceipt((d && d.session) || window._obClientEndingSnapshot || {id:sid});
       return d;
-    });
-    var timeout = new Promise(function(resolve, reject){
-      setTimeout(function(){ reject(new Error('End session is taking longer than expected')); }, 14000);
-    });
-    window._obClientEndingPromise = Promise.race([endRequest, timeout]).catch(function(e){
+    }).catch(function(e){
       clearClientEndingState();
       if(window._obActiveSessId && tok()) startClientPoller(window._obActiveSessId);
       toastMsg(e.message || 'Could not end session','err');
@@ -20861,14 +20826,12 @@ window._handleRTCMessage=function(d){
       overlay.dataset.sessionId = sid;
       overlay.style.setProperty('display', 'flex', 'important');
       overlay.classList.add('show');
-      overlay.style.pointerEvents = 'auto';
     }
     if(sheet){
       sheet.dataset.sessionId = sid;
       sheet.style.setProperty('display', 'block', 'important');
       sheet.style.transform = 'translateY(0)';
       sheet.classList.add('show');
-      sheet.style.pointerEvents = 'auto';
     }
   }
   function schedulePendingRequestVisible(){
@@ -20907,13 +20870,11 @@ window._handleRTCMessage=function(d){
     if(overlay){
       overlay.style.setProperty('display', 'flex', 'important');
       overlay.classList.add('show');
-      overlay.style.pointerEvents = 'auto';
     }
     if(sheet){
       sheet.style.setProperty('display', 'block', 'important');
       sheet.style.transform = 'translateY(0)';
       sheet.classList.add('show');
-      sheet.style.pointerEvents = 'auto';
     }
     schedulePendingRequestVisible();
     var sid = requestSidFromDom();
@@ -20937,7 +20898,7 @@ window._handleRTCMessage=function(d){
       schedulePendingRequestVisible();
     }).catch(function(){});
   }
-  [150, 500, 1200, 2500, 5000].forEach(function(ms){ setTimeout(pollPendingLiveRequestsFallback, ms); });
+  [1200, 5000, 10000].forEach(function(ms){ setTimeout(pollPendingLiveRequestsFallback, ms); });
   async function resolvePendingSessionForAccept(){
     var sid = window._pendingSid || requestSidFromDom() || window._obIncomingSessId;
     if(sid) return sid;
@@ -21477,7 +21438,7 @@ window._handleRTCMessage=function(d){
 .ob-channel-toggle.is-off{background:rgba(148,130,112,.08);border-color:rgba(148,130,112,.25);color:var(--gray-400);}
 .ob-channel-toggle.is-off .ob-channel-state{color:#b45309;}
 .ob-not-offered-badge{position:absolute;top:8px;right:8px;background:#7b6f66;color:white;font-size:9px;font-weight:900;text-transform:uppercase;letter-spacing:.05em;border-radius:999px;padding:3px 7px;pointer-events:none;z-index:3;}
-#session-request-overlay.ob-floating-request-overlay{pointer-events:auto!important;background:transparent!important;backdrop-filter:none!important;align-items:flex-start!important;justify-content:flex-end!important;padding:18px!important;}
+#session-request-overlay.ob-floating-request-overlay{pointer-events:none!important;background:transparent!important;backdrop-filter:none!important;align-items:flex-start!important;justify-content:flex-end!important;padding:18px!important;}
 #session-request-sheet.ob-floating-request-sheet{pointer-events:auto!important;width:min(420px,calc(100vw - 28px))!important;max-width:420px!important;border-radius:22px!important;padding-bottom:22px!important;box-shadow:0 20px 70px rgba(37,24,16,.24)!important;transform:none!important;animation:obFloatIn .22s ease-out both;}
 .ob-browser-notify-btn{display:block;margin:12px 24px 0;width:calc(100% - 48px);padding:10px 12px;border-radius:12px;border:1px solid rgba(196,98,45,.22);background:rgba(196,98,45,.06);color:var(--brown);font-size:12px;font-weight:800;cursor:pointer;font-family:var(--font-body);}
 @keyframes obFloatIn{from{opacity:0;transform:translateY(-8px) scale(.98);}to{opacity:1;transform:translateY(0) scale(1);}}
@@ -21861,10 +21822,6 @@ window._handleRTCMessage=function(d){
     sheet.classList.add('ob-floating-request-sheet');
     overlay.style.setProperty('display','flex','important');
     sheet.style.setProperty('display','block','important');
-    overlay.style.pointerEvents = 'auto';
-    sheet.style.pointerEvents = 'auto';
-    overlay.style.setProperty('touch-action', 'auto');
-    sheet.style.setProperty('touch-action', 'auto');
     sheet.style.transform = 'none';
     ensureNotificationButton();
     if(navigator.vibrate) try { navigator.vibrate([160, 70, 160]); } catch(e) {}
@@ -30911,8 +30868,7 @@ body.ob-ui-dark .ob-connection-note,
     var earlyReconnect = (state === 'checking' || state === 'disconnected' || state === 'failed' || /^rtc_.*(disconnected|failed|timeout|interrupted)/.test(state)) &&
       sinceStart < START_QUIET_MS &&
       !window._obRtcConnectedOnceAt;
-    var recentConnected = window._obRtcConnectedOnceAt && now() - window._obRtcConnectedOnceAt < 20000;
-    if(receiptActive() || recentlyEnding() || earlyReconnect || recentConnected){
+    if(receiptActive() || recentlyEnding() || earlyReconnect){
       clearConnectionNotes();
       return null;
     }

@@ -18751,20 +18751,8 @@ window._handleRTCMessage=function(d){
 	    try{currentRole = typeof role === 'function' ? role() : (window._obRtcLastRole || '');}catch(e){currentRole = window._obRtcLastRole || '';}
 	    if(msgSid && activeSid && msgSid !== activeSid) return;
 	    if(d.ended_by && currentRole && d.ended_by === currentRole) return;
-	    var activeClientScreen = document.querySelector('#view-5 .phone-screen.active');
-	    var endingUi = !!(window._obSessionEnding || (activeClientScreen && activeClientScreen.id === 'screen-A5'));
-	    var rtcActive = !!(window.OB_RTC && window.OB_RTC.isActive && window.OB_RTC.isActive());
-	    if(d.deliberate !== true){
-	      if(!endingUi && rtcActive && typeof window._obShowSessionConnectionIssue==='function') window._obShowSessionConnectionIssue(activeSid || msgSid, window._obRtcLastChannel || window._obPendingChannel || 'voice', 'rtc_peer_interrupted', currentRole);
-	      return;
-	    }
-	    window._obSessionEnding=true;window._obSessionEndingAt=Date.now();
-	    window.OB_RTC.cleanup();
-	    if(typeof window._obHardStopSessionMedia==='function')window._obHardStopSessionMedia();
-	    if(typeof window._obClearSessionConnectionIssue==='function')window._obClearSessionConnectionIssue();
-	    if(!rtcActive && !endingUi) return;
-	    if(typeof window._obResetExpertLiveSessionUI==='function')window._obResetExpertLiveSessionUI('chat');
-	    if(!endingUi && typeof _showToast==='function')_showToast('Call ended by other side');
+	    if(window._rtcDbg)window._rtcDbg('Ignoring rtc_end as media-level signal; waiting for authoritative session_ended');
+	    return;
 	  }
   else if(d.type==='rtc_ready'){console.log('[RTC] Peer ready');if(window.OB_RTC.handleReady)window.OB_RTC.handleReady();}
 };
@@ -30884,7 +30872,10 @@ body.ob-ui-dark .ob-connection-note,
     return !!(window._obSessionEnding || (window._obSessionEndingAt && now() - window._obSessionEndingAt < END_GRACE_MS));
   }
   function activeRecoverableSession(){
-    return !!(window._obActiveSessId || window._sid || window._sessId) && !receiptActive() && !recentlyEnding();
+    return !!(window._obActiveSessId || window._sid || window._sessId) &&
+      !receiptActive() &&
+      !recentlyEnding() &&
+      !!(window._obRecoverableRtcUntil && now() < window._obRecoverableRtcUntil);
   }
   function suppressTransientEndedCopy(){
     if(!activeRecoverableSession()) return;
@@ -30959,9 +30950,11 @@ body.ob-ui-dark .ob-connection-note,
   window._obShowSessionConnectionIssue = function(sid, ch, reason, roleName){
     var state = String(reason || '');
     var sinceStart = window._obRtcStartedAt ? now() - window._obRtcStartedAt : Infinity;
-    var earlyReconnect = (state === 'checking' || state === 'disconnected' || state === 'failed' || /^rtc_.*(disconnected|failed|timeout|interrupted)/.test(state)) &&
+    var recoverableState = state === 'checking' || state === 'disconnected' || state === 'failed' || /^rtc_.*(disconnected|failed|timeout|interrupted)/.test(state);
+    var earlyReconnect = recoverableState &&
       sinceStart < START_QUIET_MS &&
       !window._obRtcConnectedOnceAt;
+    if(recoverableState && !!(window._obActiveSessId || window._sid || window._sessId) && !recentlyEnding()) window._obRecoverableRtcUntil = now() + 6500;
     var transientEndedCopy = activeRecoverableSession() && /rtc_end|remote_end|peer_left|call_ended|ended|closed|disconnected|failed/i.test(state);
     if(receiptActive() || recentlyEnding() || earlyReconnect || transientEndedCopy){
       clearConnectionNotes();

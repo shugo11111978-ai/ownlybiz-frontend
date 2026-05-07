@@ -30871,6 +30871,18 @@ body.ob-ui-dark .ob-connection-note,
   function recentlyEnding(){
     return !!(window._obSessionEnding || (window._obSessionEndingAt && now() - window._obSessionEndingAt < END_GRACE_MS));
   }
+  function markPostSessionQuiet(){
+    window._obPostSessionQuietUntil = now() + 14000;
+    try { document.documentElement.classList.add('ob-post-session-quiet'); } catch(e) {}
+    setTimeout(function(){
+      if(!(window._obPostSessionQuietUntil && now() < window._obPostSessionQuietUntil)){
+        try { document.documentElement.classList.remove('ob-post-session-quiet'); } catch(e) {}
+      }
+    }, 14500);
+  }
+  function postSessionQuiet(){
+    return !!(window._obPostSessionQuietUntil && now() < window._obPostSessionQuietUntil);
+  }
   function activeRecoverableSession(){
     return !!(window._obActiveSessId || window._sid || window._sessId) &&
       !receiptActive() &&
@@ -31013,8 +31025,12 @@ body.ob-ui-dark .ob-connection-note,
     var previousPhoneGo = window.phoneGo;
     var wrapped = function(screenId){
       if(screenId === 'A5'){
+        markPostSessionQuiet();
         markEnding();
         window._obHardStopSessionMedia();
+      }
+      if(postSessionQuiet() && /^(A3|A4|B3|VID)$/.test(String(screenId || '')) && !(window._obActiveSessId || window._sid || window._sessId)){
+        return false;
       }
       var result = previousPhoneGo.apply(this, arguments);
       if(screenId === 'A5'){
@@ -31032,6 +31048,7 @@ body.ob-ui-dark .ob-connection-note,
     if(typeof window.clientEndSession !== 'function' || window.clientEndSession.__obFrictionGuarded) return;
     var previousClientEnd = window.clientEndSession;
     var wrapped = function(){
+      markPostSessionQuiet();
       markEnding();
       clearConnectionNotes();
       try{ return previousClientEnd.apply(this, arguments); }
@@ -31041,10 +31058,43 @@ body.ob-ui-dark .ob-connection-note,
     window.clientEndSession = wrapped;
   }
 
+  function hookPostSessionRouter(){
+    if(window.__obPostSessionRouterQuietGuard) return;
+    window.__obPostSessionRouterQuietGuard = true;
+    function duplicateCall(name, args){
+      if(!postSessionQuiet()) return false;
+      window._obPostSessionRouteSeen = window._obPostSessionRouteSeen || {};
+      var key = name + ':' + Array.prototype.slice.call(args || []).map(function(v){ return String(v == null ? '' : v); }).join('|') + ':' + location.pathname + ':' + location.search;
+      var last = window._obPostSessionRouteSeen[key] || 0;
+      window._obPostSessionRouteSeen[key] = now();
+      return now() - last < 1200;
+    }
+    ['showExpertPage','loadExpertWebsite','lookupCustomDomain','showProfileLoadFallback'].forEach(function(name){
+      var fn = window[name];
+      if(typeof fn !== 'function' || fn.__obPostSessionQuietGuarded) return;
+      var wrapped = function(){
+        if(duplicateCall(name, arguments)) return false;
+        return fn.apply(this, arguments);
+      };
+      wrapped.__obPostSessionQuietGuarded = true;
+      window[name] = wrapped;
+    });
+    if(typeof window.switchView === 'function' && !window.switchView.__obPostSessionQuietGuarded){
+      var previousSwitchView = window.switchView;
+      var switchWrapped = function(viewId){
+        if(postSessionQuiet() && String(viewId) === '5' && !(window._obActiveSessId || window._sid || window._sessId) && !receiptActive()) return false;
+        return previousSwitchView.apply(this, arguments);
+      };
+      switchWrapped.__obPostSessionQuietGuarded = true;
+      window.switchView = switchWrapped;
+    }
+  }
+
   function install(){
     hookRtc();
     hookPhoneGo();
     hookClientEnd();
+    hookPostSessionRouter();
     suppressTransientEndedCopy();
     if(receiptActive()) clearConnectionNotes();
   }

@@ -30883,6 +30883,28 @@ body.ob-ui-dark .ob-connection-note,
   function recentlyEnding(){
     return !!(window._obSessionEnding || (window._obSessionEndingAt && now() - window._obSessionEndingAt < END_GRACE_MS));
   }
+  function activeRecoverableSession(){
+    return !!(window._obActiveSessId || window._sid || window._sessId) && !receiptActive() && !recentlyEnding();
+  }
+  function suppressTransientEndedCopy(){
+    if(!activeRecoverableSession()) return;
+    var copy = /call ended on the other side|ended on the other side|call ended|session ended/i;
+    var safe = 'Reconnecting... your call is still active.';
+    [
+      'rtc-status',
+      'b3-rtc-status',
+      'a4-session-rate',
+      'live-billing-status',
+      'ob-expert-connection-note',
+      'ob-client-connection-note'
+    ].forEach(function(id){
+      var el = document.getElementById(id);
+      if(el && copy.test(el.textContent || '')) el.textContent = safe;
+    });
+    document.querySelectorAll('.ob-connection-note,[id*="connection-note"],[class*="connection-note"]').forEach(function(el){
+      if(copy.test(el.textContent || '')) el.textContent = safe;
+    });
+  }
   function clearConnectionNotes(){
     ['ob-expert-connection-note','ob-client-connection-note'].forEach(function(id){
       var el = document.getElementById(id);
@@ -30927,11 +30949,16 @@ body.ob-ui-dark .ob-connection-note,
     var earlyReconnect = (state === 'checking' || state === 'disconnected' || state === 'failed' || /^rtc_.*(disconnected|failed|timeout|interrupted)/.test(state)) &&
       sinceStart < START_QUIET_MS &&
       !window._obRtcConnectedOnceAt;
-    if(receiptActive() || recentlyEnding() || earlyReconnect){
+    var transientEndedCopy = activeRecoverableSession() && /rtc_end|remote_end|peer_left|call_ended|ended|closed|disconnected|failed/i.test(state);
+    if(receiptActive() || recentlyEnding() || earlyReconnect || transientEndedCopy){
       clearConnectionNotes();
+      suppressTransientEndedCopy();
       return null;
     }
-    return previousShow ? previousShow.apply(this, arguments) : null;
+    var ret = previousShow ? previousShow.apply(this, arguments) : null;
+    setTimeout(suppressTransientEndedCopy, 0);
+    setTimeout(suppressTransientEndedCopy, 120);
+    return ret;
   };
 
   var previousConnected = window._obRtcConnected;
@@ -31012,6 +31039,7 @@ body.ob-ui-dark .ob-connection-note,
     hookRtc();
     hookPhoneGo();
     hookClientEnd();
+    suppressTransientEndedCopy();
     if(receiptActive()) clearConnectionNotes();
   }
 

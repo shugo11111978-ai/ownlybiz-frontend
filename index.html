@@ -20157,8 +20157,18 @@ window._handleRTCMessage=function(d){
     window._obClientEndingSnapshot = null;
     setClientEndControlsEnding(false);
   }
+  function markClientLocallyEnded(sid){
+    if(!sid) return;
+    window._obClientLocallyEndedSid = String(sid);
+    window._obClientLocallyEndedAt = Date.now();
+  }
+  function clientRecentlyEndedLocal(sid){
+    sid = String(sid || '');
+    return !!(sid && window._obClientLocallyEndedSid === sid && Date.now() - (window._obClientLocallyEndedAt || 0) < 45000);
+  }
   function applyClientReceipt(sess){
     sess = normalizeClientReceiptSession(sess);
+    markClientLocallyEnded(sess.id || sess.session_id || sess.sessionId || window._obClientEndingSid || window._obActiveSessId || window._sessId);
     var free = int(sess.free_minutes,0), rate = num(sess.rate_per_min,0), dur = int(sess.duration_secs,0);
     var total = sess.total_charged != null ? num(sess.total_charged,0) : (sess.charged != null ? num(sess.charged,0) : billableMinutes(dur, free) * rate);
     var billed = billableMinutes(dur, free);
@@ -20177,6 +20187,7 @@ window._handleRTCMessage=function(d){
   }
   function handleSessionStarted(d){
     var sid = d.session_id || d.sessionId || (d.session && d.session.id) || window._obActiveSessId;
+    if(clientRecentlyEndedLocal(sid)) return;
     var started = d.started_at || (d.session && d.session.started_at);
     if(!sid || sid === window._obActiveSessId || sid === window._sid || sid === window._sessId){
       if(started){
@@ -20193,6 +20204,7 @@ window._handleRTCMessage=function(d){
   function showSessionConnectionStatus(d, roleName){
     d = d || {};
     var sid = d.session_id || d.sessionId || (d.session && d.session.id) || '';
+    if(clientRecentlyEndedLocal(sid)) return true;
     var activeSid = window._obActiveSessId || window._sid || window._sessId || '';
     if(activeSid && sid && sid !== activeSid) return true;
     var billingStarted = d.billing_started === true || (d.session && d.session.started_at);
@@ -20446,6 +20458,7 @@ window._handleRTCMessage=function(d){
   function applyClientSessionUi(sess){
     if(!sess) return;
     var sessId = sess.id || sess.session_id || sess.sessionId || '';
+    if(clientRecentlyEndedLocal(sessId)) return;
     var status = (sess.status || '').toLowerCase();
     if(status === 'ended'){
       applyClientReceipt(sess);
@@ -20518,6 +20531,7 @@ window._handleRTCMessage=function(d){
   }
   window.openClientChat = function(sid){
     if(!sid) return;
+    if(clientRecentlyEndedLocal(sid)) return;
     if(window._obClientEndingSid && sid !== window._obClientEndingSid) clearClientEndingState();
     if(!/[?&]booking=/.test(location.search)) document.documentElement.classList.remove('ob-session-boot');
     syncTokenStorage();
@@ -20571,21 +20585,20 @@ window._handleRTCMessage=function(d){
     window._obClientEndingSid = sid || '';
     window._obClientEndingAt = Date.now();
     window._obClientEndingSnapshot = normalizeClientReceiptSession({id:sid});
+    markClientLocallyEnded(sid);
     setClientEndControlsEnding(true);
     if(window._obClientSessionPoller){ clearInterval(window._obClientSessionPoller); window._obClientSessionPoller = null; }
     if(window.OB_RTC && window.OB_RTC.isActive && window.OB_RTC.isActive()){
       try { window.OB_RTC.end(); } catch(e) {}
     }
+    applyClientReceipt(window._obClientEndingSnapshot || {id:sid});
     if(!sid || !tok()){
-      applyClientReceipt(window._obClientEndingSnapshot || {});
       return false;
     }
     window._obClientEndingPromise = api('/api/sessions/' + encodeURIComponent(sid) + '/end', {method:'POST', body:'{}'}).then(function(d){
       applyClientReceipt((d && d.session) || window._obClientEndingSnapshot || {id:sid});
       return d;
     }).catch(function(e){
-      clearClientEndingState();
-      if(window._obActiveSessId && tok()) startClientPoller(window._obActiveSessId);
       toastMsg(e.message || 'Could not end session','err');
     });
     return window._obClientEndingPromise;

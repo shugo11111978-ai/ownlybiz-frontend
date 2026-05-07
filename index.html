@@ -19868,19 +19868,6 @@ window._handleRTCMessage=function(d){
     if(ch === 'video') return int(e.video_free_min || e.free_minutes_video, 0);
     return int(e.chat_free_min != null ? e.chat_free_min : e.free_minutes, 0);
   }
-  function clientStartedAt(sess){
-    sess = sess || {};
-    var direct = int(sess.started_at, 0);
-    if(direct) return direct;
-    var sid = String(sess.id || sess.session_id || sess.sessionId || '');
-    var snapshot = window._obClientSessionSnapshot || {};
-    var snapshotSid = String(snapshot.id || snapshot.session_id || snapshot.sessionId || '');
-    if(sid && snapshotSid && sid === snapshotSid && snapshot.started_at) return int(snapshot.started_at, 0);
-    var activeSid = String(window._obActiveSessId || window._sessId || '');
-    if(sid && activeSid && sid === activeSid && window._obClientStartedAt) return int(window._obClientStartedAt, 0);
-    if(!sid && window._obClientStartedAt) return int(window._obClientStartedAt, 0);
-    return 0;
-  }
 
   function stopOriginalClientTimers(){
     ['freeTimerInterval','paidTimerInterval','voiceTimerB','videoTimer','_clientTimerInterval','_obClientElapsedInterval'].forEach(function(k){
@@ -19898,21 +19885,18 @@ window._handleRTCMessage=function(d){
     ['paid-timer','voice-timer-B','video-timer-display','video-timer-a4','video-timer-a3'].forEach(function(id){ setText(id, fmtTime(elapsed)); });
     setText('paid-cost-val', money(cost));
     setText('video-cost', money(cost));
-    var billingActive = !!(window._obClientBillingStarted || elapsed > 0);
-    var rateLabel = free > 0 ? ('First ' + free + ' min free · ' + money(rate) + '/min after') : ((billingActive ? 'Billing Active · ' : 'Billing starts when connected · ') + money(rate) + '/min');
+    var rateLabel = free > 0 ? ('First ' + free + ' min free · ' + money(rate) + '/min after') : ('Billing starts when connected · ' + money(rate) + '/min');
     setText('a4-session-rate', rateLabel);
   }
   function pauseClientTimers(sess){
     stopOriginalClientTimers();
     window._obClientStartedAt = null;
-    window._obClientBillingStarted = false;
     updateClientTimerDisplays(0, sess || window._obClientSessionSnapshot || {});
   }
   function startClientTimer(startedAt, sess){
     if(!startedAt){ pauseClientTimers(sess); return; }
     stopOriginalClientTimers();
     window._obClientStartedAt = int(startedAt, Math.floor(Date.now()/1000));
-    window._obClientBillingStarted = true;
     if(sess) window._obClientSessionSnapshot = Object.assign(window._obClientSessionSnapshot || {}, sess);
     function tick(){ updateClientTimerDisplays(Math.max(0, Math.floor(Date.now()/1000) - window._obClientStartedAt), window._obClientSessionSnapshot || sess || {}); }
     tick();
@@ -20108,29 +20092,15 @@ window._handleRTCMessage=function(d){
     if(input){ input.disabled = true; input.placeholder = 'Waiting for an active client session'; }
   };
   function applyClientReceipt(sess){
-    var fallback = Object.assign({}, window._obClientSessionSnapshot || {});
-    sess = Object.assign(fallback, sess || {});
-    var ch = (sess.channel || window._obPendingChannel || window.currentBookChannel || window._obRtcLastChannel || 'chat').toLowerCase();
-    var free = int(sess.free_minutes, channelFree(ch, sess));
-    var rate = num(sess.rate_per_min, channelRate(ch, sess));
-    var started = clientStartedAt(sess);
-    var dur = int(sess.duration_secs, 0);
-    if(!dur && started) dur = Math.max(0, Math.floor(Date.now()/1000) - started);
+    sess = sess || {};
+    var free = int(sess.free_minutes,0), rate = num(sess.rate_per_min,0), dur = int(sess.duration_secs,0);
     var total = sess.total_charged != null ? num(sess.total_charged,0) : (sess.charged != null ? num(sess.charged,0) : billableMinutes(dur, free) * rate);
     var billed = billableMinutes(dur, free);
-    sess.channel = ch;
-    sess.rate_per_min = rate;
-    sess.free_minutes = free;
-    if(started) sess.started_at = started;
-    sess.duration_secs = dur;
-    if(sess.total_charged == null && sess.charged == null) sess.total_charged = total;
     setText('receipt-total', money(total));
     setText('receipt-duration', (dur > 0 && dur < 60 ? '< 1' : Math.floor(dur/60)) + ' min' + (free > 0 ? ' (' + free + ' free + ' + billed.toFixed(2) + ' billed)' : ''));
     setText('receipt-rate', money(rate) + '/min');
+    var ch = sess.channel || 'chat';
     setText('receipt-session-type', ch.charAt(0).toUpperCase() + ch.slice(1) + ' with ' + ((window._currentExpert && window._currentExpert.name) || sess.expert_name || 'Expert'));
-    var sub = document.querySelector('#screen-A5 .receipt-sub');
-    if(sub) sub.textContent = dur > 0 ? 'How was your experience?' : 'No charge was made because billing never started.';
-    window._obClientSessionSnapshot = sess;
     pauseClientTimers(sess);
     if(typeof phoneGo === 'function') phoneGo('A5');
   }
@@ -20382,12 +20352,10 @@ window._handleRTCMessage=function(d){
     window.currentBookChannel = ch;
     window._obPendingRate = rate;
     window._obClientSessionSnapshot = Object.assign(window._obClientSessionSnapshot || {}, sess, {channel:ch, rate_per_min:rate, free_minutes:free});
-    var started = clientStartedAt(window._obClientSessionSnapshot);
-    if(started) window._obClientSessionSnapshot.started_at = started;
     setClientFreeUi(ch, rate, free);
     var expertName = ((window._currentExpert && (window._currentExpert.name || window._currentExpert.display_name)) || sess.expert_name || 'Expert');
     setText('a4-session-title', expertName + ' - ' + ch.charAt(0).toUpperCase() + ch.slice(1));
-    if(!started) updateClientTimerDisplays(0, window._obClientSessionSnapshot);
+    updateClientTimerDisplays(0, window._obClientSessionSnapshot);
     if(typeof switchView === 'function') switchView(5);
     if(ch === 'voice') {
       if(typeof phoneGo === 'function') phoneGo('B3');
@@ -20411,19 +20379,16 @@ window._handleRTCMessage=function(d){
       ensureClientWsJoined(sess.id);
       bindClientChatControls();
     }
-    if(started) startClientTimer(started, window._obClientSessionSnapshot);
+    if(sess.started_at) startClientTimer(sess.started_at, window._obClientSessionSnapshot);
     else pauseClientTimers(window._obClientSessionSnapshot);
   }
   function syncClientSession(sid){
     if(!sid) return Promise.resolve();
     return api('/api/sessions/' + encodeURIComponent(sid)).then(function(d){
       var sess = d.session || d || {};
-      if(sess.status === 'ended'){
-        applyClientReceipt(sess);
-        return sess;
-      }
       applyClientSessionUi(sess);
       (d.messages || []).forEach(function(m){ if(m.sender_id !== myId()) appendPanelMessage('paid-chat-messages', m, false); });
+      if(sess.status === 'ended') applyClientReceipt(sess);
       return sess;
     }).catch(function(){});
   }
@@ -20485,13 +20450,12 @@ window._handleRTCMessage=function(d){
   window.clientEndSession = function(){
     var sid = window._obActiveSessId || window._sessId;
     if(window.OB_RTC && window.OB_RTC.isActive && window.OB_RTC.isActive()) window.OB_RTC.end();
-    applyClientReceipt(window._obClientSessionSnapshot || {id:sid, channel:window._obPendingChannel || window.currentBookChannel || 'chat'});
-    if(!sid || !tok()){ return Promise.resolve(); }
-    return api('/api/sessions/' + encodeURIComponent(sid) + '/end', {method:'POST', body:'{}'}).then(function(d){
+    if(!sid || !tok()){ if(typeof phoneGo === 'function') phoneGo('A5'); return; }
+    api('/api/sessions/' + encodeURIComponent(sid) + '/end', {method:'POST', body:'{}'}).then(function(d){
       window._obActiveSessId = null;
       window._sessId = null;
       applyClientReceipt(d.session || {});
-    }).catch(function(e){ toastMsg(e.message || 'Could not finalize session receipt yet','err'); });
+    }).catch(function(e){ toastMsg(e.message || 'Could not end session','err'); });
   };
 
   function stopExpertTimerKeepDisplay(){
@@ -30771,83 +30735,6 @@ body.ob-ui-dark .ob-connection-note,
       if(el && el.parentNode) el.parentNode.removeChild(el);
     });
   }
-  function num(value, fallback){
-    var parsed = parseFloat(value);
-    return isFinite(parsed) ? parsed : (fallback || 0);
-  }
-  function int(value, fallback){
-    var parsed = parseInt(value, 10);
-    return isFinite(parsed) ? parsed : (fallback || 0);
-  }
-  function money(value){
-    return '$' + num(value, 0).toFixed(2);
-  }
-  function setText(id, value){
-    var el = document.getElementById(id);
-    if(el) el.textContent = value;
-  }
-  function currentChannel(){
-    return String(window._obPendingChannel || window.currentBookChannel || window._obRtcLastChannel || (window._obClientSessionSnapshot && window._obClientSessionSnapshot.channel) || 'chat').toLowerCase();
-  }
-  function currentRate(channel, sess){
-    sess = sess || {};
-    var expert = window._currentExpert || {};
-    if(sess.rate_per_min != null) return num(sess.rate_per_min, 0);
-    if(window._obPendingRate != null) return num(window._obPendingRate, 0);
-    if(channel === 'voice') return num(expert.rate_voice || expert.voice_pm, 4);
-    if(channel === 'video') return num(expert.rate_video || expert.video_pm, 5);
-    return num(expert.rate_chat || expert.chat_pm, 3.5);
-  }
-  function currentFree(channel, sess){
-    sess = sess || {};
-    var expert = window._currentExpert || {};
-    if(sess.free_minutes != null) return int(sess.free_minutes, 0);
-    if(channel === 'voice') return int(expert.voice_free_min || expert.free_minutes_voice, 0);
-    if(channel === 'video') return int(expert.video_free_min || expert.free_minutes_video, 0);
-    return int(expert.chat_free_min != null ? expert.chat_free_min : expert.free_minutes, 0);
-  }
-  function billableMinutes(durationSecs, freeMins){
-    if(typeof window.obBillableWholeMinutes === 'function') return window.obBillableWholeMinutes(durationSecs, freeMins);
-    return Math.max(0, (Math.max(0, num(durationSecs, 0)) / 60) - int(freeMins, 0));
-  }
-  function renderReceiptPreview(extra){
-    var sess = Object.assign({}, window._obClientSessionSnapshot || {}, extra || {});
-    var channel = String(sess.channel || currentChannel() || 'chat').toLowerCase();
-    var rate = currentRate(channel, sess);
-    var free = currentFree(channel, sess);
-    var started = int(sess.started_at, window._obClientStartedAt || 0);
-    var duration = int(sess.duration_secs, 0);
-    if(!duration && started) duration = Math.max(0, Math.floor(Date.now()/1000) - started);
-    var total = sess.total_charged != null ? num(sess.total_charged, 0) : (sess.charged != null ? num(sess.charged, 0) : billableMinutes(duration, free) * rate);
-    var billed = billableMinutes(duration, free);
-    var expertName = (window._currentExpert && (window._currentExpert.name || window._currentExpert.display_name)) || sess.expert_name || 'Expert';
-    setText('receipt-session-type', channel.charAt(0).toUpperCase() + channel.slice(1) + ' with ' + expertName);
-    setText('receipt-duration', (duration > 0 && duration < 60 ? '< 1' : Math.floor(duration / 60)) + ' min' + (free > 0 ? ' (' + free + ' free + ' + billed.toFixed(2) + ' billed)' : ''));
-    setText('receipt-rate', money(rate) + '/min');
-    setText('receipt-total', money(total));
-    var sub = document.querySelector('#screen-A5 .receipt-sub');
-    if(sub) sub.textContent = duration > 0 ? 'How was your experience?' : 'No charge was made because billing never started.';
-    window._obClientSessionSnapshot = Object.assign(sess, {
-      channel: channel,
-      rate_per_min: rate,
-      free_minutes: free,
-      duration_secs: duration,
-      total_charged: total
-    });
-  }
-  function mediaSessionActive(){
-    var screen = activeClientScreen();
-    return !!(screen && (screen.id === 'screen-B3' || screen.id === 'screen-VID'));
-  }
-  function enforceMediaBillingCopy(){
-    if(!mediaSessionActive() || receiptActive() || recentlyEnding() || window._obClientStartedAt || window._obClientBillingStarted) return;
-    var channel = currentChannel();
-    if(channel !== 'voice' && channel !== 'video') return;
-    var label = (channel === 'video' ? 'Connecting video' : 'Connecting audio') + ' - no charge yet';
-    setText('b3-rtc-status', label);
-    setText('rtc-status', label);
-    setText('a4-session-rate', 'Billing starts after both sides connect - ' + money(currentRate(channel)) + '/min');
-  }
   function stopMediaElement(el, remove){
     if(!el) return;
     try{
@@ -30898,9 +30785,7 @@ body.ob-ui-dark .ob-connection-note,
     window._obRtcConnectedOnceAt = now();
     window._obSessionEnding = false;
     clearConnectionNotes();
-    var result = previousConnected ? previousConnected.apply(this, arguments) : undefined;
-    enforceMediaBillingCopy();
-    return result;
+    if(previousConnected) return previousConnected.apply(this, arguments);
   };
 
   function hookRtc(){
@@ -30942,17 +30827,14 @@ body.ob-ui-dark .ob-connection-note,
     var wrapped = function(screenId){
       if(screenId === 'A5'){
         markEnding();
-        renderReceiptPreview();
         window._obHardStopSessionMedia();
       }
       var result = previousPhoneGo.apply(this, arguments);
       if(screenId === 'A5'){
-        renderReceiptPreview();
         clearConnectionNotes();
         setTimeout(window._obHardStopSessionMedia, 60);
         setTimeout(clearConnectionNotes, 220);
       }
-      if(screenId === 'B3' || screenId === 'VID') setTimeout(enforceMediaBillingCopy, 80);
       return result;
     };
     wrapped.__obFrictionGuarded = true;
@@ -30965,7 +30847,6 @@ body.ob-ui-dark .ob-connection-note,
     var wrapped = function(){
       markEnding();
       clearConnectionNotes();
-      renderReceiptPreview();
       try{ return previousClientEnd.apply(this, arguments); }
       finally{ setTimeout(window._obHardStopSessionMedia, 120); }
     };
@@ -30982,12 +30863,9 @@ body.ob-ui-dark .ob-connection-note,
 
   install();
   [120, 500, 1200, 2500].forEach(function(ms){ setTimeout(install, ms); });
-  window._obRenderReceiptPreview = renderReceiptPreview;
-  setInterval(enforceMediaBillingCopy, 700);
   try{
     new MutationObserver(function(){
       if(receiptActive()) clearConnectionNotes();
-      enforceMediaBillingCopy();
     }).observe(document.body, {childList:true, subtree:true});
   }catch(e){}
 })();

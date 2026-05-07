@@ -30485,13 +30485,16 @@ body.ob-ui-dark .ob-connection-note,
     return document.querySelector('#view-5 .phone-screen.active') || document.getElementById('screen-A4') || document.getElementById('screen-B3') || document.getElementById('screen-VID');
   }
   window._obShowSessionConnectionIssue = function(sid, ch, reason, roleName){
-    var msg = 'Connection is reconnecting. Keep this page open. Billing starts only after media is stable; a deliberate end will show the receipt.';
+    var msg = 'Reconnecting...';
+    var longMsg = 'Connection is taking longer than expected. Keep this page open.';
+    ['rtc-status','b3-rtc-status','live-billing-status'].forEach(function(id){
+      var el = document.getElementById(id);
+      if(el) el.textContent = msg;
+    });
     if(roleName === 'expert' || (typeof role === 'function' && role() === 'expert')){
       var rtc = document.getElementById('expert-rtc-area');
       var parent = rtc && rtc.parentNode;
-      ensureConnectionNote(parent, 'ob-expert-connection-note', msg);
-    } else {
-      ensureConnectionNote(activeClientScreen(), 'ob-client-connection-note', msg);
+      if(reason === 'persistent_connection_issue') ensureConnectionNote(parent, 'ob-expert-connection-note', longMsg);
     }
     var input = document.getElementById('expert-chat-input');
     if(input && !input.disabled && input.placeholder === 'Session ended') input.placeholder = 'Message the client...';
@@ -30995,6 +30998,9 @@ body.ob-ui-dark .ob-connection-note,
     }
   }
 }
+@keyframes obSpin{
+  to{transform:rotate(360deg);}
+}
 </style>
 <script id="ownlybiz-session-friction-fixes">
 (function(){
@@ -31021,6 +31027,38 @@ body.ob-ui-dark .ob-connection-note,
       var el = document.getElementById(id);
       if(el && el.parentNode) el.parentNode.removeChild(el);
     });
+  }
+  function showClientEndingOverlay(){
+    var screen = activeClientScreen();
+    if(!screen || screen.id === 'screen-A5') return;
+    var overlay = document.getElementById('ob-client-ending-overlay');
+    if(!overlay){
+      overlay = document.createElement('div');
+      overlay.id = 'ob-client-ending-overlay';
+      overlay.style.cssText = [
+        'position:absolute',
+        'inset:0',
+        'z-index:9999',
+        'display:flex',
+        'align-items:center',
+        'justify-content:center',
+        'padding:24px',
+        'background:rgba(11,9,8,.72)',
+        'backdrop-filter:blur(8px)',
+        '-webkit-backdrop-filter:blur(8px)',
+        'color:#fff',
+        'font-size:20px',
+        'font-weight:900',
+        'text-align:center'
+      ].join(';');
+      overlay.innerHTML = '<div><div style="width:34px;height:34px;border-radius:50%;border:3px solid rgba(255,255,255,.28);border-top-color:#fff;margin:0 auto 14px;animation:obSpin .8s linear infinite;"></div><div>Ending session...</div></div>';
+    }
+    if(!/relative|absolute|fixed|sticky/i.test(getComputedStyle(screen).position || '')) screen.style.position = 'relative';
+    if(overlay.parentNode !== screen) screen.appendChild(overlay);
+  }
+  function hideClientEndingOverlay(){
+    var overlay = document.getElementById('ob-client-ending-overlay');
+    if(overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay);
   }
   function stopMediaElement(el, remove){
     if(!el) return;
@@ -31060,7 +31098,8 @@ body.ob-ui-dark .ob-connection-note,
     var earlyReconnect = (state === 'checking' || state === 'disconnected' || state === 'failed' || /^rtc_.*(disconnected|failed|timeout|interrupted)/.test(state)) &&
       sinceStart < START_QUIET_MS &&
       !window._obRtcConnectedOnceAt;
-    if(receiptActive() || recentlyEnding() || earlyReconnect){
+    var recentConnected = window._obRtcConnectedOnceAt && now() - window._obRtcConnectedOnceAt < 20000;
+    if(receiptActive() || recentlyEnding() || earlyReconnect || recentConnected){
       clearConnectionNotes();
       return null;
     }
@@ -31095,6 +31134,7 @@ body.ob-ui-dark .ob-connection-note,
       rtc.end = function(){
         markEnding();
         clearConnectionNotes();
+        if(!receiptActive()) showClientEndingOverlay();
         try{ return previousEnd.apply(this, arguments); }
         finally{ window._obHardStopSessionMedia(); }
       };
@@ -31114,10 +31154,12 @@ body.ob-ui-dark .ob-connection-note,
     var wrapped = function(screenId){
       if(screenId === 'A5'){
         markEnding();
+        hideClientEndingOverlay();
         window._obHardStopSessionMedia();
       }
       var result = previousPhoneGo.apply(this, arguments);
       if(screenId === 'A5'){
+        hideClientEndingOverlay();
         clearConnectionNotes();
         setTimeout(window._obHardStopSessionMedia, 60);
         setTimeout(clearConnectionNotes, 220);
@@ -31134,7 +31176,14 @@ body.ob-ui-dark .ob-connection-note,
     var wrapped = function(){
       markEnding();
       clearConnectionNotes();
-      try{ return previousClientEnd.apply(this, arguments); }
+      showClientEndingOverlay();
+      try{
+        var result = previousClientEnd.apply(this, arguments);
+        if(result && typeof result.finally === 'function'){
+          result.finally(function(){ if(!receiptActive()) hideClientEndingOverlay(); });
+        }
+        return result;
+      }
       finally{ setTimeout(window._obHardStopSessionMedia, 120); }
     };
     wrapped.__obFrictionGuarded = true;
@@ -31145,14 +31194,14 @@ body.ob-ui-dark .ob-connection-note,
     hookRtc();
     hookPhoneGo();
     hookClientEnd();
-    if(receiptActive()) clearConnectionNotes();
+    if(receiptActive()){ clearConnectionNotes(); hideClientEndingOverlay(); }
   }
 
   install();
   [120, 500, 1200, 2500].forEach(function(ms){ setTimeout(install, ms); });
   try{
     new MutationObserver(function(){
-      if(receiptActive()) clearConnectionNotes();
+      if(receiptActive()){ clearConnectionNotes(); hideClientEndingOverlay(); }
     }).observe(document.body, {childList:true, subtree:true});
   }catch(e){}
 })();

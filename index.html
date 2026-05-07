@@ -18862,12 +18862,60 @@ window.OB_RTC = (function(){
   return{start:start,handleOffer:handleOffer,handleAnswer:handleAnswer,handleIce:handleIce,handleReady:handleReady,toggleMute:toggleMute,toggleCamera:toggleCamera,end:end,cleanup:cleanup,isActive:function(){return pc!==null;},getChannel:function(){return ch;},getSid:function(){return sid;}};
 })();
 
+function _obRtcMessageApiBase(){return window.OWNLYBIZ_API_URL||window._OB_BACKEND||'https://ownlybiz-backend-production.up.railway.app';}
+function _obRtcMessageToken(){return sessionStorage.getItem('ob_t')||localStorage.getItem('ob_t')||localStorage.getItem('ob_client_token')||sessionStorage.getItem('ob_client_token')||sessionStorage.getItem('ob_token')||localStorage.getItem('ob_token')||'';}
+function _obRtcMessageSetStatus(text){
+  ['rtc-status','b3-rtc-status','live-billing-status'].forEach(function(id){
+    var el=document.getElementById(id);
+    if(el)el.textContent=text;
+  });
+}
+function _obRtcMessageInQuietStart(){
+  return !!(window._obRtcStartedAt && Date.now()-window._obRtcStartedAt<15000 && !window._obRtcConnectedOnceAt);
+}
+function _obRtcConfirmRemoteEnd(sessionId){
+  if(!sessionId)return;
+  window._obRtcRemoteEndChecks=window._obRtcRemoteEndChecks||{};
+  var sidKey=String(sessionId);
+  var seq=(window._obRtcRemoteEndChecks[sidKey]||0)+1;
+  window._obRtcRemoteEndChecks[sidKey]=seq;
+  var tok=_obRtcMessageToken();
+  var headers=tok?{Authorization:'Bearer '+tok}:{};
+  setTimeout(function(){
+    if(window._obRtcRemoteEndChecks[sidKey]!==seq)return;
+    fetch(_obRtcMessageApiBase()+'/api/sessions/'+encodeURIComponent(sessionId),{headers:headers})
+      .then(function(r){return r.ok?r.json():null;})
+      .then(function(d){
+        if(window._obRtcRemoteEndChecks[sidKey]!==seq)return;
+        var sess=(d&&(d.session||d))||{};
+        if(String(sess.status||'').toLowerCase()!=='ended'){
+          if(typeof window._rtcDbg==='function')window._rtcDbg('Ignored rtc_end; backend session still '+(sess.status||'unknown'));
+          if(_obRtcMessageInQuietStart())_obRtcMessageSetStatus('Connecting...');
+          return;
+        }
+        window._obSessionEnding=true;
+        window._obSessionEndingAt=Date.now();
+        _obRtcMessageSetStatus('Session is ending...');
+        try{if(window.OB_RTC&&typeof window.OB_RTC.cleanup==='function')window.OB_RTC.cleanup();}catch(e){}
+        try{if(typeof window._obHardStopSessionMedia==='function')window._obHardStopSessionMedia();}catch(e){}
+        try{if(typeof window._obClearSessionConnectionIssue==='function')window._obClearSessionConnectionIssue();}catch(e){}
+      })
+      .catch(function(){
+        if(typeof window._rtcDbg==='function')window._rtcDbg('rtc_end confirmation failed; waiting for session_ended/poller');
+      });
+  }, _obRtcMessageInQuietStart()?900:350);
+}
+
 window._handleRTCMessage=function(d){
   if(window._rtcDbg)window._rtcDbg('WS msg: '+d.type);
   if(!window.OB_RTC)return;
   if(d.type==='rtc_offer')window.OB_RTC.handleOffer(d.sdp);
   else if(d.type==='rtc_answer')window.OB_RTC.handleAnswer(d.sdp);
   else if(d.type==='rtc_ice')window.OB_RTC.handleIce(d.candidate);
+  else if(d.type==='rtc_failed'||d.type==='connection_failed'){
+    var failedSid=(d.session_id||d.sessionId||window._obRtcLastSid||window._obActiveSessId||window._sid||'');
+    if(typeof window._obShowSessionConnectionIssue==='function')window._obShowSessionConnectionIssue(failedSid, d.channel||window._obRtcLastChannel||window._obPendingChannel||'voice', d.reason||d.type, window._obRtcLastRole||'');
+  }
 	  else if(d.type==='rtc_end'){
 	    var activeSid = (window.OB_RTC.getSid&&window.OB_RTC.getSid()) || window._obActiveSessId || window._sid || window._sessId || window._obRtcLastSid || '';
 	    var msgSid = d.session_id || d.sessionId || '';
@@ -18882,13 +18930,15 @@ window._handleRTCMessage=function(d){
 	      if(!endingUi && rtcActive && typeof window._obShowSessionConnectionIssue==='function') window._obShowSessionConnectionIssue(activeSid || msgSid, window._obRtcLastChannel || window._obPendingChannel || 'voice', 'rtc_peer_interrupted', currentRole);
 	      return;
 	    }
-	    window._obSessionEnding=true;window._obSessionEndingAt=Date.now();
-	    window.OB_RTC.cleanup();
-	    if(typeof window._obHardStopSessionMedia==='function')window._obHardStopSessionMedia();
-	    if(typeof window._obClearSessionConnectionIssue==='function')window._obClearSessionConnectionIssue();
-	    if(!rtcActive && !endingUi) return;
-	    if(typeof window._obResetExpertLiveSessionUI==='function')window._obResetExpertLiveSessionUI('chat');
-	    if(!endingUi && typeof _showToast==='function')_showToast('Call ended by other side');
+	    if(endingUi||window._obSessionEnding)return;
+	    if(!rtcActive && !endingUi)return;
+	    if(_obRtcMessageInQuietStart()){
+	      _obRtcMessageSetStatus('Connecting...');
+	      _obRtcConfirmRemoteEnd(msgSid || activeSid);
+	      return;
+	    }
+	    _obRtcMessageSetStatus('Session is ending...');
+	    _obRtcConfirmRemoteEnd(msgSid || activeSid);
 	  }
   else if(d.type==='rtc_ready'){console.log('[RTC] Peer ready');if(window.OB_RTC.handleReady)window.OB_RTC.handleReady();}
 };
@@ -20060,17 +20110,17 @@ window._handleRTCMessage=function(d){
       return;
     }
     var message = reason === 'media_permission_failed'
-      ? 'Camera/microphone permission failed. Session ended so billing stops.'
-      : 'Connection could not be restored. Session ended so billing stops.';
+      ? 'Camera/microphone permission failed. Billing stopped for safety.'
+      : 'Connection could not be restored. Billing stopped for safety.';
     toastMsg(message, 'err');
     pauseClientTimers(window._obClientSessionSnapshot || {channel:ch || 'chat'});
-    setText('rtc-status', 'Connection ended');
-    setText('b3-rtc-status', 'Connection ended');
-    setText('a4-session-rate', 'Connection ended - billing stopped');
-    setText('live-billing-status', 'Connection ended - billing stopped');
+    setText('rtc-status', 'Media unavailable');
+    setText('b3-rtc-status', 'Media unavailable');
+    setText('a4-session-rate', 'Billing stopped for safety');
+    setText('live-billing-status', 'Billing stopped for safety');
     if(roleName === 'expert' || role() === 'expert'){
       stopExpertTimerKeepDisplay();
-      markExpertLivePanelEnded('Connection ended - billing stopped');
+      markExpertLivePanelEnded('Connection could not be restored - billing stopped');
     }
   };
 
@@ -20450,7 +20500,10 @@ window._handleRTCMessage=function(d){
     }
     if(d.type === 'session_ended' && (!sid || sid === window._obActiveSessId || sid === window._sid || sid === window._sessId)){
       var sess = d.session || {};
-      if(roleName === 'expert') applyExpertEnded(sess, 'client');
+      var endReason = d.reason || d.end_reason || sess.end_reason || '';
+      var endedBy = d.ended_by || d.endedBy || sess.ended_by || '';
+      var expertReason = endReason || (endedBy === 'client' ? 'client' : (endedBy === 'expert' ? 'expert' : ''));
+      if(roleName === 'expert') applyExpertEnded(sess, expertReason);
       else applyClientReceipt(sess);
       handled = true;
     }
@@ -20746,10 +20799,19 @@ window._handleRTCMessage=function(d){
     var banner = document.getElementById('ob-client-ended-session-banner');
     if(banner && banner.parentNode) banner.parentNode.removeChild(banner);
   }
+  function isConnectionEndReason(reason){
+    return /^rtc_|^ice_|connection|disconnected|timeout|permission|media/i.test(String(reason || ''));
+  }
+  function expertEndedMessage(reason){
+    if(isConnectionEndReason(reason)) return 'Connection could not be restored. Billing stopped for safety';
+    if(reason === 'client') return 'Client ended the session';
+    if(reason === 'expert') return 'Expert ended the session';
+    return 'Session ended';
+  }
   function showExpertEndedNotice(sess, reason){
     sess = sess || {};
     var earned = money(sess.expert_earned || 0);
-    var msg = reason === 'client' ? 'Client ended the session' : 'Session ended';
+    var msg = expertEndedMessage(reason);
     toastMsg(msg + ' - final payout: ' + earned, 'ok');
     markExpertLivePanelEnded(msg);
     setTimeout(function(){
@@ -30423,7 +30485,7 @@ body.ob-ui-dark .ob-connection-note,
     return document.querySelector('#view-5 .phone-screen.active') || document.getElementById('screen-A4') || document.getElementById('screen-B3') || document.getElementById('screen-VID');
   }
   window._obShowSessionConnectionIssue = function(sid, ch, reason, roleName){
-    var msg = 'Connection interrupted. Trying to reconnect - keep this page open. If the session is ended deliberately, the receipt will appear automatically.';
+    var msg = 'Connection is reconnecting. Keep this page open. Billing starts only after media is stable; a deliberate end will show the receipt.';
     if(roleName === 'expert' || (typeof role === 'function' && role() === 'expert')){
       var rtc = document.getElementById('expert-rtc-area');
       var parent = rtc && rtc.parentNode;

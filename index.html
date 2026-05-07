@@ -2,7 +2,6 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-  <script src="https://js.stripe.com/v3/"></script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <meta name="theme-color" content="#0B0908">
 <title>Ownlybiz — Own your expertise. Own your income.</title>
@@ -2053,6 +2052,27 @@ body{font-feature-settings:"ss01","cv11";background:
 	  var isCustomDomain=!!host && host !== 'ownlybiz.com' && host !== 'www.ownlybiz.com' && host !== 'localhost' && host !== '127.0.0.1' && host.indexOf('vercel.app') < 0;
 	  var isExpertSubdomain=/^[^.]+\.ownlybiz\.com$/i.test(host) && !/^www\.ownlybiz\.com$/i.test(host);
 	  var isPublicExpertRoute=!isLegalRoute && !isDashboardRoute && !isAdminRoute && (q.has('expert') || (firstPath && reserved.indexOf(firstPath)===-1) || isCustomDomain || isExpertSubdomain);
+  var isStagingHost=host === 'localhost' || host === '127.0.0.1' || host.endsWith('.vercel.app') || host.indexOf('git-staging') >= 0;
+  window._obInitialRouteInfo={isStagingHost:isStagingHost,isPublicExpertRoute:isPublicExpertRoute,isDashboardRoute:isDashboardRoute,isAdminRoute:isAdminRoute,firstPath:firstPath};
+  window._obPublicExpertRouteFromLocation=function(){
+    var currentPath=(location.pathname||'').replace(/^\/+|\/+$/g,'');
+    var currentParts=currentPath.split('/').filter(Boolean);
+    var currentFirst=currentParts[0]||'';
+    var currentHost=(location.hostname||'').toLowerCase();
+    var currentQuery=new URLSearchParams(location.search||'');
+    var legal=currentPath==='terms'||currentPath.indexOf('legal/')===0;
+    var dash=currentFirst==='dash';
+    var admin=currentFirst==='admin';
+    var custom=!!currentHost && currentHost !== 'ownlybiz.com' && currentHost !== 'www.ownlybiz.com' && currentHost !== 'localhost' && currentHost !== '127.0.0.1' && currentHost.indexOf('vercel.app') < 0;
+    var sub=/^[^.]+\.ownlybiz\.com$/i.test(currentHost) && !/^www\.ownlybiz\.com$/i.test(currentHost);
+    return !legal && !dash && !admin && (currentQuery.has('expert') || (currentFirst && reserved.indexOf(currentFirst)===-1) || custom || sub);
+  };
+  window._obSkipPublicExpertExtras=function(){
+    var currentHost=(location.hostname||'').toLowerCase();
+    var staging=currentHost === 'localhost' || currentHost === '127.0.0.1' || currentHost.endsWith('.vercel.app') || currentHost.indexOf('git-staging') >= 0;
+    return staging && window._obPublicExpertRouteFromLocation && window._obPublicExpertRouteFromLocation();
+  };
+  window._obFastPublicExpertBoot=!!(window._obSkipPublicExpertExtras && window._obSkipPublicExpertExtras());
   var routeKind=isDashboardRoute?'dashboard':(isAdminRoute?'admin':(isPublicExpertRoute?'public':''));
   if(routeKind){
     document.documentElement.classList.add('ob-route-loading');
@@ -2078,6 +2098,12 @@ body{font-feature-settings:"ss01","cv11";background:
   setTimeout(function(){ if(window.obRouteReady) window.obRouteReady(routeKind); }, routeKind ? 8000 : 1800);
 })();
 </script>
+<script>
+(function(){
+  if(window._obFastPublicExpertBoot) return;
+  document.write('<script src="https://js.stripe.com/v3/"><\\/script>');
+})();
+</script>
 
 	<script>
 	/* === PLATFORM CONFIG LOADER === */
@@ -2087,6 +2113,10 @@ body{font-feature-settings:"ss01","cv11";background:
 	  return isStaging ? 'https://victorious-wisdom-production-a6b0.up.railway.app' : 'https://ownlybiz-backend-production.up.railway.app';
 	})();
 (function(){
+  if(window._obSkipPublicExpertExtras && window._obSkipPublicExpertExtras()){
+    window._obSkippedBootConfig=true;
+    return;
+  }
   fetch(window.OWNLY_API+"/api/config").then(function(r){return r.json();}).then(function(c){
     window.OWNLY_CONFIG=c;
     /* Update fee % displays */
@@ -2208,6 +2238,43 @@ if (!window.toast) {
 	  window._obApplyRuntimeBackend();
 	  if(window.OWNLYBIZ_IS_STAGING && !window._obStagingBackendRewriteInstalled) {
 	    var nativeFetch = window.fetch;
+	    var hotGetCache = new Map();
+	    var hotGetInflight = new Map();
+	    function readUrl(input){
+	      if(typeof input === 'string') return input;
+	      if(input && typeof input.url === 'string') return input.url;
+	      return '';
+	    }
+	    function readMethod(input, init){
+	      var method = init && init.method;
+	      if(!method && input && typeof input.method === 'string') method = input.method;
+	      return (method || 'GET').toUpperCase();
+	    }
+	    function headerValue(input, init, key){
+	      var headers = (init && init.headers) || (input && input.headers) || {};
+	      if(headers instanceof Headers) return headers.get(key) || headers.get(key.toLowerCase()) || '';
+	      if(Array.isArray(headers)){
+	        for(var i=0;i<headers.length;i++){
+	          if(String(headers[i][0] || '').toLowerCase() === key.toLowerCase()) return headers[i][1] || '';
+	        }
+	        return '';
+	      }
+	      return headers[key] || headers[key.toLowerCase()] || '';
+	    }
+	    function ttlFor(url){
+	      if(/\/api\/config(?:$|\?)/.test(url)) return 15000;
+	      if(/\/api\/health(?:$|\?)/.test(url)) return 4000;
+	      if(/\/api\/payments\/config(?:$|\?)/.test(url)) return 10000;
+	      if(/\/api\/experts\/platform-fees(?:$|\?)/.test(url)) return 15000;
+	      if(/\/api\/billing\/plans(?:$|\?)/.test(url)) return 15000;
+	      if(/\/api\/auth\/(?:google|apple)-config(?:$|\?)/.test(url)) return 20000;
+	      if(/\/api\/marketing\//.test(url)) return 15000;
+	      if(/\/api\/experts\/[^/?#]+(?:$|\?)/.test(url) && url.indexOf('/api/experts/me/') === -1) return 6000;
+	      return 0;
+	    }
+	    function shouldDedupe(url, method, init){
+	      return method === 'GET' && url && url.indexOf('/api/') >= 0 && !(init && init.cache === 'no-store') && ttlFor(url) > 0;
+	    }
 	    window.fetch = function(input, init){
 	      if(input && typeof Request !== 'undefined' && input instanceof Request) {
 	        var rewrittenUrl = rewrite(input.url, false);
@@ -2215,7 +2282,22 @@ if (!window.toast) {
 	      } else if(typeof input === 'string' || input instanceof URL) {
 	        input = rewrite(input, false);
 	      }
-	      return nativeFetch.call(this, input, init);
+	      var url = readUrl(input);
+	      var method = readMethod(input, init);
+	      if(!shouldDedupe(url, method, init)) return nativeFetch.call(this, input, init);
+	      var ttl = ttlFor(url);
+	      var key = url + '::' + headerValue(input, init, 'Authorization');
+	      var now = Date.now();
+	      var cached = hotGetCache.get(key);
+	      if(cached && cached.expires > now) return Promise.resolve(cached.response.clone());
+	      var inflight = hotGetInflight.get(key);
+	      if(inflight) return inflight.then(function(res){ return res.clone(); });
+	      var request = nativeFetch.call(this, input, init).then(function(res){
+	        if(res && res.ok) hotGetCache.set(key, {response:res.clone(), expires:Date.now()+ttl});
+	        return res;
+	      }).finally(function(){ hotGetInflight.delete(key); });
+	      hotGetInflight.set(key, request);
+	      return request.then(function(res){ return res.clone(); });
 	    };
 	    if(window.WebSocket) {
 	      var NativeWebSocket = window.WebSocket;
@@ -8849,6 +8931,7 @@ function openBookingOverlay(channelId) {
   var el = document.getElementById('booking-overlay');
   el.style.display = 'flex';
   document.body.style.overflow = 'hidden';
+  if(typeof window._obBootClientAuthProviders === 'function') setTimeout(window._obBootClientAuthProviders, 0);
 }
 
 function closeBookingOverlay(e) {
@@ -12185,6 +12268,12 @@ async function savePaymentConfig() {
   ══════════════════════════════════════════════════════ */
   async function loadExpertWebsite(slug) {
     slug=slug||window._browseExpert||'expert-slug';
+    if(window.OWNLYBIZ_IS_STAGING){
+      var _obNow=Date.now();
+      if(window._obExpertWebsiteLastStartSlug===slug && _obNow-(window._obExpertWebsiteLastStartAt||0)<900) return;
+      window._obExpertWebsiteLastStartSlug=slug;
+      window._obExpertWebsiteLastStartAt=_obNow;
+    }
     try {
       const d=await api('GET',`/experts/${slug}`);
       const e=d.expert;
@@ -12662,7 +12751,7 @@ async function savePaymentConfig() {
     _origSwitchView?.(n);
     setTimeout(()=>{
       // Always try data loads - individual functions check READY/auth internally
-      if(n===1){ if(READY) loadMarketing(); }
+      if(n===1){ if(READY && !(window._obSkipPublicExpertExtras && window._obSkipPublicExpertExtras())) loadMarketing(); }
       if(n===3){ if(READY && (Auth.isExpert || (Auth.isAdmin && window._adminViewingExpertId))) loadExpertDashboard(); }
       if(n===4){
         var expertSlug = window._browseExpert ? String(window._browseExpert).trim() : '';
@@ -12722,6 +12811,7 @@ async function savePaymentConfig() {
     _wireLoginForm();
     // Populate pricing cards from live backend config
     (function(){
+      if(window._obSkipPublicExpertExtras && window._obSkipPublicExpertExtras()) return;
       fetch('https://ownlybiz-backend-production.up.railway.app/api/experts/platform-fees')
         .then(function(r){return r.json();}).then(function(p){
           var s=function(id,v){var e=document.getElementById(id);if(e&&v!=null)e.textContent=v;};
@@ -12753,7 +12843,8 @@ async function savePaymentConfig() {
       if(typeof switchView==='function') switchView(4);
       if(!window._customDomainPending) loadExpertWebsite(window._browseExpert);
     } else {
-      loadMarketing();
+      var hasPublicExpertRoute=window._browseExpert && window._browseExpert !== 'expert-slug' && String(window._browseExpert).indexOf('/') < 0;
+      if(!hasPublicExpertRoute) loadMarketing();
       if(window._browseExpert && window._browseExpert !== 'expert-slug'){
         if(typeof switchView==='function') switchView(4);
       }
@@ -14645,16 +14736,22 @@ window.loadExpertWebsite = function(slug) {
     if(typeof window._markRouteReady === 'function') window._markRouteReady();
     return;
   }
+  var stagingFastPublic = !!(window._obSkipPublicExpertExtras && window._obSkipPublicExpertExtras());
+  if(stagingFastPublic){
+    var state = window._obStagingPublicExpertLoad || {};
+    var now = Date.now();
+    if(state.slug === slug && state.promise && now - state.at < 6000) return state.promise;
+  }
   window._browseExpert = slug;
   if(typeof window._markRouteLoading === 'function') window._markRouteLoading('public');
 
   // Call the ORIGINAL Cursor function (buried in s3) via OwnlyAPI if available
-  if(window.OwnlyAPI && window.OwnlyAPI.loadExpertWebsite) {
+  if(!stagingFastPublic && window.OwnlyAPI && window.OwnlyAPI.loadExpertWebsite) {
     window.OwnlyAPI.loadExpertWebsite(slug);
   }
 
   // Fetch expert data + rates and refresh public page
-  fetch('https://ownlybiz-backend-production.up.railway.app/api/experts/' + slug)
+  var expertLoadPromise = fetch('https://ownlybiz-backend-production.up.railway.app/api/experts/' + slug)
     .then(function(r){ return r.json(); })
     .then(function(d){
       var e = d.expert || d;
@@ -14680,6 +14777,8 @@ window.loadExpertWebsite = function(slug) {
     }).catch(function(){
       if(typeof window._markRouteReady === 'function') window._markRouteReady('public');
     });
+  if(stagingFastPublic) window._obStagingPublicExpertLoad = {slug:slug, at:Date.now(), promise:expertLoadPromise};
+  return expertLoadPromise;
 };
 
 // --- Start live poll on expert public pages ---
@@ -15170,7 +15269,7 @@ window.loadDashboard = function(slug) {
     window._browseExpert=_slug;
     window._isSubdomain=true;
     document.documentElement.setAttribute('data-subdomain','true');
-  } else if(!_slug && _host.indexOf('ownlybiz.com')<0 && _host!=='localhost' && _host.indexOf('vercel.app')<0) {
+  } else if(!_slug && _host.indexOf('ownlybiz.com')<0 && _host!=='localhost' && _host!=='127.0.0.1' && _host.indexOf('vercel.app')<0) {
     // Custom domain — set _isSubdomain immediately so page inits for expert view,
     // but set _customDomainPending to prevent loadExpertWebsite with wrong slug
     window._customDomainHost=_host;
@@ -15940,6 +16039,7 @@ setInterval(function() {
   var shown = false;
 
   function obLoadSettings(){
+    if(window._obSkipPublicExpertExtras && window._obSkipPublicExpertExtras()) return;
     fetch(BASE+'/api/admin/settings/popup-settings').then(function(r){return r.json();}).then(function(s){
       if(s.popup_enabled==='0'||s.popup_enabled===0){return;}
       if(s.popup_headline) document.getElementById('ob-headline-txt').textContent=s.popup_headline;
@@ -26090,6 +26190,11 @@ window._handleRTCMessage=function(d){
   }
 
 	  function boot(){
+	    if(window._obSkipPublicExpertExtras && window._obSkipPublicExpertExtras()){
+	      renderPresessionMedia();
+	      renderBookingOverlayMedia();
+	      return;
+	    }
 	    installBillingFirstPaintWrappers();
 	    renderDashboardBillingShell();
 	    handleBillingReturnNotice();
@@ -26420,6 +26525,10 @@ window._handleRTCMessage=function(d){
   var clientPaymentConfigPromise = null;
   function clientPaymentConfig(){
     if(clientPaymentConfigPromise) return clientPaymentConfigPromise;
+    if(window.obStagingPaymentBypassAllowed && window.obStagingPaymentBypassAllowed()){
+      clientPaymentConfigPromise = Promise.resolve({apple_pay_enabled:false, google_pay_enabled:false});
+      return clientPaymentConfigPromise;
+    }
     clientPaymentConfigPromise = fetch(apiBase() + '/api/config')
       .then(function(r){ return r.json(); })
       .then(function(d){
@@ -26746,11 +26855,21 @@ window._handleRTCMessage=function(d){
       hideClientProvider('apple');
     }
   }
+  function clientAuthSurfaceVisible(){
+    return ['booking-overlay','client-login-gate','screen-PKG-LOGIN','bfl-step-3'].some(function(id){
+      var el = document.getElementById(id);
+      if(!el) return false;
+      var style = window.getComputedStyle ? window.getComputedStyle(el) : null;
+      return el.style.display !== 'none' && (!style || (style.display !== 'none' && style.visibility !== 'hidden'));
+    });
+  }
   function bootClientAuthProviders(){
     updateClientSsoGroups();
+    if(window._obSkipPublicExpertExtras && window._obSkipPublicExpertExtras() && !clientAuthSurfaceVisible()) return;
     bootGoogleClientSignIn();
     bootAppleClientSignIn();
   }
+  window._obBootClientAuthProviders = bootClientAuthProviders;
   document.addEventListener('DOMContentLoaded', bootClientAuthProviders);
   [800, 1800, 3500].forEach(function(ms){ setTimeout(bootClientAuthProviders, ms); });
   var mo = new MutationObserver(function(){

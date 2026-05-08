@@ -30717,12 +30717,53 @@ body.ob-ui-dark .ob-connection-note,
     if(!window.__obPublicEntrypointClickHotfix){
       window.__obPublicEntrypointClickHotfix = true;
       var lastBookLaterAt = 0;
+      var obBookLaterGesture = null;
+
+      function eventPoint(e){
+        var t = (e.changedTouches && e.changedTouches[0]) || (e.touches && e.touches[0]) || e;
+        if(!t || typeof t.clientX !== 'number') return null;
+        return {x:t.clientX,y:t.clientY};
+      }
+
+      function rememberBookLaterGesture(e){
+        var target = actionTargetFromEvent(e);
+        if(!target || !document.getElementById('view-4') || !isBookLaterTarget(target)) return;
+        var p = eventPoint(e);
+        if(!p) return;
+        obBookLaterGesture = {target:target,x:p.x,y:p.y,startedAt:Date.now(),moved:false};
+      }
+
+      function updateBookLaterGesture(e){
+        if(!obBookLaterGesture) return;
+        var p = eventPoint(e);
+        if(!p) return;
+        if(Math.abs(p.x - obBookLaterGesture.x) > 10 || Math.abs(p.y - obBookLaterGesture.y) > 10){
+          obBookLaterGesture.moved = true;
+        }
+      }
+
+      function sameBookLaterTarget(target){
+        if(!obBookLaterGesture || !target) return false;
+        return target === obBookLaterGesture.target ||
+          (target.contains && target.contains(obBookLaterGesture.target)) ||
+          (obBookLaterGesture.target.contains && obBookLaterGesture.target.contains(target));
+      }
+
+      function shouldIgnoreBookLaterOpen(target){
+        if(!sameBookLaterTarget(target)) return false;
+        var age = Date.now() - obBookLaterGesture.startedAt;
+        var ignore = obBookLaterGesture.moved || age > 700;
+        obBookLaterGesture = null;
+        return ignore;
+      }
+
       var openFromBookLaterEvent = function(e){
         var target = actionTargetFromEvent(e);
         if(!target || !document.getElementById('view-4') || !isBookLaterTarget(target)) return false;
         var now = Date.now();
         e.preventDefault();
         e.stopImmediatePropagation();
+        if(shouldIgnoreBookLaterOpen(target)) return true;
         if(now - lastBookLaterAt > 450) {
           lastBookLaterAt = now;
           openBookLaterSafely();
@@ -30730,6 +30771,12 @@ body.ob-ui-dark .ob-connection-note,
         return true;
       };
 
+      ['pointerdown','touchstart','mousedown'].forEach(function(type){
+        document.addEventListener(type, rememberBookLaterGesture, {capture:true, passive:true});
+      });
+      ['pointermove','touchmove','mousemove'].forEach(function(type){
+        document.addEventListener(type, updateBookLaterGesture, {capture:true, passive:true});
+      });
       ['pointerup','mouseup','touchend'].forEach(function(type){
         document.addEventListener(type, openFromBookLaterEvent, true);
       });

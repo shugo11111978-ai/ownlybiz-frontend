@@ -31185,6 +31185,8 @@ body.ob-ui-dark .ob-connection-note,
 .ob-ops-table{width:100%;border-collapse:collapse;font-size:12px}
 .ob-ops-table th{text-align:left;color:rgba(245,255,249,.55);font-size:10px;text-transform:uppercase;letter-spacing:.08em;padding:9px;border-bottom:1px solid rgba(255,255,255,.1)}
 .ob-ops-table td{padding:9px;border-bottom:1px solid rgba(255,255,255,.07);vertical-align:top}
+.ob-ops-table .ob-ops-dismiss-alert{border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.08);color:#f5fff9;border-radius:999px;padding:5px 10px;font-size:11px;font-weight:900;cursor:pointer}
+.ob-ops-table .ob-ops-dismiss-alert:hover{background:rgba(255,255,255,.14)}
 .ob-pill{display:inline-flex;border-radius:999px;padding:4px 8px;font-size:11px;font-weight:900;background:rgba(255,255,255,.12)}
 .ob-pill.ok{background:rgba(34,197,94,.18);color:#86efac}
 .ob-pill.warning{background:rgba(245,158,11,.18);color:#fcd34d}
@@ -31242,9 +31244,38 @@ body.ob-ui-dark .ob-connection-note,
     return (b || 'https://ownlybiz-backend-production.up.railway.app').replace(/\/+$/,'');
   }
   function esc(v){ return String(v == null ? '' : v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
+  function jsArg(v){ return esc(JSON.stringify(String(v == null ? '' : v))); }
   function num(v){ v = Number(v || 0); return Number.isFinite(v) ? v : 0; }
   function fmt(v,suffix){ return (Math.round(num(v)*100)/100).toLocaleString() + (suffix || ''); }
   function pill(status){ var s = status || 'ok'; return '<span class="ob-pill '+esc(s)+'">'+esc(s.toUpperCase())+'</span>'; }
+  var DISMISSED_ALERTS_KEY = 'ob_ops_dismissed_alerts_v1';
+  var lastOpsData = null;
+  var lastOpsTrends = null;
+  function alertKey(alert){
+    alert = alert || {};
+    return String(alert.key || (alert.title || 'alert') + '|' + (alert.detail || '')).slice(0,220);
+  }
+  function dismissedAlerts(){
+    try { return JSON.parse(localStorage.getItem(DISMISSED_ALERTS_KEY) || '{}') || {}; } catch(e) { return {}; }
+  }
+  function saveDismissedAlerts(map){
+    try { localStorage.setItem(DISMISSED_ALERTS_KEY, JSON.stringify(map || {})); } catch(e) {}
+  }
+  function visibleAlerts(alerts){
+    var dismissed = dismissedAlerts();
+    return (alerts || []).filter(function(alert){ return !dismissed[alertKey(alert)]; });
+  }
+  window.obVisibleOpsAlerts = visibleAlerts;
+  window.obDismissOpsAlert = function(key){
+    var map = dismissedAlerts();
+    map[String(key || '')] = Date.now();
+    saveDismissedAlerts(map);
+    if(lastOpsData) render(lastOpsData, lastOpsTrends);
+  };
+  window.obRestoreOpsAlerts = function(){
+    saveDismissedAlerts({});
+    if(lastOpsData) render(lastOpsData, lastOpsTrends);
+  };
   async function fetchOverview(){
     var res = await fetch(base() + '/api/admin/observability/overview', { headers:{ Authorization:'Bearer ' + token(), 'Content-Type':'application/json' } });
     var data = await res.json().catch(function(){ return {}; });
@@ -31261,9 +31292,15 @@ body.ob-ui-dark .ob-connection-note,
     return '<div class="ob-ops-card '+(cls||'')+'"><div class="ob-ops-label">'+esc(label)+'</div><div class="ob-ops-value">'+esc(value)+'</div><div class="ob-ops-note">'+esc(note||'')+'</div></div>';
   }
   function renderAlerts(alerts){
-    if(!alerts || !alerts.length) return '<div class="ob-ops-empty">No active alerts right now.</div>';
-    return '<table class="ob-ops-table"><thead><tr><th>Severity</th><th>Alert</th><th>Detail</th><th>Time</th></tr></thead><tbody>' + alerts.map(function(a){
-      return '<tr><td>'+pill(a.severity)+'</td><td><b>'+esc(a.title)+'</b></td><td>'+esc(a.detail)+'</td><td>'+esc(a.at||'')+'</td></tr>';
+    var all = alerts || [];
+    var visible = visibleAlerts(all);
+    var dismissedCount = all.length - visible.length;
+    if(!visible.length) {
+      return '<div class="ob-ops-empty">No visible active alerts right now.' + (dismissedCount ? ' ' + dismissedCount + ' dismissed. <button class="ob-ops-dismiss-alert" type="button" onclick="window.obRestoreOpsAlerts&&window.obRestoreOpsAlerts()">Restore dismissed</button>' : '') + '</div>';
+    }
+    return '<table class="ob-ops-table"><thead><tr><th>Severity</th><th>Alert</th><th>Detail</th><th>Time</th><th>Action</th></tr></thead><tbody>' + visible.map(function(a){
+      var key = alertKey(a);
+      return '<tr><td>'+pill(a.severity)+'</td><td><b>'+esc(a.title)+'</b></td><td>'+esc(a.detail)+'</td><td>'+esc(a.at||'')+'</td><td><button class="ob-ops-dismiss-alert" type="button" onclick="window.obDismissOpsAlert&&window.obDismissOpsAlert('+jsArg(key)+')">Dismiss</button></td></tr>';
     }).join('') + '</tbody></table>';
   }
   function renderRoutes(routes){
@@ -31289,6 +31326,10 @@ body.ob-ui-dark .ob-connection-note,
     if(!rows.length) return '';
     var vals = rows.map(function(r){ return num(r[key]); });
     var max = Math.max.apply(null, vals.concat([1]));
+    if(rows.length === 1){
+      var y = h - (num(rows[0][key]) / max) * h;
+      return 'M0 ' + y.toFixed(1) + ' L' + w + ' ' + y.toFixed(1);
+    }
     return rows.map(function(r,i){
       var x = rows.length === 1 ? w : (i/(rows.length-1))*w;
       var y = h - (num(r[key])/max)*h;
@@ -31314,6 +31355,9 @@ body.ob-ui-dark .ob-connection-note,
   function barChart(title, rows, key, note, classFn){
     rows = rows || [];
     var max = Math.max.apply(null, rows.map(function(r){ return num(r[key]); }).concat([1]));
+    if(!rows.length){
+      return '<div class="ob-chart"><div class="ob-chart-title"><span>'+esc(title)+'</span><span>'+esc(note || 'no samples yet')+'</span></div><div class="ob-ops-empty" style="margin-top:18px;">No samples yet. Current value: 0.</div></div>';
+    }
     return '<div class="ob-chart"><div class="ob-chart-title"><span>'+esc(title)+'</span><span>'+esc(note || '')+'</span></div><div class="ob-chart-bars">' +
       rows.map(function(r){
         var pct = Math.max(2, (num(r[key]) / max) * 100);
@@ -31329,9 +31373,37 @@ body.ob-ui-dark .ob-connection-note,
     if(prev === 0) return last > 0 ? 100 : 0;
     return Math.round(((last - prev) / prev) * 100);
   }
-  function renderTrendInsights(trends){
-    var hourly = trends.sessions && trends.sessions.hourly || [];
-    var daily = trends.sessions && trends.sessions.daily || [];
+  function normalizeTrends(trends, data){
+    trends = trends || {};
+    data = data || {};
+    var summary = data.summary || {};
+    var business = data.business || {};
+    var sessions = business.sessions || {};
+    var users = business.users || {};
+    var hourly = (trends.sessions && trends.sessions.hourly) || trends.hourly || [];
+    var daily = (trends.sessions && trends.sessions.daily) || trends.daily || [];
+    var live = trends.live || [];
+    var userDaily = (trends.users && trends.users.daily) || trends.users || [];
+    if(!hourly.length) hourly = [{bucket:'now', requested:num(sessions.sessions_15m || summary.pending_sessions), active:num(summary.active_sessions)}];
+    if(!daily.length) daily = [{bucket:'today', revenue:num(sessions.revenue_today), payment_failures:num(sessions.payment_failures_24h), requested:num(sessions.sessions_24h || sessions.sessions_15m)}];
+    if(!userDaily.length) userDaily = [{bucket:'today', total:num(users.experts_total) + num(users.clients_total), experts:num(users.experts_total), clients:num(users.clients_total)}];
+    if(!live.length) live = [{at:data.generated_at || new Date().toISOString()}];
+    live = live.map(function(row){
+      row = row || {};
+      return Object.assign({
+        api_p95_ms:num(summary.api_p95_ms),
+        pending_sessions:num(summary.pending_sessions),
+        broken_assets:num(summary.broken_assets),
+        connected_users:num(summary.connected_users),
+        sessions_now:num(summary.active_sessions)
+      }, row);
+    });
+    return {hourly:hourly,daily:daily,live:live,users:userDaily};
+  }
+  function renderTrendInsights(trends, data){
+    trends = normalizeTrends(trends, data);
+    var hourly = trends.hourly || [];
+    var daily = trends.daily || [];
     var live = trends.live || [];
     var sessionsDelta = delta(hourly, 'requested');
     var revenueDelta = delta(daily, 'revenue');
@@ -31342,14 +31414,14 @@ body.ob-ui-dark .ob-connection-note,
       '<div class="ob-insight"><b>Live risk pulse</b><span>API p95 '+fmt(latestLive.api_p95_ms,'ms')+', pending sessions '+fmt(latestLive.pending_sessions)+', broken assets '+fmt(latestLive.broken_assets)+'.</span></div>' +
     '</div>';
   }
-  function renderTrends(trends){
-    trends = trends || {};
-    var hourly = trends.sessions && trends.sessions.hourly || [];
-    var daily = trends.sessions && trends.sessions.daily || [];
-    var users = trends.users && trends.users.daily || [];
+  function renderTrends(trends, data){
+    trends = normalizeTrends(trends, data);
+    var hourly = trends.hourly || [];
+    var daily = trends.daily || [];
+    var users = trends.users || [];
     var live = trends.live || [];
     return '<div class="ob-ops-section"><h3>Trends and capacity signals</h3>' +
-      renderTrendInsights(trends) +
+      renderTrendInsights(trends, data) +
       '<div class="ob-ops-trend-grid">' +
         barChart('Sessions requested by hour', hourly, 'requested', 'last 24h') +
         lineChart('Revenue by day', daily, 'revenue', '#41b883', 'last 14d') +
@@ -31367,6 +31439,8 @@ body.ob-ui-dark .ob-connection-note,
     lastCriticalCount = critical;
   }
   function render(data, trends){
+    lastOpsData = data;
+    lastOpsTrends = trends;
     var s = data.summary || {};
     var http = data.http || {};
     var sys = data.system || {};
@@ -31379,17 +31453,19 @@ body.ob-ui-dark .ob-connection-note,
     var assetStore = storage.assets || {};
     var rt = (data.realtime && data.realtime.websocket) || {};
     var cluster = rt.cluster || {};
-    var state = data.status || 'ok';
+    var alertsVisible = visibleAlerts(data.alerts || []);
+    var dismissedCount = (data.alerts || []).length - alertsVisible.length;
+    var state = alertsVisible.some(function(a){ return a.severity === 'critical'; }) ? 'critical' : (alertsVisible.length ? 'warning' : 'ok');
     if(launcher){
       launcher.classList.add('show');
       launcher.classList.toggle('warn', state === 'warning');
       launcher.classList.toggle('crit', state === 'critical');
-      if(launcherCount) launcherCount.textContent = s.active_alerts ? '(' + s.active_alerts + ')' : '';
+      if(launcherCount) launcherCount.textContent = alertsVisible.length ? '(' + alertsVisible.length + ')' : '';
     }
-    if(updated) updated.textContent = 'Last updated ' + (data.generated_at || new Date().toISOString()) + ' - status: ' + state.toUpperCase();
+    if(updated) updated.textContent = 'Last updated ' + (data.generated_at || new Date().toISOString()) + ' - visible status: ' + state.toUpperCase() + (dismissedCount ? ' (' + dismissedCount + ' dismissed)' : '');
     body.innerHTML =
       '<div class="ob-ops-grid">' +
-        card('System status', state.toUpperCase(), s.active_alerts + ' active alerts') +
+        card('System status', state.toUpperCase(), alertsVisible.length + ' visible alerts' + (dismissedCount ? ', ' + dismissedCount + ' dismissed' : '')) +
         card('API p95', fmt(s.api_p95_ms,'ms'), 'Error rate ' + fmt(s.api_error_rate_pct,'%') + ', 429s ' + fmt(s.api_429_count)) +
         card('Sessions now', fmt(s.active_sessions), fmt(s.pending_sessions) + ' pending requests') +
         card('Realtime users', fmt(s.connected_users), 'Sockets ' + fmt(cluster.cluster_total_sockets || rt.total_sockets)) +
@@ -31416,7 +31492,7 @@ body.ob-ui-dark .ob-connection-note,
         '<div class="ob-ops-section"><h3>Recent problem requests</h3>'+renderProblems(http.recent_problem_requests || [])+'</div>' +
         '<div class="ob-ops-section"><h3>Broken uploaded assets</h3>'+renderAssets(data.assets || {})+'</div>' +
       '</div>' +
-      renderTrends(trends || {});
+      renderTrends(trends || {}, data);
     notifyIfNeeded(data);
   }
   async function refresh(){
@@ -31465,10 +31541,21 @@ body.ob-ui-dark .ob-connection-note,
   function analyticsTable(title, items, empty){
     return '<div class="admin-card"><div class="admin-card-title">' + esc(title) + '</div><table class="experts-table" style="width:100%;"><thead><tr><th>Source</th><th style="text-align:right;">Views</th><th style="text-align:right;">Visitors</th></tr></thead><tbody>' + analyticsRows(items, empty) + '</tbody></table></div>';
   }
-  async function loadAdminAnalyticsFresh(){
+  var adminAnalyticsLoading = false;
+  var adminAnalyticsLoadedAt = 0;
+  async function loadAdminAnalyticsFresh(force){
     var panel = document.getElementById('admin-analytics-content');
     if(!panel) return;
-    panel.innerHTML = '<div class="admin-card" style="padding:28px;color:rgba(246,241,233,.7);">Loading live marketing analytics...</div>';
+    var now = Date.now();
+    if(adminAnalyticsLoading) return;
+    if(!force && panel.dataset.obAnalyticsLoaded === '1' && now - adminAnalyticsLoadedAt < 12000) return;
+    adminAnalyticsLoading = true;
+    if(panel.dataset.obAnalyticsLoaded !== '1'){
+      panel.innerHTML = '<div class="admin-card" style="padding:28px;color:rgba(246,241,233,.7);">Loading live marketing analytics...</div>';
+    } else {
+      var meta = panel.querySelector('.ob-admin-analytics-meta');
+      if(meta) meta.innerHTML = '<strong style="color:inherit;">Live marketing analytics</strong><br>Refreshing from production API...';
+    }
     try{
       var d = await apiGet('/admin/analytics?days=30');
       var t = d.totals || {};
@@ -31476,7 +31563,9 @@ body.ob-ui-dark .ob-connection-note,
       var max = Math.max.apply(null, dailyData.map(function(x){ return Number(x.pageviews) || 0; }).concat([1]));
       var daily = dailyData.map(function(x){ var h = Math.max(8, Math.round((Number(x.pageviews) || 0) / max * 120)); return '<div title="' + esc(x.date) + ': ' + n(x.pageviews) + ' views" style="flex:1;min-width:8px;background:linear-gradient(180deg,#f2b181,#c4622d);height:' + h + 'px;border-radius:8px 8px 2px 2px;"></div>'; }).join('');
       var updated = new Date().toLocaleString([], {hour:'2-digit', minute:'2-digit', second:'2-digit'});
-      panel.innerHTML = '<div class="ob-admin-analytics-head"><div class="ob-admin-analytics-meta"><strong style="color:inherit;">Live marketing analytics</strong><br>Updated ' + esc(updated) + ' from production API, no browser cache.</div><button class="ob-admin-refresh-btn" type="button" onclick="window.loadAdminAnalytics&&window.loadAdminAnalytics()">Refresh analytics</button></div>' +
+      panel.dataset.obAnalyticsLoaded = '1';
+      adminAnalyticsLoadedAt = Date.now();
+      panel.innerHTML = '<div class="ob-admin-analytics-head"><div class="ob-admin-analytics-meta"><strong style="color:inherit;">Live marketing analytics</strong><br>Updated ' + esc(updated) + ' from production API, no browser cache.</div><button class="ob-admin-refresh-btn" type="button" onclick="window.loadAdminAnalytics&&window.loadAdminAnalytics(true)">Refresh analytics</button></div>' +
         '<div class="admin-kpi-row" style="grid-template-columns:repeat(4,1fr);">' +
           '<div class="admin-kpi"><div class="admin-kpi-label">Pageviews</div><div class="admin-kpi-val">' + n(t.pageviews) + '</div><div class="admin-kpi-change">Last ' + esc(d.days || 30) + ' days</div></div>' +
           '<div class="admin-kpi"><div class="admin-kpi-label">Visitors</div><div class="admin-kpi-val">' + n(t.visitors) + '</div><div class="admin-kpi-change">Privacy-safe unique count</div></div>' +
@@ -31489,6 +31578,8 @@ body.ob-ui-dark .ob-connection-note,
         '</div>';
     }catch(error){
       panel.innerHTML = '<div class="admin-card" style="padding:28px;color:#f87171;">Analytics failed: ' + esc(error.message || 'Request failed') + '</div>';
+    } finally {
+      adminAnalyticsLoading = false;
     }
   }
   function installAnalyticsOverride(){
@@ -31527,7 +31618,7 @@ body.ob-ui-dark .ob-connection-note,
   }
   function updateOpsBadge(data){
     var item = ensureOpsSidebarItem(); if(!item) return;
-    var alerts = (data && data.alerts) || [];
+    var alerts = window.obVisibleOpsAlerts ? window.obVisibleOpsAlerts((data && data.alerts) || []) : ((data && data.alerts) || []);
     var critical = alerts.filter(function(a){ return String(a.severity || a.status || '').toLowerCase() === 'critical'; }).length;
     var warning = alerts.filter(function(a){ return ['warning','degraded'].indexOf(String(a.severity || a.status || '').toLowerCase()) !== -1; }).length;
     item.classList.toggle('ob-ops-nav-critical', critical > 0); item.classList.toggle('ob-ops-nav-warning', !critical && warning > 0);

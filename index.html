@@ -31731,4 +31731,95 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   };
 })();
 </script>
+<script>
+(function(){
+  if (window._obMobileHomeCtaGuardV3) return;
+  window._obMobileHomeCtaGuardV3 = true;
+
+  const TOUCH = new WeakMap();
+  const CLICKABLE = 'button,a,[role="button"],[onclick]';
+  const BOOK_RE = /\b(?:Book|Schedule)\s+for\s+Later\b/i;
+  const START_RE = /\bStart\s+(?:Chat|Voice|Video|Session)\s+Now\b/i;
+
+  function label(el) {
+    return ((el && el.textContent) || '').replace(/\s+/g, ' ').trim();
+  }
+
+  function isBookLater(el) {
+    return !!el && (
+      el.matches('[onclick*="obGuardedBookLaterTap"],[onclick*="openBookLaterModal"],[data-ob-book-later="1"],[data-ob-book-later-guarded="1"]') ||
+      BOOK_RE.test(label(el))
+    );
+  }
+
+  function isStartCta(el) {
+    return !!el && START_RE.test(label(el));
+  }
+
+  function patch(root) {
+    const scope = root && root.querySelectorAll ? root : document;
+    scope.querySelectorAll(CLICKABLE).forEach((el) => {
+      if (!isBookLater(el) && !isStartCta(el)) return;
+      el.style.touchAction = 'manipulation';
+      el.style.webkitTapHighlightColor = 'transparent';
+      el.querySelectorAll('*').forEach((child) => { child.style.pointerEvents = 'none'; });
+      if (isBookLater(el)) el.setAttribute('data-ob-book-later-guarded', '1');
+    });
+  }
+
+  function touchInfo(el) {
+    const info = TOUCH.get(el);
+    if (!info) return { blocked: false };
+    return { blocked: info.moved || Date.now() - info.t > 700 };
+  }
+
+  document.addEventListener('touchstart', (ev) => {
+    const el = ev.target.closest && ev.target.closest(CLICKABLE);
+    if (!isBookLater(el)) return;
+    const t = ev.touches && ev.touches[0];
+    if (!t) return;
+    TOUCH.set(el, { x: t.clientX, y: t.clientY, t: Date.now(), moved: false });
+  }, { capture: true, passive: true });
+
+  document.addEventListener('touchmove', (ev) => {
+    const el = ev.target.closest && ev.target.closest(CLICKABLE);
+    if (!isBookLater(el)) return;
+    const info = TOUCH.get(el);
+    const t = ev.touches && ev.touches[0];
+    if (!info || !t) return;
+    if (Math.abs(t.clientX - info.x) > 10 || Math.abs(t.clientY - info.y) > 10) info.moved = true;
+  }, { capture: true, passive: true });
+
+  document.addEventListener('click', (ev) => {
+    const el = ev.target.closest && ev.target.closest(CLICKABLE);
+    if (!isBookLater(el)) return;
+    ev.preventDefault();
+    ev.stopImmediatePropagation();
+    if (touchInfo(el).blocked) return false;
+    if (typeof window.openBookLaterModal === 'function') window.openBookLaterModal();
+    return false;
+  }, true);
+
+  const previousGuard = window.obGuardedBookLaterTap;
+  window.obGuardedBookLaterTap = function(ev, btn) {
+    const el = btn || (ev && ev.currentTarget) || (ev && ev.target && ev.target.closest && ev.target.closest(CLICKABLE));
+    if (ev) {
+      if (ev.preventDefault) ev.preventDefault();
+      if (ev.stopPropagation) ev.stopPropagation();
+    }
+    if (el && touchInfo(el).blocked) return false;
+    if (typeof window.openBookLaterModal === 'function') window.openBookLaterModal();
+    else if (typeof previousGuard === 'function') return previousGuard(ev, btn);
+    return false;
+  };
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', () => patch(document), { once: true });
+  else patch(document);
+
+  new MutationObserver((records) => {
+    records.forEach((record) => record.addedNodes.forEach((node) => patch(node)));
+  }).observe(document.documentElement, { childList: true, subtree: true });
+})();
+</script>
+
 </html>

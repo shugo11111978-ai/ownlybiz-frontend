@@ -31583,20 +31583,30 @@ button[onclick*="openBookLaterModal"]{
     if(typeof window.handleExpertCTA === 'function') window.handleExpertCTA();
   }, true);
 
-  var armedBtn = null;
-  var armedUntil = 0;
-  var resetTimer = null;
-  function resetScheduleBtn(btn){
-    if(!btn) return;
-    btn.classList.remove('ob-schedule-armed');
-    if(btn.dataset.obScheduleOriginalText) btn.textContent = btn.dataset.obScheduleOriginalText;
-  }
+  var scheduleTouch = null;
   function isScheduleLaterButton(btn){
     if(!btn) return false;
     var text = (btn.textContent || '').trim();
     var action = btn.getAttribute('onclick') || '';
-    return action.indexOf('openBookLaterModal') >= 0 && /schedule for later|book for later|tap again to schedule/i.test(text);
+    return action.indexOf('openBookLaterModal') >= 0 && /schedule for later|book for later/i.test(text);
   }
+
+  document.addEventListener('touchstart', function(ev){
+    var btn = closest(ev.target, 'button[onclick*="openBookLaterModal"]');
+    if(!btn || !isTouchMobile() || !isScheduleLaterButton(btn)) return;
+    var t = ev.touches && ev.touches[0];
+    if(!t) return;
+    scheduleTouch = { btn: btn, x: t.clientX, y: t.clientY, moved: false, startedAt: Date.now() };
+  }, {capture:true, passive:true});
+
+  document.addEventListener('touchmove', function(ev){
+    if(!scheduleTouch) return;
+    var t = ev.touches && ev.touches[0];
+    if(!t) return;
+    if(Math.abs(t.clientX - scheduleTouch.x) > 8 || Math.abs(t.clientY - scheduleTouch.y) > 8) {
+      scheduleTouch.moved = true;
+    }
+  }, {capture:true, passive:true});
 
   document.addEventListener('click', function(ev){
     var btn = closest(ev.target, 'button[onclick*="openBookLaterModal"]');
@@ -31605,28 +31615,12 @@ button[onclick*="openBookLaterModal"]{
     ev.preventDefault();
     ev.stopImmediatePropagation();
 
-    var now = Date.now();
-    if(armedBtn === btn && now < armedUntil){
-      resetScheduleBtn(btn);
-      armedBtn = null;
-      armedUntil = 0;
-      clearTimeout(resetTimer);
-      if(typeof window.openBookLaterModal === 'function') window.openBookLaterModal();
+    var touch = scheduleTouch;
+    scheduleTouch = null;
+    if(touch && touch.btn === btn && touch.moved) {
       return;
     }
-
-    resetScheduleBtn(armedBtn);
-    armedBtn = btn;
-    armedUntil = now + 2200;
-    if(!btn.dataset.obScheduleOriginalText) btn.dataset.obScheduleOriginalText = btn.textContent;
-    btn.textContent = 'Tap again to schedule';
-    btn.classList.add('ob-schedule-armed');
-    clearTimeout(resetTimer);
-    resetTimer = setTimeout(function(){
-      resetScheduleBtn(btn);
-      if(armedBtn === btn) armedBtn = null;
-      armedUntil = 0;
-    }, 2200);
+    if(typeof window.openBookLaterModal === 'function') window.openBookLaterModal();
   }, true);
 })();
 </script>

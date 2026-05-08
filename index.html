@@ -32659,13 +32659,12 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     return r === 'expert' || r === 'admin';
   }
   function isExpertPage(){
-    if(document.querySelector('#view-4.active')) return true;
     var host = (location.hostname || '').toLowerCase();
     var path = (location.pathname || '').replace(/^\/+|\/+$/g,'');
     if(/^[^.]+\.ownlybiz\.com$/i.test(host) && host !== 'www.ownlybiz.com') return true;
     if(host && host !== 'ownlybiz.com' && host !== 'www.ownlybiz.com' && host.indexOf('vercel.app') < 0 && host !== 'localhost' && host !== '127.0.0.1') return true;
     var first = path.split('/').filter(Boolean)[0] || '';
-    var reserved = {'':1,'admin':1,'dash':1,'signup':1,'session':1,'terms':1,'legal':1};
+    var reserved = {'':1,'admin':1,'dash':1,'signup':1,'login':1,'session':1,'terms':1,'legal':1,'pricing':1,'features':1,'blog':1,'contact':1,'experts':1,'expert':1};
     return !!(first && !reserved[first]);
   }
   function view4(){
@@ -32771,13 +32770,17 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     btn.type = 'button';
     btn.id = 'ob-edit-live-preview-btn';
     btn.innerHTML = 'Edit live preview';
-    btn.onclick = function(ev){
-      ev.preventDefault();
-      if(typeof window.switchView === 'function') window.switchView(4);
-      setTimeout(function(){
-        if(typeof window.obOpenExpertEditLayer === 'function') window.obOpenExpertEditLayer();
-      }, 650);
-    };
+        btn.onclick = function(ev){
+          ev.preventDefault();
+          if(typeof window.obOpenPublicEditPreview === 'function') {
+            window.obOpenPublicEditPreview();
+            return;
+          }
+          if(typeof window.switchView === 'function') window.switchView(4);
+          setTimeout(function(){
+            if(typeof window.obOpenExpertEditLayer === 'function') window.obOpenExpertEditLayer();
+          }, 650);
+        };
     preview.insertAdjacentElement('afterend', btn);
     var row = preview.parentElement;
     if(row && !qs('#ob-editor-preview-hint')){
@@ -32926,10 +32929,182 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     ev.preventDefault();
     ev.stopPropagation();
     ev.stopImmediatePropagation();
+    if(btn.id === 'ob-edit-live-preview-btn' && typeof window.obOpenPublicEditPreview === 'function') {
+      window.obOpenPublicEditPreview();
+      return false;
+    }
+    if(btn.id === 'ob-owner-edit-site-btn' && typeof window.obStartInlineSiteEditMode === 'function') {
+      window.obStartInlineSiteEditMode();
+      return false;
+    }
     activate();
     return false;
   }, true);
 })();
 </script>
 
+<script id="ob-public-edit-scope-guard">
+(function(){
+  if(window.__obPublicEditScopeGuardV1) return;
+  window.__obPublicEditScopeGuardV1 = true;
+
+  var RESERVED_PUBLIC_SLUGS = {
+    '':1,'admin':1,'dash':1,'signup':1,'login':1,'session':1,'terms':1,'legal':1,
+    'pricing':1,'features':1,'blog':1,'contact':1,'experts':1,'expert':1,'about':1
+  };
+
+  function getUser(){
+    try { return JSON.parse(sessionStorage.getItem('ob_u') || localStorage.getItem('ob_user') || 'null'); }
+    catch(e){ return null; }
+  }
+
+  function isOwner(){
+    var user = getUser();
+    return !!(user && (user.role === 'expert' || user.role === 'admin'));
+  }
+
+  function cleanSlug(value){
+    return String(value || '').trim().replace(/^\/+|\/+$/g,'');
+  }
+
+  function currentExpertSlug(){
+    var fromPath = (location.pathname || '').match(/^\/dash\/([^/]+)/);
+    if(fromPath && fromPath[1]) return cleanSlug(fromPath[1]);
+    if(window._currentExpertSlug) return cleanSlug(window._currentExpertSlug);
+    if(window._browseExpert && window._browseExpert.slug) return cleanSlug(window._browseExpert.slug);
+    if(window._currentExpert && window._currentExpert.slug) return cleanSlug(window._currentExpert.slug);
+    var user = getUser();
+    if(user && user.slug) return cleanSlug(user.slug);
+    return '';
+  }
+
+  function platformHost(host){
+    return !host ||
+      host === 'ownlybiz.com' ||
+      host === 'www.ownlybiz.com' ||
+      host === 'localhost' ||
+      host === '127.0.0.1' ||
+      host.indexOf('vercel.app') >= 0;
+  }
+
+  function isRealPublicExpertPage(){
+    var host = (location.hostname || '').toLowerCase();
+    var path = cleanSlug(location.pathname || '');
+    var first = cleanSlug(path.split('/').filter(Boolean)[0] || '');
+
+    if(/^dash(?:\/|$)/.test(path) || /^admin(?:\/|$)/.test(path) || /^signup(?:\/|$)/.test(path) || /^login(?:\/|$)/.test(path)) {
+      return false;
+    }
+
+    if(/^[^.]+\.ownlybiz\.com$/i.test(host) && host !== 'www.ownlybiz.com') return true;
+    if(!platformHost(host)) return true;
+    return !!(first && !RESERVED_PUBLIC_SLUGS[first]);
+  }
+
+  function startInlineEditMode(){
+    if(typeof window.obSelfContainedEditMode === 'function') {
+      window.obSelfContainedEditMode();
+      return;
+    }
+    if(typeof window.obOpenExpertEditLayer === 'function' && window.obOpenExpertEditLayer !== startInlineEditMode) {
+      window.obOpenExpertEditLayer();
+    }
+  }
+
+  function publicEditUrl(){
+    var slug = currentExpertSlug();
+    var qs = 'ob_edit=1';
+    if(!slug && isRealPublicExpertPage()) {
+      var current = new URL(location.href);
+      current.searchParams.set('ob_edit', '1');
+      return current.toString();
+    }
+    if(!slug) return '';
+    return '/' + encodeURIComponent(slug) + '?' + qs;
+  }
+
+  function openPublicEditPreview(){
+    var url = publicEditUrl();
+    if(url) {
+      location.href = url;
+      return;
+    }
+    if(typeof window.switchView === 'function') window.switchView(4);
+    setTimeout(startInlineEditMode, 700);
+  }
+
+  function enforceOwnerButton(){
+    var btn = document.getElementById('ob-owner-edit-site-btn');
+    if(!btn) return;
+
+    if(!isOwner() || !isRealPublicExpertPage()) {
+      btn.classList.remove('show');
+      btn.style.setProperty('display', 'none', 'important');
+      btn.onclick = function(ev){
+        if(ev) {
+          ev.preventDefault();
+          ev.stopPropagation();
+        }
+        return false;
+      };
+      return;
+    }
+
+    btn.style.removeProperty('display');
+    btn.classList.add('show');
+    btn.onclick = function(ev){
+      if(ev) {
+        ev.preventDefault();
+        ev.stopPropagation();
+      }
+      startInlineEditMode();
+      return false;
+    };
+  }
+
+  function bindLivePreviewButton(){
+    var btn = document.getElementById('ob-edit-live-preview-btn');
+    if(!btn || btn.__obPublicPreviewBoundV1) return;
+    btn.__obPublicPreviewBoundV1 = true;
+    btn.onclick = function(ev){
+      if(ev) {
+        ev.preventDefault();
+        ev.stopPropagation();
+      }
+      openPublicEditPreview();
+      return false;
+    };
+  }
+
+  function maybeAutoStart(){
+    try {
+      var params = new URLSearchParams(location.search || '');
+      if(params.get('ob_edit') === '1' && isOwner() && isRealPublicExpertPage()) {
+        setTimeout(startInlineEditMode, 900);
+      }
+    } catch(e) {}
+  }
+
+  function boot(){
+    enforceOwnerButton();
+    bindLivePreviewButton();
+  }
+
+  window.obStartInlineSiteEditMode = startInlineEditMode;
+  window.obOpenPublicEditPreview = openPublicEditPreview;
+  window.obOpenExpertEditLayer = startInlineEditMode;
+  window.obIsRealPublicExpertPage = isRealPublicExpertPage;
+
+  document.addEventListener('DOMContentLoaded', function(){
+    boot();
+    maybeAutoStart();
+  });
+  setTimeout(function(){ boot(); maybeAutoStart(); }, 250);
+  setTimeout(boot, 1000);
+  setInterval(boot, 1500);
+  try {
+    new MutationObserver(boot).observe(document.documentElement, { childList: true, subtree: true });
+  } catch(e) {}
+})();
+</script>
 </html>

@@ -31707,6 +31707,194 @@ body.ob-ui-dark .ob-connection-note,
   document.addEventListener('DOMContentLoaded', boot);
 })();
 </script>
+<style id="ob-owner-action-guides-style">
+#ob-ops-owner-guide{margin:18px 0 22px;padding:20px;border:1px solid rgba(132,204,22,.24);border-radius:24px;background:linear-gradient(135deg,rgba(10,36,25,.92),rgba(36,30,18,.9));box-shadow:0 22px 60px rgba(0,0,0,.24);color:#f4fff5}
+#ob-ops-owner-guide h3{margin:0 0 6px;font-size:22px;line-height:1.1;color:#fff}
+#ob-ops-owner-guide>p{margin:0 0 16px;color:rgba(244,255,245,.68);font-size:14px;line-height:1.45}
+.ob-owner-guide-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px}
+.ob-owner-guide-card{border:1px solid rgba(255,255,255,.12);border-radius:18px;background:rgba(255,255,255,.055);padding:16px;display:flex;flex-direction:column;gap:12px}
+.ob-owner-guide-card.is-critical{border-color:rgba(248,113,113,.42);box-shadow:inset 0 0 0 1px rgba(248,113,113,.12)}
+.ob-owner-guide-card.is-warning{border-color:rgba(250,204,21,.36);box-shadow:inset 0 0 0 1px rgba(250,204,21,.1)}
+.ob-owner-guide-top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.ob-owner-guide-title{font-weight:900;font-size:15px;color:#fff;line-height:1.3}
+.ob-owner-guide-pill{border-radius:999px;padding:5px 9px;font-size:11px;font-weight:900;letter-spacing:.06em;text-transform:uppercase;background:rgba(255,255,255,.12);color:#fff;white-space:nowrap}
+.ob-owner-guide-card.is-critical .ob-owner-guide-pill{background:rgba(185,28,28,.65)}
+.ob-owner-guide-card.is-warning .ob-owner-guide-pill{background:rgba(161,98,7,.68);color:#fff7cc}
+.ob-owner-guide-card dl{margin:0;display:grid;gap:8px}
+.ob-owner-guide-card dt{font-size:11px;text-transform:uppercase;letter-spacing:.09em;color:rgba(244,255,245,.5);font-weight:900;margin:0}
+.ob-owner-guide-card dd{margin:2px 0 0;color:rgba(244,255,245,.86);font-size:13px;line-height:1.45}
+.ob-owner-guide-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:auto}
+.ob-owner-guide-actions button{border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.1);color:#fff;border-radius:999px;padding:9px 12px;font-weight:900;font-size:12px;cursor:pointer}
+.ob-owner-guide-actions button:hover{background:rgba(255,255,255,.18)}
+.ob-owner-guide-actions .primary{background:#48c78e;color:#06180f;border-color:#48c78e}
+.ob-owner-guide-actions .primary:hover{background:#5dd99f}
+.ob-owner-guide-empty{border:1px dashed rgba(255,255,255,.18);border-radius:16px;padding:16px;color:rgba(244,255,245,.74);font-size:14px}
+.ob-owner-guide-note{margin-top:12px;color:rgba(244,255,245,.56);font-size:12px;line-height:1.45}
+@media(max-width:760px){#ob-ops-owner-guide{padding:16px;border-radius:18px}.ob-owner-guide-grid{grid-template-columns:1fr}.ob-owner-guide-actions button{width:100%;justify-content:center}}
+</style>
+<script id="ob-owner-action-guides-script">
+(function(){
+  if(window.__obOwnerActionGuidesV1) return;
+  window.__obOwnerActionGuidesV1 = true;
+
+  function esc(value){ return String(value == null ? '' : value).replace(/[&<>"']/g,function(ch){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[ch]; }); }
+  function base(){ var b=''; try{ b = window.OWNLY_API || window.OWNLYBIZ_API_URL || window.BASE || BASE || ''; }catch(e){} return (b || 'https://ownlybiz-backend-production.up.railway.app').replace(/\/+$/,''); }
+  function token(){ return sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || ''; }
+  function role(){ try { return (JSON.parse(sessionStorage.getItem('ob_u') || localStorage.getItem('ob_u') || '{}').role || '').toLowerCase(); } catch(e){ return ''; } }
+  function api(path, opts){
+    opts = opts || {};
+    var headers = opts.headers || {};
+    headers['Content-Type'] = headers['Content-Type'] || 'application/json';
+    headers.Authorization = headers.Authorization || ('Bearer ' + token());
+    return fetch(base() + '/api' + path, Object.assign({ cache:'no-store', headers:headers }, opts)).then(function(res){
+      return res.json().catch(function(){ return {}; }).then(function(data){
+        if(!res.ok) throw new Error(data.error || data.message || ('Request failed: ' + res.status));
+        return data;
+      });
+    });
+  }
+  function fallbackGuide(alert){
+    var key = String((alert && alert.key) || '').toLowerCase();
+    var title = String((alert && alert.title) || 'Operational alert');
+    var text = (key + ' ' + title + ' ' + ((alert && alert.detail) || '')).toLowerCase();
+    var guide = {
+      impact:'This may affect production if it persists or grows.',
+      cause:'The monitor detected abnormal behavior but did not attach a specialized cause.',
+      owner_action:'Refresh after 2 minutes. If it stays visible, copy the developer report and ask for inspection before changing production.',
+      auto_recovery:'Unknown.',
+      escalation:'Escalate if it persists for more than 5 minutes or users report visible impact.',
+      safe_actions:[{id:'refresh_ops',label:'Refresh Ops Monitor',kind:'client'},{id:'copy_report',label:'Copy developer report',kind:'client'}]
+    };
+    if(text.indexOf('memory') !== -1 || text.indexOf('heap') !== -1){
+      guide.impact = 'If real memory pressure continues rising, sessions, admin pages, or expert websites may become slower or unstable.';
+      guide.cause = 'Server memory is elevated against the real runtime limit or configured pressure threshold.';
+      guide.owner_action = 'Run cleanup first, wait 2-3 minutes, then refresh. Buy more memory only if this repeats and real process/container memory is near the hosting limit.';
+      guide.auto_recovery = 'Often yes after cleanup or a traffic spike passes.';
+      guide.safe_actions = [{id:'cleanup_stale_sessions',label:'Run cleanup',kind:'api',method:'POST',path:'/admin/observability/cleanup/stale-sessions'},{id:'refresh_ops',label:'Refresh after 2 min',kind:'client'},{id:'copy_report',label:'Copy developer report',kind:'client'}];
+    } else if(text.indexOf('stale') !== -1 && text.indexOf('session') !== -1){
+      guide.impact = 'Old session records can inflate dashboard load and waste realtime state.';
+      guide.cause = 'A session missed the normal authoritative end/disconnect finalization.';
+      guide.owner_action = 'Run cleanup. The backend janitor should also clear this automatically every 15 minutes.';
+      guide.auto_recovery = 'Yes, if the janitor is healthy.';
+      guide.safe_actions = [{id:'cleanup_stale_sessions',label:'Run cleanup',kind:'api',method:'POST',path:'/admin/observability/cleanup/stale-sessions'},{id:'refresh_ops',label:'Refresh Ops Monitor',kind:'client'},{id:'copy_report',label:'Copy developer report',kind:'client'}];
+    } else if(text.indexOf('asset') !== -1 || text.indexOf('upload') !== -1 || text.indexOf('image') !== -1){
+      guide.impact = 'Expert website/profile images may be missing for clients.';
+      guide.cause = 'A media URL points to a missing or non-durable uploaded asset.';
+      guide.owner_action = 'Ask the affected expert to re-upload/re-save the image once. If new uploads still break, copy the developer report.';
+      guide.auto_recovery = 'No, missing legacy files usually need re-upload or repair.';
+    } else if(text.indexOf('payment') !== -1 || text.indexOf('stripe') !== -1 || text.indexOf('billing') !== -1){
+      guide.impact = 'Clients may fail to start paid sessions, or settlement may be delayed.';
+      guide.cause = 'Payment, billing, webhook, or settlement path reported a failure.';
+      guide.owner_action = 'Do not manually retry charges. Check Stripe dashboard first, then copy the developer report with session/payment identifiers.';
+      guide.auto_recovery = 'Sometimes for user card failures; not for webhook/settlement errors.';
+    }
+    return guide;
+  }
+  function visibleAlerts(alerts){
+    var list = alerts || [];
+    if(window.obVisibleOpsAlerts) {
+      try { return window.obVisibleOpsAlerts(list); } catch(e) {}
+    }
+    return list;
+  }
+  function reportText(alert, guide){
+    return [
+      'Ownlybiz Ops Alert',
+      'Severity: ' + ((alert && (alert.severity || alert.status)) || 'unknown'),
+      'Problem: ' + ((alert && alert.title) || 'Operational alert'),
+      'Detail: ' + ((alert && alert.detail) || ''),
+      'Impact: ' + guide.impact,
+      'Likely cause: ' + guide.cause,
+      'Owner action: ' + guide.owner_action,
+      'Auto recovery: ' + guide.auto_recovery,
+      'Escalation: ' + guide.escalation,
+      'Alert key: ' + ((alert && alert.key) || ''),
+      'Time: ' + ((alert && alert.at) || new Date().toISOString()),
+      'Evidence: ' + JSON.stringify((alert && alert.meta) || {})
+    ].join('\n');
+  }
+  window.obOwnerActionGuideRun = async function(index, actionId){
+    var item = (window.__obOwnerGuideItems || [])[index];
+    if(!item) return;
+    var guide = item.guide || {};
+    var actions = guide.safe_actions || [];
+    var action = actions.find(function(a){ return a.id === actionId; }) || {};
+    if(action.id === 'copy_report'){
+      var text = reportText(item.alert, guide);
+      if(navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).catch(function(){});
+      return;
+    }
+    if(action.id === 'refresh_ops'){
+      if(window.obRefreshOpsDashboard) window.obRefreshOpsDashboard();
+      setTimeout(renderOwnerActionGuide, 900);
+      return;
+    }
+    if(action.kind === 'api' && action.path){
+      var ok = window.confirm ? window.confirm('Run safe cleanup now? This closes stale active sessions without charging clients.') : true;
+      if(!ok) return;
+      await api(action.path, { method: action.method || 'POST' });
+      if(window.obRefreshOpsDashboard) window.obRefreshOpsDashboard();
+      setTimeout(renderOwnerActionGuide, 900);
+    }
+  };
+  function renderCard(item, index){
+    var alert = item.alert;
+    var guide = item.guide;
+    var severity = String(alert.severity || alert.status || 'warning').toLowerCase();
+    var actions = (guide.safe_actions || []).slice(0, 4);
+    var buttons = actions.map(function(action){
+      var primary = action.id === 'cleanup_stale_sessions' ? ' primary' : '';
+      return '<button type="button" class="' + primary + '" onclick="window.obOwnerActionGuideRun(' + index + ',\\'' + esc(action.id) + '\\')">' + esc(action.label || action.id) + '</button>';
+    }).join('');
+    return '<article class="ob-owner-guide-card ' + (severity === 'critical' ? 'is-critical' : 'is-warning') + '">' +
+      '<div class="ob-owner-guide-top"><div class="ob-owner-guide-title">' + esc(alert.title || 'Operational alert') + '</div><span class="ob-owner-guide-pill">' + esc(severity) + '</span></div>' +
+      '<dl>' +
+        '<dt>Impact</dt><dd>' + esc(guide.impact) + '</dd>' +
+        '<dt>Likely cause</dt><dd>' + esc(guide.cause) + '</dd>' +
+        '<dt>What you should do now</dt><dd>' + esc(guide.owner_action) + '</dd>' +
+        '<dt>Auto recovery</dt><dd>' + esc(guide.auto_recovery) + '</dd>' +
+        '<dt>When to escalate</dt><dd>' + esc(guide.escalation) + '</dd>' +
+      '</dl>' +
+      '<div class="ob-owner-guide-actions">' + buttons + '</div>' +
+      '</article>';
+  }
+  async function renderOwnerActionGuide(){
+    if(role() !== 'admin') return;
+    var body = document.getElementById('ob-ops-body');
+    if(!body) return;
+    var old = document.getElementById('ob-ops-owner-guide');
+    if(old) old.remove();
+    var data;
+    try { data = await api('/admin/observability/overview?_=' + Date.now(), { method:'GET' }); } catch(e) { return; }
+    var alerts = visibleAlerts((data && data.alerts) || []);
+    var ownerItems = alerts.map(function(alert){ return { alert:alert, guide:(alert && alert.action_guide) || fallbackGuide(alert) }; });
+    window.__obOwnerGuideItems = ownerItems;
+    var html = '<section id="ob-ops-owner-guide"><h3>What should I do?</h3><p>Owner-friendly actions for alerts that may jeopardize clients, experts, sessions, payments, websites, or admin access.</p>';
+    if(!ownerItems.length) {
+      html += '<div class="ob-owner-guide-empty">No visible service-risk alerts right now. Keep watching sessions, payments, login, booking, media, and API latency.</div>';
+    } else {
+      html += '<div class="ob-owner-guide-grid">' + ownerItems.map(renderCard).join('') + '</div>';
+      html += '<div class="ob-owner-guide-note">Memory scale-up is intentionally not the first action. First run cleanup and check whether real RSS/container memory keeps rising. Only then consider buying more memory.</div>';
+    }
+    html += '</section>';
+    body.insertAdjacentHTML('afterbegin', html);
+  }
+  function wire(){
+    if(role() !== 'admin') return;
+    if(window.__obOwnerActionGuideWired) return;
+    window.__obOwnerActionGuideWired = true;
+    var prevOpen = window.obOpenOpsDashboard;
+    window.obOpenOpsDashboard = function(){ var out = prevOpen && prevOpen.apply(this, arguments); setTimeout(renderOwnerActionGuide, 900); return out; };
+    var prevRefresh = window.obRefreshOpsDashboard;
+    window.obRefreshOpsDashboard = function(){ var out = prevRefresh && prevRefresh.apply(this, arguments); setTimeout(renderOwnerActionGuide, 900); return out; };
+    setTimeout(renderOwnerActionGuide, 1200);
+  }
+  function boot(){ wire(); }
+  boot();
+  [500,1600,3600,7000].forEach(function(ms){ setTimeout(boot, ms); });
+  document.addEventListener('DOMContentLoaded', boot);
+})();
+</script>
 </body>
 <style>
 /* MOBILE CTA TAP GUARD 2026-05-08

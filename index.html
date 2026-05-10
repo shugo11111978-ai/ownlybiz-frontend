@@ -31328,6 +31328,36 @@ body.ob-ui-dark .ob-connection-note,
       return '<tr><td>'+esc(i.status_code)+'</td><td>'+esc(i.route)+'</td><td>'+fmt(i.duration_ms,'ms')+'</td><td>'+esc(i.at||'')+'</td></tr>';
     }).join('') + '</tbody></table>';
   }
+  function renderSecurityOps(security){
+    security = security || {};
+    var profiles = security.profiles || {};
+    var active = profiles[security.level] || {};
+    var coverage = active.coverage || [];
+    var readiness = security.readiness || {};
+    var actions = security.turnstile_actions || [];
+    function yn(v){ return v ? pill('ok') : pill('warning'); }
+    return '<div class="ob-ops-section"><h3>Abuse protection readiness</h3>' +
+      '<div class="ob-ops-grid">' +
+        card('Security mode', (security.label || security.level || 'Light').toString().toUpperCase(), security.summary || 'Current abuse-protection profile') +
+        card('Turnstile', security.turnstile_configured ? 'READY' : (security.turnstile_enabled ? 'NEEDS KEYS' : 'OFF'), actions.length ? actions.join(', ') : 'No active challenges until enabled/configured') +
+        card('Email delivery', security.email_delivery_configured ? 'READY' : 'NEEDS SETUP', 'Provider: ' + (security.email_provider || 'unknown')) +
+        card('Verification', (security.email_verification_mode || 'progressive').toUpperCase(), 'Email verification policy') +
+      '</div>' +
+      '<div class="ob-ops-two">' +
+        '<div><table class="ob-ops-table"><tbody>' +
+          '<tr><td>Backend rate limits</td><td>'+esc(readiness.rate_limits || 'active')+'</td></tr>' +
+          '<tr><td>Expert signup abuse</td><td>'+esc(readiness.signup_abuse || 'covered')+'</td></tr>' +
+          '<tr><td>Client signup abuse</td><td>'+esc(readiness.client_abuse || 'covered')+'</td></tr>' +
+          '<tr><td>Email verification resend</td><td>'+esc(readiness.verification_resend || 'covered')+'</td></tr>' +
+          '<tr><td>Booking abuse</td><td>'+esc(readiness.booking_abuse || 'rate_limited')+'</td></tr>' +
+          '<tr><td>Live-session abuse</td><td>'+esc(readiness.live_session_abuse || 'rate_limited')+'</td></tr>' +
+          '<tr><td>Login abuse</td><td>'+esc(readiness.login_abuse || 'rate_limited')+'</td></tr>' +
+          '<tr><td>Cloudflare edge</td><td>'+yn(security.cloudflare_configured)+'</td></tr>' +
+          '<tr><td>Strict unconfigured Turnstile</td><td>'+esc(security.require_turnstile_when_unconfigured ? 'on' : 'off')+'</td></tr>' +
+        '</tbody></table></div>' +
+        '<div class="ob-ops-empty"><b>Selected mode supports:</b><br>' + (coverage.length ? coverage.map(function(item){ return '- ' + esc(item); }).join('<br>') : 'Coverage details unavailable.') + '</div>' +
+      '</div></div>';
+  }
   function sparkPath(rows, key, w, h){
     rows = rows || [];
     if(!rows.length) return '';
@@ -31437,6 +31467,8 @@ body.ob-ui-dark .ob-connection-note,
         card('API p95', fmt(s.api_p95_ms,'ms'), 'Error rate ' + fmt(s.api_error_rate_pct,'%') + ', 429s ' + fmt(s.api_429_count)) +
         card('Sessions now', fmt(s.active_sessions), fmt(s.pending_sessions) + ' pending requests') +
         card('Realtime users', fmt(s.connected_users), 'Sockets ' + fmt(cluster.cluster_total_sockets || rt.total_sockets)) +
+        card('Security mode', (s.security_level || (data.security && data.security.level) || 'light').toString().toUpperCase(), 'Turnstile ' + ((data.security && data.security.turnstile_configured) ? 'ready' : 'not ready')) +
+        card('Email delivery', (s.email_delivery_configured || (data.security && data.security.email_delivery_configured)) ? 'READY' : 'SETUP', 'Transactional email provider') +
         card('Broken assets', fmt(s.broken_assets), 'Scanned upload references') +
         card('Heap used', fmt(mem.heap_used_pct,'%'), fmt(mem.heap_used_mb,' MB') + ' / ' + fmt(mem.heap_total_mb,' MB')) +
         card('Event loop p95', fmt(ev.p95_ms,'ms'), 'Max ' + fmt(ev.max_ms,'ms')) +
@@ -31456,6 +31488,7 @@ body.ob-ui-dark .ob-connection-note,
           '</tbody></table></div>' +
       '</div>' +
       '<div class="ob-ops-section"><h3>Hot API routes</h3>'+renderRoutes(http.hottest_routes || [])+'</div>' +
+      renderSecurityOps(data.security || {}) +
       '<div class="ob-ops-two">' +
         '<div class="ob-ops-section"><h3>Recent problem requests</h3>'+renderProblems(http.recent_problem_requests || [])+'</div>' +
         '<div class="ob-ops-section"><h3>Broken uploaded assets</h3>'+renderAssets(data.assets || {})+'</div>' +

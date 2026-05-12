@@ -34538,13 +34538,16 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   }
   function viewSite(){ window.open('/'+slug(), '_blank', 'noopener,noreferrer'); }
   function finishPublish(){ var s=read(); s.done=s.done||{}; s.done.publish=true; s.published=true; s.active=5; write(s); render(); toast('Publishing requested. Use View website to check the public page.'); }
-  function callPublishFunction(){ if(typeof window.obPublishExpertSite==='function'){ window.obPublishExpertSite(); return true; } if(typeof window.obPublishSiteV5==='function'){ window.obPublishSiteV5(); return true; } return false; }
+  function publishDirect(){ var t=token(); if(!t) return Promise.reject(new Error('Please log in first.')); return fetch(api('/api/auth/me'),{method:'PUT',headers:{'Content-Type':'application/json',Authorization:'Bearer '+t},body:JSON.stringify({website_published:1})}).then(function(r){return r.json().catch(function(){return {};}).then(function(d){if(!r.ok||d.success===false)throw new Error(d.error||'Could not publish website');return d;});}); }
+  function callPublishFunction(){ if(typeof window.obPublishExpertSite==='function'){ window.obPublishExpertSite(true); return true; } if(typeof window.obPublishSiteV5==='function'){ window.obPublishSiteV5(true); return true; } return false; }
   function publish(){
     refreshMe(true).then(function(d){
       var s=read();
       if(!verifiedFrom(d)&&!s.emailVerified){ s.active=4; write(s); render(); toast('Verify '+accountEmail(s)+' first, then publish.'); return; }
-      if(callPublishFunction()){ finishPublish(); return; }
-      openPanel('website-editor', function(){ setTimeout(function(){ if(callPublishFunction()) finishPublish(); else toast('Opened Edit Website. Use the publish button there, then return to View website.'); }, 700); });
+      publishDirect().then(function(){ finishPublish(); }).catch(function(){
+        if(callPublishFunction()){ setTimeout(function(){ refreshMe(true).then(finishPublish); },900); return; }
+        openPanel('website-editor', function(){ setTimeout(function(){ if(callPublishFunction()) finishPublish(); else toast('Opened Edit Website. Use the publish button there, then return to View website.'); }, 700); });
+      });
     });
   }
   function act(step){

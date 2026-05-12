@@ -34444,7 +34444,22 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   function api(path){ var base = (window.OWNLYBIZ_API_URL || 'https://victorious-wisdom-production-a6b0.up.railway.app').replace(/\/$/,''); return base + path; }
   function removeLegacy(){ legacyIds.forEach(function(id){ var el=document.getElementById(id); if(el) el.remove(); }); }
   function activeIndex(s){ return Math.max(0, Math.min(steps.length - 1, Number(s.active || 0))); }
-  function doneCount(s){ var d=s.done||{}; return steps.filter(function(x){return d[x.id];}).length; }
+  function doneCount(s){ var d=s.done||{}; return steps.filter(function(x){return x.id==='email'?!!s.emailVerified:d[x.id];}).length; }
+  function storedUser(){ var keys=['ownlybiz_user','ob_u']; for(var i=0;i<keys.length;i++){ try{ var u=JSON.parse(localStorage.getItem(keys[i])||sessionStorage.getItem(keys[i])||'{}'); if(u&&u.user) u=u.user; if(u&&u.email) return u; }catch(e){} } return {}; }
+  function accountEmail(s){ var u=storedUser(); return s.accountEmail || u.email || 'your signup email'; }
+  function verifiedFrom(data){ var u=data&&data.user||{}; var p=data&&data.profile||{}; return Number(u.is_verified||0)===1 || u.is_verified===true || Number(p.email_verified||0)===1 || p.email_verified===true; }
+  var refreshBusy=false, refreshAt=0;
+  function refreshMe(force){
+    var t=token();
+    if(!t) return Promise.resolve(null);
+    if(refreshBusy) return Promise.resolve(null);
+    if(!force && Date.now()-refreshAt<7000) return Promise.resolve(null);
+    refreshBusy=true; refreshAt=Date.now();
+    return fetch(api('/api/auth/me'),{headers:{Authorization:'Bearer '+t}}).then(function(r){return r.ok?r.json():null;}).then(function(d){
+      if(d&&d.user){ var s=read(); var changed=false; if(d.user.email&&s.accountEmail!==d.user.email){s.accountEmail=d.user.email; changed=true;} var v=verifiedFrom(d); if(!!s.emailVerified!==!!v){s.emailVerified=v; changed=true;} if(changed){write(s); setTimeout(render,40);} }
+      return d;
+    }).catch(function(){return null;}).finally(function(){refreshBusy=false;});
+  }
   function toast(msg){ var old=document.querySelector('.ob19-toast'); if(old) old.remove(); var t=document.createElement('div'); t.className='ob19-toast'; t.textContent=msg; document.body.appendChild(t); setTimeout(function(){ if(t.parentNode) t.remove(); }, 3600); }
   function savePatch(patch){ var s=read(); Object.keys(patch).forEach(function(k){ s[k]=patch[k]; }); write(s); render(); }
   function mini(){
@@ -34478,11 +34493,20 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     if(s.minimized){ if(root) root.remove(); mini(); return; }
     if(m) m.remove();
     var i=activeIndex(s), step=steps[i], count=doneCount(s), pct=Math.max(8,Math.round(((i+1)/steps.length)*100));
+    if((i>=4 || !s.accountEmail) && !refreshBusy) refreshMe(false);
     var prev=steps[i-1], next=steps[i+1], published=!!(s.published || (s.done&&s.done.publish));
     var primary=step.cta, primaryAction='cta', extra='';
+    var body=step.body, later=step.later;
+    if(step.id==='email'){
+      var email=accountEmail(s);
+      body=s.emailVerified?'Your email is verified. You can publish your website when the rest is ready.':'We will send a magic verification link to '+email+'. Open that email, click the link, then return here to publish.';
+      later=s.emailVerified?'Verified email: '+email:'Sending to: '+email+'. No code is needed, and you do not need to type another email.';
+      if(s.emailVerified){ primary='Continue to publish'; primaryAction='email-next'; }
+    }
+    if(step.id==='publish' && !s.emailVerified){ later='Email must be verified before publishing. Go back one step, send the magic link, then return after opening it.'; }
     if(step.id==='publish' && published){ primary='View website'; primaryAction='view-site'; extra='<button type="button" class="ob19-btn" data-ob19="live-next">Continue to live setup</button>'; }
     root=root||document.createElement('aside'); root.id='ownlybiz-coach-v19'; root.setAttribute('aria-live','polite');
-    root.innerHTML='<div class="ob19-shell"><div class="ob19-head" data-ob19-drag="handle"><div class="ob19-topline"><div class="ob19-kicker">Step '+(i+1)+' of '+steps.length+' · '+count+' complete</div><div class="ob19-head-actions"><button type="button" class="ob19-move" data-ob19-drag="handle" aria-label="Drag setup guide">Move guide</button><button type="button" class="ob19-close" data-ob19="minimize" aria-label="Minimize setup guide">−</button></div></div><h2 class="ob19-title">'+esc(step.title)+'</h2><p class="ob19-copy">'+esc(step.body)+'</p><div class="ob19-progress"><span style="width:'+pct+'%"></span></div><div class="ob19-dots">'+steps.map(function(x,idx){var done=s.done&&s.done[x.id];return '<button type="button" class="ob19-dot '+(idx===i?'active ':'')+(done?'done':'')+'" data-ob19-step="'+idx+'" aria-label="Open step '+(idx+1)+': '+esc(x.label)+'">'+(done?'✓':idx+1)+'</button>';}).join('')+'</div></div><div class="ob19-main"><div class="ob19-context"><button type="button" data-ob19="prev" '+(prev?'':'disabled')+'>← '+esc(prev?prev.label:'Start')+'</button><div class="ob19-current">'+esc(step.label)+'</div><button type="button" data-ob19="next" '+(next?'':'disabled')+'>'+esc(next?next.label:'Done')+' →</button></div><div class="ob19-note">'+esc(step.later)+'</div><div class="ob19-actions"><button type="button" class="ob19-btn primary" data-ob19="'+primaryAction+'">'+esc(primary)+'</button>'+extra+'<button type="button" class="ob19-btn" data-ob19="done">Mark done</button><button type="button" class="ob19-btn quiet" data-ob19="skip">Skip for now</button><button type="button" class="ob19-btn quiet" data-ob19="hide">Do not show again</button></div></div></div>';
+    root.innerHTML='<div class="ob19-shell"><div class="ob19-head" data-ob19-drag="handle"><div class="ob19-topline"><div class="ob19-kicker">Step '+(i+1)+' of '+steps.length+' · '+count+' complete</div><div class="ob19-head-actions"><button type="button" class="ob19-move" data-ob19-drag="handle" aria-label="Drag setup guide">Move guide</button><button type="button" class="ob19-close" data-ob19="minimize" aria-label="Minimize setup guide">−</button></div></div><h2 class="ob19-title">'+esc(step.title)+'</h2><p class="ob19-copy">'+esc(body)+'</p><div class="ob19-progress"><span style="width:'+pct+'%"></span></div><div class="ob19-dots">'+steps.map(function(x,idx){var done=(x.id==='email')?!!s.emailVerified:(s.done&&s.done[x.id]);return '<button type="button" class="ob19-dot '+(idx===i?'active ':'')+(done?'done':'')+'" data-ob19-step="'+idx+'" aria-label="Open step '+(idx+1)+': '+esc(x.label)+'">'+(done?'✓':idx+1)+'</button>';}).join('')+'</div></div><div class="ob19-main"><div class="ob19-context"><button type="button" data-ob19="prev" '+(prev?'':'disabled')+'>← '+esc(prev?prev.label:'Start')+'</button><div class="ob19-current">'+esc(step.label)+'</div><button type="button" data-ob19="next" '+(next?'':'disabled')+'>'+esc(next?next.label:'Done')+' →</button></div><div class="ob19-note">'+esc(later)+'</div><div class="ob19-actions"><button type="button" class="ob19-btn primary" data-ob19="'+primaryAction+'">'+esc(primary)+'</button>'+extra+'<button type="button" class="ob19-btn" data-ob19="done">Mark done</button><button type="button" class="ob19-btn quiet" data-ob19="skip">Skip for now</button><button type="button" class="ob19-btn quiet" data-ob19="hide">Do not show again</button></div></div></div>';
     if(!root.parentNode) document.body.appendChild(root);
     applyPosition(root,s);
   }
@@ -34509,16 +34533,19 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   function sendEmail(){
     var t=token();
     if(!t){ toast('Please log in first, then send the verification email.'); return; }
-    fetch(api('/api/auth/resend-verification'),{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+t},body:JSON.stringify({source:'floating_onboarding_v19'})}).then(function(r){return r.json().catch(function(){return {};}).then(function(d){if(!r.ok)throw new Error(d.error||'Could not send verification email');return d;});}).then(function(){toast('Verification email sent. Check your account inbox, then return to publish.');}).catch(function(e){toast(e.message||'Could not send verification email yet.');});
+    var email=accountEmail(read());
+    fetch(api('/api/auth/resend-verification'),{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+t},body:JSON.stringify({source:'floating_onboarding_v19'})}).then(function(r){return r.json().catch(function(){return {};}).then(function(d){if(!r.ok)throw new Error(d.error||'Could not send verification email');return d;});}).then(function(){toast('Verification email sent to '+email+'. Check that inbox, then return to publish.'); setTimeout(function(){refreshMe(true);},1200);}).catch(function(e){toast(e.message||'Could not send verification email yet.');});
   }
   function viewSite(){ window.open('/'+slug(), '_blank', 'noopener,noreferrer'); }
   function finishPublish(){ var s=read(); s.done=s.done||{}; s.done.publish=true; s.published=true; s.active=5; write(s); render(); toast('Publishing requested. Use View website to check the public page.'); }
   function callPublishFunction(){ if(typeof window.obPublishExpertSite==='function'){ window.obPublishExpertSite(); return true; } if(typeof window.obPublishSiteV5==='function'){ window.obPublishSiteV5(); return true; } return false; }
   function publish(){
-    var s=read();
-    if(!(s.done&&s.done.email)){ s.active=4; write(s); render(); toast('Verify your email first, then publish.'); return; }
-    if(callPublishFunction()){ finishPublish(); return; }
-    openPanel('website-editor', function(){ setTimeout(function(){ if(callPublishFunction()) finishPublish(); else toast('Opened Edit Website. Use the publish button there, then return to View website.'); }, 700); });
+    refreshMe(true).then(function(d){
+      var s=read();
+      if(!verifiedFrom(d)&&!s.emailVerified){ s.active=4; write(s); render(); toast('Verify '+accountEmail(s)+' first, then publish.'); return; }
+      if(callPublishFunction()){ finishPublish(); return; }
+      openPanel('website-editor', function(){ setTimeout(function(){ if(callPublishFunction()) finishPublish(); else toast('Opened Edit Website. Use the publish button there, then return to View website.'); }, 700); });
+    });
   }
   function act(step){
     if(step.action==='email'){ savePatch({minimized:false, active:4}); sendEmail(); return; }
@@ -34529,7 +34556,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     openPanel(step.panel, function(){ toast('Opened '+step.title+'. The setup guide stays here when you need it.'); });
   }
   function setActive(next){ var s=read(); s.active=Math.max(0,Math.min(steps.length-1,next)); s.minimized=false; write(s); render(); }
-  function markStepDone(step,advance){ var s=read(); s.done=s.done||{}; s.done[step.id]=true; if(advance) s.active=Math.min(steps.length-1,activeIndex(s)+1); s.minimized=false; write(s); render(); }
+  function markStepDone(step,advance){ if(step.id==='email'){ refreshMe(true).then(function(d){ var s=read(); if(!verifiedFrom(d)&&!s.emailVerified){ s.active=4; write(s); render(); toast('Email is not verified yet. Check '+accountEmail(s)+' for the magic link.'); return; } s.done=s.done||{}; s.done.email=true; if(advance) s.active=5; write(s); render(); }); return; } var s=read(); s.done=s.done||{}; s.done[step.id]=true; if(advance) s.active=Math.min(steps.length-1,activeIndex(s)+1); s.minimized=false; write(s); render(); }
   var lastEventAt = 0;
   function handleCoachEvent(e){
     var root=e.target && e.target.closest && e.target.closest('#ownlybiz-coach-v19,#ownlybiz-coach-mini-v19');
@@ -34553,6 +34580,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     if(name==='skip'){ s.active=Math.min(steps.length-1,i+1); s.skipped=s.skipped||{}; s.skipped[step.id]=true; write(s); render(); return; }
     if(name==='done'){ markStepDone(step,true); return; }
     if(name==='cta'){ act(step); return; }
+    if(name==='email-next'){ setActive(5); return; }
     if(name==='view-site'){ viewSite(); return; }
     if(name==='live-next'){ setActive(6); return; }
   }

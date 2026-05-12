@@ -2899,6 +2899,7 @@ if (!window.toast) {
         <h2 style="font-family:var(--font-head);font-size:28px;color:var(--brown);margin-bottom:6px;">Welcome back</h2>
         <p style="font-size:14px;color:var(--gray-400);margin-bottom:28px;">Sign in to your expert dashboard</p>
         <div id="mkt-login-verified-note" style="display:none;margin:0 0 16px;padding:12px 14px;border-radius:14px;background:#F2FFD1;border:1px solid rgba(77,124,15,.25);color:#365314;font-size:13px;font-weight:700;line-height:1.45;">Email verified. Sign in to continue to your dashboard.</div>
+        <div id="mkt-login-status-note" style="display:none;margin:0 0 16px;padding:12px 14px;border-radius:14px;background:#FFF7ED;border:1px solid rgba(196,98,45,.28);color:#7C2D12;font-size:13px;font-weight:700;line-height:1.45;"></div>
         <div style="font-size:12px;color:var(--gray-400);margin-bottom:16px;">Sign in with email.</div>
         <input type="email" class="form-input" id="mkt-login-email" placeholder="your@email.com" style="margin-bottom:12px;">
         <input type="password" class="form-input" id="mkt-login-pass" placeholder="Password" style="margin-bottom:16px;">
@@ -9904,6 +9905,8 @@ function showMktPage(page) {
       var qs = new URLSearchParams(location.search || '');
       var note = document.getElementById('mkt-login-verified-note');
       if(note) note.style.display = (qs.get('verified') === 'email') ? 'block' : 'none';
+      var status = document.getElementById('mkt-login-status-note');
+      if(status && qs.get('status') !== 'approval') status.style.display = 'none';
     } catch(e) {}
   }
   document.querySelectorAll('.mkt-nav-link').forEach(l=>l.classList.remove('active'));
@@ -10799,6 +10802,40 @@ async function savePaymentConfig() {
 
     // ── handleMarketingLogin — defined EARLY, works before health check ──────
     // This is called by the Sign In button's onclick attribute directly.
+    window.obClearLoginSession = function() {
+      try {
+        sessionStorage.removeItem('ob_t');
+        sessionStorage.removeItem('ob_u');
+        localStorage.removeItem('ob_t');
+        localStorage.removeItem('ob_client_token');
+      } catch(e) {}
+    };
+    window.obShowLoginStatus = function(message) {
+      try { window.obClearLoginSession && window.obClearLoginSession(); } catch(e) {}
+      if (typeof switchView === 'function') switchView(1);
+      if (typeof showMktPage === 'function') showMktPage('login');
+      try { window.history.replaceState({}, '', '/login?status=approval'); } catch(e) {}
+      setTimeout(function(){
+        var note = document.getElementById('mkt-login-status-note');
+        if (note) {
+          note.textContent = message || 'Your Starter account is waiting for Ownlybiz approval. We will email you when your dashboard is ready.';
+          note.style.display = 'block';
+        }
+        var verified = document.getElementById('mkt-login-verified-note');
+        if (verified) verified.style.display = 'none';
+        var err = document.getElementById('mkt-login-error');
+        if (err) err.style.display = 'none';
+      }, 60);
+    };
+    window.obHandleExpertDashboardBlocked = function(err) {
+      var code = (err && (err.code || err.error_code || err.error)) || '';
+      var raw = (err && (err.message || err.error)) || '';
+      var msg = 'Your Starter account is waiting for Ownlybiz approval. We will email you when your dashboard is ready.';
+      if (String(code).indexOf('signup_incomplete') >= 0 || /finish choosing/i.test(raw)) {
+        msg = 'Your Starter application is not ready yet. Finish the signup plan step, or wait for the Ownlybiz approval email before opening the dashboard.';
+      }
+      window.obShowLoginStatus(msg);
+    };
     window.handleMarketingLogin = async function() {
       var BASE = window.OWNLYBIZ_API_URL || 'https://victorious-wisdom-production-a6b0.up.railway.app';
       var email = (document.getElementById('mkt-login-email') || {}).value || '';
@@ -10892,7 +10929,7 @@ async function savePaymentConfig() {
 	            }, 800);
 	          } else if (d.user.role === 'expert') {
 	            fetch(BASE + '/api/experts/me/dashboard', { headers: { 'Authorization': 'Bearer ' + d.token } })
-	              .then(function(r){ return r.json(); })
+	              .then(function(r){ return r.json().catch(function(){ return {}; }).then(function(ed){ if(!r.ok || ed.error){ var blocked = new Error(ed.error || 'Dashboard is not ready yet'); blocked.code = ed.code || ''; blocked.status = r.status; throw blocked; } return ed; }); })
 	              .then(function(ed){
 	                var slug = ed && ed.profile && ed.profile.slug ? ed.profile.slug : '';
 	                if (slug) {
@@ -10903,9 +10940,9 @@ async function savePaymentConfig() {
 	                }
 	                if (typeof switchView === 'function') switchView(3);
 	                if (window.OwnlyAPI && window.OwnlyAPI.loadExpertDashboard) window.OwnlyAPI.loadExpertDashboard();
-	              }).catch(function(){
-	                if (typeof switchView === 'function') switchView(3);
-	                if (window.OwnlyAPI && window.OwnlyAPI.loadExpertDashboard) window.OwnlyAPI.loadExpertDashboard();
+	              }).catch(function(err){
+	                if (window.obHandleExpertDashboardBlocked) window.obHandleExpertDashboardBlocked(err);
+	                else if (typeof switchView === 'function') switchView(1);
 	              });
 	          } else {
 	            if (typeof switchView === 'function') switchView(4);
@@ -15101,7 +15138,7 @@ window.loadDashboard = function(slug) {
     // Load their own slug from /me/dashboard to verify
     fetch('https://victorious-wisdom-production-a6b0.up.railway.app/api/experts/me/dashboard', {
       headers: {'Authorization':'Bearer '+tok}
-    }).then(function(r){return r.json();})
+    }).then(function(r){return r.json().catch(function(){return {};}).then(function(d){if(!r.ok || d.error){var err=new Error(d.error || 'Dashboard is not ready yet');err.code=d.code || '';err.status=r.status;throw err;}return d;});})
       .then(function(d){
         var mySlug = d.profile && d.profile.slug ? d.profile.slug : null;
         window._myExpertSlug = mySlug;
@@ -15116,9 +15153,9 @@ window.loadDashboard = function(slug) {
         if(typeof loadSettings === 'function') loadSettings();
         if(typeof loadClients === 'function') loadClients();
         if(window.OwnlyAPI && window.OwnlyAPI.loadExpertDashboard) window.OwnlyAPI.loadExpertDashboard();
-      }).catch(function(){
-        if(typeof switchView === 'function') switchView(3);
-        if(typeof loadSettings === 'function') loadSettings();
+      }).catch(function(err){
+        if(window.obHandleExpertDashboardBlocked) window.obHandleExpertDashboardBlocked(err);
+        else if(typeof switchView === 'function') switchView(1);
       });
   } else {
     // Client or unknown - redirect to home

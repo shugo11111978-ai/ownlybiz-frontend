@@ -25010,6 +25010,25 @@ window._handleRTCMessage=function(d){
 	  function selectedPlan(){
 	    return plansById(planState.plans)[planState.selected] || planDefaults[0];
 	  }
+	  function selectedSignupPlanForLaunch(){
+	    var raw = '';
+	    try {
+	      var active = document.querySelector('#ob-signup-plan-card [data-ob-signup-plan].active');
+	      if(active) raw = active.getAttribute('data-ob-signup-plan') || '';
+	    } catch(e) {}
+	    try {
+	      if(!raw) raw = sessionStorage.getItem('ob_signup_plan') || '';
+	    } catch(e) {}
+	    if(!raw && window._obSignupSelectedPlan) raw = window._obSignupSelectedPlan;
+	    raw = normalizePlanId(raw || planState.selected || 'starter');
+	    var byId = plansById(planState.plans || planDefaults);
+	    var plan = byId[raw] || plansById(planDefaults)[raw] || selectedPlan();
+	    if(plan && plan.id) {
+	      planState.selected = normalizePlanId(plan.id);
+	      window._obSignupSelectedPlan = planState.selected;
+	    }
+	    return plan || planDefaults[0];
+	  }
 	  function normalizePlanId(id){
 	    id = String(id || 'starter').toLowerCase();
 	    return id === 'free' ? 'starter' : id;
@@ -25098,7 +25117,8 @@ window._handleRTCMessage=function(d){
 	  }
 
   function setSignupPlan(plan, interval){
-    planState.selected = plan || 'starter';
+    planState.selected = normalizePlanId(plan || 'starter');
+    window._obSignupSelectedPlan = planState.selected;
     if(interval) planState.interval = interval;
     try {
       sessionStorage.setItem('ob_signup_plan', planState.selected);
@@ -25194,7 +25214,12 @@ window._handleRTCMessage=function(d){
   }
 
   async function finishSignupLaunch(){
-    var p = selectedPlan();
+    var p = selectedSignupPlanForLaunch();
+    var launchBtn = document.getElementById('ob-launch-plan-btn');
+    var checkoutRequested = !!(launchBtn && /checkout/i.test(launchBtn.textContent || ''));
+    if(checkoutRequested && p.id === 'starter'){
+      throw new Error('Please choose Pro or Scale before secure checkout.');
+    }
     if(p.id === 'starter'){
       var d = await obJson('/api/billing/starter', {method:'POST', body:{source:'signup'}});
       if((d && d.pending_approval) || planState.starterRequiresApproval){

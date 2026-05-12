@@ -32695,6 +32695,58 @@ button[data-ob-session-alert-hidden]{display:none!important;visibility:hidden!im
   window.addEventListener('resize',stabilize);
 })();
 </script>
+<!-- STAGING ONLY: prevent hidden legacy signup fields from leaking into new 3-step signup profiles -->
+<script id="ownlybiz-staging-signup-stale-profile-field-guard-v1">
+(function(){
+  if(window.__obSignupStaleProfileFieldGuardV1)return;window.__obSignupStaleProfileFieldGuardV1=true;
+  var LEGACY_PROFILE_FIELDS=['title','bio','location','category','tags','timezone','rate_chat','rate_voice','rate_video','free_minutes'];
+  function onSignup(){return /^\/signup(?:\/|$)/.test(location.pathname||'')&&!!document.querySelector('.signup-page');}
+  function visible(el){if(!el)return false;var r=el.getBoundingClientRect&&el.getBoundingClientRect();var cs=window.getComputedStyle?getComputedStyle(el):null;return !!(r&&r.width>0&&r.height>0&&(!cs||cs.display!=='none'&&cs.visibility!=='hidden'));}
+  function publicStepActive(){var active=document.querySelector('.signup-step.active');var id=active&&String(active.id||'').match(/step-(\d+)/);var step=id?parseInt(id[1],10):0;return step===1||step===4||step===7;}
+  function clearHiddenLegacyInputs(){
+    if(!onSignup())return;
+    ['signup-title'].forEach(function(id){var el=document.getElementById(id);if(el&&!visible(el))el.value='';});
+    ['step-2','step-3','step-5','step-6'].forEach(function(id){
+      var root=document.getElementById(id);
+      if(!root||visible(root))return;
+      Array.prototype.slice.call(root.querySelectorAll('input[type="text"],input[type="number"],textarea')).forEach(function(el){el.value='';});
+    });
+  }
+  function stripSignupProfileBody(init){
+    if(!init||!init.body||!onSignup()||!publicStepActive())return init;
+    var method=String(init.method||'GET').toUpperCase();
+    if(method!=='PUT'&&method!=='PATCH'&&method!=='POST')return init;
+    var body=init.body;
+    if(typeof body!=='string')return init;
+    try{
+      var data=JSON.parse(body);
+      if(!data||typeof data!=='object')return init;
+      var changed=false;
+      LEGACY_PROFILE_FIELDS.forEach(function(k){if(Object.prototype.hasOwnProperty.call(data,k)){delete data[k];changed=true;}});
+      return changed?Object.assign({},init,{body:JSON.stringify(data)}):init;
+    }catch(e){return init;}
+  }
+  var nativeFetch=window.fetch;
+  if(typeof nativeFetch==='function'&&!nativeFetch.__obSignupStaleGuardV1){
+    var guarded=function(input,init){
+      try{
+        var url=typeof input==='string'?input:(input&&input.url)||'';
+        if(/\/api\/auth\/me(?:\?|$)/.test(url)){
+          clearHiddenLegacyInputs();
+          init=stripSignupProfileBody(init);
+        }
+      }catch(e){}
+      return nativeFetch.call(this,input,init);
+    };
+    guarded.__obSignupStaleGuardV1=true;
+    window.fetch=guarded;
+  }
+  var boot=function(){clearHiddenLegacyInputs();};
+  document.addEventListener('DOMContentLoaded',boot);
+  document.addEventListener('click',function(){setTimeout(boot,0);},true);
+  setInterval(boot,750);
+})();
+</script>
 </body>
 <style>
 /* MOBILE CTA TAP GUARD 2026-05-08

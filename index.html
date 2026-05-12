@@ -2906,7 +2906,7 @@ if (!window.toast) {
         <button class="btn btn-primary" id="mkt-login-btn" style="width:100%;" onclick="handleMarketingLogin()">Sign In →</button>
         <div id="mkt-login-error" style="display:none;margin-top:12px;padding:10px 16px;background:rgba(185,28,28,.1);border:1px solid rgba(185,28,28,.3);border-radius:10px;color:#b91c1c;font-size:13px;font-weight:600;"></div>
         <p style="font-size:13px;color:var(--gray-400);margin-top:20px;">Don't have an account? <span style="color:var(--terra);font-weight:600;cursor:pointer;" onclick="switchView(2)">Start free →</span></p>
-        <p style="font-size:12px;color:var(--gray-400);margin-top:8px;"><a href="#" style="color:var(--gray-400);">Forgot password?</a></p>
+        <p style="font-size:12px;color:var(--gray-400);margin-top:8px;"><a href="#" id="mkt-forgot-password-link" onclick="return obRequestPasswordReset()" style="color:var(--gray-400);">Forgot password?</a></p>
       </div>
     </div>
   </div><!-- end login -->
@@ -12397,7 +12397,7 @@ async function savePaymentConfig() {
           || approvalStatus === 'signup_incomplete'
           || (e.approval_required == 1 && !e.approved_at);
         const isApproved = !needsApproval && e.is_active == 1 && (approvalStatus === 'approved' || !approvalStatus);
-        const isPending  = needsApproval || !e.is_active || !e.is_verified;
+        const isPending  = needsApproval || !e.is_active;
         const isSuspended = e.is_active == 0 && !needsApproval;
         const isWebsiteLive = isApproved && (e.website_published == 1 || e.website_published === true);
 
@@ -33144,7 +33144,31 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       nativeFetch(apiBase()+'/api/auth/verify-email',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:token})}).then(function(r){return r.json().then(function(d){if(!r.ok||d.success===false)throw new Error(d.error||'Verification failed');return d;});}).then(function(){render('Email verified','Your email is verified. You can safely continue to Ownlybiz.',true);}).catch(function(e){render('Could not verify email',e.message||'This link may be expired or already used.',false);});
     }catch(e){}
   }
-  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',function(){wireAdmin();polishStripeCopy();securityConfig(false);emailVerificationRoute();}); else {wireAdmin();polishStripeCopy();securityConfig(false);emailVerificationRoute();} setInterval(function(){wireAdmin();polishStripeCopy();},1200);
+  function passwordResetRoute(){
+    try{
+      var path=String(location.pathname||'').replace(/\/+$/,'')||'/';
+      if(path!=='/reset-password') return;
+      var qs=new URLSearchParams(location.search||'');
+      var token=qs.get('token')||'';
+      addStyles();
+      document.body.innerHTML='<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#160f0b;padding:24px;font-family:var(--font-body,serif);"><form id="ob-reset-password-card" style="width:min(520px,100%);background:#fffaf2;color:#251810;border-radius:24px;padding:32px;box-shadow:0 30px 80px rgba(0,0,0,.35);"><div style="font-size:12px;text-transform:uppercase;letter-spacing:.16em;color:#C4622D;font-weight:900;margin-bottom:10px;">Ownlybiz security</div><h1 style="margin:0 0 10px;font-size:32px;line-height:1.05;">Create a new password</h1><p id="ob-reset-password-msg" style="margin:0 0 20px;color:#6b5a50;line-height:1.6;">Choose a strong password for your Ownlybiz account.</p><input id="ob-reset-password-input" type="password" autocomplete="new-password" placeholder="New password, min 8 characters" style="width:100%;box-sizing:border-box;padding:14px 16px;border-radius:14px;border:1px solid rgba(36,24,19,.16);font-size:15px;margin-bottom:14px;"><button type="submit" style="width:100%;background:#C4622D;color:white;padding:13px 18px;border:0;border-radius:14px;font-weight:900;cursor:pointer;">Reset password</button><button type="button" id="ob-reset-login-btn" style="display:none;width:100%;margin-top:10px;background:#241813;color:white;padding:13px 18px;border:0;border-radius:14px;font-weight:900;cursor:pointer;">Go to login</button></form></div>';
+      var form=document.getElementById('ob-reset-password-card'), msg=document.getElementById('ob-reset-password-msg'), input=document.getElementById('ob-reset-password-input'), login=document.getElementById('ob-reset-login-btn');
+      if(login) login.onclick=function(){location.assign('/login');};
+      if(!token){ if(msg)msg.textContent='This reset link is missing a token. Please request a new password reset email.'; if(input)input.disabled=true; return; }
+      if(form) form.onsubmit=function(ev){ev.preventDefault();var pass=input&&input.value||'';if(pass.length<8){if(msg)msg.textContent='Password must be at least 8 characters.';return false;}nativeFetch(apiBase()+'/api/auth/reset-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:token,new_password:pass})}).then(function(r){return r.json().then(function(d){if(!r.ok||d.success===false)throw new Error(d.error||'Reset failed');return d;});}).then(function(){if(msg)msg.textContent='Password updated. You can now sign in.';if(input)input.style.display='none';var submit=form.querySelector('button[type=submit]');if(submit)submit.style.display='none';if(login)login.style.display='block';}).catch(function(e){if(msg)msg.textContent=e.message||'Could not reset password. Please request a new reset link.';});return false;};
+    }catch(e){}
+  }
+  window.obRequestPasswordReset=function(){
+    try{
+      var emailEl=document.getElementById('mkt-login-email');
+      var email=(emailEl&&emailEl.value||'').trim();
+      if(!email) email=(prompt('Enter your Ownlybiz account email')||'').trim();
+      if(!email) return false;
+      nativeFetch(apiBase()+'/api/auth/forgot-password',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:email})}).then(function(){var note=document.getElementById('mkt-login-status-note');if(note){note.textContent='If that email exists, we sent a password reset link. Check Inbox, Spam, or Promotions.';note.style.display='block';}else if(typeof toast==='function')toast('If that email exists, we sent a password reset link.');}).catch(function(){if(typeof toast==='function')toast('If that email exists, we sent a password reset link.');});
+    }catch(e){}
+    return false;
+  };
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',function(){wireAdmin();polishStripeCopy();securityConfig(false);emailVerificationRoute();passwordResetRoute();}); else {wireAdmin();polishStripeCopy();securityConfig(false);emailVerificationRoute();passwordResetRoute();} setInterval(function(){wireAdmin();polishStripeCopy();},1200);
 })();
 </script>
 

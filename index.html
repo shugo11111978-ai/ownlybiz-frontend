@@ -34444,7 +34444,8 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   function api(path){ var base = (window.OWNLYBIZ_API_URL || 'https://victorious-wisdom-production-a6b0.up.railway.app').replace(/\/$/,''); return base + path; }
   function removeLegacy(){ legacyIds.forEach(function(id){ var el=document.getElementById(id); if(el) el.remove(); }); }
   function activeIndex(s){ return Math.max(0, Math.min(steps.length - 1, Number(s.active || 0))); }
-  function doneCount(s){ var d=s.done||{}; return steps.filter(function(x){return x.id==='email'?!!s.emailVerified:d[x.id];}).length; }
+  function approvalBlocked(status){ status=String(status||'').toLowerCase(); return status==='draft' || status==='pending' || status==='review' || status==='rejected'; }
+  function doneCount(s){ var d=s.done||{}; return steps.filter(function(x){ if(x.id==='email') return !!s.emailVerified; if(x.id==='publish') return !!s.publicAvailable; return d[x.id]; }).length; }
   function storedUser(){ var keys=['ownlybiz_user','ob_u']; for(var i=0;i<keys.length;i++){ try{ var u=JSON.parse(localStorage.getItem(keys[i])||sessionStorage.getItem(keys[i])||'{}'); if(u&&u.user) u=u.user; if(u&&u.email) return u; }catch(e){} } return {}; }
   function accountEmail(s){ var u=storedUser(); return s.accountEmail || u.email || 'your signup email'; }
   function verifiedFrom(data){ var u=data&&data.user||{}; var p=data&&data.profile||{}; return Number(u.is_verified||0)===1 || u.is_verified===true || Number(p.email_verified||0)===1 || p.email_verified===true; }
@@ -34456,7 +34457,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     if(!force && Date.now()-refreshAt<7000) return Promise.resolve(null);
     refreshBusy=true; refreshAt=Date.now();
     return fetch(api('/api/auth/me'),{headers:{Authorization:'Bearer '+t}}).then(function(r){return r.ok?r.json():null;}).then(function(d){
-      if(d&&d.user){ var s=read(); var changed=false; if(d.user.email&&s.accountEmail!==d.user.email){s.accountEmail=d.user.email; changed=true;} var v=verifiedFrom(d); if(!!s.emailVerified!==!!v){s.emailVerified=v; changed=true;} if(changed){write(s); setTimeout(render,40);} }
+      if(d&&d.user){ var s=read(); var p=d.profile||{}; var changed=false; if(d.user.email&&s.accountEmail!==d.user.email){s.accountEmail=d.user.email; changed=true;} if(p.slug&&s.publicSlug!==p.slug){s.publicSlug=p.slug; changed=true;} if(String(p.approval_status||'')&&s.approvalStatus!==p.approval_status){s.approvalStatus=p.approval_status; changed=true;} var wp=Number(p.website_published||0)===1; if(!!s.websitePublished!==wp){s.websitePublished=wp; changed=true;} var v=verifiedFrom(d); if(!!s.emailVerified!==!!v){s.emailVerified=v; changed=true;} if(changed){write(s); setTimeout(render,40);} }
       return d;
     }).catch(function(){return null;}).finally(function(){refreshBusy=false;});
   }
@@ -34494,7 +34495,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     if(m) m.remove();
     var i=activeIndex(s), step=steps[i], count=doneCount(s), pct=Math.max(8,Math.round(((i+1)/steps.length)*100));
     if((i>=4 || !s.accountEmail) && !refreshBusy) refreshMe(false);
-    var prev=steps[i-1], next=steps[i+1], published=!!(s.published || (s.done&&s.done.publish));
+    var prev=steps[i-1], next=steps[i+1], published=!!s.publicAvailable;
     var primary=step.cta, primaryAction='cta', extra='';
     var body=step.body, later=step.later;
     if(step.id==='email'){
@@ -34504,9 +34505,17 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       if(s.emailVerified){ primary='Continue to publish'; primaryAction='email-next'; }
     }
     if(step.id==='publish' && !s.emailVerified){ later='Email must be verified before publishing. Go back one step, send the magic link, then return after opening it.'; }
+    if(step.id==='publish' && s.emailVerified && (approvalBlocked(s.approvalStatus) || s.publishBlocked==='approval')){
+      body='Your email is verified. This expert account still needs Ownlybiz approval before clients can open the public site.';
+      later='Safe next step: wait for approval, then click Publish website again. The site will only show View website after the public page actually opens.';
+    }
+    if(step.id==='publish' && s.publishBlocked==='public'){
+      body='Publishing was saved, but the public page is not ready yet. Check again in a moment.';
+      later='Ownlybiz will only show View website here after the public expert page responds successfully.';
+    }
     if(step.id==='publish' && published){ primary='View website'; primaryAction='view-site'; extra='<button type="button" class="ob19-btn" data-ob19="live-next">Continue to live setup</button>'; }
     root=root||document.createElement('aside'); root.id='ownlybiz-coach-v19'; root.setAttribute('aria-live','polite');
-    root.innerHTML='<div class="ob19-shell"><div class="ob19-head" data-ob19-drag="handle"><div class="ob19-topline"><div class="ob19-kicker">Step '+(i+1)+' of '+steps.length+' · '+count+' complete</div><div class="ob19-head-actions"><button type="button" class="ob19-move" data-ob19-drag="handle" aria-label="Drag setup guide">Move guide</button><button type="button" class="ob19-close" data-ob19="minimize" aria-label="Minimize setup guide">−</button></div></div><h2 class="ob19-title">'+esc(step.title)+'</h2><p class="ob19-copy">'+esc(body)+'</p><div class="ob19-progress"><span style="width:'+pct+'%"></span></div><div class="ob19-dots">'+steps.map(function(x,idx){var done=(x.id==='email')?!!s.emailVerified:(s.done&&s.done[x.id]);return '<button type="button" class="ob19-dot '+(idx===i?'active ':'')+(done?'done':'')+'" data-ob19-step="'+idx+'" aria-label="Open step '+(idx+1)+': '+esc(x.label)+'">'+(done?'✓':idx+1)+'</button>';}).join('')+'</div></div><div class="ob19-main"><div class="ob19-context"><button type="button" data-ob19="prev" '+(prev?'':'disabled')+'>← '+esc(prev?prev.label:'Start')+'</button><div class="ob19-current">'+esc(step.label)+'</div><button type="button" data-ob19="next" '+(next?'':'disabled')+'>'+esc(next?next.label:'Done')+' →</button></div><div class="ob19-note">'+esc(later)+'</div><div class="ob19-actions"><button type="button" class="ob19-btn primary" data-ob19="'+primaryAction+'">'+esc(primary)+'</button>'+extra+'<button type="button" class="ob19-btn" data-ob19="done">Mark done</button><button type="button" class="ob19-btn quiet" data-ob19="skip">Skip for now</button><button type="button" class="ob19-btn quiet" data-ob19="hide">Do not show again</button></div></div></div>';
+    root.innerHTML='<div class="ob19-shell"><div class="ob19-head" data-ob19-drag="handle"><div class="ob19-topline"><div class="ob19-kicker">Step '+(i+1)+' of '+steps.length+' · '+count+' complete</div><div class="ob19-head-actions"><button type="button" class="ob19-move" data-ob19-drag="handle" aria-label="Drag setup guide">Move guide</button><button type="button" class="ob19-close" data-ob19="minimize" aria-label="Minimize setup guide">−</button></div></div><h2 class="ob19-title">'+esc(step.title)+'</h2><p class="ob19-copy">'+esc(body)+'</p><div class="ob19-progress"><span style="width:'+pct+'%"></span></div><div class="ob19-dots">'+steps.map(function(x,idx){var done=x.id==='email'?!!s.emailVerified:(x.id==='publish'?!!s.publicAvailable:(s.done&&s.done[x.id]));return '<button type="button" class="ob19-dot '+(idx===i?'active ':'')+(done?'done':'')+'" data-ob19-step="'+idx+'" aria-label="Open step '+(idx+1)+': '+esc(x.label)+'">'+(done?'✓':idx+1)+'</button>';}).join('')+'</div></div><div class="ob19-main"><div class="ob19-context"><button type="button" data-ob19="prev" '+(prev?'':'disabled')+'>← '+esc(prev?prev.label:'Start')+'</button><div class="ob19-current">'+esc(step.label)+'</div><button type="button" data-ob19="next" '+(next?'':'disabled')+'>'+esc(next?next.label:'Done')+' →</button></div><div class="ob19-note">'+esc(later)+'</div><div class="ob19-actions"><button type="button" class="ob19-btn primary" data-ob19="'+primaryAction+'">'+esc(primary)+'</button>'+extra+'<button type="button" class="ob19-btn" data-ob19="done">Mark done</button><button type="button" class="ob19-btn quiet" data-ob19="skip">Skip for now</button><button type="button" class="ob19-btn quiet" data-ob19="hide">Do not show again</button></div></div></div>';
     if(!root.parentNode) document.body.appendChild(root);
     applyPosition(root,s);
   }
@@ -34537,16 +34546,25 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     fetch(api('/api/auth/resend-verification'),{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+t},body:JSON.stringify({source:'floating_onboarding_v19'})}).then(function(r){return r.json().catch(function(){return {};}).then(function(d){if(!r.ok)throw new Error(d.error||'Could not send verification email');return d;});}).then(function(){toast('Verification email sent to '+email+'. Check that inbox, then return to publish.'); setTimeout(function(){refreshMe(true);},1200);}).catch(function(e){toast(e.message||'Could not send verification email yet.');});
   }
   function viewSite(){ window.open('/'+slug(), '_blank', 'noopener,noreferrer'); }
-  function finishPublish(){ var s=read(); s.done=s.done||{}; s.done.publish=true; s.published=true; s.active=5; write(s); render(); toast('Publishing requested. Use View website to check the public page.'); }
+  function publicCheck(){
+    var publicSlug=(read().publicSlug||slug());
+    return fetch(api('/api/experts/'+encodeURIComponent(publicSlug)),{cache:'no-store'}).then(function(r){ if(!r.ok) throw new Error('public-unavailable'); return r.json(); }).then(function(d){ if(!d || !(d.expert||d.slug)) throw new Error('public-unavailable'); return true; });
+  }
+  function finishPublish(){ var s=read(); s.done=s.done||{}; s.done.publish=true; s.websitePublished=true; s.publicAvailable=true; s.publishBlocked=''; s.active=5; write(s); render(); toast('Website published. Use View website to check the public page.'); }
   function publishDirect(){ var t=token(); if(!t) return Promise.reject(new Error('Please log in first.')); return fetch(api('/api/auth/me'),{method:'PUT',headers:{'Content-Type':'application/json',Authorization:'Bearer '+t},body:JSON.stringify({website_published:1})}).then(function(r){return r.json().catch(function(){return {};}).then(function(d){if(!r.ok||d.success===false)throw new Error(d.error||'Could not publish website');return d;});}); }
   function callPublishFunction(){ if(typeof window.obPublishExpertSite==='function'){ window.obPublishExpertSite(true); return true; } if(typeof window.obPublishSiteV5==='function'){ window.obPublishSiteV5(true); return true; } return false; }
   function publish(){
     refreshMe(true).then(function(d){
       var s=read();
       if(!verifiedFrom(d)&&!s.emailVerified){ s.active=4; write(s); render(); toast('Verify '+accountEmail(s)+' first, then publish.'); return; }
-      publishDirect().then(function(){ finishPublish(); }).catch(function(){
-        if(callPublishFunction()){ setTimeout(function(){ refreshMe(true).then(finishPublish); },900); return; }
-        openPanel('website-editor', function(){ setTimeout(function(){ if(callPublishFunction()) finishPublish(); else toast('Opened Edit Website. Use the publish button there, then return to View website.'); }, 700); });
+      var approval=(d&&d.profile&&d.profile.approval_status)||s.approvalStatus;
+      if(approvalBlocked(approval)){ s.approvalStatus=approval; s.publishBlocked='approval'; s.publicAvailable=false; write(s); render(); toast('Email is verified. Ownlybiz approval is still needed before this site can go public.'); return; }
+      publishDirect().then(function(pd){
+        var ns=read(), p=(pd&&pd.profile)||{}; if(p.slug) ns.publicSlug=p.slug; if(p.approval_status) ns.approvalStatus=p.approval_status; ns.websitePublished=true; ns.publicAvailable=false; ns.publishBlocked=''; write(ns);
+        return publicCheck().then(finishPublish).catch(function(){ var xs=read(); xs.publishBlocked=approvalBlocked(xs.approvalStatus)?'approval':'public'; xs.publicAvailable=false; write(xs); render(); toast(xs.publishBlocked==='approval'?'Ownlybiz approval is still needed before this site can go public.':'Publishing was saved, but the public page is not ready yet.'); });
+      }).catch(function(){
+        if(callPublishFunction()){ setTimeout(function(){ refreshMe(true).then(function(){ publicCheck().then(finishPublish).catch(function(){ var xs=read(); xs.publishBlocked='public'; xs.publicAvailable=false; write(xs); render(); toast('Publishing was saved, but the public page is not ready yet.'); }); }); },900); return; }
+        openPanel('website-editor', function(){ setTimeout(function(){ if(callPublishFunction()) publicCheck().then(finishPublish).catch(function(){ var xs=read(); xs.publishBlocked='public'; xs.publicAvailable=false; write(xs); render(); toast('Publishing was saved, but the public page is not ready yet.'); }); else toast('Opened Edit Website. Use the publish button there, then return to View website.'); }, 700); });
       });
     });
   }

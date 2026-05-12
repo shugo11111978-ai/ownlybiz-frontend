@@ -34545,17 +34545,18 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   function storedUser(){ var keys=['ownlybiz_user','ob_u']; for(var i=0;i<keys.length;i++){ try{ var u=JSON.parse(localStorage.getItem(keys[i])||sessionStorage.getItem(keys[i])||'{}'); if(u&&u.user) u=u.user; if(u&&u.email) return u; }catch(e){} } return {}; }
   function accountEmail(s){ var u=storedUser(); return s.accountEmail || u.email || 'your signup email'; }
   function verifiedFrom(data){ var u=data&&data.user||{}; var p=data&&data.profile||{}; return Number(u.is_verified||0)===1 || u.is_verified===true || Number(p.email_verified||0)===1 || p.email_verified===true; }
-  var refreshBusy=false, refreshAt=0;
+  var refreshBusy=false, refreshAt=0, refreshPromise=null;
   function refreshMe(force){
     var t=token();
     if(!t) return Promise.resolve(null);
-    if(refreshBusy) return Promise.resolve(null);
+    if(refreshBusy) return refreshPromise || Promise.resolve(null);
     if(!force && Date.now()-refreshAt<7000) return Promise.resolve(null);
     refreshBusy=true; refreshAt=Date.now();
-    return fetch(api('/api/auth/me'),{headers:{Authorization:'Bearer '+t}}).then(function(r){return r.ok?r.json():null;}).then(function(d){
+    refreshPromise = fetch(api('/api/auth/me'),{headers:{Authorization:'Bearer '+t}}).then(function(r){return r.ok?r.json():null;}).then(function(d){
       if(d&&d.user){ var s=read(); var p=d.profile||{}; var changed=false; if(d.user.email&&s.accountEmail!==d.user.email){s.accountEmail=d.user.email; changed=true;} if(p.slug&&s.publicSlug!==p.slug){s.publicSlug=p.slug; changed=true;} if(String(p.approval_status||'')&&s.approvalStatus!==p.approval_status){s.approvalStatus=p.approval_status; changed=true;} var wp=Number(p.website_published||0)===1; if(!!s.websitePublished!==wp){s.websitePublished=wp; changed=true;} var v=verifiedFrom(d); if(!!s.emailVerified!==!!v){s.emailVerified=v; changed=true;} if(changed){write(s); setTimeout(render,40);} }
       return d;
-    }).catch(function(){return null;}).finally(function(){refreshBusy=false;});
+    }).catch(function(){return null;}).finally(function(){refreshBusy=false; refreshPromise=null;});
+    return refreshPromise;
   }
   function toast(msg){ var old=document.querySelector('.ob19-toast'); if(old) old.remove(); var t=document.createElement('div'); t.className='ob19-toast'; t.textContent=msg; document.body.appendChild(t); setTimeout(function(){ if(t.parentNode) t.remove(); }, 3600); }
   function savePatch(patch){ var s=read(); Object.keys(patch).forEach(function(k){ s[k]=patch[k]; }); write(s); render(); }

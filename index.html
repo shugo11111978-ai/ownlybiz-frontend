@@ -25113,7 +25113,8 @@ window._handleRTCMessage=function(d){
 	  }
 
   function setSignupPlan(plan, interval){
-    planState.selected = plan || 'starter';
+    planState.selected = normalizePlanId(plan || 'starter');
+    window._obSignupSelectedPlan = planState.selected;
     if(interval) planState.interval = interval;
     try {
       sessionStorage.setItem('ob_signup_plan', planState.selected);
@@ -25208,12 +25209,32 @@ window._handleRTCMessage=function(d){
     return slug ? '/dash/' + encodeURIComponent(slug) + '/' + panel : '/dash';
   }
 
+  function selectedSignupPlanForLaunch(){
+    var byId = plansById(planState.plans || planDefaults);
+    var raw = normalizePlanId(
+      (window._obSignupSelectedPlan || '') ||
+      (sessionStorage.getItem('ob_signup_plan') || '') ||
+      planState.selected ||
+      'starter'
+    );
+    var activeBtn = document.querySelector('[data-ob-signup-plan].active');
+    if(activeBtn) raw = normalizePlanId(activeBtn.getAttribute('data-ob-signup-plan') || raw);
+    planState.selected = raw;
+    window._obSignupSelectedPlan = raw;
+    return byId[raw] || plansById(planDefaults)[raw] || selectedPlan();
+  }
+
   async function finishSignupLaunch(){
-    var p = selectedPlan();
+    var p = selectedSignupPlanForLaunch();
+    var launchBtn = document.getElementById('ob-launch-plan-btn');
+    var checkoutRequested = !!(launchBtn && /checkout/i.test(launchBtn.textContent || ''));
+    if(checkoutRequested && p.id === 'starter'){
+      throw new Error('Please choose Pro or Scale before secure checkout.');
+    }
     if(p.id === 'starter'){
       var d = await obJson('/api/billing/starter', {method:'POST', body:{source:'signup'}});
-      if(d && d.pending_approval){
-        renderStarterPendingApproval(d.message);
+      if((d && d.pending_approval) || planState.starterRequiresApproval){
+        renderStarterPendingApproval((d && d.message) || 'Your Starter account is waiting for Ownlybiz approval. We will email you when your dashboard is ready.');
         return;
       }
       if(typeof switchView === 'function') switchView(3);
@@ -25225,9 +25246,15 @@ window._handleRTCMessage=function(d){
 
   function renderStarterPendingApproval(message){
     try {
-      sessionStorage.removeItem('ob_t');
-      sessionStorage.removeItem('ob_u');
-      localStorage.removeItem('ob_client_token');
+      if(window.obClearLoginSession) window.obClearLoginSession();
+      else {
+        sessionStorage.removeItem('ob_t');
+        sessionStorage.removeItem('ob_u');
+        sessionStorage.removeItem('ob_next');
+        localStorage.removeItem('ob_t');
+        localStorage.removeItem('ob_u');
+        localStorage.removeItem('ob_client_token');
+      }
     } catch(e) {}
     var step = document.getElementById('step-7');
     if(!step) {
@@ -26801,9 +26828,14 @@ window._handleRTCMessage=function(d){
   }
   function statusForExpert(e){
     var approval = String(e.approval_status || '').toLowerCase();
-    if(approval === 'pending') return '<span style="color:#f59e0b;font-weight:700;">Review needed</span>';
-    if(!e.is_active) return '<span style="color:#f87171;font-weight:700;">Suspended</span>';
-    return '<span style="color:#22c55e;font-weight:700;">Live</span>';
+    var waiting = approval === 'draft' || approval === 'pending' || approval === 'pending_approval' || approval === 'signup_incomplete' || (e.approval_required == 1 && !e.approved_at);
+    var approved = !waiting && Number(e.is_active) === 1 && (approval === 'approved' || !approval);
+    var published = approved && (Number(e.website_published) === 1 || e.website_published === true);
+    if(waiting) return '<span style="color:#f59e0b;font-weight:800;">Waiting approval</span>';
+    if(!Number(e.is_active)) return '<span style="color:#f87171;font-weight:700;">Suspended</span>';
+    if(published) return '<span style="color:#22c55e;font-weight:800;">Live</span>';
+    if(approved) return '<span style="color:#86efac;font-weight:800;">Approved</span>';
+    return '<span style="color:#f59e0b;font-weight:800;">Waiting approval</span>';
   }
   async function renderAdminExpertsEnhanced(){
     var enabled = await fetchApprovalEnabled();
@@ -26812,9 +26844,10 @@ window._handleRTCMessage=function(d){
       .then(function(d){
         var experts = d.experts || [];
         var rows = experts.map(function(e){
-          var pending = String(e.approval_status || '').toLowerCase() === 'pending';
-          var approve = pending || !Number(e.is_active) ? '<button class="admin-action-btn" onclick="adminApproveExpert(\'' + String(e.id || '').replace(/'/g,'\\\'') + '\')">Approve</button> ' : '';
-          var suspend = Number(e.is_active) ? '<button class="admin-action-btn" onclick="OwnlyAPI.adminToggleExpert(\'' + String(e.id || '').replace(/'/g,'\\\'') + '\',false)">Suspend</button> ' : '';
+          var approval = String(e.approval_status || '').toLowerCase();
+          var waiting = approval === 'draft' || approval === 'pending' || approval === 'pending_approval' || approval === 'signup_incomplete' || (e.approval_required == 1 && !e.approved_at);
+          var approve = waiting || !Number(e.is_active) ? '<button class="admin-action-btn" onclick="adminApproveExpert(\'' + String(e.id || '').replace(/'/g,'\\\'') + '\')">Approve</button> ' : '';
+          var suspend = !waiting && Number(e.is_active) ? '<button class="admin-action-btn" onclick="OwnlyAPI.adminToggleExpert(\'' + String(e.id || '').replace(/'/g,'\\\'') + '\',false)">Suspend</button> ' : '';
           return '<tr><td style="padding:12px;">' + esc(e.name || 'Expert') + '<div style="font-size:11px;color:#888;">' + esc(e.slug || '') + '</div></td>'
             + '<td>' + esc(e.email || '') + '</td><td style="text-align:center;">' + (e.session_count || 0) + '</td>'
             + '<td style="text-align:center;">' + (typeof money === 'function' ? money(e.total_revenue || 0) : ('$' + Number(e.total_revenue || 0).toFixed(2))) + '</td>'
@@ -32753,6 +32786,319 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   document.addEventListener('DOMContentLoaded', run);
   window.addEventListener('storage', function(e){ if(e.key === 'ob_u') setTimeout(run, 100); });
   new MutationObserver(function(){ run(); }).observe(document.documentElement, {childList:true, subtree:true});
+})();
+</script>
+
+<style id="ownlybiz-production-security-onboarding-css">
+  .ob-prod-security-grid{display:grid;grid-template-columns:1.15fr .85fr;gap:20px}
+  .ob-prod-security-card{background:#1a1612;border:1px solid rgba(255,250,240,.12);border-radius:18px;padding:22px;color:var(--cream,#fff8ed);box-shadow:0 18px 45px rgba(0,0,0,.16)}
+  .ob-prod-security-title{font-size:18px;font-weight:900;margin:0 0 6px}
+  .ob-prod-security-sub{font-size:13px;color:rgba(255,250,240,.55);line-height:1.55;margin:0 0 16px}
+  .ob-prod-sec-levels{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+  .ob-prod-sec-level{border:1.5px solid rgba(255,250,240,.12);background:rgba(255,250,240,.035);border-radius:16px;padding:16px;cursor:pointer;color:rgba(255,250,240,.75);text-align:left}
+  .ob-prod-sec-level.active{border-color:#ff6b47;background:rgba(255,107,71,.14);color:#fff}
+  .ob-prod-sec-level strong{display:block;font-size:15px;margin-bottom:5px}
+  .ob-prod-sec-level span{display:block;font-size:12px;line-height:1.45;color:rgba(255,250,240,.55)}
+  .ob-prod-sec-row{display:grid;grid-template-columns:190px 1fr;gap:12px;align-items:center;padding:12px 0;border-top:1px solid rgba(255,250,240,.08)}
+  .ob-prod-sec-label strong{display:block;font-size:13px}.ob-prod-sec-label span{display:block;font-size:11px;color:rgba(255,250,240,.48);line-height:1.4;margin-top:2px}
+  .ob-prod-sec-input,.ob-prod-sec-select{width:100%;background:#0f0d0b;border:1.5px solid rgba(255,250,240,.14);border-radius:12px;color:#fff8ed;padding:11px 12px;font:inherit}
+  .ob-prod-sec-check{display:flex;align-items:center;gap:10px;font-size:13px;color:rgba(255,250,240,.72)}
+  .ob-prod-sec-badge{display:inline-flex;align-items:center;border-radius:999px;padding:5px 10px;font-size:11px;font-weight:800;background:rgba(156,255,46,.14);color:#c8ff3d;border:1px solid rgba(156,255,46,.24)}
+  .ob-prod-sec-badge.warn{background:rgba(245,158,11,.12);color:#fbbf24;border-color:rgba(245,158,11,.25)}
+  .ob-prod-sec-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}.ob-prod-sec-btn{border:1.5px solid rgba(255,250,240,.14);background:rgba(255,250,240,.06);color:#fff8ed;border-radius:12px;padding:11px 14px;font-weight:850;cursor:pointer}
+  .ob-prod-sec-btn.primary{background:#ff6b47;border-color:#ff6b47;color:#160b07}
+  .ob-prod-sec-note{padding:12px 14px;border-radius:14px;background:rgba(43,108,176,.12);border:1px solid rgba(43,108,176,.28);font-size:12px;color:rgba(255,250,240,.72);line-height:1.55;margin-top:12px}
+  .ob-prod-sec-list{display:grid;gap:10px}.ob-prod-sec-list div{padding:11px 12px;border:1px solid rgba(255,250,240,.1);border-radius:12px;background:rgba(255,250,240,.035);font-size:12px;line-height:1.45;color:rgba(255,250,240,.7)}
+  #ob-production-security-challenge{position:fixed;inset:0;background:rgba(8,6,4,.68);z-index:1000000;display:flex;align-items:center;justify-content:center;padding:20px}
+  #ob-production-security-challenge .ob-prod-sec-modal{width:min(420px,100%);background:#fffaf2;color:#24160f;border-radius:22px;padding:24px;box-shadow:0 28px 90px rgba(0,0,0,.34)}
+  #ob-production-security-challenge h3{margin:0 0 6px;font-size:22px}#ob-production-security-challenge p{margin:0 0 16px;color:#6b5a50;font-size:13px;line-height:1.5}
+  .ob-prod-turnstile-box{min-height:70px;display:flex;align-items:center;justify-content:center}.ob-prod-sec-cancel{margin-top:12px;background:transparent;border:0;color:#6b5a50;font-weight:800;cursor:pointer}
+  .ob-prod-publish-card{position:relative;overflow:hidden;margin:0 0 18px;border:1px solid rgba(196,98,45,.20);border-radius:22px;background:linear-gradient(135deg,#fffaf2,#f4eadc);color:#241813;padding:20px;display:flex;align-items:center;justify-content:space-between;gap:16px;box-shadow:0 18px 45px rgba(36,24,19,.08)}
+  .ob-prod-publish-card h3{font-size:22px;line-height:1.1;margin:0 0 6px;color:#241813}.ob-prod-publish-card p{margin:0;color:rgba(36,24,19,.68);font-size:13px;line-height:1.5}
+  .ob-prod-publish-status{display:inline-flex;margin-bottom:9px;border-radius:999px;padding:6px 10px;background:rgba(196,98,45,.11);color:#9b451d;font-size:11px;font-weight:950;text-transform:uppercase;letter-spacing:.07em}
+  .ob-prod-publish-actions{display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end}.ob-prod-primary,.ob-prod-secondary{border-radius:999px;padding:11px 14px;font-weight:900;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;justify-content:center;border:1px solid rgba(36,24,19,.14)}
+  .ob-prod-primary{border:0;background:#C4622D;color:#fff}.ob-prod-secondary{background:#fffaf2;color:#241813}
+  #ownlybiz-prod-guide,#ownlybiz-prod-guide *{box-sizing:border-box}#ownlybiz-prod-guide{position:fixed;right:18px;bottom:18px;width:min(390px,calc(100vw - 28px));z-index:100006;color:#24170f;font-family:inherit}
+  .ob-prod-guide-shell{background:linear-gradient(145deg,rgba(255,252,243,.98),rgba(244,234,213,.98));border:1px solid rgba(123,91,55,.28);border-radius:22px;box-shadow:0 22px 70px rgba(0,0,0,.28);overflow:hidden}
+  .ob-prod-guide-head{padding:14px;border-bottom:1px solid rgba(123,91,55,.15);background:linear-gradient(135deg,rgba(255,255,255,.72),rgba(255,240,217,.74))}
+  .ob-prod-guide-kicker{color:#8a5a20;font-size:10px;font-weight:950;letter-spacing:.12em;text-transform:uppercase;margin-bottom:8px}.ob-prod-guide-title{font-size:21px;line-height:1.05;font-weight:950;margin:0;color:#21150f}
+  .ob-prod-guide-copy{color:rgba(33,21,15,.74);font-size:13px;line-height:1.45;margin:7px 0 0}.ob-prod-guide-main{padding:13px 14px 14px}.ob-prod-guide-note{background:rgba(196,98,45,.10);border:1px solid rgba(196,98,45,.18);border-radius:15px;color:rgba(33,21,15,.78);font-size:12px;line-height:1.45;padding:10px 11px}
+  .ob-prod-guide-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}.ob-prod-guide-btn,#ownlybiz-prod-guide-mini{align-items:center;border:1px solid rgba(36,23,15,.14);border-radius:999px;cursor:pointer;display:inline-flex;font-size:13px;font-weight:950;justify-content:center;min-height:42px;padding:10px 13px;background:#fffaf0;color:#24170f}
+  .ob-prod-guide-btn.primary,#ownlybiz-prod-guide-mini{background:#C4622D;border:0;color:#fff}.ob-prod-guide-btn.quiet{background:transparent;color:rgba(36,23,15,.62)}
+  #ownlybiz-prod-guide-mini{position:fixed;right:18px;bottom:18px;z-index:100007;box-shadow:0 18px 60px rgba(0,0,0,.28)}
+  .ob-prod-toast{position:fixed;left:50%;bottom:78px;transform:translateX(-50%);z-index:100008;background:#fffaf0;border:1px solid rgba(36,23,15,.12);border-radius:999px;box-shadow:0 20px 70px rgba(0,0,0,.26);color:#24170f;font-size:13px;font-weight:900;max-width:calc(100vw - 32px);padding:12px 17px}
+  @media(max-width:900px){.ob-prod-security-grid,.ob-prod-sec-levels{grid-template-columns:1fr}.ob-prod-sec-row{grid-template-columns:1fr}.ob-prod-publish-card{display:block}.ob-prod-publish-actions{justify-content:flex-start;margin-top:14px}}
+  @media(max-width:720px),(hover:none),(pointer:coarse){#ownlybiz-prod-guide{left:12px;right:12px;bottom:12px;width:auto}.ob-prod-guide-actions{grid-template-columns:1fr}#ownlybiz-prod-guide-mini{left:12px;right:12px;bottom:12px;width:auto}}
+</style>
+<script id="ownlybiz-production-security-email-onboarding-publish-flow">
+(function(){
+  'use strict';
+  if(window.__ownlybizProductionPrepFlow) return;
+  window.__ownlybizProductionPrepFlow = true;
+
+  var PROD_API = 'https://ownlybiz-backend-production.up.railway.app';
+  var nativeFetch = window.fetch.bind(window);
+  var configCache = null;
+  var configAt = 0;
+  var MASK = '********';
+  var steps = [
+    {id:'website', title:'Polish your expert site', label:'Build page', body:'Add the basics clients need: photo, intro, services, proof, and a clear first impression.', later:'Later: Edit Website in the sidebar.', cta:'Edit website', panel:'website-editor'},
+    {id:'payments', title:'Connect Stripe', label:'Stripe', body:'Connect Stripe so clients can safely pay for booked and live sessions when your site is ready.', later:'Later: Payments > Payment Account.', cta:'Open payments', panel:'payments'},
+    {id:'pricing', title:'Set services and rates', label:'Services', body:'Choose what clients can buy and what you charge. Start simple; refine once clients respond.', later:'Later: Pricing & Packages.', cta:'Open pricing', panel:'pricing'},
+    {id:'availability', title:'Set booking hours', label:'Hours', body:'Choose the days, hours, timezone, and booking rules clients can use.', later:'Later: Settings > Availability.', cta:'Open availability', panel:'settings'},
+    {id:'email', title:'Verify your email', label:'Email', body:'Send the verification link to your account email, then open it before publishing.', later:'Required before publishing so recovery and client notifications are safe.', cta:'Send verification email', action:'email'},
+    {id:'publish', title:'Publish your website', label:'Publish', body:'Publish when your page, Stripe, services, hours, and email verification are ready enough for real clients.', later:'View Website appears only after the public page opens successfully.', cta:'Publish website', action:'publish'}
+  ];
+
+  function apiBase(){ return String(window.OWNLY_API || window.OWNLYBIZ_API_URL || window.API_BASE || PROD_API).replace(/\/+$/,''); }
+  function api(path){ return apiBase() + path; }
+  function token(){ return localStorage.getItem('ownlybiz_token') || localStorage.getItem('ob_t') || sessionStorage.getItem('ob_t') || ''; }
+  function auth(){ var t=token(); return t ? {Authorization:'Bearer '+t} : {}; }
+  function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
+  function dash(){ return /^\/dash\//.test(location.pathname || ''); }
+  function slug(){ var m=String(location.pathname||'').match(/\/dash\/([^\/]+)/); return m && m[1] ? decodeURIComponent(m[1]) : 'expert'; }
+  function guideKey(){ return 'ownlybiz_prod_guide_' + slug(); }
+  function readGuide(){ try { return JSON.parse(localStorage.getItem(guideKey()) || '{}') || {}; } catch(e) { return {}; } }
+  function writeGuide(s){ try { localStorage.setItem(guideKey(), JSON.stringify(s || {})); } catch(e) {} }
+  function toast(msg,type){ try{ if(typeof window.toast==='function') return window.toast(msg,type||'ok'); if(typeof window.toastMsg==='function') return window.toastMsg(msg,type||'ok'); }catch(e){} var old=document.querySelector('.ob-prod-toast'); if(old) old.remove(); var el=document.createElement('div'); el.className='ob-prod-toast'; el.textContent=msg; document.body.appendChild(el); setTimeout(function(){ if(el.parentNode) el.remove(); }, 3400); }
+  function storedUser(){ try { var u=JSON.parse(sessionStorage.getItem('ob_u') || localStorage.getItem('ob_u') || '{}') || {}; return u.user || u; } catch(e) { return {}; } }
+  function accountEmail(s){ var u=storedUser(); return s.accountEmail || u.email || 'your signup email'; }
+  function verifiedFrom(d){ var u=(d&&d.user)||{}, p=(d&&d.profile)||{}; return Number(u.is_verified||0)===1 || u.is_verified===true || Number(p.email_verified||0)===1 || p.email_verified===true; }
+  function approvalBlocked(status){ status=String(status||'').toLowerCase(); return status==='draft'||status==='pending'||status==='pending_approval'||status==='signup_incomplete'||status==='review'||status==='rejected'; }
+
+  function securityConfig(force){
+    var now=Date.now();
+    if(!force && configCache && now-configAt<60000) return Promise.resolve(configCache);
+    return nativeFetch(api('/api/security/config')).then(function(r){return r.json();}).then(function(d){ configCache=(d&&d.security)||{turnstile_actions:[]}; configAt=Date.now(); return configCache; }).catch(function(){ configCache={turnstile_actions:[]}; return configCache; });
+  }
+  function actionFromRequest(input, init, body){
+    try{
+      var method=String((init&&init.method)||'GET').toUpperCase(); if(method!=='POST') return '';
+      var url=new URL(typeof input==='string'?input:(input&&input.url)||'', location.href); var p=url.pathname;
+      if(p.endsWith('/api/auth/signup')) return body&&body.role==='expert'?'expert_signup':'client_signup';
+      if(p.endsWith('/api/auth/login')) return 'login';
+      if(p.endsWith('/api/auth/forgot-password')) return 'password_reset';
+      if(p.endsWith('/api/auth/resend-verification')) return 'email_verification';
+      if(p.endsWith('/api/sessions/request')) return 'session_request';
+      if(p.endsWith('/api/bookings')) return 'book_later';
+    }catch(e){}
+    return '';
+  }
+  function loadTurnstile(){
+    if(window.turnstile) return Promise.resolve();
+    if(window.__obProductionTurnstileLoading) return window.__obProductionTurnstileLoading;
+    window.__obProductionTurnstileLoading=new Promise(function(resolve,reject){
+      var s=document.createElement('script'); s.src='https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit'; s.async=true; s.defer=true;
+      s.onload=function(){resolve();}; s.onerror=function(){reject(new Error('Security challenge could not load. Please check Cloudflare Turnstile setup.'));}; document.head.appendChild(s);
+    });
+    return window.__obProductionTurnstileLoading;
+  }
+  function challenge(action,cfg){
+    if(!cfg||!cfg.turnstile_configured||!cfg.turnstile_site_key) return Promise.resolve('');
+    if(!Array.isArray(cfg.turnstile_actions)||cfg.turnstile_actions.indexOf(action)<0) return Promise.resolve('');
+    return loadTurnstile().then(function(){ return new Promise(function(resolve,reject){
+      var modal=document.createElement('div'); modal.id='ob-production-security-challenge';
+      modal.innerHTML='<div class="ob-prod-sec-modal"><h3>Security check</h3><p>This quick check protects signups, bookings, and live-session requests from bots.</p><div class="ob-prod-turnstile-box" id="ob-prod-turnstile-box"></div><button class="ob-prod-sec-cancel" type="button">Cancel</button></div>';
+      document.body.appendChild(modal);
+      var done=false; function finish(err,t){ if(done)return; done=true; modal.remove(); err?reject(err):resolve(t||''); }
+      modal.querySelector('.ob-prod-sec-cancel').onclick=function(){finish(new Error('Security check cancelled.'));};
+      try{ window.turnstile.render('#ob-prod-turnstile-box',{sitekey:cfg.turnstile_site_key,action:action,callback:function(t){finish(null,t);},'error-callback':function(){finish(new Error('Security check failed to load.'));},'expired-callback':function(){finish(new Error('Security check expired. Please retry.'));}}); } catch(e){ finish(e); }
+      setTimeout(function(){finish(new Error('Security check timed out. Please retry.'));},120000);
+    }); });
+  }
+  window.obSecurityPayload = function(action, body){
+    body = Object.assign({}, body || {});
+    return securityConfig(false).then(function(cfg){ return challenge(action,cfg).then(function(t){ if(t){ body.turnstile_token=t; body.security_action=action; } return body; }); });
+  };
+  window.fetch = function(input, init){
+    init = init || {};
+    try{
+      var raw=init.body, parsed=null;
+      if(raw && typeof raw==='string' && raw.trim().charAt(0)==='{') parsed=JSON.parse(raw);
+      var action=parsed && !parsed.turnstile_token ? actionFromRequest(input, init, parsed) : '';
+      if(action){
+        return window.obSecurityPayload(action, parsed).then(function(nextBody){
+          return nativeFetch(input, Object.assign({}, init, {body:JSON.stringify(nextBody)}));
+        });
+      }
+    }catch(e){}
+    return nativeFetch(input, init);
+  };
+
+  function adminApi(method,path,body){
+    return nativeFetch(api('/api'+path),{method:method,headers:Object.assign({'Content-Type':'application/json'},auth()),body:body?JSON.stringify(body):undefined}).then(function(r){return r.json().catch(function(){return {};}).then(function(d){if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d;});});
+  }
+  function row(label,sub,control){return '<div class="ob-prod-sec-row"><div class="ob-prod-sec-label"><strong>'+label+'</strong><span>'+sub+'</span></div><div>'+control+'</div></div>';}
+  function levelCard(key,label,copy,current){return '<button type="button" class="ob-prod-sec-level '+(key===current?'active':'')+'" data-security-level="'+key+'"><strong>'+label+'</strong><span>'+copy+'</span></button>';}
+  function ensureAdminSecurityPanel(){
+    var sidebar=document.querySelector('.admin-sidebar');
+    if(sidebar && !document.getElementById('ob-admin-security-nav')){
+      var item=document.createElement('div'); item.id='ob-admin-security-nav'; item.className='admin-nav-item'; item.onclick=function(){window.adminNav&&window.adminNav(item,'security');}; item.innerHTML='<span aria-hidden="true"></span> Security';
+      var ref=Array.prototype.slice.call(sidebar.querySelectorAll('.admin-nav-item')).find(function(x){return String(x.getAttribute('onclick')||'').indexOf('platform-settings')>=0;});
+      if(ref&&ref.parentNode) ref.parentNode.insertBefore(item,ref.nextSibling); else sidebar.appendChild(item);
+    }
+    var tabs=document.getElementById('admin-tab-bar');
+    if(tabs && !document.getElementById('ob-admin-security-tab')){ var tab=document.createElement('div'); tab.id='ob-admin-security-tab'; tab.className='admin-tab'; tab.onclick=function(){window.adminTabSwitch&&window.adminTabSwitch(tab,'security');}; tab.textContent='Security'; tabs.appendChild(tab); }
+    var main=document.querySelector('.admin-main');
+    if(main && !document.getElementById('admin-panel-security')){ var panel=document.createElement('div'); panel.className='admin-tab-panel'; panel.id='admin-panel-security'; panel.innerHTML='<div class="admin-content" id="admin-security-content"><div class="admin-card" style="padding:28px;color:rgba(255,250,240,.65);">Loading Security Center...</div></div>'; main.appendChild(panel); }
+  }
+  function renderSecurity(settings){
+    var p=settings.security_policy||{}, level=settings.security_level||p.level||'light';
+    var html='<div style="margin-bottom:24px"><h1 style="font-family:var(--font-head);font-size:34px;margin:0;color:var(--cream,#fff8ed);">Security Center</h1><p style="color:rgba(255,250,240,.52);font-size:14px;margin:6px 0 0;max-width:860px;line-height:1.6">Control signup, booking, live-session, upload, and login abuse protection from one place. Light is the default go-live mode; medium and heavy add friction only when needed.</p></div>'+
+    '<div class="ob-prod-security-grid"><div class="ob-prod-security-card"><div class="ob-prod-security-title">Protection level</div><p class="ob-prod-security-sub">Choose how much friction Ownlybiz adds. Stripe subscription and Connect readiness stay separate from abuse controls.</p><div class="ob-prod-sec-levels">'+
+    levelCard('light','Light','Backend rate limits, optional Turnstile on signup/reset/verification resend, and progressive email verification.',level)+levelCard('medium','Medium','Light plus Turnstile on booking and live-session requests, with tighter limits.',level)+levelCard('heavy','Heavy','Medium plus Turnstile on login and the strictest limits. Use temporarily during active abuse.',level)+
+    '</div><input type="hidden" id="sec-level" value="'+esc(level)+'"><div class="ob-prod-sec-note">Recommended start: Light. Move higher only if there is abuse or spam.</div></div>'+
+    '<div class="ob-prod-security-card"><div class="ob-prod-security-title">Current coverage</div><p class="ob-prod-security-sub">What the live configuration currently supports.</p><div class="ob-prod-sec-list"><div><span class="ob-prod-sec-badge '+(p.turnstile_configured?'':'warn')+'">Turnstile '+(p.turnstile_configured?'ready':'not fully configured')+'</span><br>Challenges: '+esc((p.turnstile_actions||[]).join(', ')||'none')+'</div><div><span class="ob-prod-sec-badge">Backend rate limits on</span><br>Signup, login, reset, booking, session requests, and uploads are covered.</div><div><span class="ob-prod-sec-badge '+(p.cloudflare_configured?'':'warn')+'">Cloudflare edge '+(p.cloudflare_configured?'noted':'manual setup needed')+'</span><br>Use Cloudflare DNS/WAF to protect ownlybiz.com, expert subdomains, and API traffic before scale.</div><div><span class="ob-prod-sec-badge">Stripe trust gates stay separate</span><br>Subscription confirmation and Stripe Connect readiness still control money flows.</div><div><span class="ob-prod-sec-badge '+(settings.platform_email_configured?'':'warn')+'">Email delivery '+(settings.platform_email_configured?'configured':'not configured')+'</span><br>Provider: '+esc(settings.platform_email_provider||'not set')+'</div></div></div>'+
+    '<div class="ob-prod-security-card"><div class="ob-prod-security-title">Cloudflare Turnstile</div><p class="ob-prod-security-sub">Paste the Site Key and Secret Key from Cloudflare. The frontend only receives the Site Key; the backend validates the Secret Key.</p>'+row('Enable Turnstile','Use Cloudflare challenge on protected submits.','<label class="ob-prod-sec-check"><input id="sec-turnstile-enabled" type="checkbox" '+(String(settings.security_turnstile_enabled)==='1'?'checked':'')+'> Enabled</label>')+row('Site Key','Public key from Cloudflare Turnstile.','<input class="ob-prod-sec-input" id="sec-turnstile-site" value="'+esc(settings.security_turnstile_site_key||'')+'" placeholder="0x4AAAA...">')+row('Secret Key','Stored server-side and masked after save.','<input class="ob-prod-sec-input" id="sec-turnstile-secret" type="password" value="'+esc(settings.security_turnstile_secret_key||'')+'" placeholder="0x4AAAA...">')+row('Strict if unconfigured','Usually leave off so setup mistakes do not break signups.','<label class="ob-prod-sec-check"><input id="sec-turnstile-strict" type="checkbox" '+(String(settings.security_require_turnstile_when_unconfigured)==='1'?'checked':'')+'> Block protected forms if keys are missing</label>')+'</div>'+
+    '<div class="ob-prod-security-card"><div class="ob-prod-security-title">Email verification and delivery</div><p class="ob-prod-security-sub">Configure real transactional email delivery. This powers signup/welcome, password reset, expert approval, sessions, bookings, reviews, support/contact, and email verification links.</p>'+row('Verification mode','For conversion, keep progressive at launch; tighten before publishing or during abuse.','<select class="ob-prod-sec-select" id="sec-email-mode"><option value="progressive">Progressive: verify before risky actions</option><option value="experts_before_publish">Experts before publish</option><option value="all_before_risk">Experts and clients before risk</option><option value="off">Off</option></select>')+row('Provider','Recommended: Resend or Postmark. SendGrid, Mailgun, and SMTP remain available.','<select class="ob-prod-sec-select" id="sec-email-provider"><option value="resend">Resend</option><option value="postmark">Postmark</option><option value="sendgrid">SendGrid</option><option value="mailgun">Mailgun</option><option value="smtp">SMTP</option><option value="off">Off</option></select>')+row('API token','Stored server-side and masked after save.','<input class="ob-prod-sec-input" id="sec-email-api-key" type="password" value="'+esc(settings.platform_email_api_key||'')+'" placeholder="Provider API token">')+row('From identity','Use a verified sending domain.','<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px"><input class="ob-prod-sec-input" id="sec-email-from-name" value="'+esc(settings.platform_email_from_name||'Ownlybiz')+'" placeholder="Ownlybiz"><input class="ob-prod-sec-input" id="sec-email-from-address" value="'+esc(settings.platform_email_from_address||'')+'" placeholder="hello@mail.ownlybiz.com"></div>')+row('Reply and test','Reply-to plus test recipient.','<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px"><input class="ob-prod-sec-input" id="sec-email-reply-to" value="'+esc(settings.platform_email_reply_to||'')+'" placeholder="support@ownlybiz.com"><input class="ob-prod-sec-input" id="sec-email-test-to" value="'+esc(settings.platform_email_test_to||'')+'" placeholder="your test email"></div>')+row('Mailgun domain','Only needed for Mailgun.','<input class="ob-prod-sec-input" id="sec-email-mailgun-domain" value="'+esc(settings.platform_email_mailgun_domain||'')+'" placeholder="mg.ownlybiz.com">')+row('SMTP fallback','Only needed for SMTP. Password is masked after save.','<div style="display:grid;grid-template-columns:1fr 90px;gap:10px;margin-bottom:10px"><input class="ob-prod-sec-input" id="sec-smtp-host" value="'+esc(settings.smtp_host||'')+'" placeholder="smtp.provider.com"><input class="ob-prod-sec-input" id="sec-smtp-port" value="'+esc(settings.smtp_port||587)+'" placeholder="587"></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:10px"><input class="ob-prod-sec-input" id="sec-smtp-user" value="'+esc(settings.smtp_user||'')+'" placeholder="SMTP username"><input class="ob-prod-sec-input" id="sec-smtp-pass" type="password" value="'+esc(settings.smtp_pass||'')+'" placeholder="SMTP password"></div>')+'<div class="ob-prod-sec-note">Real delivery status: '+(settings.platform_email_configured?'configured':'not configured')+'. Provider token stays backend-only.</div></div>'+
+    '<div class="ob-prod-security-card"><div class="ob-prod-security-title">Cloudflare edge setup</div><p class="ob-prod-security-sub">For scale, Cloudflare should sit in front of ownlybiz.com, expert subdomains, custom domains where possible, and API traffic.</p>'+row('Zone ID','Optional note for future API automation.','<input class="ob-prod-sec-input" id="sec-cf-zone" value="'+esc(settings.security_cloudflare_zone_id||'')+'" placeholder="Cloudflare Zone ID">')+row('API token','Optional and masked after save.','<input class="ob-prod-sec-input" id="sec-cf-token" type="password" value="'+esc(settings.security_cloudflare_api_token||'')+'" placeholder="Cloudflare API token">')+'<div class="ob-prod-sec-note">Do not expose provider secrets in the browser. The Admin UI receives only masked values after save.</div></div></div><div class="ob-prod-sec-actions"><button class="ob-prod-sec-btn primary" onclick="saveAdminSecurity()">Save Security Settings</button><button class="ob-prod-sec-btn" onclick="loadAdminSecurity(true)">Refresh</button><button class="ob-prod-sec-btn" onclick="testAdminTurnstile()">Check Turnstile setup</button><button class="ob-prod-sec-btn" onclick="testAdminEmail()">Send email test</button></div>';
+    var target=document.getElementById('admin-security-content'); if(target) target.innerHTML=html;
+    var sel=document.getElementById('sec-email-mode'); if(sel) sel.value=settings.security_email_verification_mode||'progressive';
+    var provider=document.getElementById('sec-email-provider'); if(provider) provider.value=settings.platform_email_provider||'resend';
+    document.querySelectorAll('[data-security-level]').forEach(function(btn){btn.onclick=function(){document.querySelectorAll('[data-security-level]').forEach(function(b){b.classList.remove('active');});btn.classList.add('active');var hid=document.getElementById('sec-level');if(hid)hid.value=btn.getAttribute('data-security-level');};});
+  }
+  window.loadAdminSecurity=function(force){ ensureAdminSecurityPanel(); return adminApi('GET','/admin/settings').then(function(d){ renderSecurity(d.settings||{}); if(force) toast('Security settings refreshed'); }).catch(function(e){ var t=document.getElementById('admin-security-content'); if(t)t.innerHTML='<div class="admin-card" style="color:#f87171;padding:28px">Security settings failed: '+esc(e.message)+'</div>'; }); };
+  window.saveAdminSecurity=function(){
+    var payload={security_level:(document.getElementById('sec-level')||{}).value||'light',security_turnstile_enabled:(document.getElementById('sec-turnstile-enabled')||{}).checked?'1':'0',security_turnstile_site_key:((document.getElementById('sec-turnstile-site')||{}).value||'').trim(),security_turnstile_secret_key:((document.getElementById('sec-turnstile-secret')||{}).value||'').trim(),security_require_turnstile_when_unconfigured:(document.getElementById('sec-turnstile-strict')||{}).checked?'1':'0',security_email_verification_mode:(document.getElementById('sec-email-mode')||{}).value||'progressive',platform_email_provider:(document.getElementById('sec-email-provider')||{}).value||'resend',platform_email_api_key:((document.getElementById('sec-email-api-key')||{}).value||'').trim(),platform_email_from_name:((document.getElementById('sec-email-from-name')||{}).value||'Ownlybiz').trim(),platform_email_from_address:((document.getElementById('sec-email-from-address')||{}).value||'').trim(),platform_email_reply_to:((document.getElementById('sec-email-reply-to')||{}).value||'').trim(),platform_email_test_to:((document.getElementById('sec-email-test-to')||{}).value||'').trim(),platform_email_mailgun_domain:((document.getElementById('sec-email-mailgun-domain')||{}).value||'').trim(),smtp_host:((document.getElementById('sec-smtp-host')||{}).value||'').trim(),smtp_port:((document.getElementById('sec-smtp-port')||{}).value||'').trim(),smtp_user:((document.getElementById('sec-smtp-user')||{}).value||'').trim(),smtp_pass:((document.getElementById('sec-smtp-pass')||{}).value||'').trim(),security_cloudflare_zone_id:((document.getElementById('sec-cf-zone')||{}).value||'').trim(),security_cloudflare_api_token:((document.getElementById('sec-cf-token')||{}).value||'').trim()};
+    if(payload.platform_email_api_key===MASK) delete payload.platform_email_api_key;
+    adminApi('PUT','/admin/settings',payload).then(function(){configCache=null;toast('Security settings saved');return loadAdminSecurity();}).catch(function(e){toast(e.message,'err');});
+  };
+  window.testAdminTurnstile=function(){adminApi('POST','/admin/settings/test-turnstile',{}).then(function(d){toast(d.message || (d.ok?'Turnstile ready':'Turnstile not ready'),d.ok?'ok':'err');}).catch(function(e){toast(e.message,'err');});};
+  window.testAdminEmail=function(){var to=((document.getElementById('sec-email-test-to')||{}).value||'').trim();adminApi('POST','/admin/settings/test-email',{to:to}).then(function(d){toast(d.ok?'Email test sent via '+(d.provider||'provider'):'Email test failed: '+(d.error||'not configured'),d.ok?'ok':'err');}).catch(function(e){toast(e.message,'err');});};
+  function wireAdmin(){ ensureAdminSecurityPanel(); if(!window.adminTabSwitch||window.adminTabSwitch.__obProductionSecurityWrapped) return; var oldTab=window.adminTabSwitch; window.adminTabSwitch=function(tabEl,panel){ ensureAdminSecurityPanel(); oldTab&&oldTab(tabEl,panel); if(panel==='security'){ document.querySelectorAll('.admin-tab-panel').forEach(function(p){p.classList.remove('active');}); var target=document.getElementById('admin-panel-security'); if(target)target.classList.add('active'); document.querySelectorAll('.admin-tab').forEach(function(t){t.classList.remove('active');}); var stab=document.getElementById('ob-admin-security-tab'); if(stab)stab.classList.add('active'); var title=document.getElementById('admin-page-title'); if(title)title.textContent='Security Center'; window.loadAdminSecurity(); } }; window.adminTabSwitch.__obProductionSecurityWrapped=true; if(window.adminNav&&!window.adminNav.__obProductionSecurityWrapped){ var oldNav=window.adminNav; window.adminNav=function(el,panel){ ensureAdminSecurityPanel(); oldNav&&oldNav(el,panel); if(panel==='security'){ document.querySelectorAll('.admin-nav-item').forEach(function(i){i.classList.remove('active');}); if(el)el.classList.add('active'); window.adminTabSwitch(null,'security'); } }; window.adminNav.__obProductionSecurityWrapped=true; } }
+
+  function verifyEmailRoute(){
+    var path=String(location.pathname||'').replace(/\/+$/,'')||'/'; if(path!=='/verify-email') return;
+    var tokenParam=new URLSearchParams(location.search||'').get('token')||'';
+    document.body.innerHTML='<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#160f0b;padding:24px;font-family:var(--font-body,serif);"><div id="ob-email-verify-card" style="width:min(520px,100%);background:#fffaf2;color:#251810;border-radius:24px;padding:32px;box-shadow:0 30px 80px rgba(0,0,0,.35);"><div style="font-size:12px;text-transform:uppercase;letter-spacing:.16em;color:#C4622D;font-weight:900;margin-bottom:10px;">Ownlybiz security</div><h1 style="margin:0 0 10px;font-size:32px;line-height:1.05;">Verifying your email...</h1><p style="margin:0;color:#6b5a50;line-height:1.6;">One moment while we confirm this email address.</p></div></div>';
+    var card=document.getElementById('ob-email-verify-card');
+    function render(title,msg,ok){ if(card)card.innerHTML='<div style="font-size:12px;text-transform:uppercase;letter-spacing:.16em;color:'+(ok?'#4d7c0f':'#b45309')+';font-weight:900;margin-bottom:10px;">'+(ok?'Verified':'Action needed')+'</div><h1 style="margin:0 0 10px;font-size:32px;line-height:1.05;">'+esc(title)+'</h1><p style="margin:0 0 20px;color:#6b5a50;line-height:1.6;">'+esc(msg)+'</p><button type="button" id="ob-verify-login-btn" style="display:inline-block;background:#C4622D;color:white;padding:12px 20px;border:0;border-radius:12px;text-decoration:none;font-weight:900;cursor:pointer;">Go to login</button><p style="margin:14px 0 0;color:#7a6a5e;font-size:12px;line-height:1.5;">If you requested another verification email and cannot find it, check Spam or Promotions too.</p>'; var btn=document.getElementById('ob-verify-login-btn'); if(btn)btn.onclick=function(){location.assign('/login?verified=email');}; }
+    if(!tokenParam){render('Verification link missing','This link does not include a verification token. Please request a new verification email.',false);return;}
+    nativeFetch(api('/api/auth/verify-email'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:tokenParam})}).then(function(r){return r.json().then(function(d){if(!r.ok||d.success===false)throw new Error(d.error||'Verification failed');return d;});}).then(function(){render('Email verified','Your email is verified. You can safely continue to Ownlybiz.',true);}).catch(function(e){render('Could not verify email',e.message||'This link may be expired or already used.',false);});
+  }
+  function resetPasswordRoute(){
+    var path=String(location.pathname||'').replace(/\/+$/,'')||'/'; if(path!=='/reset-password') return;
+    var resetToken=new URLSearchParams(location.search||'').get('token')||'';
+    document.body.innerHTML='<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#160f0b;padding:24px;font-family:var(--font-body,serif);"><form id="ob-reset-password-card" style="width:min(520px,100%);background:#fffaf2;color:#251810;border-radius:24px;padding:32px;box-shadow:0 30px 80px rgba(0,0,0,.35);"><div style="font-size:12px;text-transform:uppercase;letter-spacing:.16em;color:#C4622D;font-weight:900;margin-bottom:10px;">Ownlybiz security</div><h1 style="margin:0 0 10px;font-size:32px;line-height:1.05;">Create a new password</h1><p id="ob-reset-password-msg" style="margin:0 0 20px;color:#6b5a50;line-height:1.6;">Choose a strong password for your Ownlybiz account.</p><input id="ob-reset-password-input" type="password" autocomplete="new-password" placeholder="New password, min 8 characters" style="width:100%;box-sizing:border-box;padding:14px 16px;border-radius:14px;border:1px solid rgba(36,24,19,.16);font-size:15px;margin-bottom:14px;"><button type="submit" style="width:100%;background:#C4622D;color:white;padding:13px 18px;border:0;border-radius:14px;font-weight:900;cursor:pointer;">Reset password</button><button type="button" id="ob-reset-login-btn" style="display:none;width:100%;margin-top:10px;background:#241813;color:white;padding:13px 18px;border:0;border-radius:14px;font-weight:900;cursor:pointer;">Go to login</button></form></div>';
+    var form=document.getElementById('ob-reset-password-card'), msg=document.getElementById('ob-reset-password-msg'), input=document.getElementById('ob-reset-password-input'), login=document.getElementById('ob-reset-login-btn');
+    if(login) login.onclick=function(){location.assign('/login');};
+    if(!resetToken){ if(msg)msg.textContent='This reset link is missing a token. Please request a new password reset email.'; if(input)input.disabled=true; return; }
+    if(form) form.onsubmit=function(ev){ev.preventDefault();var pass=input&&input.value||'';if(pass.length<8){if(msg)msg.textContent='Password must be at least 8 characters.';return false;}nativeFetch(api('/api/auth/reset-password'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token:resetToken,new_password:pass})}).then(function(r){return r.json().then(function(d){if(!r.ok||d.success===false)throw new Error(d.error||'Reset failed');return d;});}).then(function(){if(msg)msg.textContent='Password updated. You can now sign in.';if(input)input.style.display='none';var submit=form.querySelector('button[type=submit]');if(submit)submit.style.display='none';if(login)login.style.display='block';}).catch(function(e){if(msg)msg.textContent=e.message||'Could not reset password. Please request a new reset link.';});return false;};
+  }
+  function ensureLoginNote(){
+    var emailEl=document.getElementById('mkt-login-email'), passEl=document.getElementById('mkt-login-pass');
+    var forgot=Array.prototype.slice.call(document.querySelectorAll('a,button')).find(function(el){return /forgot password/i.test(el.textContent||'');});
+    if(forgot){ forgot.onclick=function(ev){ev.preventDefault();window.obRequestPasswordReset();return false;}; }
+    if(!document.getElementById('mkt-login-status-note') && (passEl||emailEl)){ var note=document.createElement('div'); note.id='mkt-login-status-note'; note.style.cssText='display:none;margin-top:10px;font-size:13px;color:var(--gray-500);line-height:1.5;'; (passEl||emailEl).insertAdjacentElement('afterend',note); }
+    if(new URLSearchParams(location.search||'').get('verified')==='email'){ var n=document.getElementById('mkt-login-status-note'); if(n){n.textContent='Email verified. Sign in to continue to your dashboard.'; n.style.display='block';} }
+  }
+  window.obRequestPasswordReset=function(){
+    var emailEl=document.getElementById('mkt-login-email'); var email=(emailEl&&emailEl.value||'').trim(); if(!email) email=(prompt('Enter your Ownlybiz account email')||'').trim(); if(!email)return false;
+    nativeFetch(api('/api/auth/forgot-password'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:email})}).then(function(){var note=document.getElementById('mkt-login-status-note'); if(note){note.textContent='If that email exists, we sent a password reset link. Check Inbox, Spam, or Promotions.'; note.style.display='block';} else toast('If that email exists, we sent a password reset link.');}).catch(function(){toast('If that email exists, we sent a password reset link.');});
+    return false;
+  };
+
+  function fetchMe(){ var t=token(); if(!t)return Promise.resolve(null); return nativeFetch(api('/api/auth/me'),{headers:auth(),cache:'no-store'}).then(function(r){return r.ok?r.json():null;}).catch(function(){return null;}); }
+  function publicCheck(publicSlug){ return nativeFetch(api('/api/experts/'+encodeURIComponent(publicSlug)),{cache:'no-store'}).then(function(r){if(!r.ok)throw new Error('public-unavailable');return r.json();}).then(function(d){ if(!d || !(d.expert||d.slug)) throw new Error('public-unavailable'); return true; }); }
+  function saveGuidePatch(patch){ var s=readGuide(); Object.keys(patch).forEach(function(k){s[k]=patch[k];}); writeGuide(s); renderGuide(); }
+  function openPanel(panel){
+    var item=Array.prototype.slice.call(document.querySelectorAll('.db-nav-item,a,button,[role="button"]')).find(function(el){ var txt=(el.textContent||'').replace(/\s+/g,' ').trim().toLowerCase(); var on=String(el.getAttribute('onclick')||'').toLowerCase(); return on.indexOf("'"+panel+"'")>-1 || on.indexOf('"'+panel+'"')>-1 || (panel==='website-editor'&&/edit website|website editor/.test(txt)) || (panel==='pricing'&&/pricing|packages/.test(txt)) || (panel==='payments'&&/payments/.test(txt)) || (panel==='settings'&&/settings/.test(txt)); });
+    try{ if(item&&typeof window.dbNav==='function') window.dbNav(item,panel); else if(item) item.click(); else location.href='/dash/'+slug()+'/'+panel; }catch(e){ location.href='/dash/'+slug()+'/'+panel; }
+  }
+  function sendVerification(){
+    var t=token(); if(!t){toast('Please log in first.','err');return;}
+    var email=accountEmail(readGuide());
+    nativeFetch(api('/api/auth/resend-verification'),{method:'POST',headers:Object.assign({'Content-Type':'application/json'},auth()),body:JSON.stringify({source:'dashboard_setup_guide'})}).then(function(r){return r.json().catch(function(){return {};}).then(function(d){if(!r.ok)throw new Error(d.error||'Could not send verification email');return d;});}).then(function(){toast('Verification email sent to '+email+'. Check Inbox, Spam, or Promotions.'); setTimeout(refreshGuideState,1200);}).catch(function(e){toast(e.message||'Could not send verification email.','err');});
+  }
+  function publishDirect(value){ var t=token(); if(!t)return Promise.reject(new Error('Please log in first.')); return nativeFetch(api('/api/auth/me'),{method:'PUT',headers:Object.assign({'Content-Type':'application/json'},auth()),body:JSON.stringify({website_published:value?1:0})}).then(function(r){return r.json().catch(function(){return {};}).then(function(d){if(!r.ok||d.success===false)throw new Error(d.error||'Could not update publish state');return d;});}); }
+  function publishSite(value){
+    refreshGuideState(true).then(function(d){
+      var s=readGuide();
+      if(value && !verifiedFrom(d) && !s.emailVerified){ s.active=4; writeGuide(s); renderGuide(); toast('Verify '+accountEmail(s)+' first, then publish.'); return; }
+      var approval=(d&&d.profile&&d.profile.approval_status)||s.approvalStatus;
+      if(value && approvalBlocked(approval)){ saveGuidePatch({publishBlocked:'approval',approvalStatus:approval,active:5}); toast('Ownlybiz approval is still needed before this site can go public.'); return; }
+      publishDirect(value).then(function(pd){
+        var p=(pd&&pd.profile)||{}, publicSlug=p.slug||s.publicSlug||slug();
+        saveGuidePatch({websitePublished:!!value,publicSlug:publicSlug,publishBlocked:''});
+        if(value){ publicCheck(publicSlug).then(function(){saveGuidePatch({publicAvailable:true,websitePublished:true,active:5}); toast('Website published. Use View website to check the public page.'); installPublishCard();}).catch(function(){saveGuidePatch({publicAvailable:false,publishBlocked:'public'}); toast('Publishing was saved, but the public page is not ready yet.');}); }
+        else { saveGuidePatch({publicAvailable:false,websitePublished:false}); toast('Website unpublished.'); installPublishCard(); }
+      }).catch(function(e){toast(e.message||'Could not publish website.','err');});
+    });
+  }
+  window.obPublishExpertSite = publishSite;
+  window.obPublishSiteV5 = publishSite;
+
+  function installPublishCard(){
+    if(!dash()) return;
+    fetchMe().then(function(d){
+      var profile=(d&&d.profile)||{}, host=document.querySelector('.db-content')||document.querySelector('#dashboard-overview')||document.querySelector('#view-3 .db-content'); if(!host)return;
+      var card=document.getElementById('ob-prod-publish-card'); if(!card){card=document.createElement('div');card.id='ob-prod-publish-card';card.className='ob-prod-publish-card';host.insertBefore(card,host.firstChild);}
+      var published=Number(profile.website_published||0)===1, publicSlug=profile.slug||slug(), url=publicSlug?(location.origin+'/'+encodeURIComponent(publicSlug)):'';
+      card.innerHTML='<div><span class="ob-prod-publish-status">'+(published?'Website live':'Website private')+'</span><h3>'+(published?'Your website is published.':'Publish your website when it is ready.')+'</h3><p>'+(published?'Clients can open your public page. You can unpublish anytime while editing.':'Your address is reserved, but clients cannot open the public page until you publish from this dashboard.')+'</p></div><div class="ob-prod-publish-actions"><button class="ob-prod-primary" type="button" onclick="obPublishExpertSite('+(!published)+')">'+(published?'Unpublish website':'Publish website')+'</button>'+(published&&url?'<a class="ob-prod-secondary" href="'+esc(url)+'" target="_blank" rel="noopener">View website</a>':'')+'<button class="ob-prod-secondary" type="button" onclick="ownlybizProdGuideOpen()">Setup guide</button></div>';
+    });
+  }
+  function refreshGuideState(force){
+    return fetchMe().then(function(d){
+      if(!d||!d.user) return d;
+      var s=readGuide(), p=d.profile||{}, changed=false;
+      if(d.user.email&&s.accountEmail!==d.user.email){s.accountEmail=d.user.email;changed=true;}
+      if(p.slug&&s.publicSlug!==p.slug){s.publicSlug=p.slug;changed=true;}
+      if(String(p.approval_status||'')&&s.approvalStatus!==p.approval_status){s.approvalStatus=p.approval_status;changed=true;}
+      var pub=Number(p.website_published||0)===1; if(!!s.websitePublished!==pub){s.websitePublished=pub;changed=true;}
+      var ver=verifiedFrom(d); if(!!s.emailVerified!==!!ver){s.emailVerified=ver;changed=true;}
+      if(changed||force) writeGuide(s);
+      return d;
+    });
+  }
+  function renderGuide(){
+    if(!dash()){ var g=document.getElementById('ownlybiz-prod-guide'); if(g)g.remove(); return; }
+    var s=readGuide(); if(s.hidden){hideGuide();return;} if(s.minimized){hideGuide();showMini();return;}
+    var i=Math.max(0,Math.min(steps.length-1,Number(s.active||0))), step=steps[i], email=accountEmail(s);
+    if(i>=4 && !s._refreshQueued){ s._refreshQueued=true; writeGuide(s); setTimeout(function(){refreshGuideState(true).then(function(){var ns=readGuide();delete ns._refreshQueued;writeGuide(ns);renderGuide();});},100); }
+    var body=step.body, later=step.later, primary=step.cta;
+    if(step.id==='email'){ body=s.emailVerified?'Your email is verified. You can publish when the rest is ready.':'We will send a magic verification link to '+email+'. Open that email, then return here to publish.'; later=s.emailVerified?'Verified email: '+email:'Sending to: '+email+'. No code is needed.'; primary=s.emailVerified?'Continue to publish':'Send verification email'; }
+    if(step.id==='publish'&&!s.emailVerified) later='Email must be verified before publishing. Send the magic link, then return after opening it.';
+    if(step.id==='publish'&&s.publishBlocked==='approval') body='Your email is verified. This expert account still needs Ownlybiz approval before clients can open the public site.';
+    if(step.id==='publish'&&s.publicAvailable){ body='Clients can open your public page now. Use View website to review it from a client point of view.'; primary='View website'; }
+    var root=document.getElementById('ownlybiz-prod-guide')||document.createElement('aside'); root.id='ownlybiz-prod-guide';
+    root.innerHTML='<div class="ob-prod-guide-shell"><div class="ob-prod-guide-head"><div class="ob-prod-guide-kicker">Setup guide - step '+(i+1)+' of '+steps.length+'</div><h2 class="ob-prod-guide-title">'+esc(step.title)+'</h2><p class="ob-prod-guide-copy">'+esc(body)+'</p></div><div class="ob-prod-guide-main"><div class="ob-prod-guide-note">'+esc(later)+'</div><div class="ob-prod-guide-actions"><button type="button" class="ob-prod-guide-btn primary" data-prod-guide="primary">'+esc(primary)+'</button><button type="button" class="ob-prod-guide-btn" data-prod-guide="next">Next</button><button type="button" class="ob-prod-guide-btn" data-prod-guide="prev">Back</button><button type="button" class="ob-prod-guide-btn quiet" data-prod-guide="minimize">Minimize</button><button type="button" class="ob-prod-guide-btn quiet" data-prod-guide="hide">Do not show again</button></div></div></div>';
+    if(!root.parentNode) document.body.appendChild(root);
+  }
+  function hideGuide(){ var g=document.getElementById('ownlybiz-prod-guide'); if(g)g.remove(); var m=document.getElementById('ownlybiz-prod-guide-mini'); if(m)m.remove(); }
+  function showMini(){ if(document.getElementById('ownlybiz-prod-guide-mini'))return; var b=document.createElement('button'); b.id='ownlybiz-prod-guide-mini'; b.type='button'; b.textContent='Setup guide'; b.onclick=function(){saveGuidePatch({minimized:false});}; document.body.appendChild(b); }
+  window.ownlybizProdGuideOpen=function(){saveGuidePatch({minimized:false,hidden:false});};
+  document.addEventListener('click',function(e){
+    var btn=e.target&&e.target.closest&&e.target.closest('[data-prod-guide]'); if(!btn)return;
+    var s=readGuide(), i=Math.max(0,Math.min(steps.length-1,Number(s.active||0))), step=steps[i], action=btn.getAttribute('data-prod-guide');
+    e.preventDefault(); e.stopPropagation(); if(e.stopImmediatePropagation)e.stopImmediatePropagation();
+    if(action==='next'){s.active=Math.min(steps.length-1,i+1);writeGuide(s);renderGuide();return;}
+    if(action==='prev'){s.active=Math.max(0,i-1);writeGuide(s);renderGuide();return;}
+    if(action==='minimize'){saveGuidePatch({minimized:true});return;}
+    if(action==='hide'){saveGuidePatch({hidden:true,minimized:false});return;}
+    if(action==='primary'){ if(step.action==='email'){sendVerification();return;} if(step.action==='publish'){ if(s.publicAvailable&&s.publicSlug){window.open('/'+encodeURIComponent(s.publicSlug),'_blank','noopener,noreferrer');return;} publishSite(true);return;} openPanel(step.panel); return; }
+  },true);
+
+  function staleSignupFieldGuard(){
+    if(!document.querySelector('.signup-step,#step-1,#step-7')) return;
+    ['position','intro','rate','availability','title','bio'].forEach(function(key){
+      Array.prototype.slice.call(document.querySelectorAll('input[name*="'+key+'"],textarea[name*="'+key+'"],#signup-'+key+',#sfield-'+key)).forEach(function(el){
+        if(el.offsetParent===null || getComputedStyle(el).display==='none') el.value='';
+      });
+    });
+  }
+  function boot(){
+    wireAdmin();
+    ensureLoginNote();
+    verifyEmailRoute();
+    resetPasswordRoute();
+    securityConfig(false);
+    staleSignupFieldGuard();
+    if(dash()){ installPublishCard(); renderGuide(); }
+  }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',boot); else boot();
+  [400,1200,2600,5000].forEach(function(ms){setTimeout(boot,ms);});
+  window.addEventListener('popstate',boot); window.addEventListener('hashchange',boot);
+  if(window.MutationObserver&&document.body) new MutationObserver(function(){ setTimeout(function(){wireAdmin();installPublishCard();staleSignupFieldGuard();},120); }).observe(document.body,{childList:true,subtree:true});
 })();
 </script>
 

@@ -28,7 +28,7 @@
 
   var BASE = (window.OWNLYBIZ_API_URL || window._OB_BACKEND || 'https://victorious-wisdom-production-a6b0.up.railway.app').replace(/\/+$/,'');
   var CREDIT_AMOUNTS = [10,20,30,50,75,100,150,200,250,500];
-  var state = { settings:null, summary:null, amount:0, promo:null, intent:null, stripe:null, elements:null, paymentMounted:false, context:null, pauseSessionId:null };
+  var state = { settings:null, summary:null, amount:0, promo:null, intent:null, stripe:null, elements:null, cardElement:null, paymentMounted:false, context:null, pauseSessionId:null };
 
   function token(){ return sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || localStorage.getItem('ob_client_token') || ''; }
   function user(){ try { return JSON.parse(sessionStorage.getItem('ob_u') || localStorage.getItem('ob_u') || 'null'); } catch(e){ return null; } }
@@ -104,6 +104,8 @@
       '.ob-credit-btn.danger{background:rgba(220,38,38,.1);color:#dc2626;border:1px solid rgba(220,38,38,.26)}' +
       '.ob-credit-input{border:1.5px solid rgba(36,24,19,.16);border-radius:12px;padding:11px 12px;font-size:14px;background:#fffaf5;color:#241813;min-width:0;min-height:42px}' +
       '.ob-credit-input::placeholder{color:#8f847b}' +
+      '.ob-credit-card-frame{background:#fff;border:1px solid rgba(36,24,19,.14);border-radius:12px;padding:14px 12px;box-shadow:0 8px 24px rgba(36,24,19,.08)}' +
+      '.ob-credit-card-help{font-size:12px;line-height:1.45;color:#746a63;margin:8px 2px 0}' +
       '.ob-credit-modal{position:fixed;inset:0;z-index:100000;background:rgba(20,12,8,.72);backdrop-filter:blur(8px);display:none;align-items:center;justify-content:center;padding:16px}' +
       '.ob-credit-sheet{background:#fffaf5;color:#241813;border:1px solid rgba(36,24,19,.12);border-radius:18px;width:min(560px,100%);max-height:92vh;overflow:auto;padding:22px;box-shadow:0 28px 90px rgba(0,0,0,.34)}' +
       '.ob-credit-modal.ob-credit-inline{position:static;inset:auto;z-index:auto;background:transparent;backdrop-filter:none;display:block;padding:0;margin-top:12px}' +
@@ -121,6 +123,7 @@
       '.ob-credit-dashboard-card .ob-credit-chip.active{background:rgba(200,255,61,.12);border-color:#c8ff3d;color:#f8ffe5}' +
       '.ob-credit-dashboard-card .ob-credit-input{background:rgba(255,250,245,.075);border-color:rgba(255,250,245,.18);color:#faf7f2}' +
       '.ob-credit-dashboard-card .ob-credit-input::placeholder{color:#8f877f}' +
+      '.ob-credit-dashboard-card .ob-credit-promo-form{grid-template-columns:minmax(190px,1fr) 110px;max-width:620px}' +
       '.ob-credit-dashboard-card .ob-credit-btn.secondary{background:rgba(255,250,245,.08);border-color:rgba(255,250,245,.18);color:#faf7f2}' +
       '.ob-credit-dashboard-card [style*="var(--brown)"]{color:#faf7f2!important}' +
       '.ob-credit-dashboard-card [style*="var(--gray-400)"],.ob-credit-dashboard-card [style*="var(--gray-500)"]{color:#b8afa6!important}' +
@@ -398,6 +401,17 @@
     el.style.display = msg ? 'block' : 'none';
   }
 
+  function resetCreditPaymentMount(){
+    if(state.cardElement && typeof state.cardElement.destroy === 'function') {
+      try { state.cardElement.destroy(); } catch(e) {}
+    }
+    state.cardElement = null;
+    state.elements = null;
+    state.paymentMounted = false;
+    var payment = document.getElementById('ob-credit-payment-element');
+    if(payment){ payment.innerHTML=''; payment.style.display='none'; }
+  }
+
   function renderModalAmounts(amounts){
     var box = document.getElementById('ob-credit-modal-amounts');
     if(!box) return;
@@ -417,7 +431,7 @@
       '<div style="display:flex;justify-content:space-between"><span>Credit added</span><strong>' + money(state.amount) + '</strong></div>' +
       (state.promo ? '<div style="display:flex;justify-content:space-between;margin-top:4px"><span>Promotion ' + esc(state.promo.code) + '</span><strong>-' + money(discount) + '</strong></div>' : '') +
       '<div style="display:flex;justify-content:space-between;margin-top:6px;border-top:1px solid rgba(36,24,19,.12);padding-top:6px"><span>Due today</span><strong>' + money(due) + '</strong></div>';
-    btn.textContent = state.paymentMounted ? ('Pay ' + money(due)) : 'Continue to secure payment';
+    btn.textContent = state.paymentMounted ? ('Pay ' + money(due)) : 'Continue to card payment';
   }
 
   window.obCreditOpenTopup = async function(context, amount){
@@ -426,15 +440,13 @@
     state.promo = null;
     state.intent = null;
     state.paymentMounted = false;
-    state.elements = null;
     var modal = ensureModal(state.context);
     modal.style.display = state.context === 'booking' ? 'block' : 'flex';
     setModalError('');
     var pauseNote = document.getElementById('ob-credit-session-pause-note');
     if(pauseNote) pauseNote.style.display = state.context === 'session' ? 'block' : 'none';
     if(state.context === 'session') pauseBillingForTopup();
-    var payment = document.getElementById('ob-credit-payment-element');
-    if(payment){ payment.innerHTML=''; payment.style.display='none'; }
+    resetCreditPaymentMount();
     var balanceEl = document.getElementById('ob-credit-modal-balance');
     var d = await loadClientCreditSummary();
     var amounts = (d && d.settings && d.settings.amounts) || (window._currentExpert && window._currentExpert.credit_amounts) || CREDIT_AMOUNTS;
@@ -454,9 +466,7 @@
     state.amount = Number(amount);
     state.promo = null;
     state.intent = null;
-    state.paymentMounted = false;
-    var payment = document.getElementById('ob-credit-payment-element');
-    if(payment){ payment.innerHTML=''; payment.style.display='none'; }
+    resetCreditPaymentMount();
     renderModalAmounts((state.summary && state.summary.settings && state.summary.settings.amounts) || CREDIT_AMOUNTS);
     renderModalSummary();
   };
@@ -468,9 +478,7 @@
       var d = await creditApi('POST','/promotions/preview',{expert_id:expertId(),code:code,amount:state.amount,applies_to:'credits'});
       state.promo = d.promo;
       state.intent = null;
-      state.paymentMounted = false;
-      var payment = document.getElementById('ob-credit-payment-element');
-      if(payment){ payment.innerHTML=''; payment.style.display='none'; }
+      resetCreditPaymentMount();
       renderModalSummary();
       setModalError('');
     }catch(e){ state.promo=null; renderModalSummary(); setModalError(e.message); }
@@ -486,24 +494,24 @@
     });
     state.intent = d;
     state.stripe = Stripe(d.publishable_key);
-    state.elements = state.stripe.elements({
-      clientSecret:d.client_secret,
-      appearance:{
-        theme:'stripe',
-        variables:{
-          colorPrimary:'#c4622d',
-          colorBackground:'#ffffff',
-          colorText:'#241813',
-          colorDanger:'#dc2626',
-          fontFamily:'Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-          borderRadius:'12px'
-        }
-      }
-    });
+    state.elements = state.stripe.elements();
     var mount = document.getElementById('ob-credit-payment-element');
     mount.style.display = 'block';
-    mount.innerHTML = '';
-    state.elements.create('payment', {layout:'accordion'}).mount('#ob-credit-payment-element');
+    mount.innerHTML = '<div id="ob-credit-card-element" class="ob-credit-card-frame"></div><div class="ob-credit-card-help">Use a credit or debit card for this prepaid credit top-up. Card details are handled securely by Stripe.</div>';
+    state.cardElement = state.elements.create('card', {
+      disableLink:true,
+      style:{
+        base:{
+          color:'#241813',
+          fontFamily:'Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+          fontSize:'16px',
+          '::placeholder':{ color:'#8f847b' },
+          iconColor:'#c4622d'
+        },
+        invalid:{ color:'#dc2626', iconColor:'#dc2626' }
+      }
+    });
+    state.cardElement.mount('#ob-credit-card-element');
     state.paymentMounted = true;
     renderModalSummary();
   }
@@ -514,7 +522,9 @@
       if(btn){ btn.disabled = true; btn.textContent = 'Please wait...'; }
       setModalError('');
       if(!state.paymentMounted){ await mountCreditPayment(); return; }
-      var result = await state.stripe.confirmPayment({elements:state.elements,redirect:'if_required',confirmParams:{return_url:location.href}});
+      var result = await state.stripe.confirmCardPayment(state.intent.client_secret, {
+        payment_method:{card:state.cardElement}
+      });
       if(result.error) throw new Error(result.error.message || 'Payment failed.');
       var pi = (result.paymentIntent && result.paymentIntent.id) || state.intent.payment_intent_id;
       var purchaseId = state.intent.purchase && state.intent.purchase.id;

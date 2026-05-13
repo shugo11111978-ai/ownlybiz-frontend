@@ -28,7 +28,7 @@
 
   var BASE = (window.OWNLYBIZ_API_URL || window._OB_BACKEND || 'https://victorious-wisdom-production-a6b0.up.railway.app').replace(/\/+$/,'');
   var CREDIT_AMOUNTS = [10,20,30,50,75,100,150,200,250,500];
-  var state = { settings:null, summary:null, amount:0, promo:null, intent:null, stripe:null, elements:null, cardElement:null, paymentMounted:false, context:null, pauseSessionId:null };
+  var state = { settings:null, summary:null, amount:0, promo:null, intent:null, stripe:null, elements:null, cardElement:null, paymentMounted:false, context:null, pauseSessionId:null, bookingCreditRequest:0 };
 
   function token(){ return sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || localStorage.getItem('ob_client_token') || ''; }
   function user(){ try { return JSON.parse(sessionStorage.getItem('ob_u') || localStorage.getItem('ob_u') || 'null'); } catch(e){ return null; } }
@@ -325,7 +325,17 @@
     }catch(e){ return null; }
   }
 
-  function injectBookingCredit(){
+  function clientCreditCacheKey(){
+    var userKey = '';
+    try{
+      var raw = sessionStorage.getItem('ob_u') || localStorage.getItem('ob_u') || 'null';
+      var u = JSON.parse(raw);
+      userKey = (u && (u.id || u.email)) || '';
+    }catch(e){}
+    return String(expertId() || '') + ':' + String(userKey || (token() ? 'signed-in' : 'anon'));
+  }
+
+  function injectBookingCredit(forceRefresh){
     addStyle();
     var step = document.getElementById('bov-step2');
     if(!step) return;
@@ -345,12 +355,23 @@
       var wallet = document.getElementById('bov-wallet-section');
       step.insertBefore(mount, wallet || step.firstChild);
     }
-    mount.innerHTML = '<div style="font-size:13px;color:var(--gray-400)">Loading prepaid credit...</div>';
+    var cacheKey = clientCreditCacheKey();
+    if(!forceRefresh && mount.dataset.obCreditReady === '1' && mount.dataset.obCreditKey === cacheKey) return;
+    if(!forceRefresh && mount.dataset.obCreditLoading === '1') return;
+    var requestId = String(++state.bookingCreditRequest);
+    mount.dataset.obCreditLoading = '1';
+    mount.dataset.obCreditRequest = requestId;
+    mount.dataset.obCreditKey = cacheKey;
+    if(forceRefresh || mount.dataset.obCreditReady !== '1') {
+      mount.innerHTML = '<div style="font-size:13px;color:var(--gray-400)">Loading prepaid credit...</div>';
+    }
     loadClientCreditSummary().then(function(d){
+      if(mount.dataset.obCreditRequest !== requestId) return;
       var settings = (d && d.settings) || {amounts:e.credit_amounts || []};
       var balance = Number(d && d.balance || 0);
       if(!settings.is_enabled && !(e.credit_enabled || e.credit && e.credit.enabled)){ mount.style.display='none'; return; }
       mount.style.display = '';
+      mount.dataset.obCreditReady = '1';
       mount.innerHTML =
         '<h3>Payment choice</h3>' +
         '<p class="ob-credit-sub">Use prepaid credit first, or continue with pay by minute. You will always see rates clearly before starting.</p>' +
@@ -360,6 +381,11 @@
           '<button class="ob-credit-btn secondary" onclick="obCreditOpenTopup(&quot;booking&quot;)">Add prepaid credit</button>' +
         '</div>' +
         '<div style="display:flex;align-items:center;gap:10px;margin:14px 0 0;color:var(--gray-400);font-size:11px;text-transform:uppercase"><span style="height:1px;background:var(--gray-200);flex:1"></span>or pay by minute below<span style="height:1px;background:var(--gray-200);flex:1"></span></div>';
+    }).catch(function(){
+      if(mount.dataset.obCreditRequest !== requestId || mount.dataset.obCreditReady === '1') return;
+      mount.innerHTML = '<div style="font-size:13px;color:var(--gray-400)">Prepaid credit is temporarily unavailable. You can still pay by minute below.</div>';
+    }).finally(function(){
+      if(mount.dataset.obCreditRequest === requestId) mount.dataset.obCreditLoading = '0';
     });
   }
 
@@ -460,6 +486,12 @@
     if(balanceEl) balanceEl.innerHTML = '<strong>Current balance:</strong> ' + money(d && d.balance || 0) + ' with this expert. No expiration.';
     renderModalAmounts(amounts);
     renderModalSummary();
+    if(state.context === 'booking' && modal.scrollIntoView) {
+      setTimeout(function(){
+        try { modal.scrollIntoView({behavior:'smooth', block:'start'}); }
+        catch(e){ try { modal.scrollIntoView(); } catch(ignore){} }
+      }, 80);
+    }
   };
 
   window.obCreditCloseModal = function(){
@@ -538,7 +570,7 @@
       var confirmed = await creditApi('POST','/purchases/' + encodeURIComponent(purchaseId) + '/confirm',{payment_intent_id:pi});
       state.summary = confirmed;
       toastMsg('Prepaid credit added.');
-      injectBookingCredit();
+      injectBookingCredit(true);
       renderSessionCreditBar();
       window.obCreditCloseModal();
       if(state.context === 'booking') window.obCreditStartWithCredit();

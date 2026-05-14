@@ -28,7 +28,7 @@
 
   var BASE = (window.OWNLYBIZ_API_URL || window._OB_BACKEND || 'https://victorious-wisdom-production-a6b0.up.railway.app').replace(/\/+$/,'');
   var CREDIT_AMOUNTS = [10,20,30,50,75,100,150,200,250,500];
-  var state = { settings:null, summary:null, amount:0, promo:null, sessionPromo:null, promotions:[], intent:null, stripe:null, elements:null, expressElements:null, cardElement:null, expressElement:null, paymentMounted:false, paymentMounting:false, confirming:false, context:null, pauseSessionId:null, bookingCreditRequest:0, bookingPayMode:'minute', mountSeq:0, mountTimer:null };
+  var state = { settings:null, summary:null, amount:0, promo:null, sessionPromo:null, promotions:[], intent:null, stripe:null, elements:null, expressElements:null, cardElement:null, expressElement:null, paymentMounted:false, paymentMounting:false, confirming:false, context:null, pauseSessionId:null, bookingCreditRequest:0, bookingPayMode:'minute', bookLaterCreditRequest:0, bookLaterPayMode:'minute', mountSeq:0, mountTimer:null };
   var creditPaymentConfigPromise = null;
 
   function token(){ return sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || localStorage.getItem('ob_client_token') || ''; }
@@ -474,26 +474,7 @@
   function renderPublicCredit(){
     addStyle();
     hideLegacyPackageSurfaces();
-    var e = window._currentExpert || {};
-    var enabled = !!(e.credit_enabled || (e.credit && e.credit.enabled));
-    var amounts = e.credit_amounts || (e.credit && e.credit.amounts) || [];
-    var hosts = Array.from(document.querySelectorAll('#ep-home.active .services-preview-inner,#ep-services.active .services-full-inner,#view-4.active #ep-services .services-full-inner,#ep-services .services-full-inner'));
-    var host = hosts.find(function(el){
-      var r = el.getBoundingClientRect();
-      var cs = window.getComputedStyle ? getComputedStyle(el) : null;
-      return r.width > 0 && r.height > 0 && (!cs || (cs.display !== 'none' && cs.visibility !== 'hidden'));
-    }) || hosts[0];
-    if(!host) return;
     document.querySelectorAll('#ob-public-credit-section').forEach(function(old){ old.remove(); });
-    if(!enabled || !amounts.length) return;
-    var card = document.createElement('div');
-    card.id = 'ob-public-credit-section';
-    card.className = 'ob-credit-public';
-    card.innerHTML =
-      '<div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap"><div><h2 style="font-family:var(--font-head);font-size:24px;margin:0 0 6px;color:var(--brown)">Prepaid credit</h2><p class="ob-credit-sub">Add credit for chat, voice, or video with this expert. Credit is used automatically before pay-by-minute card billing.</p></div><span class="ob-credit-balance-pill">No expiration</span></div>' +
-      '<div class="ob-credit-grid">' + amounts.map(function(a){return '<button class="ob-credit-chip" onclick="obCreditOpenTopup(&quot;public&quot;,' + Number(a) + ')">' + money(a) + '</button>';}).join('') + '</div>' +
-      '<div class="ob-credit-note">Credit applies only to this expert. You can still pay by minute instead; each session type shows its own per-minute rate before you start.</div>';
-    host.appendChild(card);
   }
 
   async function loadClientCreditSummary(){
@@ -506,6 +487,7 @@
       return d;
     }catch(e){ return null; }
   }
+  window.obCreditLoadClientSummary = loadClientCreditSummary;
 
   function clientCreditCacheKey(){
     var userKey = '';
@@ -802,9 +784,106 @@
     setTimeout(function(){ if(typeof _launchSession === 'function') _launchSession(true); }, 450);
   };
 
+  function bookLaterPaymentMode(){
+    return state.bookLaterPayMode === 'prepaid' || window._bflPaymentMode === 'prepaid' ? 'prepaid' : 'minute';
+  }
+
+  function bookLaterCreditBalance(){
+    return Number(state.summary && state.summary.balance || 0);
+  }
+  window.obCreditBookLaterBalance = bookLaterCreditBalance;
+
+  function setBookLaterPaymentMode(mode){
+    state.bookLaterPayMode = mode === 'prepaid' ? 'prepaid' : 'minute';
+    window._bflPaymentMode = state.bookLaterPayMode;
+    var overlay = document.getElementById('bfl-overlay');
+    if(overlay){
+      overlay.classList.toggle('ob-credit-mode-topup', state.bookLaterPayMode === 'prepaid');
+      overlay.classList.toggle('ob-credit-mode-minute', state.bookLaterPayMode !== 'prepaid');
+    }
+    document.querySelectorAll('[data-ob-bfl-payment-mode]').forEach(function(btn){
+      btn.classList.toggle('active', btn.getAttribute('data-ob-bfl-payment-mode') === state.bookLaterPayMode);
+    });
+    var cardSection = document.getElementById('bfl-card-section');
+    if(cardSection) cardSection.style.display = state.bookLaterPayMode === 'prepaid' ? 'none' : '';
+    if(state.bookLaterPayMode !== 'prepaid' && typeof window.mountBflCardElement === 'function') {
+      setTimeout(function(){ window.mountBflCardElement(); }, 80);
+    }
+  }
+  window.obCreditSetBookLaterPaymentMode = setBookLaterPaymentMode;
+
+  window.obBookLaterPaymentMode = function(mode){
+    if(mode === 'prepaid' || mode === 'topup'){
+      setBookLaterPaymentMode('prepaid');
+      window.obCreditOpenTopup('book_later');
+    } else {
+      window.obCreditCloseModal();
+      setBookLaterPaymentMode('minute');
+    }
+  };
+
+  window.obBookLaterUseCredit = function(){
+    setBookLaterPaymentMode('prepaid');
+    var modal = document.getElementById('ob-credit-modal');
+    if(modal) modal.style.display = 'none';
+  };
+
+  window.obCreditRenderBookLaterChoice = function(forceRefresh){
+    addStyle();
+    var step = document.getElementById('bfl-step-3');
+    if(!step) return;
+    var e = window._currentExpert || {};
+    var enabled = !!(e.credit_enabled || (e.credit && e.credit.enabled));
+    var mount = document.getElementById('ob-credit-bfl-choice');
+    if(!enabled) {
+      if(mount) mount.remove();
+      setBookLaterPaymentMode('minute');
+      return;
+    }
+    if(!mount) return;
+    var cacheKey = clientCreditCacheKey();
+    if(!forceRefresh && mount.dataset.obCreditReady === '1' && mount.dataset.obCreditKey === cacheKey) {
+      setBookLaterPaymentMode(bookLaterPaymentMode());
+      return;
+    }
+    if(!forceRefresh && mount.dataset.obCreditLoading === '1') return;
+    var requestId = String(++state.bookLaterCreditRequest);
+    mount.dataset.obCreditLoading = '1';
+    mount.dataset.obCreditRequest = requestId;
+    mount.dataset.obCreditKey = cacheKey;
+    if(forceRefresh || mount.dataset.obCreditReady !== '1') {
+      mount.innerHTML = '<div style="font-size:13px;color:var(--gray-400)">Loading prepaid credit...</div>';
+    }
+    loadClientCreditSummary().then(function(d){
+      if(mount.dataset.obCreditRequest !== requestId) return;
+      var balance = Number(d && d.balance || 0);
+      var signedIn = !!token();
+      mount.style.display = '';
+      mount.dataset.obCreditReady = '1';
+      mount.innerHTML =
+        '<h3>Choose how to pay</h3>' +
+        '<p class="ob-credit-sub">Use pay by minute or prepaid credit for this scheduled session.</p>' +
+        '<div class="ob-credit-row"><div><strong>Available credit</strong><div style="font-size:12px;color:var(--gray-400)">With this expert only · no expiration</div></div><span class="ob-credit-balance-pill">' + money(balance) + '</span></div>' +
+        '<div class="ob-payment-mode-grid">' +
+          '<button type="button" class="ob-payment-mode-btn" data-ob-bfl-payment-mode="minute" onclick="obBookLaterPaymentMode(&quot;minute&quot;)"><strong>Pay by minute</strong><span>Authorize card, Apple Pay, or Google Pay. Charged after the session for exact time used.</span></button>' +
+          '<button type="button" class="ob-payment-mode-btn" data-ob-bfl-payment-mode="prepaid" onclick="obBookLaterPaymentMode(&quot;topup&quot;)"><strong>Add prepaid credit</strong><span>Choose an amount now. Credit is used automatically first and has no expiration.</span></button>' +
+        '</div>' +
+        (balance > 0 ? '<button type="button" class="ob-credit-btn" style="width:100%;margin-top:4px" onclick="obBookLaterUseCredit()">Use available credit for booking</button>' : '<div class="ob-credit-note" style="margin-top:4px">' + (signedIn ? 'Add prepaid credit before confirming, or use pay by minute.' : 'Create or log in to add prepaid credit. You can still choose pay by minute below.') + '</div>');
+      setBookLaterPaymentMode(bookLaterPaymentMode());
+    }).catch(function(){
+      if(mount.dataset.obCreditRequest !== requestId || mount.dataset.obCreditReady === '1') return;
+      mount.innerHTML = '<div class="ob-credit-note">Prepaid credit is temporarily unavailable. You can still pay by minute below.</div>';
+      setBookLaterPaymentMode('minute');
+    }).finally(function(){
+      if(mount.dataset.obCreditRequest === requestId) mount.dataset.obCreditLoading = '0';
+    });
+  };
+
   function ensureModal(context){
     addStyle();
-    var inlineHost = context === 'booking' ? document.getElementById('ob-credit-booking-choice') : null;
+    var inlineHost = context === 'booking'
+      ? document.getElementById('ob-credit-booking-choice')
+      : (context === 'book_later' ? document.getElementById('ob-credit-bfl-choice') : null);
     var targetHost = inlineHost && inlineHost.parentNode ? inlineHost.parentNode : document.body;
     var modal = document.getElementById('ob-credit-modal');
     if(!modal){
@@ -812,7 +891,7 @@
       modal.id = 'ob-credit-modal';
       modal.innerHTML =
         '<div class="ob-credit-sheet">' +
-        '<div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:12px"><div><h3 style="font-size:22px;margin:0 0 4px">Add prepaid credit</h3><p class="ob-credit-sub" style="margin:0">Credit has no expiration and is used automatically with this expert.</p></div><button class="ob-credit-btn secondary" data-ob-credit-close onclick="obCreditCloseModal()">Close</button></div>' +
+        '<div data-ob-credit-head style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:12px"><div data-ob-credit-title><h3 style="font-size:22px;margin:0 0 4px">Add prepaid credit</h3><p class="ob-credit-sub" style="margin:0">Credit has no expiration and is used automatically with this expert.</p></div><button class="ob-credit-btn secondary" data-ob-credit-close onclick="obCreditCloseModal()">Close</button></div>' +
         '<div id="ob-credit-modal-balance" class="ob-credit-note" style="margin-bottom:12px">Loading balance...</div>' +
         '<div id="ob-credit-modal-amounts"></div>' +
         '<div id="ob-credit-session-pause-note" class="ob-credit-note" style="display:none;margin-bottom:12px">Billing is paused briefly while you add credit. The session stays open, and the pause is capped to protect both sides.</div>' +
@@ -824,6 +903,13 @@
       modal.addEventListener('click',function(e){ if(e.target === modal && !modal.classList.contains('ob-credit-inline')) window.obCreditCloseModal(); });
     }
     modal.className = 'ob-credit-modal' + (inlineHost ? ' ob-credit-inline' : '');
+    var head = modal.querySelector('[data-ob-credit-head]');
+    var title = modal.querySelector('[data-ob-credit-title]');
+    if(head) {
+      head.style.justifyContent = inlineHost ? 'flex-end' : 'space-between';
+      head.style.marginBottom = inlineHost ? '8px' : '12px';
+    }
+    if(title) title.style.display = inlineHost ? 'none' : '';
     var closeBtn = modal.querySelector('[data-ob-credit-close]');
     if(closeBtn) closeBtn.textContent = inlineHost ? 'Pay by minute instead' : 'Close';
     if(inlineHost && targetHost) {
@@ -926,12 +1012,13 @@
   window.obCreditOpenTopup = async function(context, amount){
     state.context = context || 'manual';
     if(state.context === 'booking') setBookingPaymentMode('topup');
+    if(state.context === 'book_later') setBookLaterPaymentMode('prepaid');
     state.amount = Number(amount || 0);
     state.promo = null;
     state.intent = null;
     state.paymentMounted = false;
     var modal = ensureModal(state.context);
-    modal.style.display = state.context === 'booking' ? 'block' : 'flex';
+    modal.style.display = (state.context === 'booking' || state.context === 'book_later') ? 'block' : 'flex';
     setModalError('');
     var pauseNote = document.getElementById('ob-credit-session-pause-note');
     if(pauseNote) pauseNote.style.display = state.context === 'session' ? 'block' : 'none';
@@ -946,7 +1033,7 @@
     renderModalSummary();
     injectSessionPromo();
     scheduleCreditPaymentMount();
-    if(state.context === 'booking' && modal.scrollIntoView) {
+    if((state.context === 'booking' || state.context === 'book_later') && modal.scrollIntoView) {
       setTimeout(function(){
         try { modal.scrollIntoView({behavior:'smooth', block:'nearest'}); }
         catch(e){ try { modal.scrollIntoView(); } catch(ignore){} }
@@ -962,6 +1049,9 @@
       setBookingPaymentMode('minute');
       setTimeout(restoreStandardBookingPayment, 160);
       setTimeout(restoreStandardBookingPayment, 700);
+    } else if(state.context === 'book_later') {
+      resetCreditPaymentMount();
+      setBookLaterPaymentMode('minute');
     }
     resumeBillingForTopup();
   };
@@ -1096,15 +1186,24 @@
   }
 
   async function completeCreditPurchase(paymentIntentId){
+    var completedContext = state.context;
     var purchaseId = state.intent && state.intent.purchase && state.intent.purchase.id;
     if(!purchaseId) throw new Error('Credit purchase was not initialized.');
     var confirmed = await creditApi('POST','/purchases/' + encodeURIComponent(purchaseId) + '/confirm',{payment_intent_id:paymentIntentId});
     state.summary = confirmed;
     toastMsg('Prepaid credit added.');
     injectBookingCredit(true);
+    if(window.obCreditRenderBookLaterChoice) window.obCreditRenderBookLaterChoice(true);
     renderSessionCreditBar();
+    if(completedContext === 'book_later') {
+      var modal = document.getElementById('ob-credit-modal');
+      if(modal) modal.style.display = 'none';
+      resetCreditPaymentMount();
+      setBookLaterPaymentMode('prepaid');
+      return;
+    }
     window.obCreditCloseModal();
-    if(state.context === 'booking') window.obCreditStartWithCredit();
+    if(completedContext === 'booking') window.obCreditStartWithCredit();
   }
 
   window.obCreditContinuePayment = async function(){
@@ -18814,10 +18913,13 @@ var _bflCardElement = null;
 var _bflCardReady = false;
 var _bflCardComplete = false;
 var _bflStripeConfigured = null;
+var _bflPaymentMode = 'minute';
 
 window.openBookLaterModal = function() {
   var ov = document.getElementById('bfl-overlay');
   if (ov) { ov.style.display = 'flex'; document.body.style.overflow = 'hidden'; }
+  _bflPaymentMode = 'minute';
+  if (typeof window.obCreditSetBookLaterPaymentMode === 'function') window.obCreditSetBookLaterPaymentMode('minute');
   bflGoStep(1);
   var ct = typeof getClientToken === 'function' ? getClientToken() : (localStorage.getItem('ob_client_token') || sessionStorage.getItem('ob_t'));
   if (ct) {
@@ -18878,12 +18980,10 @@ window.bflGoStep = function(n) {
     var fm = typeof freeMinutes === 'object' ? (parseInt(freeMinutes[_bflChannel], 10) || 0) : 0;
     if (freeRow) freeRow.style.display = fm > 0 ? 'flex' : 'none';
     if (freeVal && fm > 0) freeVal.textContent = fm + ' minute' + (fm === 1 ? '' : 's') + ' included';
-    if (window.OWNLYBIZ_IS_STAGING) {
-      var cardSection = document.getElementById('bfl-card-section');
-      if (cardSection) cardSection.style.display = 'none';
-      var submitBtn = document.getElementById('bfl-submit-btn');
-      if (submitBtn) submitBtn.textContent = 'Confirm Booking →';
-    } else if (typeof mountBflCardElement === 'function') mountBflCardElement();
+    if (typeof window.obCreditRenderBookLaterChoice === 'function') window.obCreditRenderBookLaterChoice(true);
+    if (typeof mountBflCardElement === 'function') mountBflCardElement();
+    var submitBtn = document.getElementById('bfl-submit-btn');
+    if (submitBtn) submitBtn.textContent = 'Confirm Booking →';
   }
 };
 
@@ -19033,17 +19133,37 @@ window.submitBookForLater = function() {
       });
   }
 
-  // STEP B: Save card
+  // STEP B: Save or validate the selected payment path
   authPromise.then(function(auth) {
+    var paymentMode = _bflPaymentMode === 'prepaid' ? 'prepaid' : 'minute';
+    if (paymentMode === 'prepaid') {
+      btn.textContent = 'Checking prepaid credit...';
+      return Promise.resolve(window.obCreditLoadClientSummary ? window.obCreditLoadClientSummary() : null)
+        .then(function(){
+          if (typeof window.obCreditRenderBookLaterChoice === 'function') window.obCreditRenderBookLaterChoice(true);
+          var balance = window.obCreditBookLaterBalance ? Number(window.obCreditBookLaterBalance() || 0) : 0;
+          if (balance <= 0) {
+            if (status) {
+              status.style.display = 'block';
+              status.style.background = 'rgba(196,98,45,.1)';
+              status.style.color = '#9b4d24';
+              status.textContent = 'Add prepaid credit first, then confirm the booking.';
+            }
+            btn.disabled = false;
+            btn.textContent = 'Confirm Booking \u2192';
+            if (typeof window.obCreditOpenTopup === 'function') window.obCreditOpenTopup('book_later');
+            throw new Error('credit_required');
+          }
+          return { auth: auth, cardSaved: false, paymentMode: 'prepaid' };
+        });
+    }
     if (window.OWNLYBIZ_IS_STAGING) {
       localStorage.setItem('ob_hpm','1');
-      var cs = document.getElementById('bfl-card-section');
-      if (cs) cs.style.display = 'none';
-      return { auth: auth, cardSaved: false, stagingBypass: true };
+      return { auth: auth, cardSaved: false, stagingBypass: true, paymentMode: 'minute' };
     }
     btn.textContent = 'Saving card...';
     if (window._bflWalletPaymentSaved && (!window._bflWalletPaymentSavedToken || window._bflWalletPaymentSavedToken === auth.token)) {
-      return { auth: auth, cardSaved: true };
+      return { auth: auth, cardSaved: true, paymentMode: 'minute' };
     }
     // Block if Stripe is configured but card not filled in
     if (_bflStripeConfigured === true) {
@@ -19060,10 +19180,10 @@ window.submitBookForLater = function() {
         throw new Error('card_required');
       }
     }
-    if (!_bflStripe || !_bflCardElement) { return { auth: auth, cardSaved: false }; }
+    if (!_bflStripe || !_bflCardElement) { return { auth: auth, cardSaved: false, paymentMode: 'minute' }; }
     return fetch(BASE + '/api/payments/methods/setup', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + auth.token } })
       .then(function(r) { return r.json(); }).then(function(d) {
-        if (!d.client_secret) { return { auth: auth, cardSaved: false }; }
+        if (!d.client_secret) { return { auth: auth, cardSaved: false, paymentMode: 'minute' }; }
         return _bflStripe.confirmCardSetup(d.client_secret, { payment_method: { card: _bflCardElement } }).then(function(result) {
           if (result.error) { var ce = document.getElementById('bfl-card-error'); if (ce) { ce.textContent = result.error.message; ce.style.display = 'block'; } throw new Error('card_error'); }
           var saveDefault = window._obSaveDefaultPaymentMethod && result.setupIntent && result.setupIntent.payment_method
@@ -19071,7 +19191,7 @@ window.submitBookForLater = function() {
             : Promise.resolve();
           return saveDefault.then(function(){
             var sv = document.getElementById('bfl-card-saved'); if (sv) sv.style.display = 'block';
-            return { auth: auth, cardSaved: true };
+            return { auth: auth, cardSaved: true, paymentMode: 'minute' };
           });
         });
       }).catch(function(e) { if (e.message === 'card_error') throw e;
@@ -19082,7 +19202,7 @@ window.submitBookForLater = function() {
         btn.disabled = false; btn.textContent = 'Confirm Booking \u2192';
         throw new Error('card_error');
       }
-      return { auth: auth, cardSaved: false }; });
+      return { auth: auth, cardSaved: false, paymentMode: 'minute' }; });
 
   // STEP C: Create booking
   }).then(function(data) {
@@ -19093,7 +19213,7 @@ window.submitBookForLater = function() {
     var notes = document.getElementById('bfl-notes') ? document.getElementById('bfl-notes').value.trim() : '';
     var hdrs = { 'Content-Type': 'application/json' };
     if (auth.token) hdrs['Authorization'] = 'Bearer ' + auth.token;
-    return fetch(BASE + '/api/bookings', { method: 'POST', headers: hdrs, body: JSON.stringify({ expert_slug: slug, scheduled_date: _bflSelectedDate, scheduled_time: _bflSelectedTime, client_name: cName, client_email: cEmail, channel: _bflChannel, notes: notes }) })
+    return fetch(BASE + '/api/bookings', { method: 'POST', headers: hdrs, body: JSON.stringify({ expert_slug: slug, scheduled_date: _bflSelectedDate, scheduled_time: _bflSelectedTime, client_name: cName, client_email: cEmail, channel: _bflChannel, notes: notes, credit_mode: data.paymentMode === 'prepaid' ? 'prepaid' : 'minute' }) })
       .then(function(r) { return r.json(); });
   }).then(function(d) {
     btn.disabled = false; btn.textContent = 'Confirm Booking \u2192';
@@ -19106,7 +19226,7 @@ window.submitBookForLater = function() {
     }
   }).catch(function(e) {
     btn.disabled = false; btn.textContent = 'Confirm Booking \u2192';
-    if (e.message !== 'exists' && e.message !== 'card_error' && e.message !== 'card_required') {
+    if (e.message !== 'exists' && e.message !== 'card_error' && e.message !== 'card_required' && e.message !== 'credit_required') {
       if (authErr) { authErr.textContent = e.message; authErr.style.display = 'block'; }
     }
   });
@@ -19980,6 +20100,7 @@ function loadClientCredit() {
         </div>
       </div>
       <div id="bfl-auth-error" style="display:none;background:rgba(239,68,68,.08);border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:12px;color:#dc2626;font-weight:600;"></div>
+      <div id="ob-credit-bfl-choice" class="ob-credit-card" style="margin:0 0 16px;"></div>
       <div id="bfl-card-section" style="margin-bottom:16px;">
         <label style="font-size:12px;font-weight:700;color:var(--brown);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:8px;">Payment method</label>
         <div style="font-size:12px;color:var(--gray-400);margin-bottom:10px;">Use a supported wallet or save a card. You won't be charged until the session starts.</div>

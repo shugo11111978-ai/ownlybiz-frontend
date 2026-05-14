@@ -22665,7 +22665,7 @@ window._handleRTCMessage=function(d){
   }
   function forcePendingRequestVisible(){
     if(role() !== 'expert') return;
-    if(window._obActiveSessId || window._sid) return;
+    if(window._obActiveSessId) return;
     var sid = window._pendingSid || requestSidFromDom() || window._obIncomingSessId;
     if(!sid) return;
     if(window._obDismissedPendingSid === sid) return;
@@ -22696,7 +22696,7 @@ window._handleRTCMessage=function(d){
     window._obRequestVisibilityGuardStarted = Date.now();
     window._obRequestVisibilityGuard = setInterval(function(){
       var sid = window._pendingSid || requestSidFromDom() || window._obIncomingSessId;
-      if(!sid || window._obDismissedPendingSid === sid || window._obActiveSessId || window._sid || Date.now() - (window._obRequestVisibilityGuardStarted || 0) > 18000){
+      if(!sid || window._obDismissedPendingSid === sid || window._obActiveSessId || Date.now() - (window._obRequestVisibilityGuardStarted || 0) > 18000){
         clearInterval(window._obRequestVisibilityGuard);
         window._obRequestVisibilityGuard = null;
         return;
@@ -22705,6 +22705,37 @@ window._handleRTCMessage=function(d){
     }, 250);
   }
   var prevShowSessionRequestV22 = window.showSessionRequest;
+  function startPendingRequestCountdown(){
+    try { clearInterval(window._sessionRequestTimer); } catch(e) {}
+    try { clearInterval(window._obRequestCountdownTimer); } catch(e) {}
+    var total = 30;
+    var left = total;
+    function draw(){
+      var el = document.getElementById('req-countdown');
+      var bar = document.getElementById('req-progress-bar');
+      if(el) el.textContent = left + 's';
+      if(bar){
+        bar.style.width = Math.max(0, (left / total) * 100) + '%';
+        bar.style.background = left <= 10 ? '#ef4444' : 'var(--terra)';
+      }
+    }
+    draw();
+    window._obRequestCountdownTimer = setInterval(function(){
+      var sid = window._pendingSid || requestSidFromDom() || window._obIncomingSessId;
+      if(!sid || window._obDismissedPendingSid === sid || window._obActiveSessId){
+        clearInterval(window._obRequestCountdownTimer);
+        window._obRequestCountdownTimer = null;
+        return;
+      }
+      left -= 1;
+      draw();
+      if(left <= 0){
+        clearInterval(window._obRequestCountdownTimer);
+        window._obRequestCountdownTimer = null;
+        if(typeof window.declineSessionRequest === 'function') window.declineSessionRequest();
+      }
+    }, 1000);
+  }
   window.showSessionRequest = function(opts){
     opts = opts || {};
     var sess = opts.session || opts.sess || {};
@@ -22732,6 +22763,7 @@ window._handleRTCMessage=function(d){
       sheet.style.transform = 'translateY(0)';
       sheet.classList.add('show');
     }
+    startPendingRequestCountdown();
     schedulePendingRequestVisible();
     var sid = requestSidFromDom();
     if(sid){
@@ -22741,7 +22773,7 @@ window._handleRTCMessage=function(d){
   };
   function pollPendingLiveRequestsFallback(){
     if(role() !== 'expert') return;
-    if(window._obActiveSessId || window._sid) return;
+    if(window._obActiveSessId) return;
     var overlay = document.getElementById('session-request-overlay');
     if(overlay && getComputedStyle(overlay).display === 'flex') return;
     api('/api/sessions/pending').then(function(d){
@@ -22799,6 +22831,7 @@ window._handleRTCMessage=function(d){
     clearInterval(window._obRequestVisibilityGuard);
     window._obRequestVisibilityGuard = null;
     try { clearInterval(window._sessionRequestTimer); } catch(_timerE) {}
+    try { clearInterval(window._obRequestCountdownTimer); window._obRequestCountdownTimer = null; } catch(_timerE2) {}
     var overlay = document.getElementById('session-request-overlay');
     var sheet = document.getElementById('session-request-sheet');
     var inc = document.getElementById('ob-expert-incoming');

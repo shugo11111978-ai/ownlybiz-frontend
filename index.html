@@ -12642,8 +12642,11 @@ async function savePaymentConfig() {
     switch(d.type) {
       case 'session_request':
         window._pendingSid = d.session?.id;
-        // Skip popup if expert already in active session
-        if(window._sid||window._obActiveSessId){console.log('[WS] session_request skipped — in active session');break;}
+        // Let the guarded request handler decide whether an active session is real or stale.
+        if(window._sid||window._obActiveSessId){
+          if(typeof showLiveSessionRequestFromWs === 'function') showLiveSessionRequestFromWs(d);
+          break;
+        }
         // Use showSessionRequest so timer starts + all fields populated from real BE data
         if(typeof showSessionRequest==='function'){
           var _n=d.client?.name||'Client';
@@ -22038,7 +22041,12 @@ window._handleRTCMessage=function(d){
     if(current && current !== sid){
       api('/api/sessions/' + encodeURIComponent(current)).then(function(info){
         var cur = info.session || info || {};
-        if(cur.status === 'active') return;
+        if(cur.status === 'active'){
+          var started = cur.started_at || cur.startedAt || cur.start_time || '';
+          var created = Number(cur.created_at || cur.createdAt || 0);
+          var age = created ? ((Date.now() / 1000) - created) : 999999;
+          if(started || age < 120) return;
+        }
         window._sid = null;
         window._obActiveSessId = null;
         window._expertSessActive = false;

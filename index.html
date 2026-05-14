@@ -140,6 +140,12 @@
       '.ob-credit-balance-pill{display:inline-flex;align-items:center;gap:6px;border-radius:999px;background:rgba(122,140,110,.12);color:#56684c;padding:7px 11px;font-size:12px;font-weight:900}' +
       '.ob-credit-session-bar{background:rgba(122,140,110,.15);border:1px solid rgba(122,140,110,.26);color:#f7f1e8;border-radius:12px;margin:8px;padding:9px 10px;font-size:12px;display:flex;gap:8px;align-items:center;justify-content:space-between}' +
       '.ob-credit-session-bar-floating{position:absolute;left:10px;right:10px;top:48px;z-index:25;margin:0;background:rgba(14,20,16,.76);backdrop-filter:blur(8px);box-shadow:0 10px 30px rgba(0,0,0,.28)}' +
+      '.ob-credit-session-main{display:grid;gap:5px;min-width:0;flex:1}' +
+      '.ob-credit-session-copy{white-space:normal;line-height:1.28}' +
+      '.ob-credit-session-progress{height:4px;border-radius:999px;background:rgba(255,250,240,.18);overflow:hidden}' +
+      '.ob-credit-session-progress span{display:block;height:100%;border-radius:999px;background:#c8ff3d;transition:width .25s ease}' +
+      '.ob-credit-session-bar.is-low{border-color:rgba(248,113,113,.62);background:rgba(127,29,29,.78)}' +
+      '.ob-credit-session-bar.is-low .ob-credit-session-progress span{background:#f87171}' +
       '#screen-A4,#screen-B3,#screen-VID{position:relative}' +
       '.ob-credit-promo-form{display:grid;grid-template-columns:minmax(140px,1.1fr) 110px minmax(160px,.9fr) 120px auto;gap:10px;align-items:end}' +
       '.ob-credit-dashboard-card{background:linear-gradient(180deg,rgba(255,255,255,.065),rgba(255,255,255,.03));border-color:rgba(255,250,245,.14);border-radius:18px;color:#faf7f2;box-shadow:none;padding:24px;width:100%;max-width:none}' +
@@ -500,7 +506,9 @@
       node.dataset.obCreditDisplayReady = '1';
       node.dataset.obCreditOriginalDisplay = node.style.display || '';
     }
-    node.style.display = visible ? (node.dataset.obCreditOriginalDisplay || '') : 'none';
+    var original = node.dataset.obCreditOriginalDisplay || '';
+    if(original === 'none') original = '';
+    node.style.display = visible ? original : 'none';
   }
 
   function standardBookingPaymentNodes(){
@@ -519,8 +527,41 @@
     return state.bookingPayMode === 'topup' ? 'topup' : 'minute';
   }
 
+  function normalizeCreditMode(value){
+    value = String(value || '').trim().toLowerCase();
+    return value === 'prepaid' || value === 'credit' || value === 'topup' ? 'prepaid' : 'minute';
+  }
+
+  function selectedCreditMode(){
+    return normalizeCreditMode(window._obSelectedPaymentMode || (state.bookingPayMode === 'topup' ? 'prepaid' : 'minute'));
+  }
+
+  function setSelectedCreditMode(mode){
+    window._obSelectedPaymentMode = normalizeCreditMode(mode);
+  }
+
+  function restoreStandardBookingPayment(){
+    if(getBookingPaymentMode() === 'topup') return;
+    var walletSection = document.getElementById('bov-wallet-section');
+    var walletButton = document.getElementById('bov-wallet-button');
+    if(walletSection) {
+      var originalDisplay = walletSection.dataset.obCreditOriginalDisplay || '';
+      walletSection.style.display = originalDisplay === 'none' ? '' : originalDisplay;
+      walletSection.style.visibility = '';
+    }
+    if(walletButton && window._bovStripe && typeof window._obMountBovWallet === 'function'){
+      walletButton._obWalletMounted = false;
+      walletButton.innerHTML = '';
+      setTimeout(function(){
+        if(getBookingPaymentMode() !== 'topup') window._obMountBovWallet(window._bovStripe);
+      }, 60);
+    }
+  }
+
   function setBookingPaymentMode(mode){
+    var wasTopup = state.bookingPayMode === 'topup';
     state.bookingPayMode = mode === 'topup' ? 'topup' : 'minute';
+    setSelectedCreditMode(state.bookingPayMode === 'topup' ? 'prepaid' : 'minute');
     var overlay = document.getElementById('booking-overlay');
     if(overlay){
       overlay.classList.toggle('ob-credit-mode-topup', state.bookingPayMode === 'topup');
@@ -532,13 +573,18 @@
     document.querySelectorAll('[data-ob-payment-mode]').forEach(function(btn){
       btn.classList.toggle('active', btn.getAttribute('data-ob-payment-mode') === state.bookingPayMode);
     });
+    if(state.bookingPayMode !== 'topup' && wasTopup) restoreStandardBookingPayment();
     sessionPromoStatus();
   }
 
   window.obBookingPaymentMode = function(mode){
     setBookingPaymentMode(mode);
     if(mode === 'topup') window.obCreditOpenTopup('booking');
-    else window.obCreditCloseModal();
+    else {
+      window.obCreditCloseModal();
+      setTimeout(restoreStandardBookingPayment, 140);
+      setTimeout(restoreStandardBookingPayment, 650);
+    }
   };
 
   function injectBookingCredit(forceRefresh){
@@ -729,6 +775,7 @@
   };
 
   window.obCreditStartWithCredit = function(){
+    setSelectedCreditMode('prepaid');
     if(typeof _bovGoStep === 'function') _bovGoStep(3);
     setTimeout(function(){ if(typeof _launchSession === 'function') _launchSession(true); }, 450);
   };
@@ -1085,12 +1132,61 @@
     return bar;
   }
 
+  function clearSessionCreditBars(){
+    document.querySelectorAll('[id^="ob-credit-session-bar-"]').forEach(function(bar){ bar.remove(); });
+  }
+
+  function activeSessionCreditMode(){
+    var session = window._obClientSessionSnapshot || window._obActiveSession || window._currentSession || {};
+    return normalizeCreditMode(session.credit_mode || window._obActiveSessionCreditMode || window._obSelectedPaymentMode);
+  }
+
+  function rememberSessionCreditMode(session){
+    session = session || {};
+    if(session.id) window._obClientSessionSnapshot = session;
+    var mode = normalizeCreditMode(session.credit_mode || window._obSelectedPaymentMode);
+    window._obActiveSessionCreditMode = mode;
+    return mode;
+  }
+  window.obCreditRememberSessionMode = rememberSessionCreditMode;
+
+  function creditMinutesCopy(balance, rate){
+    if(!(rate > 0) || !(balance > 0)) return 'No prepaid minutes left at this rate';
+    var mins = balance / rate;
+    if(mins < 1) return 'less than 1 minute left at this rate';
+    if(mins < 10) return 'about ' + Math.floor(mins) + ' min ' + Math.round((mins % 1) * 60) + ' sec left';
+    return 'about ' + Math.floor(mins) + ' minutes left';
+  }
+
+  function sessionElapsedSeconds(session){
+    session = session || window._obClientSessionSnapshot || {};
+    var started = Number(session.started_at || window._obClientStartedAt || 0);
+    if(!started) return 0;
+    if(started > 100000000000) started = Math.floor(started / 1000);
+    return Math.max(0, Math.floor(Date.now() / 1000) - started);
+  }
+
+  function estimatedSessionCreditLeft(balance, rate, session){
+    session = session || window._obClientSessionSnapshot || {};
+    balance = Number(balance || 0);
+    rate = Number(rate || 0);
+    if(!(balance > 0) || !(rate > 0)) return Math.max(0, balance);
+    var elapsed = sessionElapsedSeconds(session);
+    var free = Math.max(0, Number(session.free_minutes || 0));
+    var billable = Math.max(0, (elapsed / 60) - free);
+    return Math.max(0, balance - (billable * rate));
+  }
+
   async function renderSessionCreditBar(){
     document.querySelectorAll('[id^="ob-credit-session-bar-"]').forEach(function(old){
       var parent = old.closest('#screen-A4,#screen-B3,#screen-VID');
       if(!parent || visibleSessionTargets().indexOf(parent) < 0) old.remove();
     });
     if(!expertId() || !token() || !activeSessionId()) return;
+    if(activeSessionCreditMode() !== 'prepaid'){
+      clearSessionCreditBars();
+      return;
+    }
     var targets = visibleSessionTargets();
     if(!targets.length) return;
     var d = await loadClientCreditSummary();
@@ -1098,14 +1194,26 @@
       document.querySelectorAll('[id^="ob-credit-session-bar-"]').forEach(function(bar){ bar.style.display='none'; });
       return;
     }
-    var balance = Number(d.balance || 0);
+    var actualBalance = Number(d.balance || 0);
     var ch = window._obPendingChannel || window.currentBookChannel || 'chat';
-    var rate = Number(window._obPendingRate || (window._currentExpert && window._currentExpert['rate_' + ch]) || 0);
-    var low = balance > 0 && rate > 0 && balance < rate * 3;
+    var session = window._obClientSessionSnapshot || {};
+    var rate = Number(window._obPendingRate || session.rate_per_min || (window._currentExpert && window._currentExpert['rate_' + ch]) || 0);
+    var displayBalance = estimatedSessionCreditLeft(actualBalance, rate, session);
+    var remainingText = creditMinutesCopy(displayBalance, rate);
+    var low = displayBalance <= 0 || (rate > 0 && displayBalance < rate * 3);
+    var pctBase = Math.max(actualBalance, rate * 10, 1);
+    var pct = Math.max(3, Math.min(100, Math.round((displayBalance / pctBase) * 100)));
+    var running = sessionElapsedSeconds(session) > 0;
     targets.forEach(function(screen){
       var bar = ensureSessionCreditBar(screen);
       bar.style.display = 'flex';
-      bar.innerHTML = '<span>' + (low ? 'Credit is running low: ' : 'Prepaid credit: ') + '<strong>' + money(balance) + '</strong><span style="opacity:.72"> · no expiration</span></span><button class="ob-credit-btn secondary" style="padding:6px 9px;font-size:11px" onclick="obCreditOpenTopup(&quot;session&quot;)">Add credit</button>';
+      bar.classList.toggle('is-low', low);
+      bar.innerHTML =
+        '<div class="ob-credit-session-main">' +
+          '<div class="ob-credit-session-copy">' + (low ? 'Credit running low: ' : (running ? 'Estimated credit left: ' : 'Prepaid credit left: ')) + '<strong>' + money(displayBalance) + '</strong><span style="opacity:.74"> · ' + esc(remainingText) + ' · no expiration</span></div>' +
+          '<div class="ob-credit-session-progress" aria-hidden="true"><span style="width:' + pct + '%"></span></div>' +
+        '</div>' +
+        '<button class="ob-credit-btn secondary" style="padding:6px 9px;font-size:11px;white-space:nowrap" onclick="obCreditOpenTopup(&quot;session&quot;)">Add credit</button>';
     });
   }
 
@@ -6854,6 +6962,7 @@ if (!window.toast) {
           <div id="client-nav-dropdown" style="display:none;position:absolute;top:100%;right:0;margin-top:6px;background:var(--white);border:1px solid var(--gray-200);border-radius:12px;box-shadow:0 8px 30px rgba(0,0,0,.12);min-width:200px;z-index:9999;overflow:hidden;">
             <a onclick="showExpertPage('account')" style="display:flex;align-items:center;gap:10px;padding:12px 16px;font-size:13px;color:var(--brown);cursor:pointer;transition:.15s;font-weight:500;border-bottom:1px solid var(--gray-100);" onmouseenter="this.style.background='var(--cream)'" onmouseleave="this.style.background=''"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>My Bookings</a>
             <a onclick="showExpertPage('account');setTimeout(function(){var t=document.getElementById('client-sessions-tab');if(t)t.click();},100);" style="display:flex;align-items:center;gap:10px;padding:12px 16px;font-size:13px;color:var(--brown);cursor:pointer;transition:.15s;font-weight:500;border-bottom:1px solid var(--gray-100);" onmouseenter="this.style.background='var(--cream)'" onmouseleave="this.style.background=''"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>My Sessions</a>
+            <a onclick="showExpertPage('account');setTimeout(function(){var t=document.getElementById('client-credit-tab');if(t)t.click();},100);" style="display:flex;align-items:center;gap:10px;padding:12px 16px;font-size:13px;color:var(--brown);cursor:pointer;transition:.15s;font-weight:500;border-bottom:1px solid var(--gray-100);" onmouseenter="this.style.background='var(--cream)'" onmouseleave="this.style.background=''"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v10"/><path d="M8 11h8"/></svg>My Credit</a>
             <a onclick="clientLogout()" style="display:flex;align-items:center;gap:10px;padding:12px 16px;font-size:13px;color:#dc2626;cursor:pointer;transition:.15s;font-weight:500;" onmouseenter="this.style.background='rgba(239,68,68,.05)'" onmouseleave="this.style.background=''"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>Log Out</a>
           </div>
         </div>
@@ -7424,12 +7533,16 @@ if (!window.toast) {
       <div style="display:flex;border-bottom:2px solid var(--gray-200);margin-bottom:20px;">
         <button class="client-acct-tab active" id="client-bookings-tab" onclick="switchClientTab('bookings')" style="flex:1;padding:12px;font-size:13px;font-weight:600;border:none;background:none;color:var(--terra);border-bottom:2px solid var(--terra);cursor:pointer;font-family:var(--font-body);margin-bottom:-2px;">My Bookings</button>
         <button class="client-acct-tab" id="client-sessions-tab" onclick="switchClientTab('sessions')" style="flex:1;padding:12px;font-size:13px;font-weight:600;border:none;background:none;color:var(--gray-400);border-bottom:2px solid transparent;cursor:pointer;font-family:var(--font-body);margin-bottom:-2px;">Session History</button>
+        <button class="client-acct-tab" id="client-credit-tab" onclick="switchClientTab('credit')" style="flex:1;padding:12px;font-size:13px;font-weight:600;border:none;background:none;color:var(--gray-400);border-bottom:2px solid transparent;cursor:pointer;font-family:var(--font-body);margin-bottom:-2px;">Credit</button>
       </div>
       <div id="client-bookings-list">
         <div style="text-align:center;padding:30px;color:var(--gray-400);font-size:14px;">Loading bookings...</div>
       </div>
       <div id="client-sessions-list" style="display:none;">
         <div style="text-align:center;padding:30px;color:var(--gray-400);font-size:14px;">Loading sessions...</div>
+      </div>
+      <div id="client-credit-list" style="display:none;">
+        <div style="text-align:center;padding:30px;color:var(--gray-400);font-size:14px;">Loading credit...</div>
       </div>
     </div>
   </div>
@@ -10392,6 +10505,8 @@ async function bovAuthorize() {
   var t = sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || localStorage.getItem('ob_client_token') || '';
   if (!t) { showErr('Please log in first.'); return; }
   if (window.OWNLYBIZ_IS_STAGING) {
+    window._obSelectedPaymentMode = 'minute';
+    window._obActiveSessionCreditMode = 'minute';
     localStorage.setItem('ob_hpm','1');
     if (btn) btn.textContent = 'Bypassed for staging ✓';
     _bovGoStep(3);
@@ -12505,6 +12620,8 @@ async function savePaymentConfig() {
           var _n=d.client?.name||'Client';
           var _fm=d.session?.free_minutes!=null?d.session.free_minutes:0;
           showSessionRequest({
+            session:d.session,
+            sessionId:d.session?.id,
             clientName: _n,
             clientSub: (d.session?.channel||'chat')+' session',
             initials: ((_n.match(/\b\w/g)||['C','L']).slice(0,2).join('').toUpperCase()),
@@ -12520,6 +12637,11 @@ async function savePaymentConfig() {
       case 'session_accepted':
         window._sid = d.session?.id;
         if(d.session?.channel) window._obPendingChannel = d.session.channel;
+        if(d.session){
+          window._obClientSessionSnapshot = d.session;
+          window._obActiveSessionCreditMode = d.session.credit_mode || window._obSelectedPaymentMode || 'minute';
+          if(typeof window.obCreditRememberSessionMode === 'function') window.obCreditRememberSessionMode(d.session);
+        }
         WS.send({type:'join',session_id:d.session.id});
         toast('Session started! 🚀');
         if(typeof window.openClientChat==='function') {
@@ -13399,7 +13521,7 @@ async function savePaymentConfig() {
     window._obPendingChannel=channel;
     const type=window.currentBookMode||'permin';
     try {
-      const d=await api('POST','/sessions/request',{expert_id:expertId,channel,type,promo_code:window._obSessionPromoCode||''});
+      const d=await api('POST','/sessions/request',{expert_id:expertId,channel,type,promo_code:window._obSessionPromoCode||'',credit_mode:window._obSelectedPaymentMode||'minute'});
       window._sid=d.session.id;
       WS.connect(); WS.send({type:'join',session_id:d.session.id});
       toast('Session requested! Waiting for expert…');
@@ -17929,10 +18051,11 @@ body.expert-page #mob-cta-bar{display:none!important;}
     document.getElementById('ob-wait-sub').textContent=channel.charAt(0).toUpperCase()+channel.slice(1)+' session requested';
     if(ov)ov.classList.add('show');
     window._obPendingChannel=channel;
-    fetch(BASE+'/api/sessions/request',{method:'POST',headers:hdr(),body:JSON.stringify({expert_id:expertId,channel:channel,message:'',promo_code:window._obSessionPromoCode||''})})
+    fetch(BASE+'/api/sessions/request',{method:'POST',headers:hdr(),body:JSON.stringify({expert_id:expertId,channel:channel,message:'',promo_code:window._obSessionPromoCode||'',credit_mode:window._obSelectedPaymentMode||'minute'})})
       .then(function(r){return r.json();}).then(function(d){
         if(d.session){
-          _sessId=d.session.id;window._obPendingSessId=d.session.id;window._obPendingExpertName=expertName;
+          _sessId=d.session.id;window._obPendingSessId=d.session.id;window._obPendingExpertName=expertName;window._obClientSessionSnapshot=d.session;window._obActiveSessionCreditMode=d.session.credit_mode||window._obSelectedPaymentMode||'minute';
+          if(typeof window.obCreditRememberSessionMode === 'function') window.obCreditRememberSessionMode(d.session);
           // Mark client as having payment method (session accepted = authorized for billing)
           try{localStorage.setItem('ob_hpm','1');}catch(e){}
           var ws=window._obWs||window._obClientWs;if(ws&&ws.readyState===1)sendWsAuth(ws);
@@ -19532,16 +19655,23 @@ function clientSignupFromModal() {
 
 // ══════════ CLIENT ACCOUNT PAGE ══════════
 function switchClientTab(tab) {
-  document.getElementById('client-bookings-list').style.display = tab === 'bookings' ? 'block' : 'none';
-  document.getElementById('client-sessions-list').style.display = tab === 'sessions' ? 'block' : 'none';
-  document.getElementById('client-bookings-tab').style.color = tab === 'bookings' ? 'var(--terra)' : 'var(--gray-400)';
-  document.getElementById('client-bookings-tab').style.borderBottomColor = tab === 'bookings' ? 'var(--terra)' : 'transparent';
-  document.getElementById('client-bookings-tab').classList.toggle('active', tab === 'bookings');
-  document.getElementById('client-sessions-tab').style.color = tab === 'sessions' ? 'var(--terra)' : 'var(--gray-400)';
-  document.getElementById('client-sessions-tab').style.borderBottomColor = tab === 'sessions' ? 'var(--terra)' : 'transparent';
-  document.getElementById('client-sessions-tab').classList.toggle('active', tab === 'sessions');
+  var bookingsList = document.getElementById('client-bookings-list');
+  var sessionsList = document.getElementById('client-sessions-list');
+  var creditList = document.getElementById('client-credit-list');
+  if(bookingsList) bookingsList.style.display = tab === 'bookings' ? 'block' : 'none';
+  if(sessionsList) sessionsList.style.display = tab === 'sessions' ? 'block' : 'none';
+  if(creditList) creditList.style.display = tab === 'credit' ? 'block' : 'none';
+  [['bookings','client-bookings-tab'],['sessions','client-sessions-tab'],['credit','client-credit-tab']].forEach(function(pair){
+    var el = document.getElementById(pair[1]);
+    if(!el) return;
+    var active = tab === pair[0];
+    el.style.color = active ? 'var(--terra)' : 'var(--gray-400)';
+    el.style.borderBottomColor = active ? 'var(--terra)' : 'transparent';
+    el.classList.toggle('active', active);
+  });
   if (tab === 'bookings') loadClientBookings();
   if (tab === 'sessions') loadClientSessions();
+  if (tab === 'credit') loadClientCredit();
 }
 
 function loadClientBookings() {
@@ -19611,6 +19741,65 @@ function loadClientSessions() {
       }).join('');
     })
     .catch(function() { list.innerHTML = '<div style="text-align:center;padding:20px;color:#dc2626;">Failed to load sessions.</div>'; });
+}
+
+function loadClientCredit() {
+  var tok = getClientToken();
+  var list = document.getElementById('client-credit-list');
+  var expertId = window._currentExpertId || window._browseExpertId || (window._currentExpert && (window._currentExpert.user_id || window._currentExpert.id)) || '';
+  if (!tok || !list) return;
+  if (!expertId) {
+    list.innerHTML = '<div style="text-align:center;padding:30px;color:var(--gray-400);font-size:14px;">Open this from an expert page to see credit for that expert.</div>';
+    return;
+  }
+  function fmtMoney(v){ return '$' + Number(v || 0).toFixed(2); }
+  function html(s){ var el = document.createElement('div'); el.textContent = s == null ? '' : String(s); return el.innerHTML; }
+  function fmtDate(ts){
+    if(!ts) return '';
+    var d = new Date(Number(ts) > 10000000000 ? Number(ts) : Number(ts) * 1000);
+    if(isNaN(d.getTime())) return '';
+    return d.toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' });
+  }
+  function label(type){
+    type = String(type || '').toLowerCase();
+    if(type.indexOf('purchase') >= 0 || type === 'credit') return 'Credit added';
+    if(type.indexOf('session') >= 0 || type.indexOf('debit') >= 0 || type.indexOf('use') >= 0) return 'Used in session';
+    if(type.indexOf('refund') >= 0) return 'Refunded';
+    if(type.indexOf('freeze') >= 0) return 'Temporarily frozen';
+    if(type.indexOf('dispute') >= 0) return 'Dispute adjustment';
+    return 'Credit activity';
+  }
+  list.innerHTML = '<div style="text-align:center;padding:20px;color:var(--gray-400);">Loading credit...</div>';
+  fetch(_BASE + '/api/credits/experts/' + encodeURIComponent(expertId) + '/client', { headers: { 'Authorization': 'Bearer ' + tok } })
+    .then(function(r) { return r.json().then(function(d){ return { ok:r.ok, data:d }; }); })
+    .then(function(res) {
+      if(!res.ok) throw new Error(res.data && res.data.error || 'Credit unavailable');
+      var d = res.data || {};
+      var balance = Number(d.balance || 0);
+      var tx = d.transactions || [];
+      var expertName = (window._currentExpert && (window._currentExpert.name || window._currentExpert.display_name)) || 'this expert';
+      list.innerHTML =
+        '<div style="background:var(--white);border:1px solid var(--gray-200);border-radius:16px;padding:18px;margin-bottom:12px;">' +
+          '<div style="font-size:12px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--gray-400);margin-bottom:6px;">Prepaid credit</div>' +
+          '<div style="display:flex;align-items:flex-end;justify-content:space-between;gap:14px;flex-wrap:wrap;">' +
+            '<div><div style="font-size:34px;font-family:var(--font-head);font-weight:700;color:var(--brown);line-height:1;">' + fmtMoney(balance) + '</div><div style="font-size:13px;color:var(--gray-400);margin-top:6px;">Available with ' + html(expertName) + ' only.</div></div>' +
+            '<span style="display:inline-flex;border-radius:999px;background:rgba(122,140,110,.12);color:#56684c;padding:8px 12px;font-size:12px;font-weight:800;">No expiration</span>' +
+          '</div>' +
+        '</div>' +
+        '<div style="font-size:12px;color:var(--gray-400);line-height:1.5;margin:0 0 14px;">Credit is used automatically only when you choose prepaid credit for a matching live session with this expert. Pay-by-minute sessions stay on the normal card or wallet flow.</div>' +
+        '<div style="font-size:15px;font-weight:700;color:var(--brown);margin-bottom:10px;">Credit activity</div>' +
+        (tx.length ? tx.map(function(row){
+          var amount = Number(row.amount_credit || 0);
+          var pos = amount >= 0;
+          return '<div style="background:var(--white);border:1px solid var(--gray-200);border-radius:14px;padding:14px;margin-bottom:9px;display:flex;justify-content:space-between;gap:12px;align-items:flex-start;">' +
+            '<div><div style="font-size:14px;font-weight:700;color:var(--brown);">' + label(row.type) + '</div><div style="font-size:12px;color:var(--gray-400);margin-top:3px;">' + html(row.description || fmtDate(row.created_at) || 'Credit ledger entry') + '</div></div>' +
+            '<div style="text-align:right;"><div style="font-size:14px;font-weight:800;color:' + (pos ? '#56684c' : 'var(--terra)') + ';">' + (pos ? '+' : '-') + fmtMoney(Math.abs(amount)) + '</div><div style="font-size:11px;color:var(--gray-400);margin-top:3px;">Balance ' + fmtMoney(row.balance_after) + '</div></div>' +
+          '</div>';
+        }).join('') : '<div style="background:var(--white);border:1px solid var(--gray-200);border-radius:14px;padding:24px;text-align:center;color:var(--gray-400);">No credit activity yet.</div>');
+    })
+    .catch(function(e) {
+      list.innerHTML = '<div style="text-align:center;padding:20px;color:#dc2626;">' + (e.message || 'Failed to load credit.') + '</div>';
+    });
 }
 
 // Init: check auth on page load
@@ -21769,6 +21958,7 @@ window._handleRTCMessage=function(d){
     var started = d.started_at || (d.session && d.session.started_at);
     if(!sid || sid === window._obActiveSessId || sid === window._sid || sid === window._sessId){
       if(started){
+        if(d.session && typeof window.obCreditRememberSessionMode === 'function') window.obCreditRememberSessionMode(d.session);
         if(d.session){
           if(d.session.free_minutes != null) window._expertSessFreeMins = int(d.session.free_minutes, 0);
           if(d.session.rate_per_min != null) window._expertSessRate = num(d.session.rate_per_min, window._expertSessRate || 3.5);
@@ -22057,6 +22247,7 @@ window._handleRTCMessage=function(d){
     window.currentBookChannel = ch;
     window._obPendingRate = rate;
     window._obClientSessionSnapshot = Object.assign(window._obClientSessionSnapshot || {}, sess, {channel:ch, rate_per_min:rate, free_minutes:free});
+    if(typeof window.obCreditRememberSessionMode === 'function') window.obCreditRememberSessionMode(window._obClientSessionSnapshot);
     setClientFreeUi(ch, rate, free);
     var expertName = ((window._currentExpert && (window._currentExpert.name || window._currentExpert.display_name)) || sess.expert_name || 'Expert');
     setText('a4-session-title', expertName + ' - ' + ch.charAt(0).toUpperCase() + ch.slice(1));
@@ -22454,11 +22645,13 @@ window._handleRTCMessage=function(d){
     if(overlay){
       overlay.dataset.sessionId = sid;
       overlay.style.setProperty('display', 'flex', 'important');
+      overlay.style.setProperty('z-index', '2147483000', 'important');
       overlay.classList.add('show');
     }
     if(sheet){
       sheet.dataset.sessionId = sid;
       sheet.style.setProperty('display', 'block', 'important');
+      sheet.style.setProperty('z-index', '2147483001', 'important');
       sheet.style.transform = 'translateY(0)';
       sheet.classList.add('show');
     }
@@ -22523,6 +22716,12 @@ window._handleRTCMessage=function(d){
       if(!sess || !sess.id) return;
       var age = (Date.now()/1000) - int(sess.created_at, 0);
       if(age > 90) return;
+      if(window._obRequestVisibleSid === sess.id || window._obLastPendingPollShownSid === sess.id && Date.now() - (window._obLastPendingPollShownAt || 0) < 25000){
+        schedulePendingRequestVisible();
+        return;
+      }
+      window._obLastPendingPollShownSid = sess.id;
+      window._obLastPendingPollShownAt = Date.now();
       showLiveSessionRequestFromWs({type:'session_request', session:sess, client:{name:sess.client_name || 'Client'}, channel:sess.channel || 'chat'});
       schedulePendingRequestVisible();
     }).catch(function(){});
@@ -23077,6 +23276,10 @@ window._handleRTCMessage=function(d){
 .ob-not-offered-badge{position:absolute;top:8px;right:8px;background:#7b6f66;color:white;font-size:9px;font-weight:900;text-transform:uppercase;letter-spacing:.05em;border-radius:999px;padding:3px 7px;pointer-events:none;z-index:3;}
 #session-request-overlay.ob-floating-request-overlay{pointer-events:none!important;background:transparent!important;backdrop-filter:none!important;align-items:flex-start!important;justify-content:flex-end!important;padding:18px!important;}
 #session-request-sheet.ob-floating-request-sheet{pointer-events:auto!important;width:min(420px,calc(100vw - 28px))!important;max-width:420px!important;border-radius:22px!important;padding-bottom:22px!important;box-shadow:0 20px 70px rgba(37,24,16,.24)!important;transform:none!important;animation:obFloatIn .22s ease-out both;}
+#session-request-overlay,
+#session-request-overlay.ob-floating-request-overlay{z-index:2147483000!important;}
+#session-request-sheet,
+#session-request-sheet.ob-floating-request-sheet{z-index:2147483001!important;}
 .ob-browser-notify-btn{display:block;margin:12px 24px 0;width:calc(100% - 48px);padding:10px 12px;border-radius:12px;border:1px solid rgba(196,98,45,.22);background:rgba(196,98,45,.06);color:var(--brown);font-size:12px;font-weight:800;cursor:pointer;font-family:var(--font-body);}
 @keyframes obFloatIn{from{opacity:0;transform:translateY(-8px) scale(.98);}to{opacity:1;transform:translateY(0) scale(1);}}
 @media(max-width:680px){
@@ -23458,7 +23661,9 @@ window._handleRTCMessage=function(d){
     overlay.classList.add('ob-floating-request-overlay');
     sheet.classList.add('ob-floating-request-sheet');
     overlay.style.setProperty('display','flex','important');
+    overlay.style.setProperty('z-index','2147483000','important');
     sheet.style.setProperty('display','block','important');
+    sheet.style.setProperty('z-index','2147483001','important');
     sheet.style.transform = 'none';
     ensureNotificationButton();
     if(navigator.vibrate) try { navigator.vibrate([160, 70, 160]); } catch(e) {}
@@ -28036,6 +28241,8 @@ window._handleRTCMessage=function(d){
       errorId:'bov-card-error',
       token:function(){ return token(); },
       onSuccess:function(pm){
+        window._obSelectedPaymentMode = 'minute';
+        window._obActiveSessionCreditMode = 'minute';
         window._bovPaymentMethodId = pm;
         localStorage.setItem('ob_hpm','1');
         var btn = document.getElementById('bov-pay-btn');
@@ -34754,7 +34961,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   function sendVerification(){var t=tok();if(!t){toast('Please log in first.');return;}fetch(api('/api/auth/resend-verification'),{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+t},body:JSON.stringify({source:'dashboard_setup_guide'})}).then(function(r){return r.json().catch(function(){return {};}).then(function(d){if(!r.ok)throw new Error(d.error||'Could not send verification email');return d;});}).then(function(){toast('Verification email sent. Check your inbox, then return here.');installSettingsEmailCard();}).catch(function(e){toast(e.message||'Could not send verification email.');});}
   function siteUrl(){var s=slug();return s?location.origin+'/'+encodeURIComponent(s):location.origin+'/';}
   function publishSite(value){var t=tok();if(!t){toast('Please log in first.');return;}fetch(api('/api/auth/me'),{method:'PUT',headers:{'Content-Type':'application/json',Authorization:'Bearer '+t},body:JSON.stringify({website_published:value?1:0})}).then(function(r){return r.json().catch(function(){return {};}).then(function(d){if(!r.ok||d.success===false)throw new Error(d.error||'Could not update publish state');return d;});}).then(function(d){state.profile=d.profile||(d.user&&d.user.profile)||Object.assign({},state.profile,{website_published:value?1:0});state.user=d.user||state.user;try{var u=readUser();u.profile=Object.assign({},u.profile||{},state.profile);localStorage.setItem('ob_u',JSON.stringify(u));sessionStorage.setItem('ob_u',JSON.stringify(u));}catch(e){}toast(value?'Website published. You can now view the public page.':'Website unpublished.');renderGuide();installPublishViewShortcut();}).catch(function(e){toast(e.message||'Could not publish website.');});}
-  window.obPublishExpertSite=publishSite;window.obPublishSiteV5=publishSite;window.obShowOnboardingV5=function(force){sessionStorage.removeItem(key('minimized'));state.expanded=true;var m=document.getElementById('ob-guide-mini-v6');if(m)m.remove();ensureGuide();};
+  window.obPublishExpertSite=publishSite;window.obPublishSiteV5=publishSite;window.obShowOnboardingV5=function(force){if(force){try{localStorage.removeItem(key('never'));localStorage.removeItem('ownlybiz_onboarding_v19_'+(slug()||'expert'));}catch(e){}}sessionStorage.removeItem(key('minimized'));state.expanded=true;var m=document.getElementById('ob-guide-mini-v6');if(m)m.remove();ensureGuide();};
   function installSettingsEmailCard(){if(!isDash()||panel()!=='settings')return;var active=document.querySelector('.db-tab-panel.active')||host();if(!active)return;var existing=document.getElementById('ob-email-verify-card-v6');var verified=done(steps[0]);if(verified){if(existing)existing.remove();return;}var card=existing||document.createElement('div');card.id='ob-email-verify-card-v6';card.className='ob-email-verify-card-v6';card.innerHTML='<div style="display:flex;justify-content:space-between;gap:16px;align-items:center;flex-wrap:wrap"><div><div style="font-size:12px;font-weight:950;text-transform:uppercase;letter-spacing:.08em;color:#9b451d;margin-bottom:6px">Account security</div><h3 style="margin:0 0 6px;color:#241813">Verify your email</h3><p style="margin:0;color:rgba(36,24,19,.62);line-height:1.55">Send a verification link to your email. This protects recovery and future client notifications.</p></div><button class="ob-guide-v6-btn primary" type="button" data-obv6-send-email>Send verification email</button></div>';if(!existing)active.insertBefore(card,active.firstChild);}
   function installPublishViewShortcut(){var published=Number((state.profile||{}).website_published||0)===1;Array.prototype.slice.call(document.querySelectorAll('#ob-publish-card-v5')).forEach(function(card){if(panel()==='live-session')card.remove();else if(published&&!card.querySelector('[data-obv6-view-site]')){var a=document.createElement('a');a.className='ob-secondary';a.setAttribute('data-obv6-view-site','1');a.href=siteUrl();a.target='_blank';a.textContent='View website';var actions=card.querySelector('.ob-actions')||card;actions.appendChild(a);}});}
   function installLiveOnlineCard(){if(!isDash())return;var existing=document.getElementById('ob-live-online-card-v6');if(panel()!=='live-session'){if(existing)existing.remove();return;}var h=host();if(!h)return;var label=(document.getElementById('golive-label')||{}).textContent||((state.profile||{}).is_online?'Online':'Offline');var online=/online/i.test(label)&&!/offline/i.test(label);var card=existing||document.createElement('div');card.id='ob-live-online-card-v6';card.className='ob-live-online-card-v6';card.innerHTML='<div style="display:flex;justify-content:space-between;gap:16px;align-items:center;flex-wrap:wrap"><div><div style="font-size:12px;font-weight:950;text-transform:uppercase;letter-spacing:.08em;color:#c8ff3d;margin-bottom:7px">Live sessions</div><h3 style="font-size:25px;line-height:1.05;margin:0 0 7px;color:#fffaf0">'+(online?'You are online and ready for live clients.':'You are offline. Go online to receive live sessions.')+'</h3><p style="margin:0">'+(online?'Clients can request live sessions when your profile is published and payments are ready.':'Turn your status online when you are available. This is separate from publishing your website.')+'</p></div><button class="ob-guide-v6-btn primary" type="button" data-obv6-go-online>'+(online?'You are online':'Go online')+'</button></div>';if(!existing)h.insertBefore(card,h.firstChild);}
@@ -36590,12 +36797,23 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       state.minimized = false;
       state.open = true;
       localStorage.setItem(key, JSON.stringify(state));
+      localStorage.removeItem('ownlybiz_onboarding_v19_' + slug());
       legacyHiddenKeys().forEach(function(k){ localStorage.removeItem(k); });
       legacyMinKeys().forEach(function(k){ sessionStorage.removeItem(k); });
     } catch(e) {}
     closeHelp();
-    if(typeof window.ownlybizProdGuideOpen === 'function') window.ownlybizProdGuideOpen();
-    else if(typeof window.ownlybizProdCoachOpen === 'function') window.ownlybizProdCoachOpen();
+    if(typeof window.ownlybizProdCoachOpen === 'function') window.ownlybizProdCoachOpen();
+    else if(typeof window.ownlybizStagingCoachOpen === 'function') window.ownlybizStagingCoachOpen();
+    else if(typeof window.obShowOnboardingV5 === 'function') window.obShowOnboardingV5(true);
+    setTimeout(function(){
+      if(typeof window.ownlybizProdCoachOpen === 'function') window.ownlybizProdCoachOpen();
+      var guide = document.getElementById('ownlybiz-coach-v19') || document.getElementById('ob-guide-v6');
+      if(guide){
+        guide.style.display = '';
+        guide.style.visibility = 'visible';
+        guide.style.opacity = '1';
+      }
+    }, 180);
   }
   function openDashboardPanel(panel){
     closeHelp();

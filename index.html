@@ -28,7 +28,7 @@
 
   var BASE = (window.OWNLYBIZ_API_URL || window._OB_BACKEND || 'https://victorious-wisdom-production-a6b0.up.railway.app').replace(/\/+$/,'');
   var CREDIT_AMOUNTS = [10,20,30,50,75,100,150,200,250,500];
-  var state = { settings:null, summary:null, amount:0, promo:null, intent:null, stripe:null, elements:null, cardElement:null, paymentMounted:false, context:null, pauseSessionId:null, bookingCreditRequest:0 };
+  var state = { settings:null, summary:null, amount:0, promo:null, sessionPromo:null, intent:null, stripe:null, elements:null, cardElement:null, paymentMounted:false, context:null, pauseSessionId:null, bookingCreditRequest:0 };
 
   function token(){ return sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || localStorage.getItem('ob_client_token') || ''; }
   function user(){ try { return JSON.parse(sessionStorage.getItem('ob_u') || localStorage.getItem('ob_u') || 'null'); } catch(e){ return null; } }
@@ -41,6 +41,9 @@
   function toastMsg(msg,type){ if(typeof toast==='function') toast(msg,type||'ok'); else if(typeof _showToast==='function') _showToast(msg,type==='err'?'red':'green'); else console.log(msg); }
   function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
   function attr(s){ return esc(String(s == null ? '' : s)); }
+  function promoAppliesLabel(value){
+    return ({credits:'Prepaid credit',sessions:'Pay-by-minute sessions',both:'Credit + sessions'})[String(value || 'credits')] || 'Prepaid credit';
+  }
   async function creditApi(method,path,body){
     var h = {'Content-Type':'application/json'};
     var t = token();
@@ -106,6 +109,10 @@
       '.ob-credit-input::placeholder{color:#8f847b}' +
       '.ob-credit-card-frame{background:#fff;border:1px solid rgba(36,24,19,.14);border-radius:12px;padding:14px 12px;box-shadow:0 8px 24px rgba(36,24,19,.08)}' +
       '.ob-credit-card-help{font-size:12px;line-height:1.45;color:#746a63;margin:8px 2px 0}' +
+      '.ob-session-promo-card{background:#fffaf5;border:1px solid rgba(36,24,19,.12);border-radius:14px;padding:16px;margin:14px 0;color:#241813;box-shadow:0 10px 30px rgba(36,24,19,.06)}' +
+      '.ob-session-promo-card h3{margin:0 0 6px;font-size:18px;line-height:1.15;font-family:var(--font-head,inherit);color:#241813;letter-spacing:0}' +
+      '.ob-session-promo-form{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center}' +
+      '.ob-session-promo-status{font-size:12px;line-height:1.45;color:#746a63;margin-top:8px}' +
       '.ob-credit-modal{position:fixed;inset:0;z-index:100000;background:rgba(20,12,8,.72);backdrop-filter:blur(8px);display:none;align-items:center;justify-content:center;padding:16px}' +
       '.ob-credit-sheet{background:#fffaf5;color:#241813;border:1px solid rgba(36,24,19,.12);border-radius:18px;width:min(560px,100%);max-height:92vh;overflow:auto;padding:22px;box-shadow:0 28px 90px rgba(0,0,0,.34)}' +
       '.ob-credit-modal.ob-credit-inline{position:static;inset:auto;z-index:auto;background:transparent;backdrop-filter:none;display:block;padding:0;margin-top:12px}' +
@@ -123,13 +130,13 @@
       '.ob-credit-dashboard-card .ob-credit-chip.active{background:rgba(200,255,61,.12);border-color:#c8ff3d;color:#f8ffe5}' +
       '.ob-credit-dashboard-card .ob-credit-input{background:rgba(255,250,245,.075);border-color:rgba(255,250,245,.18);color:#faf7f2}' +
       '.ob-credit-dashboard-card .ob-credit-input::placeholder{color:#8f877f}' +
-      '.ob-credit-dashboard-card .ob-credit-promo-form{grid-template-columns:minmax(190px,1fr) 110px;max-width:620px}' +
+      '.ob-credit-dashboard-card .ob-credit-promo-form{grid-template-columns:minmax(160px,1fr) 104px minmax(170px,.9fr) 110px auto;max-width:none}' +
       '.ob-credit-dashboard-card .ob-credit-btn.secondary{background:rgba(255,250,245,.08);border-color:rgba(255,250,245,.18);color:#faf7f2}' +
       '.ob-credit-dashboard-card [style*="var(--brown)"]{color:#faf7f2!important}' +
       '.ob-credit-dashboard-card [style*="var(--gray-400)"],.ob-credit-dashboard-card [style*="var(--gray-500)"]{color:#b8afa6!important}' +
       '.services-grid-4.ob-credit-live-only{grid-template-columns:repeat(3,minmax(0,1fr))}' +
       '@media(min-width:1200px){body:has(#ownlybiz-coach-v19) .ob-credit-dashboard-card{max-width:680px}}' +
-      '@media(max-width:760px){.ob-credit-promo-form{grid-template-columns:1fr}.ob-credit-promo-form .ob-credit-btn{width:100%}}' +
+      '@media(max-width:760px){.ob-credit-promo-form,.ob-session-promo-form{grid-template-columns:1fr}.ob-credit-promo-form .ob-credit-btn,.ob-session-promo-form .ob-credit-btn{width:100%}}' +
       '@media(max-width:640px){.ob-credit-row{align-items:stretch}.ob-credit-row>*{width:100%}.ob-credit-card{padding:14px}.ob-credit-grid{grid-template-columns:repeat(2,1fr)}.ob-credit-sheet{padding:16px;border-radius:14px}.ob-credit-modal{padding:10px}}';
     document.head.appendChild(css);
   }
@@ -212,7 +219,7 @@
     }
     list.innerHTML = promos.map(function(p, idx){
       return '<div style="display:grid;grid-template-columns:1fr auto auto;gap:10px;align-items:center;border-top:1px solid rgba(36,24,19,.08);padding:10px 0">' +
-        '<div><div style="font-weight:900;color:var(--brown)">' + esc(p.code) + '</div><div style="font-size:12px;color:var(--gray-400)">' + Number(p.percent_off||0).toFixed(0) + '% off · ' + esc(p.applies_to || 'credits') + ' · used ' + (p.uses_count || 0) + '</div></div>' +
+        '<div><div style="font-weight:900;color:var(--brown)">' + esc(p.code) + '</div><div style="font-size:12px;color:var(--gray-400)">' + Number(p.percent_off||0).toFixed(0) + '% off · ' + esc(promoAppliesLabel(p.applies_to)) + ' · used ' + (p.uses_count || 0) + '</div></div>' +
         '<label style="font-size:12px;color:var(--gray-500);display:flex;align-items:center;gap:6px"><input type="checkbox" ' + (p.is_active ? 'checked' : '') + ' data-ob-credit-promo-toggle="' + idx + '"> Active</label>' +
         '<button class="ob-credit-btn secondary" data-ob-credit-promo-pause="' + idx + '">Pause</button>' +
       '</div>';
@@ -254,11 +261,11 @@
       '<div class="ob-credit-row"><span id="ob-credit-settings-status" style="font-size:12px;color:var(--gray-400)"></span><button class="ob-credit-btn" onclick="obCreditSaveSettings()">Save prepaid credit</button></div>' +
       '<div style="height:1px;background:rgba(36,24,19,.1);margin:18px 0"></div>' +
       '<h3>Promotion Codes</h3>' +
-      '<p class="ob-credit-sub">Pro and Scale experts can offer Shopify-style percentage discounts for prepaid credit checkout. Clients see the code, discount line, and final total before paying; pay-by-minute sessions still show the posted live rate.</p>' +
+      '<p class="ob-credit-sub">Pro and Scale experts can offer Shopify-style percentage discounts for prepaid credit, pay-by-minute sessions, or both. Clients see the posted rate, the code, and the discount before they start.</p>' +
       '<div class="ob-credit-promo-form">' +
         '<input id="ob-promo-code" class="ob-credit-input" placeholder="WELCOME20">' +
         '<input id="ob-promo-percent" class="ob-credit-input" type="number" min="1" max="90" placeholder="% off">' +
-        '<select id="ob-promo-applies" class="ob-credit-input"><option value="credits">Prepaid credit</option></select>' +
+        '<select id="ob-promo-applies" class="ob-credit-input"><option value="credits">Prepaid credit</option><option value="sessions">Pay-by-minute sessions</option><option value="both">Credit + sessions</option></select>' +
         '<input id="ob-promo-max" class="ob-credit-input" type="number" min="0" placeholder="Max uses">' +
         '<button class="ob-credit-btn secondary" onclick="obCreditCreatePromo()">Create</button>' +
       '</div>' +
@@ -406,6 +413,84 @@
       if(mount.dataset.obCreditRequest === requestId) mount.dataset.obCreditLoading = '0';
     });
   }
+
+  function sessionRateAmount(){
+    var ch = window.selectedChannel || {};
+    var raw = window._obPendingRate || (ch && ch.price) || '';
+    var rate = Number(String(raw).replace(/[^0-9.]/g,''));
+    if(!rate && window._currentExpert){
+      var channel = (ch && ch.id) || window._obPendingChannel || window.currentBookChannel || 'chat';
+      rate = Number(window._currentExpert['rate_' + channel] || window._currentExpert[channel + '_rate'] || 0);
+    }
+    return Number.isFinite(rate) ? rate : 0;
+  }
+
+  function sessionPromoStatus(){
+    var el = document.getElementById('ob-session-promo-status');
+    if(!el) return;
+    if(!state.sessionPromo){
+      el.innerHTML = 'Optional. Codes for pay-by-minute sessions apply to the final bill after the exact minutes are known.';
+      return;
+    }
+    var rate = sessionRateAmount();
+    var pct = Number(state.sessionPromo.percent_off || 0);
+    var effective = rate > 0 ? money(rate * (1 - pct / 100)) + '/min' : pct.toFixed(0) + '% off';
+    el.innerHTML = '<strong>' + esc(state.sessionPromo.code) + '</strong> applied · ' + pct.toFixed(0) + '% off pay-by-minute sessions' + (rate > 0 ? ' · effective rate about <strong>' + effective + '</strong>' : '') + '. Final discount uses the exact session time.';
+  }
+
+  function injectSessionPromo(){
+    addStyle();
+    var step = document.getElementById('bov-step2');
+    if(!step) return;
+    var mount = document.getElementById('ob-session-promo-choice');
+    if(!mount){
+      mount = document.createElement('div');
+      mount.id = 'ob-session-promo-choice';
+      mount.className = 'ob-session-promo-card';
+      var creditChoice = document.getElementById('ob-credit-booking-choice');
+      var wallet = document.getElementById('bov-wallet-section');
+      if(creditChoice && creditChoice.parentNode) creditChoice.parentNode.insertBefore(mount, creditChoice.nextSibling);
+      else step.insertBefore(mount, wallet || step.firstChild);
+    }
+    var code = state.sessionPromo ? state.sessionPromo.code : (window._obSessionPromoCode || '');
+    mount.innerHTML =
+      '<h3>Promotion code</h3>' +
+      '<p class="ob-credit-sub">Use a session discount code for pay-by-minute billing. Prepaid credit, if available, is still used first after the discount.</p>' +
+      '<div class="ob-session-promo-form">' +
+        '<input id="ob-session-promo-code" class="ob-credit-input" placeholder="WELCOME20" value="' + attr(code) + '">' +
+        '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
+          '<button type="button" class="ob-credit-btn secondary" onclick="obSessionPromoApply()">Apply</button>' +
+          (state.sessionPromo ? '<button type="button" class="ob-credit-btn secondary" onclick="obSessionPromoClear()">Remove</button>' : '') +
+        '</div>' +
+      '</div>' +
+      '<div id="ob-session-promo-status" class="ob-session-promo-status"></div>';
+    sessionPromoStatus();
+  }
+
+  window.obSessionPromoApply = async function(){
+    var input = document.getElementById('ob-session-promo-code');
+    var code = input && input.value || '';
+    if(!code.trim()){ toastMsg('Enter a promotion code first.','err'); return; }
+    try{
+      var rate = sessionRateAmount() || 1;
+      var d = await creditApi('POST','/promotions/preview',{expert_id:expertId(),code:code,amount:rate,applies_to:'sessions'});
+      state.sessionPromo = d.promo;
+      window._obSessionPromoCode = d.promo && d.promo.code;
+      injectSessionPromo();
+      toastMsg('Promotion code applied.');
+    }catch(e){
+      state.sessionPromo = null;
+      window._obSessionPromoCode = '';
+      sessionPromoStatus();
+      toastMsg(e.message || 'Promotion code is not eligible.','err');
+    }
+  };
+
+  window.obSessionPromoClear = function(){
+    state.sessionPromo = null;
+    window._obSessionPromoCode = '';
+    injectSessionPromo();
+  };
 
   window.obCreditStartWithCredit = function(){
     if(typeof _bovGoStep === 'function') _bovGoStep(3);
@@ -637,7 +722,7 @@
     if(typeof oldGoStep === 'function' && !oldGoStep.__obCreditWrapped){
       window._bovGoStep = function(n){
         var result = oldGoStep.apply(this, arguments);
-        if(n === 2) setTimeout(injectBookingCredit, 80);
+        if(n === 2) setTimeout(function(){ injectBookingCredit(); injectSessionPromo(); }, 80);
         return result;
       };
       window._bovGoStep.__obCreditWrapped = true;
@@ -7099,6 +7184,7 @@ if (!window.toast) {
                 <div class="receipt-row"><span>Session</span><span id="receipt-session-type">Chat with Expert</span></div>
                 <div class="receipt-row"><span>Duration</span><span id="receipt-duration">—</span></div>
                 <div class="receipt-row"><span>Rate</span><span id="receipt-rate">—</span></div>
+                <div class="receipt-row" id="receipt-promo-row" style="display:none;"><span>Promotion</span><span id="receipt-promo">—</span></div>
                 <div class="receipt-row" style="border-top:1px solid var(--gray-200);padding-top:8px;margin-top:4px;font-weight:700;"><span>Total Charged</span><span id="receipt-total">—</span></div>
               </div>
               <div class="receipt-actions">
@@ -9851,7 +9937,7 @@ function _launchSession(isPaid) {
   el = document.getElementById('presess-channel-name'); if(el) el.textContent = ch.name;
   el = document.getElementById('presess-type'); if(el) el.textContent = ch.name + ' · Per-minute';
   el = document.getElementById('presess-rate'); if(el) el.textContent = ch.price;
-  el = document.getElementById('presess-payment'); if(el) el.textContent = isPaid ? (fm > 0 ? 'Card authorized · billing after free minutes' : 'Card authorized') : 'Free — card on file';
+  el = document.getElementById('presess-payment'); if(el) el.textContent = isPaid ? (window._obSessionPromoCode ? 'Card authorized · promo ' + window._obSessionPromoCode : (fm > 0 ? 'Card authorized · billing after free minutes' : 'Card authorized')) : 'Free — card on file';
   var freeRow = document.getElementById('presess-free-row');
   var freeNote = document.getElementById('presess-free-note');
   var paidNote = document.getElementById('presess-paid-note');
@@ -9900,7 +9986,7 @@ function _startSessionScreen(paidMode) {
   var t4 = document.getElementById('a4-session-title');
   if(t4) t4.textContent = ((window._currentExpert&&(window._currentExpert.name||window._currentExpert.display_name))||'Expert') + ' · ' + ch.name;
   var r4 = document.getElementById('a4-session-rate');
-  if(r4) r4.textContent = 'Billing Active · ' + (ch.price || '$0.00/min');
+  if(r4) r4.textContent = 'Billing Active · ' + (ch.price || '$0.00/min') + (window._obSessionPromoCode ? ' · promo ' + window._obSessionPromoCode : '');
   var a4chat = document.getElementById('a4-chat-ui');
   var a4voice = document.getElementById('a4-voice-ui');
   var a4video = document.getElementById('a4-video-ui');
@@ -12757,7 +12843,7 @@ async function savePaymentConfig() {
     window._obPendingChannel=channel;
     const type=window.currentBookMode||'permin';
     try {
-      const d=await api('POST','/sessions/request',{expert_id:expertId,channel,type});
+      const d=await api('POST','/sessions/request',{expert_id:expertId,channel,type,promo_code:window._obSessionPromoCode||''});
       window._sid=d.session.id;
       WS.connect(); WS.send({type:'join',session_id:d.session.id});
       toast('Session requested! Waiting for expert…');
@@ -17281,7 +17367,7 @@ body.expert-page #mob-cta-bar{display:none!important;}
     document.getElementById('ob-wait-sub').textContent=channel.charAt(0).toUpperCase()+channel.slice(1)+' session requested';
     if(ov)ov.classList.add('show');
     window._obPendingChannel=channel;
-    fetch(BASE+'/api/sessions/request',{method:'POST',headers:hdr(),body:JSON.stringify({expert_id:expertId,channel:channel,message:''})})
+    fetch(BASE+'/api/sessions/request',{method:'POST',headers:hdr(),body:JSON.stringify({expert_id:expertId,channel:channel,message:'',promo_code:window._obSessionPromoCode||''})})
       .then(function(r){return r.json();}).then(function(d){
         if(d.session){
           _sessId=d.session.id;window._obPendingSessId=d.session.id;window._obPendingExpertName=expertName;
@@ -17342,7 +17428,7 @@ function openClientChat(sid){
   var expertName=((window._currentExpert&&(window._currentExpert.name||window._currentExpert.display_name))||window._obPendingExpertName||'Expert');
   var rate=((window._currentExpert&&window._currentExpert.rate_chat)||'?');
   var t4=document.getElementById('a4-session-title');if(t4)var _chN=(_sessCh||'chat');t4.textContent=expertName+' - '+_chN.charAt(0).toUpperCase()+_chN.slice(1);
-  var r4=document.getElementById('a4-session-rate');if(r4)r4.textContent='Billing Active · $'+parseFloat(rate).toFixed(2)+'/min';
+  var r4=document.getElementById('a4-session-rate');if(r4)r4.textContent='Billing Active · $'+parseFloat(rate).toFixed(2)+'/min' + (window._obSessionPromoCode ? ' · promo ' + window._obSessionPromoCode : '');
   // Wire sendPaidMsg to real API
   window.sendPaidMsg=function(){
     var inp=document.getElementById('paid-chat-input');
@@ -20447,6 +20533,9 @@ window._handleRTCMessage=function(d){
     el=document.getElementById('receipt-duration'); if(el) el.textContent = (dur > 0 ? Math.max(1, Math.ceil(dur/60)) : 0) + ' min' + (free > 0 ? ' (' + free + ' free + ' + billed.toFixed(2) + ' billed)' : '');
     el=document.getElementById('receipt-rate'); if(el) el.textContent = money(rate) + '/min';
     el=document.getElementById('receipt-session-type'); if(el) el.textContent = (sess.channel || 'chat').charAt(0).toUpperCase() + (sess.channel || 'chat').slice(1) + ' with ' + ((window._currentExpert && window._currentExpert.name) || 'Expert');
+    var promoAmt = num(sess.promo_discount,0);
+    el=document.getElementById('receipt-promo-row'); if(el) el.style.display = promoAmt > 0 ? 'flex' : 'none';
+    el=document.getElementById('receipt-promo'); if(el && promoAmt > 0) el.textContent = '-' + money(promoAmt) + (sess.session_promo_code ? ' · ' + sess.session_promo_code : '');
     window._obClientEndingSid = null;
     window._obClientEndingAt = 0;
     window._obClientEndingPromise = null;
@@ -20468,6 +20557,7 @@ window._handleRTCMessage=function(d){
     window._obPendingRate = rate;
     if(typeof freeMinutes === 'object') freeMinutes[ch] = free;
     var label = free > 0 ? 'Free intro: first ' + free + ' min free · ' + money(rate) + '/min after' : 'Billing Active · ' + money(rate) + '/min';
+    if(window._obSessionPromoCode) label += ' · promo ' + window._obSessionPromoCode;
     var title = ((window._currentExpert && (window._currentExpert.name || window._currentExpert.display_name)) || sess.expert_name || 'Expert') + ' - ' + ch.charAt(0).toUpperCase() + ch.slice(1);
     var el;
     el=document.getElementById('a4-session-title'); if(el) el.textContent = title;
@@ -20475,7 +20565,7 @@ window._handleRTCMessage=function(d){
     el=document.getElementById('presess-rate'); if(el) el.textContent = money(rate) + '/min' + (free > 0 ? ' · first ' + free + ' min free' : '');
     el=document.getElementById('presess-free'); if(el) el.textContent = obMinuteText(free,'free');
     el=document.getElementById('presess-free-mins'); if(el) el.textContent = obMinuteText(free);
-    el=document.getElementById('presess-payment'); if(el) el.textContent = free > 0 ? 'Card authorized · billing after free minutes' : 'Card authorized';
+    el=document.getElementById('presess-payment'); if(el) el.textContent = window._obSessionPromoCode ? 'Card authorized · promo ' + window._obSessionPromoCode : (free > 0 ? 'Card authorized · billing after free minutes' : 'Card authorized');
     el=document.getElementById('presess-free-row'); if(el) el.style.display = free > 0 ? 'flex' : 'none';
     el=document.getElementById('presess-free-note'); if(el) el.style.display = free > 0 ? 'block' : 'none';
     el=document.getElementById('bk-total'); if(el) el.textContent = money(rate) + '/min' + (free > 0 ? ' · ' + free + ' min free' : '');
@@ -21357,7 +21447,7 @@ window._handleRTCMessage=function(d){
     setText('bk-total', label);
     setText('presess-free', obMinuteText(free,'free'));
     setText('presess-free-mins', obMinuteText(free));
-    setText('presess-payment', free > 0 ? 'Card authorized. Billing starts after free minutes.' : 'Card authorized.');
+    setText('presess-payment', window._obSessionPromoCode ? 'Card authorized · promo ' + window._obSessionPromoCode : (free > 0 ? 'Card authorized. Billing starts after free minutes.' : 'Card authorized.'));
     show('presess-free-row', free > 0);
     show('presess-free-note', free > 0);
     var row = document.getElementById('bk-free-row');

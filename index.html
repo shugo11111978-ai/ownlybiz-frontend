@@ -27071,6 +27071,14 @@ window._handleRTCMessage=function(d){
 	  function readUserSnapshot(){
 	    return readJsonStore('ob_u') || {};
 	  }
+	  function currentBillingRole(){
+	    var u = readUserSnapshot();
+	    return String(u.role || u.user_role || '').trim().toLowerCase();
+	  }
+	  function canLoadExpertBilling(){
+	    var role = currentBillingRole();
+	    return role === 'expert' || role === 'admin';
+	  }
 	  function currentPlanIdFromUser(){
 	    var u = readUserSnapshot();
 	    return normalizePlanId(u.subscription_plan || u.plan || u.current_plan || (u.expert && (u.expert.subscription_plan || u.expert.plan)) || 'starter');
@@ -27135,8 +27143,9 @@ window._handleRTCMessage=function(d){
       planState.plans = planDefaults;
     }
     return planState.plans;
-  }
+	  }
 	  async function loadBilling(){
+	    if(!canLoadExpertBilling()) return readBillingSnapshot();
 	    var d = await obJson('/api/billing/me');
 	    planState.plans = d.plans || planState.plans;
 	    planState.current = d.current_plan || null;
@@ -27927,10 +27936,7 @@ window._handleRTCMessage=function(d){
 	  }
 
 		  async function refreshBillingUi(){
-		    if(!token()) return;
-		    var role = '';
-		    try { role = String((readUserSnapshot() || {}).role || '').toLowerCase(); } catch(e) {}
-		    if(role !== 'expert' && role !== 'admin') return;
+		    if(!token() || !canLoadExpertBilling()) return;
 		    try {
 		      renderDashboardBillingShell();
 		      var d = await loadBilling();

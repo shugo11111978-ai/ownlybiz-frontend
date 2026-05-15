@@ -1003,9 +1003,6 @@
     } else if(state.confirming){
       btn.disabled = true;
       btn.textContent = 'Processing...';
-    } else if(state.intent && state.intent.staging_bypass){
-      btn.disabled = false;
-      btn.textContent = 'Add credit on staging';
     } else {
       btn.disabled = false;
       btn.textContent = 'Pay ' + money(due);
@@ -1113,27 +1110,6 @@
     if(!token()) throw new Error('Please sign in first.');
     state.paymentMounting = true;
     renderModalSummary();
-    if(window.OWNLYBIZ_IS_STAGING){
-      if(seq !== state.mountSeq) return;
-      state.intent = {
-        staging_bypass: true,
-        summary: {
-          credit_amount: state.amount,
-          discount_amount: state.promo ? Number(state.promo.discount_amount || 0) : 0,
-          amount_due: Math.max(0, Number(state.amount || 0) - (state.promo ? Number(state.promo.discount_amount || 0) : 0)),
-          promo: state.promo || null
-        }
-      };
-      var stagingMount = document.getElementById('ob-credit-payment-element');
-      if(!stagingMount) throw new Error('Payment form is not available.');
-      stagingMount.classList.remove('ob-credit-payment-loading');
-      stagingMount.style.display = 'block';
-      stagingMount.innerHTML = '<div class="ob-credit-payment-loading-card"><strong>Staging prepaid bypass</strong><br>No real Stripe charge will run. This adds prepaid credit only on staging.</div>';
-      state.paymentMounted = true;
-      state.paymentMounting = false;
-      renderModalSummary();
-      return;
-    }
     var d = await creditApi('POST','/payment-intents',{
       expert_id: expertId(),
       amount: state.amount,
@@ -1268,15 +1244,6 @@
         await mountCreditPayment(++state.mountSeq);
         if(!state.paymentMounted) return;
       }
-      if(state.intent && state.intent.staging_bypass){
-        var confirmed = await creditApi('POST','/staging-bypass-purchase',{
-          expert_id: expertId(),
-          amount: state.amount,
-          promo_code: state.promo && state.promo.code
-        });
-        finishCreditPurchase(confirmed, state.context);
-        return;
-      }
       var result = await state.stripe.confirmCardPayment(state.intent.client_secret, {
         payment_method:{card:state.cardElement}
       });
@@ -1405,15 +1372,6 @@
     });
   }
 
-  function temporarilyDisableStagingBypass(fn){
-    var e = window._currentExpert || {};
-    if(!(e.credit_enabled || (e.credit && e.credit.enabled))) return fn();
-    var old = window.OWNLYBIZ_IS_STAGING;
-    window.OWNLYBIZ_IS_STAGING = false;
-    setTimeout(function(){ window.OWNLYBIZ_IS_STAGING = old; }, 5000);
-    return fn();
-  }
-
   window.obCreditTopUpWallet = function(){ return window.obCreditOpenTopup('manual'); };
 
   function installCreditWrappers(){
@@ -1431,7 +1389,7 @@
     if(typeof oldOpenBooking === 'function' && !oldOpenBooking.__obCreditWrapped){
       window.openBookingOverlay = function(){
         var self = this, args = arguments;
-        return temporarilyDisableStagingBypass(function(){ return oldOpenBooking.apply(self, args); });
+        return oldOpenBooking.apply(self, args);
       };
       window.openBookingOverlay.__obCreditWrapped = true;
     }
@@ -1440,7 +1398,7 @@
     if(typeof oldBovSignup === 'function' && !oldBovSignup.__obCreditWrapped){
       window.bovSignup = function(){
         var self = this, args = arguments;
-        return temporarilyDisableStagingBypass(function(){ return oldBovSignup.apply(self, args); });
+        return oldBovSignup.apply(self, args);
       };
       window.bovSignup.__obCreditWrapped = true;
     }
@@ -1449,7 +1407,7 @@
     if(typeof oldBovAuthorize === 'function' && !oldBovAuthorize.__obCreditWrapped){
       window.bovAuthorize = function(){
         var self = this, args = arguments;
-        return temporarilyDisableStagingBypass(function(){ return oldBovAuthorize.apply(self, args); });
+        return oldBovAuthorize.apply(self, args);
       };
       window.bovAuthorize.__obCreditWrapped = true;
     }
@@ -10262,7 +10220,7 @@ function confirmBooking(){
     return;
   }
   // Block if expert hasn't configured payments (only when explicitly false)
-  if(!window.OWNLYBIZ_IS_STAGING && window._currentExpert && window._currentExpert.payments_enabled === false){
+  if(window._currentExpert && window._currentExpert.payments_enabled === false){
     alert('This expert is not accepting payments yet. Please try again later.');
     return;
   }
@@ -10496,14 +10454,6 @@ function openBookingOverlay(channelId) {
   // If client has already authorized payment before, track it
   var _hpm = localStorage.getItem('ob_hpm') === '1';
   if (clientLoggedIn) {
-    if (window.OWNLYBIZ_IS_STAGING) {
-      localStorage.setItem('ob_hpm','1');
-      _bovGoStep(3);
-      var el = document.getElementById('booking-overlay');
-      if (el) { el.style.display = 'flex'; document.body.style.overflow = 'hidden'; }
-      setTimeout(function(){ _launchSession(true); }, 450);
-      return;
-    }
     if (mode === 'upfront' || fm === 0) {
       // Always go through payment step — session request only fires after Begin Session
       {
@@ -10665,12 +10615,6 @@ function bovSignup() {
     if(res.data.user){ sessionStorage.setItem('ob_u',JSON.stringify(res.data.user)); }
     clientLoggedIn = true;
     if(btn){ btn.disabled=false; btn.textContent='Continue \u2192'; }
-    if (window.OWNLYBIZ_IS_STAGING) {
-      localStorage.setItem('ob_hpm','1');
-      _bovGoStep(3);
-      setTimeout(function(){ _launchSession(true); }, 450);
-      return;
-    }
     _bovGoStep(2);
   }).catch(function(e){
     _showToast(e.message||'Account error','red');
@@ -10692,16 +10636,6 @@ async function bovAuthorize() {
 
   var t = sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || localStorage.getItem('ob_client_token') || '';
   if (!t) { showErr('Please log in first.'); return; }
-  if (window.OWNLYBIZ_IS_STAGING) {
-    window._obSelectedPaymentMode = 'minute';
-    window._obActiveSessionCreditMode = 'minute';
-    localStorage.setItem('ob_hpm','1');
-    if (btn) btn.textContent = 'Bypassed for staging ✓';
-    _bovGoStep(3);
-    setTimeout(function(){ _launchSession(true); }, 450);
-    return;
-  }
-
 	  // Get Stripe publishable key from backend, then confirm card setup
   fetch(BASE + '/api/payments/config')
     .then(function(r){ return r.json(); })
@@ -13873,12 +13807,6 @@ async function savePaymentConfig() {
       WS.connect();
       _linkClientToCurrentExpert();
       if(typeof _bovGoStep==='function') {
-        if (window.OWNLYBIZ_IS_STAGING) {
-          localStorage.setItem('ob_hpm','1');
-          _bovGoStep(3);
-          setTimeout(function(){ _launchSession(true); }, 450);
-          return;
-        }
         _bovGoStep(2);
         // Mount Stripe card element after step 2 shows
         setTimeout(async function() {
@@ -19216,10 +19144,6 @@ window.submitBookForLater = function() {
           }
           return { auth: auth, cardSaved: false, paymentMode: 'prepaid' };
         });
-    }
-    if (window.OWNLYBIZ_IS_STAGING) {
-      localStorage.setItem('ob_hpm','1');
-      return { auth: auth, cardSaved: false, stagingBypass: true, paymentMode: 'minute' };
     }
     btn.textContent = 'Saving card...';
     if (window._bflWalletPaymentSaved && (!window._bflWalletPaymentSavedToken || window._bflWalletPaymentSavedToken === auth.token)) {

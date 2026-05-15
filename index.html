@@ -267,6 +267,7 @@
       '.ob-credit-payment-loading-card{border:1px dashed rgba(196,98,45,.28);border-radius:12px;padding:16px;color:#746a63;font-size:13px;line-height:1.45;background:rgba(196,98,45,.05)}' +
       '.pay-section.coming-soon,.free-mins-row.ssm-coming-soon,#view-4 #stype-grid .stype-btn.disabled-channel{display:none!important}' +
       '#booking-overlay.ob-credit-mode-topup #bov-wallet-section,#booking-overlay.ob-credit-mode-topup #bov-card-element,#booking-overlay.ob-credit-mode-topup #bov-card-error,#booking-overlay.ob-credit-mode-topup #bov-pay-btn,#booking-overlay.ob-credit-mode-topup #bov-pay-explainer{display:none!important}' +
+      '#bfl-overlay.ob-credit-mode-topup #bfl-card-section{display:none!important}' +
       '#view-4 #stype-grid.session-types{grid-template-columns:repeat(3,minmax(0,1fr))!important;gap:12px!important;align-items:stretch}' +
       '#view-4 #stype-grid .stype-btn[data-mode="permin"]{min-height:132px;display:flex;flex-direction:column;justify-content:space-between}' +
       '.services-grid-4.ob-credit-live-only{grid-template-columns:repeat(3,minmax(0,1fr))}' +
@@ -987,7 +988,15 @@
       setBookLaterPaymentMode('minute');
       return;
     }
-    if(!mount) return;
+    if(!mount) {
+      mount = document.createElement('div');
+      mount.id = 'ob-credit-bfl-choice';
+      mount.className = 'ob-credit-card';
+      var authTabs = document.getElementById('bfl-auth-tabs');
+      var loggedIn = document.getElementById('bfl-logged-in');
+      var cardSection = document.getElementById('bfl-card-section');
+      step.insertBefore(mount, authTabs || loggedIn || cardSection || step.firstChild);
+    }
     var cacheKey = clientCreditCacheKey();
     if(!forceRefresh && mount.dataset.obCreditReady === '1' && mount.dataset.obCreditKey === cacheKey) {
       setBookLaterPaymentMode(bookLaterPaymentMode());
@@ -19062,7 +19071,8 @@ window.bflGoStep = function(n) {
     var fm = typeof freeMinutes === 'object' ? (parseInt(freeMinutes[_bflChannel], 10) || 0) : 0;
     if (freeRow) freeRow.style.display = fm > 0 ? 'flex' : 'none';
     if (freeVal && fm > 0) freeVal.textContent = fm + ' minute' + (fm === 1 ? '' : 's') + ' included';
-    if (typeof mountBflCardElement === 'function') mountBflCardElement();
+    if (typeof window.obCreditRenderBookLaterChoice === 'function') window.obCreditRenderBookLaterChoice();
+    if (window._bflPaymentMode !== 'prepaid' && typeof mountBflCardElement === 'function') mountBflCardElement();
   }
 };
 
@@ -19184,6 +19194,7 @@ window.submitBookForLater = function() {
   var slug = window._currentExpert ? window._currentExpert.slug : '';
   if (!slug) { var h = window.location.hostname; var pts = h.split('.'); if (pts.length >= 3 && pts[1] === 'ownlybiz') slug = pts[0]; }
   if (!_bflSelectedDate || !_bflSelectedTime) { alert('Please select a date and time.'); return; }
+  var bflCreditMode = window._bflPaymentMode === 'prepaid' ? 'prepaid' : 'minute';
   btn.disabled = true; btn.textContent = 'Processing...';
 
   // STEP A: Authenticate
@@ -19214,9 +19225,13 @@ window.submitBookForLater = function() {
 
   // STEP B: Save card
   authPromise.then(function(auth) {
+    if (bflCreditMode === 'prepaid') {
+      btn.textContent = 'Checking prepaid credit...';
+      return { auth: auth, cardSaved: false, creditMode: 'prepaid' };
+    }
     btn.textContent = 'Saving card...';
     if (window._bflWalletPaymentSaved && (!window._bflWalletPaymentSavedToken || window._bflWalletPaymentSavedToken === auth.token)) {
-      return { auth: auth, cardSaved: true };
+      return { auth: auth, cardSaved: true, creditMode: 'minute' };
     }
     // Block if Stripe is configured but card not filled in
     if (_bflStripeConfigured === true) {
@@ -19233,10 +19248,10 @@ window.submitBookForLater = function() {
         throw new Error('card_required');
       }
     }
-    if (!_bflStripe || !_bflCardElement) { return { auth: auth, cardSaved: false }; }
+    if (!_bflStripe || !_bflCardElement) { return { auth: auth, cardSaved: false, creditMode: 'minute' }; }
     return fetch(BASE + '/api/payments/methods/setup', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + auth.token } })
       .then(function(r) { return r.json(); }).then(function(d) {
-        if (!d.client_secret) { return { auth: auth, cardSaved: false }; }
+        if (!d.client_secret) { return { auth: auth, cardSaved: false, creditMode: 'minute' }; }
         return _bflStripe.confirmCardSetup(d.client_secret, { payment_method: { card: _bflCardElement } }).then(function(result) {
           if (result.error) { var ce = document.getElementById('bfl-card-error'); if (ce) { ce.textContent = result.error.message; ce.style.display = 'block'; } throw new Error('card_error'); }
           var saveDefault = window._obSaveDefaultPaymentMethod && result.setupIntent && result.setupIntent.payment_method
@@ -19244,7 +19259,7 @@ window.submitBookForLater = function() {
             : Promise.resolve();
           return saveDefault.then(function(){
             var sv = document.getElementById('bfl-card-saved'); if (sv) sv.style.display = 'block';
-            return { auth: auth, cardSaved: true };
+            return { auth: auth, cardSaved: true, creditMode: 'minute' };
           });
         });
       }).catch(function(e) { if (e.message === 'card_error') throw e;
@@ -19255,7 +19270,7 @@ window.submitBookForLater = function() {
         btn.disabled = false; btn.textContent = 'Confirm Booking \u2192';
         throw new Error('card_error');
       }
-      return { auth: auth, cardSaved: false }; });
+      return { auth: auth, cardSaved: false, creditMode: 'minute' }; });
 
   // STEP C: Create booking
   }).then(function(data) {
@@ -19266,7 +19281,9 @@ window.submitBookForLater = function() {
     var notes = document.getElementById('bfl-notes') ? document.getElementById('bfl-notes').value.trim() : '';
     var hdrs = { 'Content-Type': 'application/json' };
     if (auth.token) hdrs['Authorization'] = 'Bearer ' + auth.token;
-    return fetch(BASE + '/api/bookings', { method: 'POST', headers: hdrs, body: JSON.stringify({ expert_slug: slug, scheduled_date: _bflSelectedDate, scheduled_time: _bflSelectedTime, client_name: cName, client_email: cEmail, channel: _bflChannel, notes: notes }) })
+    var bookingPayload = { expert_slug: slug, scheduled_date: _bflSelectedDate, scheduled_time: _bflSelectedTime, client_name: cName, client_email: cEmail, channel: _bflChannel, notes: notes, credit_mode: data.creditMode || bflCreditMode || 'minute' };
+    if (bookingPayload.credit_mode !== 'prepaid' && window._obSessionPromoCode) bookingPayload.promo_code = window._obSessionPromoCode;
+    return fetch(BASE + '/api/bookings', { method: 'POST', headers: hdrs, body: JSON.stringify(bookingPayload) })
       .then(function(r) { return r.json(); });
   }).then(function(d) {
     btn.disabled = false; btn.textContent = 'Confirm Booking \u2192';

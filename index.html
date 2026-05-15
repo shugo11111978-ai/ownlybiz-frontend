@@ -775,7 +775,7 @@
 
   function promoHostContext(preferredContext){
     if(preferredContext === 'book_later' || preferredContext === 'booking') return preferredContext;
-    var bflStep = document.getElementById('bfl-step-3');
+    var bflStep = document.getElementById('bfl-step-4') || document.getElementById('bfl-step-3');
     var bflChoice = document.getElementById('ob-credit-bfl-choice');
     var bflOverlay = document.getElementById('bfl-overlay');
     if(bflStep && bflChoice && bflOverlay){
@@ -820,7 +820,7 @@
   function injectSessionPromo(preferredContext){
     addStyle();
     var context = promoHostContext(preferredContext);
-    var step = context === 'book_later' ? document.getElementById('bfl-step-3') : document.getElementById('bov-step2');
+    var step = context === 'book_later' ? document.getElementById('bfl-step-4') : document.getElementById('bov-step2');
     if(!step) return;
     var mount = document.getElementById('ob-session-promo-choice');
     if(!mount){
@@ -978,7 +978,7 @@
 
   window.obCreditRenderBookLaterChoice = function(forceRefresh){
     addStyle();
-    var step = document.getElementById('bfl-step-3');
+    var step = document.getElementById('bfl-step-4');
     if(!step) return;
     var e = window._currentExpert || {};
     var enabled = !!(e.credit_enabled || (e.credit && e.credit.enabled));
@@ -19005,34 +19005,15 @@ var _bflCardElement = null;
 var _bflCardReady = false;
 var _bflCardComplete = false;
 var _bflStripeConfigured = null;
+var _BFL_BASE = 'https://ownlybiz-backend-production.up.railway.app';
 
 window.openBookLaterModal = function() {
   var ov = document.getElementById('bfl-overlay');
   if (ov) { ov.style.display = 'flex'; document.body.style.overflow = 'hidden'; }
   bflGoStep(1);
   var ct = typeof getClientToken === 'function' ? getClientToken() : (localStorage.getItem('ob_client_token') || sessionStorage.getItem('ob_t'));
-  if (ct) {
-    _bflClientToken = ct;
-    var li = document.getElementById('bfl-logged-in');
-    var tabs = document.getElementById('bfl-auth-tabs');
-    var sf = document.getElementById('bfl-signup-fields');
-    var lf = document.getElementById('bfl-login-fields');
-    if (li) {
-      li.style.display = 'block';
-      var _cu = typeof _clientUser !== 'undefined' ? _clientUser : null;
-      li.innerHTML = '\u2713 Logged in as <strong>' + (_cu && _cu.name ? _cu.name : (_cu && _cu.email ? _cu.email : 'you')) + '</strong>';
-    }
-    if (tabs) tabs.style.display = 'none';
-    if (sf) sf.style.display = 'none';
-    if (lf) lf.style.display = 'none';
-  } else {
-    _bflClientToken = null;
-    var li = document.getElementById('bfl-logged-in');
-    var tabs = document.getElementById('bfl-auth-tabs');
-    if (li) li.style.display = 'none';
-    if (tabs) tabs.style.display = 'flex';
-    bflAuthMode('signup');
-  }
+  if (ct) bflApplyAuthState({ token: ct });
+  else bflApplyAuthState(null);
   var dp = document.getElementById('bfl-date');
   if (dp) { dp.min = new Date().toISOString().split('T')[0]; dp.value = ''; }
   _bflSelectedTime = ''; _bflSelectedDate = '';
@@ -19047,28 +19028,145 @@ window.closeBookLaterModal = function() {
   if (ov) { ov.style.display = 'none'; document.body.style.overflow = ''; }
 };
 
+function bflSetText(id, text) {
+  var el = document.getElementById(id);
+  if (el) el.textContent = text;
+}
+
+function bflUpdateSummary() {
+  if (!_bflSelectedDate || !_bflSelectedTime) return;
+  var d = new Date(_bflSelectedDate + 'T12:00:00');
+  var dateText = d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+  var h = parseInt(_bflSelectedTime.split(':')[0]);
+  var m = _bflSelectedTime.split(':')[1];
+  var ampm = h >= 12 ? 'PM' : 'AM';
+  var h12 = h > 12 ? h - 12 : (h === 0 ? 12 : h);
+  var timeText = h12 + ':' + m + ' ' + ampm;
+  var typeText = _bflChannel.charAt(0).toUpperCase() + _bflChannel.slice(1);
+  var fm = typeof freeMinutes === 'object' ? (parseInt(freeMinutes[_bflChannel], 10) || 0) : 0;
+  bflSetText('bfl-sum-date', dateText);
+  bflSetText('bfl-sum-time', timeText);
+  bflSetText('bfl-sum-type', typeText);
+  bflSetText('bfl-pay-sum-date', dateText);
+  bflSetText('bfl-pay-sum-time', timeText);
+  bflSetText('bfl-pay-sum-type', typeText);
+  var freeRow = document.getElementById('bfl-sum-free-row');
+  var freeVal = document.getElementById('bfl-sum-free');
+  var payFreeRow = document.getElementById('bfl-pay-sum-free-row');
+  var payFreeVal = document.getElementById('bfl-pay-sum-free');
+  if (freeRow) freeRow.style.display = fm > 0 ? 'flex' : 'none';
+  if (freeVal && fm > 0) freeVal.textContent = fm + ' minute' + (fm === 1 ? '' : 's') + ' included';
+  if (payFreeRow) payFreeRow.style.display = fm > 0 ? 'flex' : 'none';
+  if (payFreeVal && fm > 0) payFreeVal.textContent = fm + ' minute' + (fm === 1 ? '' : 's') + ' included';
+}
+
+function bflApplyAuthState(auth) {
+  var tok = auth && auth.token || (typeof getClientToken === 'function' ? getClientToken() : (localStorage.getItem('ob_client_token') || sessionStorage.getItem('ob_t')));
+  var li = document.getElementById('bfl-logged-in');
+  var tabs = document.getElementById('bfl-auth-tabs');
+  var sf = document.getElementById('bfl-signup-fields');
+  var lf = document.getElementById('bfl-login-fields');
+  if (tok) {
+    _bflClientToken = tok;
+    var user = auth && auth.user || (typeof _clientUser !== 'undefined' ? _clientUser : null);
+    if (li) {
+      li.style.display = 'block';
+      li.innerHTML = '\u2713 Logged in as <strong>' + (user && (user.name || user.email) || 'you') + '</strong>';
+    }
+    if (tabs) tabs.style.display = 'none';
+    if (sf) sf.style.display = 'none';
+    if (lf) lf.style.display = 'none';
+  } else {
+    _bflClientToken = null;
+    if (li) li.style.display = 'none';
+    if (tabs) tabs.style.display = 'flex';
+    bflAuthMode('signup');
+  }
+}
+
+function bflSaveClientAuth(d, fallbackName, fallbackEmail) {
+  if (!d || !d.token) return;
+  var user = d.user || { name: fallbackName || '', email: fallbackEmail || '', role: 'client' };
+  _bflClientToken = d.token;
+  if (typeof setClientToken === 'function') setClientToken(d.token);
+  try { localStorage.setItem('ob_client_token', d.token); } catch(e) {}
+  try { localStorage.setItem('ob_t', d.token); } catch(e) {}
+  try { sessionStorage.setItem('ob_t', d.token); } catch(e) {}
+  try { localStorage.setItem('ob_u', JSON.stringify(user)); sessionStorage.setItem('ob_u', JSON.stringify(user)); } catch(e) {}
+  if (typeof _clientUser !== 'undefined') _clientUser = user;
+  if (typeof checkClientAuth === 'function') setTimeout(checkClientAuth, 250);
+  bflApplyAuthState({ token: d.token, user: user });
+}
+
+function bflReadExistingAuth() {
+  var tok = _bflClientToken || (typeof getClientToken === 'function' ? getClientToken() : (localStorage.getItem('ob_client_token') || sessionStorage.getItem('ob_t')));
+  if (!tok) return Promise.reject(new Error('account_required'));
+  var _cu = typeof _clientUser !== 'undefined' ? _clientUser : null;
+  if (_cu) return Promise.resolve({ token: tok, name: _cu.name || '', email: _cu.email || '', user: _cu });
+  return fetch(_BFL_BASE + '/api/auth/me', { headers: { 'Authorization': 'Bearer ' + tok } })
+    .then(function(r){ return r.json(); })
+    .then(function(d){
+      if (!d.user) throw new Error('account_required');
+      bflApplyAuthState({ token: tok, user: d.user });
+      return { token: tok, name: d.user.name || '', email: d.user.email || '', user: d.user };
+    });
+}
+
+function bflAuthenticateAccount() {
+  var existing = _bflClientToken || (typeof getClientToken === 'function' ? getClientToken() : (localStorage.getItem('ob_client_token') || sessionStorage.getItem('ob_t')));
+  if (existing) return bflReadExistingAuth();
+  if (_bflAuthMode === 'signup') {
+    var nm = document.getElementById('bfl-name'), em = document.getElementById('bfl-email'), pw = document.getElementById('bfl-password');
+    if (!nm || !nm.value.trim()) throw new Error('Please enter your name.');
+    if (!em || !em.value.trim()) throw new Error('Please enter your email.');
+    if (!pw || pw.value.length < 8) throw new Error('Password must be at least 8 characters.');
+    return fetch(_BFL_BASE + '/api/auth/signup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: nm.value.trim(), email: em.value.trim(), password: pw.value, role: 'client' }) })
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        if (!d.token) {
+          if (d.error && d.error.toLowerCase().indexOf('exist') >= 0) throw new Error('Email already registered. Switch to Returning Client.');
+          throw new Error(d.error || 'Signup failed');
+        }
+        bflSaveClientAuth(d, nm.value.trim(), em.value.trim());
+        return { token: d.token, name: nm.value.trim(), email: em.value.trim(), user: d.user };
+      });
+  }
+  var le = document.getElementById('bfl-login-email'), lp = document.getElementById('bfl-login-pass');
+  if (!le || !le.value.trim() || !lp || !lp.value) throw new Error('Enter your email and password.');
+  return fetch(_BFL_BASE + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: le.value.trim(), password: lp.value }) })
+    .then(function(r) { return r.json(); })
+    .then(function(d) {
+      if (!d.token) throw new Error(d.error || 'Login failed');
+      bflSaveClientAuth(d, d.user && d.user.name || '', le.value.trim());
+      return { token: d.token, name: d.user ? d.user.name || '' : '', email: le.value.trim(), user: d.user };
+    });
+}
+
+window.bflContinueToPayment = function() {
+  var btn = document.getElementById('bfl-account-continue-btn');
+  var authErr = document.getElementById('bfl-auth-error');
+  if (authErr) authErr.style.display = 'none';
+  if (btn) { btn.disabled = true; btn.textContent = 'Checking account...'; }
+  Promise.resolve().then(bflAuthenticateAccount).then(function(){
+    if (btn) { btn.disabled = false; btn.textContent = 'Continue to payment \u2192'; }
+    bflGoStep(4);
+  }).catch(function(e){
+    if (btn) { btn.disabled = false; btn.textContent = 'Continue to payment \u2192'; }
+    if (authErr) { authErr.textContent = e.message || 'Account sign in failed.'; authErr.style.display = 'block'; }
+  });
+};
+
 window.bflGoStep = function(n) {
-  [1,2,3].forEach(function(s) {
+  [1,2,3,4].forEach(function(s) {
     var el = document.getElementById('bfl-step-' + s);
     if (el) el.style.display = s === n ? 'block' : 'none';
     var dot = document.getElementById('bfl-dot-' + s);
     if (dot) dot.style.background = s <= n ? 'var(--terra)' : 'var(--gray-200)';
   });
   document.getElementById('bfl-step-success').style.display = 'none';
-  if (n === 3) {
-    var d = new Date(_bflSelectedDate + 'T12:00:00');
-    document.getElementById('bfl-sum-date').textContent = d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
-    var h = parseInt(_bflSelectedTime.split(':')[0]);
-    var m = _bflSelectedTime.split(':')[1];
-    var ampm = h >= 12 ? 'PM' : 'AM';
-    var h12 = h > 12 ? h - 12 : (h === 0 ? 12 : h);
-    document.getElementById('bfl-sum-time').textContent = h12 + ':' + m + ' ' + ampm;
-    document.getElementById('bfl-sum-type').textContent = _bflChannel.charAt(0).toUpperCase() + _bflChannel.slice(1);
-    var freeRow = document.getElementById('bfl-sum-free-row');
-    var freeVal = document.getElementById('bfl-sum-free');
-    var fm = typeof freeMinutes === 'object' ? (parseInt(freeMinutes[_bflChannel], 10) || 0) : 0;
-    if (freeRow) freeRow.style.display = fm > 0 ? 'flex' : 'none';
-    if (freeVal && fm > 0) freeVal.textContent = fm + ' minute' + (fm === 1 ? '' : 's') + ' included';
+  if (n === 3 || n === 4) bflUpdateSummary();
+  if (n === 4) {
+    bflApplyAuthState({ token: _bflClientToken || (typeof getClientToken === 'function' ? getClientToken() : null), user: typeof _clientUser !== 'undefined' ? _clientUser : null });
     if (typeof window.obCreditRenderBookLaterChoice === 'function') window.obCreditRenderBookLaterChoice(true);
     if (window._bflPaymentMode !== 'prepaid' && typeof mountBflCardElement === 'function') mountBflCardElement();
   }
@@ -19195,37 +19293,34 @@ window.submitBookForLater = function() {
   var bflCreditMode = window._bflPaymentMode === 'prepaid' ? 'prepaid' : 'minute';
   btn.disabled = true; btn.textContent = 'Processing...';
 
-  // STEP A: Authenticate
-  var authPromise;
-  if (_bflClientToken) {
-    var _cu2 = typeof _clientUser !== 'undefined' ? _clientUser : null;
-    authPromise = _cu2 ? Promise.resolve({ token: _bflClientToken, name: _cu2.name || '', email: _cu2.email || '' }) : fetch(BASE + '/api/auth/me', { headers: { 'Authorization': 'Bearer ' + _bflClientToken } }).then(function(r){ return r.json(); }).then(function(d){ return { token: _bflClientToken, name: d.user ? d.user.name : '', email: d.user ? d.user.email : '' }; });
-  } else if (_bflAuthMode === 'signup') {
-    var nm = document.getElementById('bfl-name'), em = document.getElementById('bfl-email'), pw = document.getElementById('bfl-password');
-    if (!nm || !nm.value.trim()) { alert('Please enter your name.'); btn.disabled = false; btn.textContent = 'Confirm Booking \u2192'; return; }
-    if (!em || !em.value.trim()) { alert('Please enter your email.'); btn.disabled = false; btn.textContent = 'Confirm Booking \u2192'; return; }
-    if (!pw || pw.value.length < 8) { if (authErr) { authErr.textContent = 'Password must be at least 8 characters.'; authErr.style.display = 'block'; } btn.disabled = false; btn.textContent = 'Confirm Booking \u2192'; return; }
-    authPromise = fetch(BASE + '/api/auth/signup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: nm.value.trim(), email: em.value.trim(), password: pw.value, role: 'client' }) })
-      .then(function(r) { return r.json(); }).then(function(d) {
-        if (d.token) { _bflClientToken = d.token; if(typeof setClientToken==='function') setClientToken(d.token); if(typeof checkClientAuth==='function') setTimeout(checkClientAuth,500); return { token: d.token, name: nm.value.trim(), email: em.value.trim() }; }
-        if (d.error && d.error.toLowerCase().indexOf('exist') >= 0) { if (authErr) { authErr.textContent = 'Email already registered. Switch to Returning Client.'; authErr.style.display = 'block'; } throw new Error('exists'); }
-        throw new Error(d.error || 'Signup failed');
-      });
-  } else {
-    var le = document.getElementById('bfl-login-email'), lp = document.getElementById('bfl-login-pass');
-    if (!le || !le.value.trim() || !lp || !lp.value) { if (authErr) { authErr.textContent = 'Enter your email and password.'; authErr.style.display = 'block'; } btn.disabled = false; btn.textContent = 'Confirm Booking \u2192'; return; }
-    authPromise = fetch(BASE + '/api/auth/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: le.value.trim(), password: lp.value }) })
-      .then(function(r) { return r.json(); }).then(function(d) {
-        if (d.token) { _bflClientToken = d.token; if(typeof setClientToken==='function') setClientToken(d.token); if(typeof checkClientAuth==='function') setTimeout(checkClientAuth,500); return { token: d.token, name: d.user ? d.user.name : '', email: le.value.trim() }; }
-        throw new Error(d.error || 'Login failed');
-      });
-  }
+  // STEP A: Use the account established in the previous step
+  var authPromise = bflReadExistingAuth().catch(function(e){
+    bflGoStep(3);
+    throw e;
+  });
 
   // STEP B: Save card
   authPromise.then(function(auth) {
     if (bflCreditMode === 'prepaid') {
       btn.textContent = 'Checking prepaid credit...';
-      return { auth: auth, cardSaved: false, creditMode: 'prepaid' };
+      return Promise.resolve(window.obCreditLoadClientSummary ? window.obCreditLoadClientSummary() : null)
+        .then(function(){
+          if (typeof window.obCreditRenderBookLaterChoice === 'function') window.obCreditRenderBookLaterChoice(true);
+          var balance = window.obCreditBookLaterBalance ? Number(window.obCreditBookLaterBalance() || 0) : 0;
+          if (balance <= 0) {
+            if (status) {
+              status.style.display = 'block';
+              status.style.background = 'rgba(196,98,45,.1)';
+              status.style.color = '#9b4d24';
+              status.textContent = 'Add prepaid credit first, then confirm the booking.';
+            }
+            btn.disabled = false;
+            btn.textContent = 'Confirm Booking \u2192';
+            if (typeof window.obCreditOpenTopup === 'function') window.obCreditOpenTopup('book_later');
+            throw new Error('credit_required');
+          }
+          return { auth: auth, cardSaved: false, creditMode: 'prepaid' };
+        });
     }
     btn.textContent = 'Saving card...';
     if (window._bflWalletPaymentSaved && (!window._bflWalletPaymentSavedToken || window._bflWalletPaymentSavedToken === auth.token)) {
@@ -19286,15 +19381,17 @@ window.submitBookForLater = function() {
   }).then(function(d) {
     btn.disabled = false; btn.textContent = 'Confirm Booking \u2192';
     if (d && d.success) {
-      [1, 2, 3].forEach(function(s) { var el = document.getElementById('bfl-step-' + s); if (el) el.style.display = 'none'; });
+      [1, 2, 3, 4].forEach(function(s) { var el = document.getElementById('bfl-step-' + s); if (el) el.style.display = 'none'; });
       document.getElementById('bfl-step-success').style.display = 'block';
-      [1, 2, 3].forEach(function(s) { var dot = document.getElementById('bfl-dot-' + s); if (dot) dot.style.background = 'var(--terra)'; });
+      [1, 2, 3, 4].forEach(function(s) { var dot = document.getElementById('bfl-dot-' + s); if (dot) dot.style.background = 'var(--terra)'; });
     } else if (d) {
       if (status) { status.style.display = 'block'; status.style.background = 'rgba(239,68,68,.1)'; status.style.color = '#dc2626'; status.textContent = d.error || 'Something went wrong.'; }
     }
   }).catch(function(e) {
     btn.disabled = false; btn.textContent = 'Confirm Booking \u2192';
-    if (e.message !== 'exists' && e.message !== 'card_error' && e.message !== 'card_required') {
+    if (e.message === 'account_required') {
+      if (authErr) { authErr.textContent = 'Create an account or sign in before choosing payment.'; authErr.style.display = 'block'; }
+    } else if (e.message !== 'exists' && e.message !== 'card_error' && e.message !== 'card_required' && e.message !== 'credit_required') {
       if (authErr) { authErr.textContent = e.message; authErr.style.display = 'block'; }
     }
   });
@@ -20010,6 +20107,7 @@ function loadClientSessions() {
       <div class="bfl-step-dot active" id="bfl-dot-1" style="flex:1;height:4px;border-radius:4px;background:var(--terra);transition:.3s;"></div>
       <div class="bfl-step-dot" id="bfl-dot-2" style="flex:1;height:4px;border-radius:4px;background:var(--gray-200);transition:.3s;"></div>
       <div class="bfl-step-dot" id="bfl-dot-3" style="flex:1;height:4px;border-radius:4px;background:var(--gray-200);transition:.3s;"></div>
+      <div class="bfl-step-dot" id="bfl-dot-4" style="flex:1;height:4px;border-radius:4px;background:var(--gray-200);transition:.3s;"></div>
     </div>
 
     <!-- STEP 1: Date & Time -->
@@ -20057,7 +20155,7 @@ function loadClientSessions() {
       </div>
     </div>
 
-    <!-- STEP 3: Your Details & Confirm -->
+    <!-- STEP 3: Account -->
     <div id="bfl-step-3" style="display:none;padding:0 24px 24px;">
       <!-- Summary -->
       <div style="background:var(--white);border:1px solid var(--gray-200);border-radius:12px;padding:16px;margin-bottom:16px;">
@@ -20101,6 +20199,22 @@ function loadClientSessions() {
         </div>
       </div>
       <div id="bfl-auth-error" style="display:none;background:rgba(239,68,68,.08);border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:12px;color:#dc2626;font-weight:600;"></div>
+      <div style="display:flex;gap:10px;">
+        <button class="btn" style="flex:1;padding:14px;color:var(--gray-400);" onclick="bflGoStep(2)">← Back</button>
+        <button class="btn btn-primary" style="flex:2;padding:14px;font-size:15px;" id="bfl-account-continue-btn" onclick="bflContinueToPayment()">Continue to payment →</button>
+      </div>
+    </div>
+
+    <!-- STEP 4: Payment & Confirm -->
+    <div id="bfl-step-4" style="display:none;padding:0 24px 24px;">
+      <div style="background:var(--white);border:1px solid var(--gray-200);border-radius:12px;padding:16px;margin-bottom:16px;">
+        <div style="font-size:11px;font-weight:700;color:var(--gray-400);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px;">Booking Summary</div>
+        <div style="display:flex;justify-content:space-between;font-size:14px;margin-bottom:6px;"><span style="color:var(--gray-400);">Date</span><span style="font-weight:600;color:var(--brown);" id="bfl-pay-sum-date">—</span></div>
+        <div style="display:flex;justify-content:space-between;font-size:14px;margin-bottom:6px;"><span style="color:var(--gray-400);">Time</span><span style="font-weight:600;color:var(--brown);" id="bfl-pay-sum-time">—</span></div>
+        <div style="display:flex;justify-content:space-between;font-size:14px;margin-bottom:6px;"><span style="color:var(--gray-400);">Type</span><span style="font-weight:600;color:var(--brown);" id="bfl-pay-sum-type">Chat</span></div>
+        <div id="bfl-pay-sum-free-row" style="display:none;justify-content:space-between;font-size:14px;"><span style="color:var(--gray-400);">Free Minutes</span><span style="font-weight:600;color:var(--sage);" id="bfl-pay-sum-free">—</span></div>
+      </div>
+      <div id="bfl-payment-account-note" style="background:rgba(34,197,94,.08);border:1.5px solid rgba(34,197,94,.2);border-radius:10px;padding:12px 14px;margin-bottom:16px;font-size:13px;color:#15803d;font-weight:600;text-align:center;">✓ Account ready</div>
       <div id="ob-credit-bfl-choice" class="ob-credit-card" style="margin:0 0 16px;"></div>
       <div id="bfl-card-section" style="margin-bottom:16px;">
         <label style="font-size:12px;font-weight:700;color:var(--brown);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:8px;">Payment method</label>
@@ -20117,7 +20231,7 @@ function loadClientSessions() {
         <div id="bfl-card-saved" style="display:none;background:rgba(34,197,94,.08);border-radius:8px;padding:8px 12px;margin-top:8px;font-size:12px;color:#15803d;font-weight:600;">✓ Card saved securely</div>
       </div>
       <div style="display:flex;gap:10px;">
-        <button class="btn" style="flex:1;padding:14px;color:var(--gray-400);" onclick="bflGoStep(2)">← Back</button>
+        <button class="btn" style="flex:1;padding:14px;color:var(--gray-400);" onclick="bflGoStep(3)">← Back</button>
         <button class="btn btn-primary" style="flex:2;padding:14px;font-size:15px;" id="bfl-submit-btn" onclick="submitBookForLater()">Confirm Booking →</button>
       </div>
       <div id="bfl-status" style="display:none;text-align:center;padding:10px;margin-top:10px;border-radius:10px;font-size:13px;font-weight:600;"></div>
@@ -28440,11 +28554,15 @@ window._handleRTCMessage=function(d){
     }
     if(document.getElementById('bfl-step-3') && document.getElementById('bfl-step-3').style.display !== 'none') {
       window._bflClientToken = d.token;
-      if(typeof window.mountBflCardElement === 'function') window.mountBflCardElement();
+      if(typeof window.bflApplyAuthState === 'function') window.bflApplyAuthState(d);
       var logged = document.getElementById('bfl-logged-in');
       var name = document.getElementById('bfl-logged-name');
       if(name) name.textContent = d.user && (d.user.name || d.user.email) || (providerName + ' client');
       if(logged) logged.style.display = 'block';
+      if(typeof window.bflGoStep === 'function') window.bflGoStep(4);
+    } else if(document.getElementById('bfl-step-4') && document.getElementById('bfl-step-4').style.display !== 'none') {
+      window._bflClientToken = d.token;
+      if(typeof window.mountBflCardElement === 'function') window.mountBflCardElement();
     }
     toastLocal('Signed in with ' + providerName);
   }
@@ -28497,7 +28615,7 @@ window._handleRTCMessage=function(d){
     completeClientProviderAuth(d, 'Google');
   }
   function replaceGoogleButtons(clientId){
-    var roots = ['#booking-overlay', '#client-login-gate', '#screen-PKG-LOGIN', '#bfl-step-3'];
+    var roots = ['#booking-overlay', '#client-login-gate', '#screen-PKG-LOGIN', '#bfl-step-3', '#bfl-step-4'];
     roots.forEach(function(rootSel){
       var root = document.querySelector(rootSel);
       if(!root) return;

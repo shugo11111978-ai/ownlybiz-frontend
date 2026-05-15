@@ -20340,7 +20340,7 @@ window.OB_RTC = (function(){
   var _lastOfferSdp=null, _lastAnswerSdp=null, _lastLocalOfferSdp=null, _remoteAnswerSet=false, _answerApplying=false, _offerRetryTimer=null;
   var _connectDeadlineTimer=null, _connectionIssueTimer=null, _billingReadyTimer=null, _connectedOnce=false, _endingForIssue=false, _iceRestartAttempted=false;
   var _localIce=[], _peerReady=false, _remoteMediaSeen=false, _remoteMediaKinds={audio:false,video:false}, _rtcConfigLoaded=false, _rtcConfigPromise=null;
-  var _qualityTimer=null, _qualityBaseline={}, _qualityWeakSamples=0, _qualityGoodSamples=0, _qualityLevel='unknown', _qualityProfile='standard', _lastQualitySentAt=0;
+  var _qualityTimer=null, _qualityBaseline={}, _qualityWeakSamples=0, _qualityGoodSamples=0, _qualityLevel='unknown', _qualityProfile='standard', _lastQualitySentAt=0, _connectionSignalHandler=null;
   var RTC_TIMEOUTS={initialMs:35000,reconnectMs:15000,failureMs:7000};
   var RTC_BILLING_STABLE_MS=3500;
   var DEFAULT_ICE={iceServers:[{urls:'stun:stun.l.google.com:19302'},{urls:'stun:stun1.l.google.com:19302'}],iceCandidatePoolSize:10,bundlePolicy:'max-bundle',rtcpMuxPolicy:'require'};
@@ -20507,6 +20507,33 @@ window.OB_RTC = (function(){
     var loss=sample&&Number.isFinite(sample.lossPct)?sample.lossPct.toFixed(1)+'%':'unknown';
     note.textContent=(level==='poor'?'Connection is very weak. ':'Connection is weak. ') + 'Keeping the session connected and reducing video load. RTT '+rtt+', loss '+loss+'.';
   }
+  function _connectionInfo(){
+    return navigator.connection || navigator.mozConnection || navigator.webkitConnection || null;
+  }
+  function _connectionHintSample(){
+    var info=_connectionInfo();
+    if(!info) return null;
+    var effective=String(info.effectiveType||'').toLowerCase();
+    var rtt=Number(info.rtt);
+    var downlink=Number(info.downlink);
+    var saveData=!!info.saveData;
+    var poor=saveData||effective==='slow-2g'||effective==='2g'||(Number.isFinite(rtt)&&rtt>=1200)||(Number.isFinite(downlink)&&downlink>0&&downlink<0.35);
+    var weak=poor||effective==='3g'||(Number.isFinite(rtt)&&rtt>=550)||(Number.isFinite(downlink)&&downlink>0&&downlink<1.2);
+    if(!weak) return null;
+    return {
+      rttMs:Number.isFinite(rtt)?rtt:null,
+      lossPct:null,
+      videoSendKbps:Number.isFinite(downlink)&&downlink>0?Math.round(downlink*1000):null,
+      fps:null,
+      qualityLimitation:saveData?'save-data':(effective||'network'),
+      level:poor?'poor':'weak',
+      source:'network'
+    };
+  }
+  function _applyConnectionHint(){
+    var sample=_connectionHintSample();
+    if(sample) _handleQualitySample(sample);
+  }
   function _applyVideoProfile(profile){
     if(ch!=='video'||!localStream) return;
     if(_qualityProfile===profile) return;
@@ -20576,6 +20603,7 @@ window.OB_RTC = (function(){
         video_send_kbps:sample.videoSendKbps==null?null:Math.round(sample.videoSendKbps),
         fps:sample.fps==null?null:Math.round(sample.fps),
         profile:_qualityProfile,
+        source:sample.source || 'stats',
         role:_role
       });
     }catch(e){}
@@ -20594,6 +20622,10 @@ window.OB_RTC = (function(){
   function _startQualityMonitor(){
     _stopQualityMonitor();
     _qualityBaseline={}; _qualityWeakSamples=0; _qualityGoodSamples=0; _qualityLevel='unknown'; _qualityProfile='standard'; _lastQualitySentAt=0;
+    _connectionSignalHandler=function(){_applyConnectionHint();};
+    var info=_connectionInfo();
+    if(info&&typeof info.addEventListener==='function') info.addEventListener('change',_connectionSignalHandler);
+    _applyConnectionHint();
     _qualityTimer=setInterval(function(){
       if(!pc||pc.connectionState==='closed') return;
       if(typeof pc.getStats!=='function') return;
@@ -20603,6 +20635,9 @@ window.OB_RTC = (function(){
   }
   function _stopQualityMonitor(){
     if(_qualityTimer){clearInterval(_qualityTimer);_qualityTimer=null;}
+    var info=_connectionInfo();
+    if(info&&_connectionSignalHandler&&typeof info.removeEventListener==='function') info.removeEventListener('change',_connectionSignalHandler);
+    _connectionSignalHandler=null;
     var note=document.getElementById('ob-rtc-quality-note');
     if(note&&note.parentNode) note.parentNode.removeChild(note);
   }
@@ -33489,10 +33524,10 @@ body.ob-ui-dark .ob-connection-note,
   }catch(e){}
 })();
 </script>
-<script id="ownlybiz-staging-realtime-resume-v1">
+<script id="ownlybiz-production-realtime-resume-v1">
 (function(){
-  if(window.__obStagingRealtimeResumeV1) return;
-  window.__obStagingRealtimeResumeV1 = true;
+  if(window.__obProductionRealtimeResumeV1) return;
+  window.__obProductionRealtimeResumeV1 = true;
 
   var wakeLock = null;
   var hiddenAt = 0;
@@ -33500,7 +33535,7 @@ body.ob-ui-dark .ob-connection-note,
 
   function now(){ return Date.now(); }
   function token(){ return sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || localStorage.getItem('ob_client_token') || sessionStorage.getItem('ob_client_token') || ''; }
-  function apiBase(){ return (window.OWNLYBIZ_API_URL || window._OB_BACKEND || 'https://victorious-wisdom-production-a6b0.up.railway.app').replace(/\/+$/,''); }
+  function apiBase(){ return (window.OWNLYBIZ_API_URL || window._OB_BACKEND || 'https://ownlybiz-backend-production.up.railway.app').replace(/\/+$/,''); }
   function role(){
     if(resumeState.role) return resumeState.role;
     try { return (JSON.parse(sessionStorage.getItem('ob_u') || localStorage.getItem('ob_u') || '{}').role || '').toLowerCase(); } catch(e){ return ''; }
@@ -33694,22 +33729,35 @@ body.ob-ui-dark .ob-connection-note,
   window.addEventListener('pageshow', function(){ setTimeout(function(){ resumeAfterSleep('pageshow_resume'); }, 250); });
   window.addEventListener('focus', function(){ setTimeout(function(){ resumeAfterSleep('focus_resume'); }, 250); });
   window.addEventListener('online', function(){ setTimeout(function(){ resumeAfterSleep('network_online'); }, 250); });
-  window.obStagingForceRealtimeResume = function(){ resumeAfterSleep('manual_qa_resume'); };
+  window.obProductionForceRealtimeResume = function(){ resumeAfterSleep('manual_qa_resume'); };
+  window.obStagingForceRealtimeResume = window.obProductionForceRealtimeResume;
   install();
   [300, 1200, 3000, 6000].forEach(function(ms){ setTimeout(install, ms); });
 })();
 </script>
-<script id="ownlybiz-staging-chat-outbox-v1">
+<script id="ownlybiz-chat-outbox-v2">
 (function(){
-  if(window.__obStagingChatOutboxV1) return;
-  window.__obStagingChatOutboxV1 = true;
-  var KEY = 'ob_chat_outbox_v1';
-  function apiBase(){ return (window.OWNLYBIZ_API_URL || window._OB_BACKEND || 'https://victorious-wisdom-production-a6b0.up.railway.app').replace(/\/+$/,''); }
+  if(window.__obChatOutboxV2) return;
+  window.__obChatOutboxV2 = true;
+  var KEY = 'ob_chat_outbox_v2';
+  var LEGACY_KEY = 'ob_chat_outbox_v1';
+  function apiBase(){ return (window.OWNLYBIZ_API_URL || window._OB_BACKEND || 'https://ownlybiz-backend-production.up.railway.app').replace(/\/+$/,''); }
   function token(){ return sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || localStorage.getItem('ob_client_token') || sessionStorage.getItem('ob_client_token') || ''; }
   function role(){ try { return (JSON.parse(sessionStorage.getItem('ob_u') || localStorage.getItem('ob_u') || '{}').role || '').toLowerCase(); } catch(e){ return ''; } }
   function activeSid(){ return window._obActiveSessId || window._sid || window._sessId || window._obRtcLastSid || ''; }
+  function messageId(){ return 'ob-msg-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 12); }
+  function myId(){ try { if(typeof window.myId === 'function') return window.myId(); return (JSON.parse(sessionStorage.getItem('ob_u') || localStorage.getItem('ob_u') || '{}').id || 'local'); } catch(e){ return 'local'; } }
   function read(){
-    try { return JSON.parse(sessionStorage.getItem(KEY) || '[]'); } catch(e){ return []; }
+    var current = [];
+    var legacy = [];
+    try { current = JSON.parse(sessionStorage.getItem(KEY) || '[]'); } catch(e){ current = []; }
+    try { legacy = JSON.parse(sessionStorage.getItem(LEGACY_KEY) || '[]'); } catch(e){ legacy = []; }
+    if(legacy.length) {
+      try { sessionStorage.removeItem(LEGACY_KEY); } catch(e) {}
+      current = current.concat(legacy);
+      write(current);
+    }
+    return current;
   }
   function write(items){
     try { sessionStorage.setItem(KEY, JSON.stringify((items || []).slice(-50))); } catch(e) {}
@@ -33724,31 +33772,35 @@ body.ob-ui-dark .ob-connection-note,
         window.appendPanelMessage(panelId, {
           id:item.id,
           session_id:item.sid,
-          sender_id:(typeof window.myId === 'function' ? window.myId() : 'local'),
+          sender_id:myId(),
           content:item.content,
           sent_at:Math.floor(Date.now()/1000)
         }, true);
       }
     } catch(e) {}
   }
-  function queue(panelId, sid, content){
+  function queue(panelId, sid, content, existingId){
     if(!sid || !content) return;
-    var item = { id:'queued-chat-' + Date.now() + '-' + Math.random().toString(16).slice(2), sid:sid, content:content, panelId:panelId, role:role(), queuedAt:Date.now() };
+    var item = { id:existingId || messageId(), sid:sid, content:content, panelId:panelId, role:role(), queuedAt:Date.now() };
     var items = read();
-    items.push(item);
+    if(!items.some(function(x){ return x && x.id === item.id; })) items.push(item);
     write(items);
-    appendLocal(panelId, item);
     toastMsg('Message queued. It will send when the connection returns.', 'ok');
+    return item;
   }
   async function postMessage(item){
     var res = await fetch(apiBase() + '/api/sessions/' + encodeURIComponent(item.sid) + '/message', {
       method:'POST',
       headers:{'Content-Type':'application/json','Authorization':'Bearer ' + token()},
-      body:JSON.stringify({content:item.content})
+      body:JSON.stringify({content:item.content, client_message_id:item.id})
     });
     var data = {};
     try { data = await res.json(); } catch(e) {}
-    if(!res.ok) throw new Error(data.error || data.message || 'Message send failed');
+    if(!res.ok) {
+      var err = new Error(data.error || data.message || 'Message send failed');
+      err.status = res.status;
+      throw err;
+    }
     return data;
   }
   async function flush(){
@@ -33758,10 +33810,28 @@ body.ob-ui-dark .ob-connection-note,
     var remaining = [];
     for(var i=0;i<items.length;i++){
       try { await postMessage(items[i]); }
-      catch(e){ remaining.push(items[i]); }
+      catch(e){ if(!e || !e.status || e.status >= 500) remaining.push(items[i]); }
     }
     write(remaining);
     if(items.length && !remaining.length) toastMsg('Queued chat messages sent.', 'ok');
+  }
+  function sendWithRetry(panelId, sid, content, input){
+    if(!sid || !content) return false;
+    var item = { id:messageId(), sid:sid, content:content, panelId:panelId, role:role(), queuedAt:Date.now() };
+    if(input) input.value = '';
+    appendLocal(panelId, item);
+    if(!navigator.onLine || !token()){
+      queue(panelId, sid, content, item.id);
+      return true;
+    }
+    postMessage(item).catch(function(e){
+      if(e && e.status && e.status < 500) {
+        toastMsg(e.message || 'Message failed', 'err');
+        return;
+      }
+      queue(panelId, sid, content, item.id);
+    });
+    return true;
   }
   function wrapClient(){
     if(typeof window.sendPaidMsg !== 'function' || window.sendPaidMsg.__obOutboxGuarded) return;
@@ -33770,11 +33840,7 @@ body.ob-ui-dark .ob-connection-note,
       var input = document.getElementById('paid-chat-input');
       var content = input ? input.value.trim() : '';
       var sid = activeSid();
-      if(content && sid && !navigator.onLine){
-        if(input) input.value = '';
-        queue('paid-chat-messages', sid, content);
-        return;
-      }
+      if(content && sid) return sendWithRetry('paid-chat-messages', sid, content, input);
       return previous.apply(this, arguments);
     };
     wrapped.__obOutboxGuarded = true;
@@ -33787,11 +33853,7 @@ body.ob-ui-dark .ob-connection-note,
       var input = document.getElementById('expert-chat-input') || document.getElementById('chat-input');
       var content = input ? input.value.trim() : '';
       var sid = activeSid();
-      if(content && sid && !navigator.onLine){
-        if(input) input.value = '';
-        queue('expert-chat-messages', sid, content);
-        return;
-      }
+      if(content && sid) return sendWithRetry('expert-chat-messages', sid, content, input);
       return previous.apply(this, arguments);
     };
     wrapped.__obOutboxGuarded = true;

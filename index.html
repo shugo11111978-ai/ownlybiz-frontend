@@ -20340,6 +20340,7 @@ window.OB_RTC = (function(){
   var _lastOfferSdp=null, _lastAnswerSdp=null, _lastLocalOfferSdp=null, _remoteAnswerSet=false, _answerApplying=false, _offerRetryTimer=null;
   var _connectDeadlineTimer=null, _connectionIssueTimer=null, _billingReadyTimer=null, _connectedOnce=false, _endingForIssue=false, _iceRestartAttempted=false;
   var _localIce=[], _peerReady=false, _remoteMediaSeen=false, _remoteMediaKinds={audio:false,video:false}, _rtcConfigLoaded=false, _rtcConfigPromise=null;
+  var _qualityTimer=null, _qualityBaseline={}, _qualityWeakSamples=0, _qualityGoodSamples=0, _qualityLevel='unknown', _qualityProfile='standard', _lastQualitySentAt=0;
   var RTC_TIMEOUTS={initialMs:35000,reconnectMs:15000,failureMs:7000};
   var RTC_BILLING_STABLE_MS=3500;
   var DEFAULT_ICE={iceServers:[{urls:'stun:stun.l.google.com:19302'},{urls:'stun:stun1.l.google.com:19302'}],iceCandidatePoolSize:10,bundlePolicy:'max-bundle',rtcpMuxPolicy:'require'};
@@ -20393,6 +20394,8 @@ window.OB_RTC = (function(){
     if(channel==='video')return {audio:audio,video:{width:{ideal:640,max:1280},height:{ideal:480,max:720},frameRate:{ideal:24,max:30}}};
     return {audio:audio,video:false};
   }
+  var VIDEO_STANDARD_CONSTRAINTS={width:{ideal:640,max:1280},height:{ideal:480,max:720},frameRate:{ideal:24,max:30}};
+  var VIDEO_LOW_CONSTRAINTS={width:{ideal:320,max:640},height:{ideal:240,max:360},frameRate:{ideal:12,max:15}};
 
   function _ws(){
     var w;
@@ -20478,6 +20481,130 @@ window.OB_RTC = (function(){
     if(_connectDeadlineTimer){clearTimeout(_connectDeadlineTimer);_connectDeadlineTimer=null;}
     if(_connectionIssueTimer){clearTimeout(_connectionIssueTimer);_connectionIssueTimer=null;}
     if(_billingReadyTimer){clearTimeout(_billingReadyTimer);_billingReadyTimer=null;}
+  }
+  function _qualityNoteHost(){
+    if(_role==='expert'){
+      return document.getElementById('expert-rtc-area') || document.getElementById('db-panel-live-session') || document.body;
+    }
+    return document.getElementById('screen-VID') || document.getElementById('screen-B3') || document.getElementById('screen-A4') || document.body;
+  }
+  function _renderQualityNote(level, sample){
+    var host=_qualityNoteHost();
+    if(!host) return;
+    var note=document.getElementById('ob-rtc-quality-note');
+    var weak=level==='weak'||level==='poor';
+    if(!weak){
+      if(note&&note.parentNode) note.parentNode.removeChild(note);
+      return;
+    }
+    if(!note){
+      note=document.createElement('div');
+      note.id='ob-rtc-quality-note';
+      note.style.cssText='margin:10px 0;padding:10px 12px;border-radius:12px;background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.28);color:#92400e;font-size:12px;font-weight:800;line-height:1.35;';
+      if(host.firstChild) host.insertBefore(note,host.firstChild); else host.appendChild(note);
+    }
+    var rtt=sample&&Number.isFinite(sample.rttMs)?Math.round(sample.rttMs)+'ms':'unknown';
+    var loss=sample&&Number.isFinite(sample.lossPct)?sample.lossPct.toFixed(1)+'%':'unknown';
+    note.textContent=(level==='poor'?'Connection is very weak. ':'Connection is weak. ') + 'Keeping the session connected and reducing video load. RTT '+rtt+', loss '+loss+'.';
+  }
+  function _applyVideoProfile(profile){
+    if(ch!=='video'||!localStream) return;
+    if(_qualityProfile===profile) return;
+    var track=localStream.getVideoTracks&&localStream.getVideoTracks()[0];
+    if(!track||track.readyState!=='live'||_camOff) return;
+    var constraints=profile==='low'?VIDEO_LOW_CONSTRAINTS:VIDEO_STANDARD_CONSTRAINTS;
+    _qualityProfile=profile;
+    try{
+      var ret=track.applyConstraints(constraints);
+      if(ret&&typeof ret.catch==='function')ret.catch(function(){});
+    }catch(e){}
+  }
+  function _qualityKind(report){
+    return String(report.kind||report.mediaType||'').toLowerCase();
+  }
+  function _computeQuality(stats){
+    var sample={rttMs:null,lossPct:null,videoSendKbps:null,fps:null,qualityLimitation:'',level:'good'};
+    var lossLost=0, lossTotal=0;
+    stats.forEach(function(report){
+      if(report.type==='candidate-pair'&&report.state==='succeeded'&&(report.selected||report.nominated)){
+        if(Number.isFinite(report.currentRoundTripTime)) sample.rttMs=report.currentRoundTripTime*1000;
+        if(Number.isFinite(report.availableOutgoingBitrate)) sample.videoSendKbps=Math.max(sample.videoSendKbps||0, report.availableOutgoingBitrate/1000);
+      }
+      if(report.type==='remote-inbound-rtp'&&Number.isFinite(report.roundTripTime)){
+        sample.rttMs=Math.max(sample.rttMs||0, report.roundTripTime*1000);
+      }
+      if(report.type==='outbound-rtp'&&_qualityKind(report)==='video'){
+        if(Number.isFinite(report.framesPerSecond)) sample.fps=report.framesPerSecond;
+        if(report.qualityLimitationReason) sample.qualityLimitation=String(report.qualityLimitationReason);
+        var prevOut=_qualityBaseline[report.id]||{};
+        if(Number.isFinite(report.bytesSent)&&Number.isFinite(prevOut.bytesSent)&&Number.isFinite(prevOut.ts)&&report.timestamp>prevOut.ts){
+          var kbps=((report.bytesSent-prevOut.bytesSent)*8)/Math.max(1,(report.timestamp-prevOut.ts));
+          sample.videoSendKbps=Math.max(0,kbps);
+        }
+        _qualityBaseline[report.id]={bytesSent:report.bytesSent,ts:report.timestamp};
+      }
+      if(report.type==='inbound-rtp'&&(Number.isFinite(report.packetsLost)||Number.isFinite(report.packetsReceived))){
+        var prev=_qualityBaseline[report.id]||{};
+        if(Number.isFinite(prev.packetsLost)&&Number.isFinite(prev.packetsReceived)){
+          var lostDelta=Math.max(0,(report.packetsLost||0)-prev.packetsLost);
+          var recvDelta=Math.max(0,(report.packetsReceived||0)-prev.packetsReceived);
+          if(lostDelta+recvDelta>0){lossLost+=lostDelta;lossTotal+=lostDelta+recvDelta;}
+        }
+        _qualityBaseline[report.id]={packetsLost:report.packetsLost||0,packetsReceived:report.packetsReceived||0};
+      }
+    });
+    if(lossTotal>0) sample.lossPct=(lossLost/lossTotal)*100;
+    var poor=(sample.rttMs!=null&&sample.rttMs>1200)||(sample.lossPct!=null&&sample.lossPct>12)||(ch==='video'&&sample.fps!=null&&sample.fps<8)||(ch==='video'&&sample.videoSendKbps!=null&&sample.videoSendKbps<120);
+    var weak=poor||(sample.rttMs!=null&&sample.rttMs>550)||(sample.lossPct!=null&&sample.lossPct>5)||(ch==='video'&&sample.fps!=null&&sample.fps<14)||(ch==='video'&&sample.videoSendKbps!=null&&sample.videoSendKbps<300)||sample.qualityLimitation==='bandwidth';
+    sample.level=poor?'poor':(weak?'weak':'good');
+    return sample;
+  }
+  function _sendQuality(sample, force){
+    if(!sid||!sample) return;
+    var changed=sample.level!==_qualityLevel;
+    _qualityLevel=sample.level;
+    if(!force&&!changed&&Date.now()-_lastQualitySentAt<15000) return;
+    _lastQualitySentAt=Date.now();
+    try{
+      _send({
+        type:'rtc_quality',
+        session_id:sid,
+        channel:ch,
+        level:sample.level,
+        rtt_ms:sample.rttMs==null?null:Math.round(sample.rttMs),
+        loss_pct:sample.lossPct==null?null:Number(sample.lossPct.toFixed(2)),
+        video_send_kbps:sample.videoSendKbps==null?null:Math.round(sample.videoSendKbps),
+        fps:sample.fps==null?null:Math.round(sample.fps),
+        profile:_qualityProfile,
+        role:_role
+      });
+    }catch(e){}
+  }
+  function _handleQualitySample(sample){
+    if(!sample) return;
+    if(sample.level==='weak'||sample.level==='poor'){
+      _qualityWeakSamples+=1; _qualityGoodSamples=0;
+      if(_qualityWeakSamples>=2){_applyVideoProfile('low');_renderQualityNote(sample.level,sample);}
+    }else{
+      _qualityGoodSamples+=1; _qualityWeakSamples=0;
+      if(_qualityGoodSamples>=4){_applyVideoProfile('standard');_renderQualityNote('good',sample);}
+    }
+    _sendQuality(sample,false);
+  }
+  function _startQualityMonitor(){
+    _stopQualityMonitor();
+    _qualityBaseline={}; _qualityWeakSamples=0; _qualityGoodSamples=0; _qualityLevel='unknown'; _qualityProfile='standard'; _lastQualitySentAt=0;
+    _qualityTimer=setInterval(function(){
+      if(!pc||pc.connectionState==='closed') return;
+      if(typeof pc.getStats!=='function') return;
+      pc.getStats().then(function(stats){_handleQualitySample(_computeQuality(stats));}).catch(function(){});
+    },5000);
+    if(_qualityTimer&&typeof _qualityTimer.unref==='function')_qualityTimer.unref();
+  }
+  function _stopQualityMonitor(){
+    if(_qualityTimer){clearInterval(_qualityTimer);_qualityTimer=null;}
+    var note=document.getElementById('ob-rtc-quality-note');
+    if(note&&note.parentNode) note.parentNode.removeChild(note);
   }
   function _fallbackEndSession(failedSid, reason){
     var tok=_authToken();
@@ -20575,6 +20702,7 @@ window.OB_RTC = (function(){
     _connectedOnce=true;
     _iceRestartAttempted=false;
     _clearConnectionTimers();
+    _startQualityMonitor();
     try{_send({type:'rtc_connected',session_id:sid,channel:ch,billing_ready:true,stable:true,stable_ms:RTC_BILLING_STABLE_MS});}catch(e){}
     try{if(typeof window._obRtcConnected==='function')window._obRtcConnected(sid,ch,_role);}catch(e){}
   }
@@ -20843,6 +20971,7 @@ window.OB_RTC = (function(){
 	  }
   function cleanup(){
     _clearConnectionTimers();
+    _stopQualityMonitor();
     if(pc){try{pc.close();}catch(e){}pc=null;}
     if(localStream){localStream.getTracks().forEach(function(t){t.stop();});localStream=null;}
 	    _pendingOffer=null;_pendingIce=[];_pendingAnswer=null;
@@ -20864,7 +20993,7 @@ window.OB_RTC = (function(){
     sid=null;ch=null;_role=null;_muted=false;_camOff=false;_connectedOnce=false;_endingForIssue=false;_iceRestartAttempted=false;
   }
 
-  return{start:start,handleOffer:handleOffer,handleAnswer:handleAnswer,handleIce:handleIce,handleReady:handleReady,toggleMute:toggleMute,toggleCamera:toggleCamera,end:end,cleanup:cleanup,isActive:function(){return pc!==null;},getChannel:function(){return ch;},getSid:function(){return sid;}};
+  return{start:start,handleOffer:handleOffer,handleAnswer:handleAnswer,handleIce:handleIce,handleReady:handleReady,toggleMute:toggleMute,toggleCamera:toggleCamera,end:end,cleanup:cleanup,isActive:function(){return pc!==null;},getChannel:function(){return ch;},getSid:function(){return sid;},getQuality:function(){return{level:_qualityLevel,profile:_qualityProfile,weak_samples:_qualityWeakSamples,good_samples:_qualityGoodSamples};}};
 })();
 
 window._handleRTCMessage=function(d){
@@ -20884,6 +21013,24 @@ window._handleRTCMessage=function(d){
 	    return;
 	  }
   else if(d.type==='rtc_ready'){console.log('[RTC] Peer ready');if(window.OB_RTC.handleReady)window.OB_RTC.handleReady();}
+  else if(d.type==='rtc_quality'){
+    try{
+      var level=String(d.level||'').toLowerCase();
+      if(level==='weak'||level==='poor'){
+        var host=(typeof role==='function'&&role()==='expert')
+          ? (document.getElementById('expert-rtc-area')||document.getElementById('db-panel-live-session')||document.body)
+          : (document.getElementById('screen-VID')||document.getElementById('screen-B3')||document.getElementById('screen-A4')||document.body);
+        var note=document.getElementById('ob-rtc-peer-quality-note');
+        if(!note){
+          note=document.createElement('div');
+          note.id='ob-rtc-peer-quality-note';
+          note.style.cssText='margin:10px 0;padding:10px 12px;border-radius:12px;background:rgba(96,165,250,.12);border:1px solid rgba(96,165,250,.28);color:#1e3a8a;font-size:12px;font-weight:800;line-height:1.35;';
+          if(host&&host.firstChild)host.insertBefore(note,host.firstChild);else if(host)host.appendChild(note);
+        }
+        note.textContent='The other side has a weak connection. Ownlybiz is keeping the session connected and lowering video load where possible.';
+      }
+    }catch(e){}
+  }
 };
 </script>
 <script>
@@ -33552,6 +33699,111 @@ body.ob-ui-dark .ob-connection-note,
   [300, 1200, 3000, 6000].forEach(function(ms){ setTimeout(install, ms); });
 })();
 </script>
+<script id="ownlybiz-staging-chat-outbox-v1">
+(function(){
+  if(window.__obStagingChatOutboxV1) return;
+  window.__obStagingChatOutboxV1 = true;
+  var KEY = 'ob_chat_outbox_v1';
+  function apiBase(){ return (window.OWNLYBIZ_API_URL || window._OB_BACKEND || 'https://victorious-wisdom-production-a6b0.up.railway.app').replace(/\/+$/,''); }
+  function token(){ return sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || localStorage.getItem('ob_client_token') || sessionStorage.getItem('ob_client_token') || ''; }
+  function role(){ try { return (JSON.parse(sessionStorage.getItem('ob_u') || localStorage.getItem('ob_u') || '{}').role || '').toLowerCase(); } catch(e){ return ''; } }
+  function activeSid(){ return window._obActiveSessId || window._sid || window._sessId || window._obRtcLastSid || ''; }
+  function read(){
+    try { return JSON.parse(sessionStorage.getItem(KEY) || '[]'); } catch(e){ return []; }
+  }
+  function write(items){
+    try { sessionStorage.setItem(KEY, JSON.stringify((items || []).slice(-50))); } catch(e) {}
+  }
+  function toastMsg(msg,type){
+    if(typeof window.toast === 'function') window.toast(msg,type || 'ok');
+    else if(typeof window._showToast === 'function') window._showToast(msg,type === 'err' ? 'red' : 'green');
+  }
+  function appendLocal(panelId, item){
+    try {
+      if(typeof window.appendPanelMessage === 'function'){
+        window.appendPanelMessage(panelId, {
+          id:item.id,
+          session_id:item.sid,
+          sender_id:(typeof window.myId === 'function' ? window.myId() : 'local'),
+          content:item.content,
+          sent_at:Math.floor(Date.now()/1000)
+        }, true);
+      }
+    } catch(e) {}
+  }
+  function queue(panelId, sid, content){
+    if(!sid || !content) return;
+    var item = { id:'queued-chat-' + Date.now() + '-' + Math.random().toString(16).slice(2), sid:sid, content:content, panelId:panelId, role:role(), queuedAt:Date.now() };
+    var items = read();
+    items.push(item);
+    write(items);
+    appendLocal(panelId, item);
+    toastMsg('Message queued. It will send when the connection returns.', 'ok');
+  }
+  async function postMessage(item){
+    var res = await fetch(apiBase() + '/api/sessions/' + encodeURIComponent(item.sid) + '/message', {
+      method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer ' + token()},
+      body:JSON.stringify({content:item.content})
+    });
+    var data = {};
+    try { data = await res.json(); } catch(e) {}
+    if(!res.ok) throw new Error(data.error || data.message || 'Message send failed');
+    return data;
+  }
+  async function flush(){
+    if(!navigator.onLine || !token()) return;
+    var items = read();
+    if(!items.length) return;
+    var remaining = [];
+    for(var i=0;i<items.length;i++){
+      try { await postMessage(items[i]); }
+      catch(e){ remaining.push(items[i]); }
+    }
+    write(remaining);
+    if(items.length && !remaining.length) toastMsg('Queued chat messages sent.', 'ok');
+  }
+  function wrapClient(){
+    if(typeof window.sendPaidMsg !== 'function' || window.sendPaidMsg.__obOutboxGuarded) return;
+    var previous = window.sendPaidMsg;
+    var wrapped = function(){
+      var input = document.getElementById('paid-chat-input');
+      var content = input ? input.value.trim() : '';
+      var sid = activeSid();
+      if(content && sid && !navigator.onLine){
+        if(input) input.value = '';
+        queue('paid-chat-messages', sid, content);
+        return;
+      }
+      return previous.apply(this, arguments);
+    };
+    wrapped.__obOutboxGuarded = true;
+    window.sendPaidMsg = wrapped;
+  }
+  function wrapExpert(){
+    if(typeof window.sendExpertMsg !== 'function' || window.sendExpertMsg.__obOutboxGuarded) return;
+    var previous = window.sendExpertMsg;
+    var wrapped = function(){
+      var input = document.getElementById('expert-chat-input') || document.getElementById('chat-input');
+      var content = input ? input.value.trim() : '';
+      var sid = activeSid();
+      if(content && sid && !navigator.onLine){
+        if(input) input.value = '';
+        queue('expert-chat-messages', sid, content);
+        return;
+      }
+      return previous.apply(this, arguments);
+    };
+    wrapped.__obOutboxGuarded = true;
+    window.sendExpertMsg = wrapped;
+  }
+  function install(){ wrapClient(); wrapExpert(); flush(); }
+  window.addEventListener('online', function(){ setTimeout(flush, 500); });
+  window.addEventListener('focus', function(){ setTimeout(flush, 500); });
+  setInterval(flush, 5000);
+  [200,1000,2500,5000].forEach(function(ms){ setTimeout(install, ms); });
+})();
+</script>
 <style>
 #ob-ops-launcher{display:none;position:fixed;right:18px;bottom:18px;z-index:99998;border:1px solid rgba(255,255,255,.22);background:#07130f;color:#ecfff8;border-radius:999px;padding:12px 16px;font:800 13px/1.1 var(--font-body,Arial,sans-serif);box-shadow:0 18px 50px rgba(0,0,0,.36);cursor:pointer;gap:9px;align-items:center}
 #ob-ops-launcher.show{display:flex}
@@ -33736,6 +33988,8 @@ body.ob-ui-dark .ob-connection-note,
         card('Reconnect grace', fmt((runtime.media_reconnect_grace_ms || 0) / 1000, 's'), 'Before ending sleeping voice/video sessions') +
         card('RTC relays', fmt(metrics.rtc_relay_total), 'SDP/ICE signaling messages') +
         card('Resume events', fmt(metrics.session_resume_total), 'Browser wake/rejoin attempts') +
+        card('Quality samples', fmt(metrics.rtc_quality_total), 'Weak ' + fmt(metrics.rtc_quality_weak_total) + ' · poor ' + fmt(metrics.rtc_quality_poor_total)) +
+        card('Quality tracked', fmt(runtime.quality_entries), 'Active sessions with latest RTC stats') +
         card('WS errors', fmt(metrics.handler_error_total), 'Handler errors since restart') +
       '</div>' +
       '<div class="ob-ops-two">' +
@@ -33748,6 +34002,8 @@ body.ob-ui-dark .ob-connection-note,
           '<tr><td>Participant disconnect timeouts</td><td>'+fmt(metrics.participant_disconnect_timeout_total)+'</td></tr>' +
           '<tr><td>Media reconnect grace events</td><td>'+fmt(metrics.media_reconnect_grace_total)+'</td></tr>' +
           '<tr><td>Participant rejoined</td><td>'+fmt(metrics.participant_rejoined_total)+'</td></tr>' +
+          '<tr><td>RTC quality good / weak / poor</td><td>'+fmt(metrics.rtc_quality_good_total)+' / '+fmt(metrics.rtc_quality_weak_total)+' / '+fmt(metrics.rtc_quality_poor_total)+'</td></tr>' +
+          '<tr><td>Tracked quality sessions</td><td>'+fmt(runtime.quality_entries)+'</td></tr>' +
           '<tr><td>Pending bookings</td><td>'+fmt(bookings.pending_bookings)+'</td></tr>' +
           '<tr><td>Payments paid 24h</td><td>'+fmt(payments.paid_sessions_24h)+'</td></tr>' +
           '<tr><td>Card / credit / promo 24h</td><td>$'+fmt(payments.card_charged_24h)+' / $'+fmt(payments.credit_applied_24h)+' / $'+fmt(payments.promo_discount_24h)+'</td></tr>' +
@@ -33907,6 +34163,7 @@ body.ob-ui-dark .ob-connection-note,
         card('Broken assets', fmt(s.broken_assets), 'Scanned upload references') +
         card('Media waiting', fmt(sessions.active_media_waiting_to_start), 'Oldest ' + fmt(sessions.oldest_waiting_media_age_sec || 0, 's')) +
         card('Reconnect grace', fmt((runtime.media_reconnect_grace_ms || 0) / 1000, 's'), 'Voice/video sleep recovery') +
+        card('RTC quality', fmt(rtMetrics.rtc_quality_total), 'Weak ' + fmt(rtMetrics.rtc_quality_weak_total) + ', poor ' + fmt(rtMetrics.rtc_quality_poor_total)) +
         card('WS errors', fmt(rtMetrics.handler_error_total), 'Since backend restart') +
         card('Heap used', fmt(mem.heap_used_pct,'%'), fmt(mem.heap_used_mb,' MB') + ' / ' + fmt(mem.heap_total_mb,' MB')) +
         card('Event loop p95', fmt(ev.p95_ms,'ms'), 'Max ' + fmt(ev.max_ms,'ms')) +
@@ -33924,6 +34181,7 @@ body.ob-ui-dark .ob-connection-note,
           '<tr><td>Active chat / voice / video</td><td>'+fmt(sessions.active_chat_sessions)+' / '+fmt(sessions.active_voice_sessions)+' / '+fmt(sessions.active_video_sessions)+'</td></tr>' +
           '<tr><td>Voice/video waiting to bill</td><td>'+fmt(sessions.active_media_waiting_to_start)+' · oldest '+fmt(sessions.oldest_waiting_media_age_sec || 0,'s')+'</td></tr>' +
           '<tr><td>RTC relay / resume events</td><td>'+fmt(rtMetrics.rtc_relay_total)+' / '+fmt(rtMetrics.session_resume_total)+'</td></tr>' +
+          '<tr><td>RTC quality good / weak / poor</td><td>'+fmt(rtMetrics.rtc_quality_good_total)+' / '+fmt(rtMetrics.rtc_quality_weak_total)+' / '+fmt(rtMetrics.rtc_quality_poor_total)+'</td></tr>' +
           '<tr><td>Reconnect timers</td><td>'+fmt(runtime.disconnect_timers)+' disconnect · '+fmt(runtime.media_start_timers)+' media-start</td></tr>' +
           '<tr><td>Payment failures 24h</td><td>'+fmt(sessions.payment_failures_24h)+'</td></tr>' +
           '<tr><td>Stale active sessions</td><td>'+fmt(sessions.stale_active_sessions)+'</td></tr>' +

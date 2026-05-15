@@ -657,10 +657,29 @@
     return Number.isFinite(rate) ? rate : 0;
   }
 
-  function sessionPromoStatus(){
+  function promoHostContext(preferredContext){
+    if(preferredContext === 'book_later' || preferredContext === 'booking') return preferredContext;
+    var bflStep = document.getElementById('bfl-step-3');
+    var bflChoice = document.getElementById('ob-credit-bfl-choice');
+    var bflOverlay = document.getElementById('bfl-overlay');
+    if(bflStep && bflChoice && bflOverlay){
+      var cs = window.getComputedStyle ? getComputedStyle(bflStep) : null;
+      var os = window.getComputedStyle ? getComputedStyle(bflOverlay) : null;
+      if((!os || os.display !== 'none') && (!cs || cs.display !== 'none')) return 'book_later';
+    }
+    return 'booking';
+  }
+
+  function sessionPromoPaymentMode(preferredContext){
+    return promoHostContext(preferredContext) === 'book_later'
+      ? (bookLaterPaymentMode() === 'prepaid' ? 'topup' : 'minute')
+      : getBookingPaymentMode();
+  }
+
+  function sessionPromoStatus(preferredContext){
     var el = document.getElementById('ob-session-promo-status');
     if(!el) return;
-    if(getBookingPaymentMode() === 'topup'){
+    if(sessionPromoPaymentMode(preferredContext) === 'topup'){
       if(!state.promo){
         el.innerHTML = 'Optional. Codes are checked against prepaid credit when that payment choice is selected.';
         return;
@@ -678,29 +697,32 @@
     el.innerHTML = '<strong>' + esc(state.sessionPromo.code) + '</strong> applied · ' + pct.toFixed(0) + '% off pay-by-minute sessions' + (rate > 0 ? ' · effective rate about <strong>' + effective + '</strong>' : '') + '. Final discount uses the exact session time.';
   }
 
-  function injectSessionPromo(){
+  function injectSessionPromo(preferredContext){
     addStyle();
-    var step = document.getElementById('bov-step2');
+    var context = promoHostContext(preferredContext);
+    var step = context === 'book_later' ? document.getElementById('bfl-step-3') : document.getElementById('bov-step2');
     if(!step) return;
     var mount = document.getElementById('ob-session-promo-choice');
     if(!mount){
       mount = document.createElement('div');
       mount.id = 'ob-session-promo-choice';
       mount.className = 'ob-session-promo-card ob-session-promo-compact';
-      var creditChoice = document.getElementById('ob-credit-booking-choice');
-      var wallet = document.getElementById('bov-wallet-section');
+      var creditChoice = context === 'book_later' ? document.getElementById('ob-credit-bfl-choice') : document.getElementById('ob-credit-booking-choice');
+      var wallet = context === 'book_later' ? null : document.getElementById('bov-wallet-section');
       if(creditChoice && creditChoice.parentNode) creditChoice.parentNode.insertBefore(mount, creditChoice);
       else step.insertBefore(mount, wallet || step.firstChild);
     } else if(!mount.classList.contains('ob-session-promo-compact')) {
       mount.classList.add('ob-session-promo-compact');
     }
-    var currentCreditChoice = document.getElementById('ob-credit-booking-choice');
+    var currentCreditChoice = context === 'book_later' ? document.getElementById('ob-credit-bfl-choice') : document.getElementById('ob-credit-booking-choice');
     if(mount && currentCreditChoice && currentCreditChoice.parentNode === mount.parentNode && mount.nextSibling !== currentCreditChoice){
+      currentCreditChoice.parentNode.insertBefore(mount, currentCreditChoice);
+    } else if(mount && currentCreditChoice && currentCreditChoice.parentNode && mount.parentNode !== currentCreditChoice.parentNode) {
       currentCreditChoice.parentNode.insertBefore(mount, currentCreditChoice);
     }
     var open = mount.dataset.open === '1' || !!state.sessionPromo || !!state.promo;
     mount.classList.toggle('is-open', open);
-    var code = getBookingPaymentMode() === 'topup'
+    var code = sessionPromoPaymentMode(context) === 'topup'
       ? (state.promo ? state.promo.code : '')
       : (state.sessionPromo ? state.sessionPromo.code : (window._obSessionPromoCode || ''));
     mount.innerHTML =
@@ -716,7 +738,7 @@
         '</div>' +
         '<div id="ob-session-promo-status" class="ob-session-promo-status"></div>' +
       '</div>';
-    sessionPromoStatus();
+    sessionPromoStatus(context);
   }
 
   window.obSessionPromoToggle = function(){
@@ -731,7 +753,8 @@
     var code = input && input.value || '';
     if(!code.trim()){ toastMsg('Enter a promotion code first.','err'); return; }
     try{
-      if(getBookingPaymentMode() === 'topup'){
+      var mode = sessionPromoPaymentMode();
+      if(mode === 'topup'){
         if(!state.amount) throw new Error('Choose a prepaid credit amount first.');
         var cd = await creditApi('POST','/promotions/preview',{expert_id:expertId(),code:code,amount:state.amount,applies_to:'credits'});
         state.promo = cd.promo;
@@ -750,7 +773,7 @@
       injectSessionPromo();
       toastMsg('Promotion code applied.');
     }catch(e){
-      if(getBookingPaymentMode() === 'topup'){
+      if(sessionPromoPaymentMode() === 'topup'){
         state.promo = null;
         state.intent = null;
         resetCreditPaymentMount();
@@ -766,7 +789,7 @@
   };
 
   window.obSessionPromoClear = function(){
-    if(getBookingPaymentMode() === 'topup'){
+    if(sessionPromoPaymentMode() === 'topup'){
       state.promo = null;
       state.intent = null;
       resetCreditPaymentMount();
@@ -809,6 +832,7 @@
     if(state.bookLaterPayMode !== 'prepaid' && typeof window.mountBflCardElement === 'function') {
       setTimeout(function(){ window.mountBflCardElement(); }, 80);
     }
+    sessionPromoStatus('book_later');
   }
   window.obCreditSetBookLaterPaymentMode = setBookLaterPaymentMode;
 
@@ -844,6 +868,7 @@
     var cacheKey = clientCreditCacheKey();
     if(!forceRefresh && mount.dataset.obCreditReady === '1' && mount.dataset.obCreditKey === cacheKey) {
       setBookLaterPaymentMode(bookLaterPaymentMode());
+      injectSessionPromo('book_later');
       return;
     }
     if(!forceRefresh && mount.dataset.obCreditLoading === '1') return;
@@ -870,6 +895,7 @@
         '</div>' +
         (balance > 0 ? '<button type="button" class="ob-credit-btn" style="width:100%;margin-top:4px" onclick="obBookLaterUseCredit()">Use available credit for booking</button>' : '<div class="ob-credit-note" style="margin-top:4px">' + (signedIn ? 'Add prepaid credit before confirming, or use pay by minute.' : 'Create or log in to add prepaid credit. You can still choose pay by minute below.') + '</div>');
       setBookLaterPaymentMode(bookLaterPaymentMode());
+      injectSessionPromo('book_later');
     }).catch(function(){
       if(mount.dataset.obCreditRequest !== requestId || mount.dataset.obCreditReady === '1') return;
       mount.innerHTML = '<div class="ob-credit-note">Prepaid credit is temporarily unavailable. You can still pay by minute below.</div>';
@@ -905,13 +931,10 @@
     modal.className = 'ob-credit-modal' + (inlineHost ? ' ob-credit-inline' : '');
     var head = modal.querySelector('[data-ob-credit-head]');
     var title = modal.querySelector('[data-ob-credit-title]');
-    if(head) {
-      head.style.justifyContent = inlineHost ? 'flex-end' : 'space-between';
-      head.style.marginBottom = inlineHost ? '8px' : '12px';
-    }
+    if(head) head.style.display = inlineHost ? 'none' : 'flex';
     if(title) title.style.display = inlineHost ? 'none' : '';
     var closeBtn = modal.querySelector('[data-ob-credit-close]');
-    if(closeBtn) closeBtn.textContent = inlineHost ? 'Pay by minute instead' : 'Close';
+    if(closeBtn) closeBtn.textContent = 'Close';
     if(inlineHost && targetHost) {
       if(modal.parentNode !== targetHost) targetHost.insertBefore(modal, inlineHost.nextSibling);
       else if(modal.previousSibling !== inlineHost) targetHost.insertBefore(modal, inlineHost.nextSibling);
@@ -980,6 +1003,9 @@
     } else if(state.confirming){
       btn.disabled = true;
       btn.textContent = 'Processing...';
+    } else if(state.intent && state.intent.staging_bypass){
+      btn.disabled = false;
+      btn.textContent = 'Add credit on staging';
     } else {
       btn.disabled = false;
       btn.textContent = 'Pay ' + money(due);
@@ -1087,6 +1113,27 @@
     if(!token()) throw new Error('Please sign in first.');
     state.paymentMounting = true;
     renderModalSummary();
+    if(window.OWNLYBIZ_IS_STAGING){
+      if(seq !== state.mountSeq) return;
+      state.intent = {
+        staging_bypass: true,
+        summary: {
+          credit_amount: state.amount,
+          discount_amount: state.promo ? Number(state.promo.discount_amount || 0) : 0,
+          amount_due: Math.max(0, Number(state.amount || 0) - (state.promo ? Number(state.promo.discount_amount || 0) : 0)),
+          promo: state.promo || null
+        }
+      };
+      var stagingMount = document.getElementById('ob-credit-payment-element');
+      if(!stagingMount) throw new Error('Payment form is not available.');
+      stagingMount.classList.remove('ob-credit-payment-loading');
+      stagingMount.style.display = 'block';
+      stagingMount.innerHTML = '<div class="ob-credit-payment-loading-card"><strong>Staging prepaid bypass</strong><br>No real Stripe charge will run. This adds prepaid credit only on staging.</div>';
+      state.paymentMounted = true;
+      state.paymentMounting = false;
+      renderModalSummary();
+      return;
+    }
     var d = await creditApi('POST','/payment-intents',{
       expert_id: expertId(),
       amount: state.amount,
@@ -1185,11 +1232,7 @@
     renderModalSummary();
   }
 
-  async function completeCreditPurchase(paymentIntentId){
-    var completedContext = state.context;
-    var purchaseId = state.intent && state.intent.purchase && state.intent.purchase.id;
-    if(!purchaseId) throw new Error('Credit purchase was not initialized.');
-    var confirmed = await creditApi('POST','/purchases/' + encodeURIComponent(purchaseId) + '/confirm',{payment_intent_id:paymentIntentId});
+  function finishCreditPurchase(confirmed, completedContext){
     state.summary = confirmed;
     toastMsg('Prepaid credit added.');
     injectBookingCredit(true);
@@ -1206,6 +1249,14 @@
     if(completedContext === 'booking') window.obCreditStartWithCredit();
   }
 
+  async function completeCreditPurchase(paymentIntentId){
+    var completedContext = state.context;
+    var purchaseId = state.intent && state.intent.purchase && state.intent.purchase.id;
+    if(!purchaseId) throw new Error('Credit purchase was not initialized.');
+    var confirmed = await creditApi('POST','/purchases/' + encodeURIComponent(purchaseId) + '/confirm',{payment_intent_id:paymentIntentId});
+    finishCreditPurchase(confirmed, completedContext);
+  }
+
   window.obCreditContinuePayment = async function(){
     var btn = document.getElementById('ob-credit-modal-primary');
     try{
@@ -1216,6 +1267,15 @@
       if(!state.paymentMounted){
         await mountCreditPayment(++state.mountSeq);
         if(!state.paymentMounted) return;
+      }
+      if(state.intent && state.intent.staging_bypass){
+        var confirmed = await creditApi('POST','/staging-bypass-purchase',{
+          expert_id: expertId(),
+          amount: state.amount,
+          promo_code: state.promo && state.promo.code
+        });
+        finishCreditPurchase(confirmed, state.context);
+        return;
       }
       var result = await state.stripe.confirmCardPayment(state.intent.client_secret, {
         payment_method:{card:state.cardElement}
@@ -19213,7 +19273,7 @@ window.submitBookForLater = function() {
     var notes = document.getElementById('bfl-notes') ? document.getElementById('bfl-notes').value.trim() : '';
     var hdrs = { 'Content-Type': 'application/json' };
     if (auth.token) hdrs['Authorization'] = 'Bearer ' + auth.token;
-    return fetch(BASE + '/api/bookings', { method: 'POST', headers: hdrs, body: JSON.stringify({ expert_slug: slug, scheduled_date: _bflSelectedDate, scheduled_time: _bflSelectedTime, client_name: cName, client_email: cEmail, channel: _bflChannel, notes: notes, credit_mode: data.paymentMode === 'prepaid' ? 'prepaid' : 'minute' }) })
+    return fetch(BASE + '/api/bookings', { method: 'POST', headers: hdrs, body: JSON.stringify({ expert_slug: slug, scheduled_date: _bflSelectedDate, scheduled_time: _bflSelectedTime, client_name: cName, client_email: cEmail, channel: _bflChannel, notes: notes, credit_mode: data.paymentMode === 'prepaid' ? 'prepaid' : 'minute', promo_code: data.paymentMode === 'prepaid' ? '' : (window._obSessionPromoCode || '') }) })
       .then(function(r) { return r.json(); });
   }).then(function(d) {
     btn.disabled = false; btn.textContent = 'Confirm Booking \u2192';

@@ -22354,9 +22354,12 @@ window._handleRTCMessage=function(d){
     var activeSid = window._obActiveSessId || window._sid || window._sessId || '';
     if(activeSid && sid && sid !== activeSid) return true;
     var billingStarted = d.billing_started === true || (d.session && d.session.started_at);
+    var reconnectGraceMs = Number(d.remaining_ms || d.reconnect_grace_ms || 0);
+    var reconnectGraceText = reconnectGraceMs > 0 ? ' · reconnect grace ' + Math.ceil(reconnectGraceMs / 1000) + 's' : '';
     var status = d.type === 'session_connection_waiting'
       ? (billingStarted ? 'Connection interrupted - trying to reconnect' : 'Still connecting - billing has not started')
       : 'Connection interrupted - trying to reconnect';
+    if(d.type === 'participant_reconnecting') status = 'Connection interrupted - trying to reconnect' + reconnectGraceText;
     setText('rtc-status', status);
     setText('b3-rtc-status', status);
     setText('a4-session-rate', status);
@@ -22456,6 +22459,15 @@ window._handleRTCMessage=function(d){
     var handled = false;
     if(d.type === 'session_connection_waiting' || d.type === 'session_connection_recovering' || d.type === 'participant_reconnecting'){
       return showSessionConnectionStatus(d, roleName);
+    }
+    if(d.type === 'participant_rejoined' || d.type === 'session_resume_ack'){
+      if(!sid || sid === window._obActiveSessId || sid === window._sid || sid === window._sessId){
+        if(typeof window._obClearSessionConnectionIssue === 'function') window._obClearSessionConnectionIssue(sid, d.channel || window._obPendingChannel || 'chat', roleName);
+        setText('rtc-status', 'Rejoined - restoring session');
+        setText('b3-rtc-status', 'Rejoined - restoring session');
+        setText('live-billing-status', 'Rejoined - restoring session');
+      }
+      handled = true;
     }
     if(d.type && d.type.indexOf('rtc_') === 0 && typeof window._handleRTCMessage === 'function'){ window._handleRTCMessage(d); return true; }
     if(d.type === 'joined'){
@@ -33324,6 +33336,216 @@ body.ob-ui-dark .ob-connection-note,
   }catch(e){}
 })();
 </script>
+<script id="ownlybiz-staging-realtime-resume-v1">
+(function(){
+  if(window.__obStagingRealtimeResumeV1) return;
+  window.__obStagingRealtimeResumeV1 = true;
+
+  var wakeLock = null;
+  var hiddenAt = 0;
+  var resumeState = { sid:'', channel:'', role:'', active:false, lastResumeAt:0, hardAttempts:0 };
+
+  function now(){ return Date.now(); }
+  function token(){ return sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || localStorage.getItem('ob_client_token') || sessionStorage.getItem('ob_client_token') || ''; }
+  function apiBase(){ return (window.OWNLYBIZ_API_URL || window._OB_BACKEND || 'https://victorious-wisdom-production-a6b0.up.railway.app').replace(/\/+$/,''); }
+  function role(){
+    if(resumeState.role) return resumeState.role;
+    try { return (JSON.parse(sessionStorage.getItem('ob_u') || localStorage.getItem('ob_u') || '{}').role || '').toLowerCase(); } catch(e){ return ''; }
+  }
+  function activeSid(){
+    return (window.OB_RTC && window.OB_RTC.getSid && window.OB_RTC.getSid()) ||
+      resumeState.sid || window._obActiveSessId || window._sid || window._sessId || window._obRtcLastSid || '';
+  }
+  function activeChannel(){
+    return ((window.OB_RTC && window.OB_RTC.getChannel && window.OB_RTC.getChannel()) ||
+      resumeState.channel || window._obPendingChannel || window.currentBookChannel || window._obRtcLastChannel || '').toLowerCase();
+  }
+  function isMediaChannel(channel){ return channel === 'voice' || channel === 'video'; }
+  function setText(id, value){ var el=document.getElementById(id); if(el) el.textContent = value; }
+  function status(value){
+    setText('rtc-status', value);
+    setText('b3-rtc-status', value);
+    setText('a4-session-rate', value);
+    setText('live-billing-status', value);
+  }
+  function wsForRole(roleName){
+    if(roleName === 'expert' && window._expertWs && window._expertWs.readyState === 1) return window._expertWs;
+    if(window._obClientWs && window._obClientWs.readyState === 1) return window._obClientWs;
+    if(window._obWs && window._obWs.readyState === 1) return window._obWs;
+    if(window._expertWs && window._expertWs.readyState === 1) return window._expertWs;
+    return null;
+  }
+  function send(ws, payload){
+    if(!ws || ws.readyState !== 1) return false;
+    try { ws.send(JSON.stringify(payload)); return true; } catch(e){ return false; }
+  }
+  function joinAndResume(reason){
+    var sid = activeSid();
+    if(!sid) return;
+    var roleName = role() || 'client';
+    function sendResume(ws){
+      if(!ws || ws.readyState !== 1) return;
+      var t = token();
+      if(t) send(ws, {type:'auth', token:t});
+      send(ws, {type:'join', session_id:sid});
+      send(ws, {type:'join_session', sessionId:sid});
+      send(ws, {type:'session_resume', session_id:sid, sessionId:sid, reason:reason || 'page_resume'});
+    }
+    var ws = wsForRole(roleName);
+    if(ws){ sendResume(ws); return; }
+    if(roleName === 'expert' && typeof window._obEnsureExpertWsJoined === 'function'){
+      window._obEnsureExpertWsJoined(sid, function(){ sendResume(wsForRole(roleName)); });
+      return;
+    }
+    if(typeof window._obEnsureClientWsJoined === 'function'){
+      window._obEnsureClientWsJoined(sid, function(){ sendResume(wsForRole(roleName)); });
+      return;
+    }
+    try {
+      var prop = roleName === 'expert' ? '_expertWs' : '_obClientWs';
+      var fallback = new WebSocket(apiBase().replace('https://','wss://').replace('http://','ws://') + '/ws');
+      window[prop] = fallback;
+      fallback.onopen = function(){ sendResume(fallback); };
+      fallback.onmessage = function(evt){
+        try {
+          var data = JSON.parse(evt.data);
+          if(data.type && data.type.indexOf('rtc_') === 0 && typeof window._handleRTCMessage === 'function') window._handleRTCMessage(data);
+        } catch(e) {}
+      };
+      fallback.onclose = function(){ if(window[prop] === fallback) window[prop] = null; };
+    } catch(e) {}
+  }
+  async function requestWakeLock(){
+    if(!('wakeLock' in navigator) || document.hidden || !resumeState.active || !isMediaChannel(activeChannel())) return;
+    try {
+      if(wakeLock && !wakeLock.released) return;
+      wakeLock = await navigator.wakeLock.request('screen');
+      wakeLock.addEventListener('release', function(){ wakeLock = null; });
+    } catch(e) {}
+  }
+  function releaseWakeLock(){
+    if(!wakeLock) return;
+    try { wakeLock.release(); } catch(e) {}
+    wakeLock = null;
+  }
+  function remember(sessionId, channel, roleName){
+    if(!sessionId) return;
+    resumeState.sid = sessionId;
+    resumeState.channel = String(channel || resumeState.channel || '').toLowerCase();
+    resumeState.role = String(roleName || resumeState.role || role() || 'client').toLowerCase();
+    resumeState.active = true;
+    resumeState.hardAttempts = 0;
+    window._obRtcLastSid = sessionId;
+    window._obRtcLastChannel = resumeState.channel;
+    window._obRtcLastRole = resumeState.role;
+    requestWakeLock();
+  }
+  function softResume(reason){
+    var sid = activeSid();
+    var channel = activeChannel();
+    if(!sid) return;
+    joinAndResume(reason);
+    if(isMediaChannel(channel) && window.OB_RTC && window.OB_RTC.handleReady){
+      try { window.OB_RTC.handleReady(); } catch(e) {}
+    }
+  }
+  function hardResume(reason){
+    var sid = activeSid();
+    var channel = activeChannel();
+    var roleName = role() || resumeState.role || 'client';
+    if(!sid || !isMediaChannel(channel) || !window.OB_RTC || typeof window.OB_RTC.start !== 'function') return;
+    var tooSoon = now() - (resumeState.lastResumeAt || 0) < 2500;
+    if(tooSoon) return;
+    resumeState.lastResumeAt = now();
+    resumeState.hardAttempts += 1;
+    status('Reconnecting - restoring audio/video...');
+    joinAndResume(reason || 'hard_resume');
+    var start = function(){ window.OB_RTC.start(sid, channel, roleName); };
+    try {
+      if(window.OB_RTC.isActive && window.OB_RTC.isActive() && typeof window.OB_RTC.cleanup === 'function') window.OB_RTC.cleanup();
+    } catch(e) {}
+    setTimeout(start, 350);
+  }
+  function resumeAfterSleep(reason){
+    var sid = activeSid();
+    var channel = activeChannel();
+    if(!sid || !resumeState.active) return;
+    requestWakeLock();
+    softResume(reason || 'resume');
+    if(isMediaChannel(channel)){
+      var sleptMs = hiddenAt ? now() - hiddenAt : 0;
+      if(sleptMs > 12000 || !(window.OB_RTC && window.OB_RTC.isActive && window.OB_RTC.isActive())){
+        hardResume(reason || 'wake_resume');
+      }
+    } else if(typeof window.openClientChat === 'function' && role() !== 'expert') {
+      try { window.openClientChat(sid); } catch(e) {}
+    } else if(typeof window.openExpertLivePanel === 'function' && role() === 'expert') {
+      try { window.openExpertLivePanel(sid); } catch(e) {}
+    }
+  }
+  function hookRtc(){
+    var rtc = window.OB_RTC;
+    if(!rtc || rtc.__obResumeGuarded) return;
+    rtc.__obResumeGuarded = true;
+    if(typeof rtc.start === 'function'){
+      var priorStart = rtc.start;
+      rtc.start = function(sessionId, channel, roleName){
+        remember(sessionId, channel, roleName);
+        return priorStart.apply(this, arguments);
+      };
+    }
+    if(typeof rtc.end === 'function'){
+      var priorEnd = rtc.end;
+      rtc.end = function(){
+        resumeState.active = false;
+        releaseWakeLock();
+        return priorEnd.apply(this, arguments);
+      };
+    }
+  }
+  function hookSessionOpeners(){
+    if(typeof window.openClientChat === 'function' && !window.openClientChat.__obResumeGuarded){
+      var priorClient = window.openClientChat;
+      window.openClientChat = function(sid){
+        if(sid) {
+          resumeState.sid = sid;
+          resumeState.role = 'client';
+          resumeState.active = true;
+        }
+        return priorClient.apply(this, arguments);
+      };
+      window.openClientChat.__obResumeGuarded = true;
+    }
+    if(typeof window.openExpertLivePanel === 'function' && !window.openExpertLivePanel.__obResumeGuarded){
+      var priorExpert = window.openExpertLivePanel;
+      window.openExpertLivePanel = function(sid){
+        if(sid) {
+          resumeState.sid = sid;
+          resumeState.role = 'expert';
+          resumeState.active = true;
+        }
+        return priorExpert.apply(this, arguments);
+      };
+      window.openExpertLivePanel.__obResumeGuarded = true;
+    }
+  }
+  function install(){
+    hookRtc();
+    hookSessionOpeners();
+    requestWakeLock();
+  }
+  document.addEventListener('visibilitychange', function(){
+    if(document.hidden){ hiddenAt = now(); return; }
+    setTimeout(function(){ resumeAfterSleep('visibility_resume'); }, 200);
+  });
+  window.addEventListener('pageshow', function(){ setTimeout(function(){ resumeAfterSleep('pageshow_resume'); }, 250); });
+  window.addEventListener('focus', function(){ setTimeout(function(){ resumeAfterSleep('focus_resume'); }, 250); });
+  window.addEventListener('online', function(){ setTimeout(function(){ resumeAfterSleep('network_online'); }, 250); });
+  window.obStagingForceRealtimeResume = function(){ resumeAfterSleep('manual_qa_resume'); };
+  install();
+  [300, 1200, 3000, 6000].forEach(function(ms){ setTimeout(install, ms); });
+})();
+</script>
 <style>
 #ob-ops-launcher{display:none;position:fixed;right:18px;bottom:18px;z-index:99998;border:1px solid rgba(255,255,255,.22);background:#07130f;color:#ecfff8;border-radius:999px;padding:12px 16px;font:800 13px/1.1 var(--font-body,Arial,sans-serif);box-shadow:0 18px 50px rgba(0,0,0,.36);cursor:pointer;gap:9px;align-items:center}
 #ob-ops-launcher.show{display:flex}
@@ -33381,7 +33603,7 @@ body.ob-ui-dark .ob-connection-note,
   <div class="ob-ops-head">
     <div>
       <div class="ob-ops-title">Ownlybiz Ops Monitor</div>
-      <div class="ob-ops-sub" id="ob-ops-updated">Live production telemetry for experts, clients, sessions, storage, and API health.</div>
+      <div class="ob-ops-sub" id="ob-ops-updated">Live telemetry for experts, clients, sessions, storage, realtime, and API health.</div>
     </div>
     <div class="ob-ops-actions">
       <button class="ob-ops-btn" type="button" onclick="window.obRefreshOpsDashboard&&window.obRefreshOpsDashboard()">Refresh</button>
@@ -33484,6 +33706,47 @@ body.ob-ui-dark .ob-connection-note,
     return '<table class="ob-ops-table"><thead><tr><th>Status</th><th>Route</th><th>Duration</th><th>At</th></tr></thead><tbody>' + items.slice(0,12).map(function(i){
       return '<tr><td>'+esc(i.status_code)+'</td><td>'+esc(i.route)+'</td><td>'+fmt(i.duration_ms,'ms')+'</td><td>'+esc(i.at||'')+'</td></tr>';
     }).join('') + '</tbody></table>';
+  }
+  function renderSessionHealth(data){
+    data = data || {};
+    var bus = data.business || {};
+    var sessions = bus.sessions || {};
+    var channels = bus.channels || {};
+    var bookings = bus.bookings || {};
+    var payments = bus.payments || {};
+    var rt = (data.realtime && data.realtime.websocket) || {};
+    var runtime = rt.runtime || {};
+    var metrics = rt.metrics || {};
+    function channelRow(name){
+      var c = channels[name] || {};
+      return '<tr><td>'+esc(name)+'</td><td>'+fmt(c.active)+'</td><td>'+fmt(c.pending)+'</td><td>'+fmt(c.waiting_to_start)+'</td><td>'+fmt(c.ended_24h)+'</td><td>$'+fmt(c.revenue_24h)+'</td></tr>';
+    }
+    return '<div class="ob-ops-section"><h3>Session lifecycle and realtime health</h3>' +
+      '<div class="ob-ops-grid">' +
+        card('Active chat', fmt(sessions.active_chat_sessions), 'Live text sessions') +
+        card('Active voice', fmt(sessions.active_voice_sessions), 'Live audio sessions') +
+        card('Active video', fmt(sessions.active_video_sessions), 'Live camera sessions') +
+        card('Media waiting', fmt(sessions.active_media_waiting_to_start), 'Oldest wait ' + fmt(sessions.oldest_waiting_media_age_sec || 0, 's')) +
+        card('Reconnect grace', fmt((runtime.media_reconnect_grace_ms || 0) / 1000, 's'), 'Before ending sleeping voice/video sessions') +
+        card('RTC relays', fmt(metrics.rtc_relay_total), 'SDP/ICE signaling messages') +
+        card('Resume events', fmt(metrics.session_resume_total), 'Browser wake/rejoin attempts') +
+        card('WS errors', fmt(metrics.handler_error_total), 'Handler errors since restart') +
+      '</div>' +
+      '<div class="ob-ops-two">' +
+        '<table class="ob-ops-table"><thead><tr><th>Channel</th><th>Active</th><th>Pending</th><th>Waiting</th><th>Ended 24h</th><th>Paid 24h</th></tr></thead><tbody>' +
+          channelRow('chat') + channelRow('voice') + channelRow('video') +
+        '</tbody></table>' +
+        '<table class="ob-ops-table"><tbody>' +
+          '<tr><td>Disconnect timers</td><td>'+fmt(runtime.disconnect_timers)+'</td></tr>' +
+          '<tr><td>Media start timers</td><td>'+fmt(runtime.media_start_timers)+'</td></tr>' +
+          '<tr><td>Participant disconnect timeouts</td><td>'+fmt(metrics.participant_disconnect_timeout_total)+'</td></tr>' +
+          '<tr><td>Media reconnect grace events</td><td>'+fmt(metrics.media_reconnect_grace_total)+'</td></tr>' +
+          '<tr><td>Participant rejoined</td><td>'+fmt(metrics.participant_rejoined_total)+'</td></tr>' +
+          '<tr><td>Pending bookings</td><td>'+fmt(bookings.pending_bookings)+'</td></tr>' +
+          '<tr><td>Payments paid 24h</td><td>'+fmt(payments.paid_sessions_24h)+'</td></tr>' +
+          '<tr><td>Card / credit / promo 24h</td><td>$'+fmt(payments.card_charged_24h)+' / $'+fmt(payments.credit_applied_24h)+' / $'+fmt(payments.promo_discount_24h)+'</td></tr>' +
+        '</tbody></table>' +
+      '</div></div>';
   }
   function sparkPath(rows, key, w, h){
     rows = rows || [];
@@ -33598,7 +33861,7 @@ body.ob-ui-dark .ob-connection-note,
   function notifyIfNeeded(data){
     var critical = num(data.summary && data.summary.critical_alerts);
     if(critical > lastCriticalCount && 'Notification' in window && Notification.permission === 'granted'){
-      try { new Notification('Ownlybiz production alert', { body: critical + ' critical alert(s) active in Ops Monitor.', tag:'ownlybiz-ops-alert' }); } catch(e) {}
+      try { new Notification('Ownlybiz ops alert', { body: critical + ' critical alert(s) active in Ops Monitor.', tag:'ownlybiz-ops-alert' }); } catch(e) {}
     }
     lastCriticalCount = critical;
   }
@@ -33617,6 +33880,8 @@ body.ob-ui-dark .ob-connection-note,
     var assetStore = storage.assets || {};
     var rt = (data.realtime && data.realtime.websocket) || {};
     var cluster = rt.cluster || {};
+    var runtime = rt.runtime || {};
+    var rtMetrics = rt.metrics || {};
     var alertsVisible = visibleAlerts(data.alerts || []);
     var dismissedCount = (data.alerts || []).length - alertsVisible.length;
     var state = alertsVisible.some(function(a){ return a.severity === 'critical'; }) ? 'critical' : (alertsVisible.length ? 'warning' : 'ok');
@@ -33634,6 +33899,9 @@ body.ob-ui-dark .ob-connection-note,
         card('Sessions now', fmt(s.active_sessions), fmt(s.pending_sessions) + ' pending requests') +
         card('Realtime users', fmt(s.connected_users), 'Sockets ' + fmt(cluster.cluster_total_sockets || rt.total_sockets)) +
         card('Broken assets', fmt(s.broken_assets), 'Scanned upload references') +
+        card('Media waiting', fmt(sessions.active_media_waiting_to_start), 'Oldest ' + fmt(sessions.oldest_waiting_media_age_sec || 0, 's')) +
+        card('Reconnect grace', fmt((runtime.media_reconnect_grace_ms || 0) / 1000, 's'), 'Voice/video sleep recovery') +
+        card('WS errors', fmt(rtMetrics.handler_error_total), 'Since backend restart') +
         card('Heap used', fmt(mem.heap_used_pct,'%'), fmt(mem.heap_used_mb,' MB') + ' / ' + fmt(mem.heap_total_mb,' MB')) +
         card('Event loop p95', fmt(ev.p95_ms,'ms'), 'Max ' + fmt(ev.max_ms,'ms')) +
         card('Asset storage', assetStore.durable ? 'DURABLE' : 'RISK', assetStore.upload_dir || '') +
@@ -33647,10 +33915,15 @@ body.ob-ui-dark .ob-connection-note,
           '<tr><td>Experts active / total</td><td>'+fmt(users.experts_active)+' / '+fmt(users.experts_total)+'</td></tr>' +
           '<tr><td>Clients total</td><td>'+fmt(users.clients_total)+'</td></tr>' +
           '<tr><td>Sessions last 15m</td><td>'+fmt(sessions.sessions_15m)+'</td></tr>' +
+          '<tr><td>Active chat / voice / video</td><td>'+fmt(sessions.active_chat_sessions)+' / '+fmt(sessions.active_voice_sessions)+' / '+fmt(sessions.active_video_sessions)+'</td></tr>' +
+          '<tr><td>Voice/video waiting to bill</td><td>'+fmt(sessions.active_media_waiting_to_start)+' · oldest '+fmt(sessions.oldest_waiting_media_age_sec || 0,'s')+'</td></tr>' +
+          '<tr><td>RTC relay / resume events</td><td>'+fmt(rtMetrics.rtc_relay_total)+' / '+fmt(rtMetrics.session_resume_total)+'</td></tr>' +
+          '<tr><td>Reconnect timers</td><td>'+fmt(runtime.disconnect_timers)+' disconnect · '+fmt(runtime.media_start_timers)+' media-start</td></tr>' +
           '<tr><td>Payment failures 24h</td><td>'+fmt(sessions.payment_failures_24h)+'</td></tr>' +
           '<tr><td>Stale active sessions</td><td>'+fmt(sessions.stale_active_sessions)+'</td></tr>' +
           '</tbody></table></div>' +
       '</div>' +
+      renderSessionHealth(data) +
       '<div class="ob-ops-section"><h3>Hot API routes</h3>'+renderRoutes(http.hottest_routes || [])+'</div>' +
       '<div class="ob-ops-two">' +
         '<div class="ob-ops-section"><h3>Recent problem requests</h3>'+renderProblems(http.recent_problem_requests || [])+'</div>' +

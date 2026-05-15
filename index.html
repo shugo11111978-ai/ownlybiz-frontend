@@ -28,7 +28,7 @@
 
   var BASE = (window.OWNLYBIZ_API_URL || window._OB_BACKEND || 'https://victorious-wisdom-production-a6b0.up.railway.app').replace(/\/+$/,'');
   var CREDIT_AMOUNTS = [10,20,30,50,75,100,150,200,250,500];
-  var state = { settings:null, summary:null, amount:0, promo:null, sessionPromo:null, promotions:[], promoEligible:null, promoPlan:'starter', intent:null, stripe:null, elements:null, expressElements:null, cardElement:null, expressElement:null, paymentMounted:false, paymentMounting:false, confirming:false, context:null, pauseSessionId:null, bookingCreditRequest:0, bookingPayMode:'minute', bookLaterCreditRequest:0, bookLaterPayMode:'minute', mountSeq:0, mountTimer:null };
+  var state = { settings:null, summary:null, amount:0, promo:null, sessionPromo:null, promoError:null, promotions:[], promoEligible:null, promoPlan:'starter', intent:null, stripe:null, elements:null, expressElements:null, cardElement:null, expressElement:null, paymentMounted:false, paymentMounting:false, confirming:false, context:null, pauseSessionId:null, bookingCreditRequest:0, bookingPayMode:'minute', bookLaterCreditRequest:0, bookLaterPayMode:'minute', mountSeq:0, mountTimer:null };
   var creditPaymentConfigPromise = null;
 
   function token(){ return sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || localStorage.getItem('ob_client_token') || ''; }
@@ -37,7 +37,15 @@
     var u = user() || {};
     return String(u.role || '').toLowerCase() === 'expert';
   }
-  function expertId(){ return (window._currentExpert && (window._currentExpert.user_id || window._currentExpert.id)) || window._currentExpertId || ''; }
+  function expertId(){
+    var session = window._obClientSessionSnapshot || window._obActiveSession || window._currentSession || {};
+    return (window._currentExpert && (window._currentExpert.user_id || window._currentExpert.id))
+      || window._currentExpertId
+      || session.expert_id
+      || session.expertId
+      || window._obPendingExpertId
+      || '';
+  }
   function money(n){ n = Number(n) || 0; return '$' + n.toFixed(2); }
   function toastMsg(msg,type){ if(typeof toast==='function') toast(msg,type||'ok'); else if(typeof _showToast==='function') _showToast(msg,type==='err'?'red':'green'); else console.log(msg); }
   function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
@@ -82,7 +90,8 @@
     return creditPaymentConfigPromise;
   }
   function activeSessionId(){
-    return window._obActiveSessId || window._sessId || window._sid || null;
+    var session = window._obClientSessionSnapshot || window._obActiveSession || window._currentSession || {};
+    return window._obActiveSessId || window._sessId || window._sid || session.id || session.session_id || session.sessionId || null;
   }
   function sessionCreditModeStore(){
     try { return JSON.parse(sessionStorage.getItem('ob_session_credit_modes') || '{}') || {}; }
@@ -163,6 +172,8 @@
       '.ob-credit-session-progress span{display:block;height:100%;border-radius:999px;background:#c8ff3d;transition:width .25s ease}' +
       '.ob-credit-session-bar.is-low{border-color:rgba(248,113,113,.62);background:rgba(127,29,29,.78)}' +
       '.ob-credit-session-bar.is-low .ob-credit-session-progress span{background:#f87171}' +
+      '.ob-credit-session-bar.is-minute{border-color:rgba(255,250,240,.22);background:rgba(36,24,19,.74)}' +
+      '.ob-credit-session-bar.is-minute .ob-credit-session-progress span{background:#d8cfc5}' +
       '#screen-A4,#screen-B3,#screen-VID{position:relative}' +
       '.ob-credit-promo-form{display:grid;grid-template-columns:minmax(140px,1.1fr) 110px minmax(160px,.9fr) 120px auto;gap:10px;align-items:end}' +
       '.ob-credit-dashboard-card{background:linear-gradient(180deg,rgba(255,255,255,.065),rgba(255,255,255,.03));border-color:rgba(255,250,245,.14);border-radius:18px;color:#faf7f2;box-shadow:none;padding:24px;width:100%;max-width:none}' +
@@ -332,7 +343,12 @@
     var group = document.getElementById('ob-credit-promo-group');
     if(group) group.classList.toggle('ob-promo-locked', !state.promoEligible);
     var count = document.getElementById('ob-credit-promo-count');
-    if(count && !state.promoEligible) count.textContent = 'Pro / Scale';
+    if(count && !state.promoEligible) count.textContent = 'Upgrade required';
+    var note = document.getElementById('ob-credit-promo-eligibility-note');
+    if(note){
+      note.style.display = state.promoEligible ? 'none' : 'block';
+      note.innerHTML = '<strong>Promotion codes are locked on ' + esc(plan || 'Starter') + '.</strong> Move this expert to Pro or Scale to create codes and let clients apply them at checkout.';
+    }
     document.querySelectorAll('#ob-credit-promo-group input,#ob-credit-promo-group select,#ob-credit-promo-group button').forEach(function(el){
       if(el.closest && el.closest('.ob-credit-promo-lock')) return;
       el.disabled = !state.promoEligible;
@@ -462,6 +478,7 @@
         '</section>' +
         '<section id="ob-credit-promo-group" class="ob-credit-dashboard-group ob-promo-locked">' +
           '<div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap"><div><h3>Promotion Codes</h3><p class="ob-credit-sub">Pro and Scale experts can offer Shopify-style percentage discounts for prepaid credit, pay-by-minute sessions, or both. Clients see the code, discount, and total before paying.</p></div><span id="ob-credit-promo-count" class="ob-credit-toggle-pill" style="font-size:12px">0 codes</span></div>' +
+          '<div id="ob-credit-promo-eligibility-note" class="ob-credit-note" style="display:none;margin:12px 0"></div>' +
           '<div class="ob-credit-promo-lock-target">' +
             '<details class="ob-credit-drill"><summary>Create a promotion code</summary><div class="ob-credit-drill-body"><div class="ob-credit-promo-form">' +
               '<input id="ob-promo-code" class="ob-credit-input" placeholder="WELCOME20">' +
@@ -745,6 +762,10 @@
   function sessionPromoStatus(preferredContext){
     var el = document.getElementById('ob-session-promo-status');
     if(!el) return;
+    if(state.promoError){
+      el.innerHTML = '<span style="color:#b91c1c;font-weight:800">' + esc(state.promoError) + '</span>';
+      return;
+    }
     if(sessionPromoPaymentMode(preferredContext) === 'topup'){
       if(!state.promo){
         el.innerHTML = 'Optional. Codes are checked against prepaid credit when that payment choice is selected.';
@@ -819,6 +840,7 @@
     var code = input && input.value || '';
     if(!code.trim()){ toastMsg('Enter a promotion code first.','err'); return; }
     try{
+      state.promoError = null;
       var mode = sessionPromoPaymentMode();
       if(mode === 'topup'){
         if(!state.amount) throw new Error('Choose a prepaid credit amount first.');
@@ -850,11 +872,14 @@
         window._obSessionPromoCode = '';
       }
       sessionPromoStatus();
+      state.promoError = e.message || 'Promotion code is not eligible.';
+      sessionPromoStatus();
       toastMsg(e.message || 'Promotion code is not eligible.','err');
     }
   };
 
   window.obSessionPromoClear = function(){
+    state.promoError = null;
     if(sessionPromoPaymentMode() === 'topup'){
       state.promo = null;
       state.intent = null;
@@ -1404,10 +1429,7 @@
       if(!parent || visibleSessionTargets().indexOf(parent) < 0) old.remove();
     });
     if(!expertId() || !token() || !activeSessionId()) return;
-    if(activeSessionCreditMode() !== 'prepaid'){
-      clearSessionCreditBars();
-      return;
-    }
+    var mode = activeSessionCreditMode();
     var targets = visibleSessionTargets();
     if(!targets.length) return;
     var d = await loadClientCreditSummary();
@@ -1419,9 +1441,9 @@
     var ch = window._obPendingChannel || window.currentBookChannel || 'chat';
     var session = window._obClientSessionSnapshot || {};
     var rate = Number(window._obPendingRate || session.rate_per_min || (window._currentExpert && window._currentExpert['rate_' + ch]) || 0);
-    var displayBalance = estimatedSessionCreditLeft(actualBalance, rate, session);
-    var remainingText = creditMinutesCopy(displayBalance, rate);
-    var low = displayBalance <= 0 || (rate > 0 && displayBalance < rate * 3);
+    var displayBalance = mode === 'prepaid' ? estimatedSessionCreditLeft(actualBalance, rate, session) : actualBalance;
+    var remainingText = mode === 'prepaid' ? creditMinutesCopy(displayBalance, rate) : 'saved for prepaid sessions';
+    var low = mode === 'prepaid' && (displayBalance <= 0 || (rate > 0 && displayBalance < rate * 3));
     var pctBase = Math.max(actualBalance, rate * 10, 1);
     var pct = Math.max(3, Math.min(100, Math.round((displayBalance / pctBase) * 100)));
     var running = sessionElapsedSeconds(session) > 0;
@@ -1429,12 +1451,17 @@
       var bar = ensureSessionCreditBar(screen);
       bar.style.display = 'flex';
       bar.classList.toggle('is-low', low);
+      bar.classList.toggle('is-minute', mode !== 'prepaid');
+      var copy = mode === 'prepaid'
+        ? ((low ? 'Credit running low: ' : (running ? 'Estimated credit left: ' : 'Prepaid credit left: ')) + '<strong>' + money(displayBalance) + '</strong><span style="opacity:.74"> · ' + esc(remainingText) + ' · no expiration</span>')
+        : ('Pay-by-minute active. <strong>' + money(actualBalance) + '</strong><span style="opacity:.74"> prepaid credit is available but not used for this session.</span>');
+      var buttonContext = mode === 'prepaid' ? 'session' : 'manual';
       bar.innerHTML =
         '<div class="ob-credit-session-main">' +
-          '<div class="ob-credit-session-copy">' + (low ? 'Credit running low: ' : (running ? 'Estimated credit left: ' : 'Prepaid credit left: ')) + '<strong>' + money(displayBalance) + '</strong><span style="opacity:.74"> · ' + esc(remainingText) + ' · no expiration</span></div>' +
+          '<div class="ob-credit-session-copy">' + copy + '</div>' +
           '<div class="ob-credit-session-progress" aria-hidden="true"><span style="width:' + pct + '%"></span></div>' +
         '</div>' +
-        '<button class="ob-credit-btn secondary" style="padding:6px 9px;font-size:11px;white-space:nowrap" onclick="obCreditOpenTopup(&quot;session&quot;)">Add credit</button>';
+        '<button class="ob-credit-btn secondary" style="padding:6px 9px;font-size:11px;white-space:nowrap" onclick="obCreditOpenTopup(&quot;' + buttonContext + '&quot;)">Add credit</button>';
     });
   }
 
@@ -1532,6 +1559,7 @@
       if(totalRow && totalRow.parentNode === card) card.insertBefore(row, opts.afterTotal ? totalRow.nextSibling : totalRow);
       else card.appendChild(row);
     }
+    row.hidden = value == null;
     row.style.display = value == null ? 'none' : 'flex';
     if(value != null){
       row.children[0].textContent = label;
@@ -1542,20 +1570,47 @@
 
   window.obCreditEnhanceReceipt = function(sess){
     sess = sess || {};
+    var sid = sess.id || sess.session_id || sess.sessionId || activeSessionId();
+    var mode = normalizeCreditMode(sess.credit_mode || sess.payment_mode || creditModeForSessionId(sid) || window._obActiveSessionCreditMode || 'minute');
+    var totalCharged = Number(sess.total_charged != null ? sess.total_charged : (sess.charged != null ? sess.charged : 0));
     var creditUsed = Number(sess.credit_applied || sess.creditApplied || 0);
     var cardCharged = Number(sess.card_charged || sess.cardCharged || 0);
     var promoAmt = Number(sess.promo_discount || sess.promoDiscount || 0);
+    var promoCode = sess.session_promo_code || sess.promo_code || sess.promoCode || '';
+    var total = document.getElementById('receipt-total');
+    var totalRow = total && total.closest ? total.closest('.receipt-row') : null;
+    if(totalRow && totalRow.children && totalRow.children[0]) totalRow.children[0].textContent = 'Total session cost';
+    if(total && totalCharged >= 0 && (sess.total_charged != null || sess.charged != null)) total.textContent = money(totalCharged);
+    setReceiptRow('receipt-payment-mode-row','Payment choice', mode === 'prepaid' ? 'Prepaid credit' : 'Pay by minute');
+    setReceiptRow('receipt-subtotal-row','Subtotal before promo', promoAmt > 0 ? money(totalCharged + promoAmt) : null);
     var promoRow = document.getElementById('receipt-promo-row');
     var promoVal = document.getElementById('receipt-promo');
-    if(promoRow) promoRow.style.display = promoAmt > 0 ? 'flex' : 'none';
-    if(promoVal && promoAmt > 0) promoVal.textContent = '-' + money(promoAmt) + (sess.session_promo_code ? ' · ' + sess.session_promo_code : '');
-    setReceiptRow('receipt-credit-row','Prepaid credit used', creditUsed > 0 ? '-' + money(creditUsed) : null);
-    setReceiptRow('receipt-card-row','Charged to card', creditUsed > 0 || cardCharged > 0 ? money(cardCharged) : null);
+    if(promoRow) {
+      promoRow.hidden = !(promoAmt > 0 || promoCode);
+      promoRow.style.display = (promoAmt > 0 || promoCode) ? 'flex' : 'none';
+    }
+    if(promoVal && (promoAmt > 0 || promoCode)) {
+      promoVal.textContent = promoAmt > 0
+        ? ('-' + money(promoAmt) + (promoCode ? ' · ' + promoCode : ''))
+        : (promoCode + ' applied · no billable discount');
+    } else if(promoVal) {
+      promoVal.textContent = '—';
+    }
+    setReceiptRow('receipt-credit-row','Prepaid credit used', (creditUsed > 0 || mode === 'prepaid') ? (creditUsed > 0 ? '-' + money(creditUsed) : '$0.00 used') : null);
+    setReceiptRow('receipt-card-row','Charged to card', (mode === 'minute' || creditUsed > 0 || cardCharged > 0 || promoAmt > 0) ? money(cardCharged) : null);
     setReceiptRow('receipt-balance-row','Credit remaining', null, {afterTotal:true});
-    if(creditUsed > 0 || state.summary){
+    setReceiptRow('receipt-credit-note-row','Credit note', mode === 'minute' && creditUsed <= 0 ? 'Prepaid credit is not used when Pay by minute is selected.' : (creditUsed > 0 ? 'Prepaid credit was applied before any card charge.' : null), {afterTotal:true});
+    if(expertId() && token()){
       loadClientCreditSummary().then(function(d){
         var balance = Number(d && d.balance || 0);
-        setReceiptRow('receipt-balance-row','Credit remaining', money(balance) + ' · no expiration', {afterTotal:true});
+        if(balance > 0 || creditUsed > 0 || mode === 'prepaid'){
+          setReceiptRow('receipt-balance-row','Credit remaining', money(balance) + ' · no expiration', {afterTotal:true});
+        }
+        if(mode === 'minute' && balance > 0 && creditUsed <= 0){
+          setReceiptRow('receipt-credit-note-row','Credit note', 'Existing prepaid balance was not used because Pay by minute was selected.', {afterTotal:true});
+        } else if(creditUsed > 0) {
+          setReceiptRow('receipt-credit-note-row','Credit note', 'Prepaid credit was applied before any card charge.', {afterTotal:true});
+        }
       }).catch(function(){});
     }
   };
@@ -22103,6 +22158,21 @@ window._handleRTCMessage=function(d){
     sess.duration_secs = clientReceiptDuration(sess);
     return sess;
   }
+  function normalizeEndSessionResponse(payload, sid){
+    payload = payload || {};
+    var sess = Object.assign({}, payload.session || {});
+    if(!sess.id && sid) sess.id = sid;
+    if(payload.duration_secs != null && sess.duration_secs == null) sess.duration_secs = payload.duration_secs;
+    if(payload.charged != null && sess.total_charged == null) sess.total_charged = payload.charged;
+    if(payload.credit_applied != null && sess.credit_applied == null) sess.credit_applied = payload.credit_applied;
+    if(payload.card_charged != null && sess.card_charged == null) sess.card_charged = payload.card_charged;
+    if(payload.promo_discount != null && sess.promo_discount == null) sess.promo_discount = payload.promo_discount;
+    if(payload.payment_status != null && sess.payment_status == null) sess.payment_status = payload.payment_status;
+    if(payload.payout_status != null && sess.payout_status == null) sess.payout_status = payload.payout_status;
+    if(!sess.channel) sess.channel = window._obPendingChannel || window.currentBookChannel || 'chat';
+    if(sess.rate_per_min == null) sess.rate_per_min = window._obPendingRate;
+    return sess;
+  }
   function setClientEndControlsEnding(ending){
     var controls = document.querySelectorAll('#view-5 button[onclick*="clientEndSession"],#view-5 .end-session-link,#view-5 .v-ctrl.end,#view-5 .vid-ctrl.end-vid');
     controls.forEach(function(el){
@@ -22572,21 +22642,23 @@ window._handleRTCMessage=function(d){
     window._obClientEndingSid = sid || '';
     window._obClientEndingAt = Date.now();
     window._obClientEndingSnapshot = normalizeClientReceiptSession({id:sid});
-    markClientLocallyEnded(sid);
     setClientEndControlsEnding(true);
     if(window._obClientSessionPoller){ clearInterval(window._obClientSessionPoller); window._obClientSessionPoller = null; }
     if(window.OB_RTC && window.OB_RTC.isActive && window.OB_RTC.isActive()){
       try { window.OB_RTC.end(); } catch(e) {}
     }
-    applyClientReceipt(window._obClientEndingSnapshot || {id:sid});
     if(!sid || !tok()){
+      clearClientEndingState();
+      toastMsg('Could not finalize the session because the client session is missing. Please refresh and check Sessions.');
       return false;
     }
     window._obClientEndingPromise = api('/api/sessions/' + encodeURIComponent(sid) + '/end', {method:'POST', body:'{}'}).then(function(d){
-      applyClientReceipt((d && d.session) || window._obClientEndingSnapshot || {id:sid});
+      applyClientReceipt(normalizeEndSessionResponse(d, sid));
       return d;
     }).catch(function(e){
+      clearClientEndingState();
       toastMsg(e.message || 'Could not end session','err');
+      syncClientSession(sid);
     });
     return window._obClientEndingPromise;
   };

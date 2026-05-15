@@ -28,7 +28,7 @@
 
   var BASE = (window.OWNLYBIZ_API_URL || window._OB_BACKEND || 'https://victorious-wisdom-production-a6b0.up.railway.app').replace(/\/+$/,'');
   var CREDIT_AMOUNTS = [10,20,30,50,75,100,150,200,250,500];
-  var state = { settings:null, summary:null, amount:0, promo:null, sessionPromo:null, promotions:[], intent:null, stripe:null, elements:null, expressElements:null, cardElement:null, expressElement:null, paymentMounted:false, paymentMounting:false, confirming:false, context:null, pauseSessionId:null, bookingCreditRequest:0, bookingPayMode:'minute', bookLaterCreditRequest:0, bookLaterPayMode:'minute', mountSeq:0, mountTimer:null };
+  var state = { settings:null, summary:null, amount:0, promo:null, sessionPromo:null, promotions:[], promoEligible:null, promoPlan:'starter', intent:null, stripe:null, elements:null, expressElements:null, cardElement:null, expressElement:null, paymentMounted:false, paymentMounting:false, confirming:false, context:null, pauseSessionId:null, bookingCreditRequest:0, bookingPayMode:'minute', bookLaterCreditRequest:0, bookLaterPayMode:'minute', mountSeq:0, mountTimer:null };
   var creditPaymentConfigPromise = null;
 
   function token(){ return sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || localStorage.getItem('ob_client_token') || ''; }
@@ -175,6 +175,14 @@
       '.ob-credit-dashboard-card .ob-credit-input{background:rgba(255,250,245,.075);border-color:rgba(255,250,245,.18);color:#faf7f2}' +
       '.ob-credit-dashboard-card .ob-credit-input::placeholder{color:#8f877f}' +
       '.ob-credit-dashboard-card .ob-credit-promo-form{grid-template-columns:minmax(160px,1fr) 104px minmax(170px,.9fr) 110px auto;max-width:none}' +
+      '.ob-credit-dashboard-group{position:relative}' +
+      '.ob-credit-promo-lock-target{transition:filter .18s ease,opacity .18s ease}' +
+      '.ob-credit-dashboard-group.ob-promo-locked .ob-credit-promo-lock-target{filter:blur(2px);opacity:.42;pointer-events:none;user-select:none}' +
+      '.ob-credit-promo-lock{display:none;position:absolute;left:14px;right:14px;top:88px;bottom:14px;z-index:3;align-items:center;justify-content:center;text-align:center;pointer-events:auto}' +
+      '.ob-credit-dashboard-group.ob-promo-locked .ob-credit-promo-lock{display:flex}' +
+      '.ob-credit-promo-lock-inner{max-width:430px;background:rgba(14,20,16,.92);border:1px solid rgba(200,255,61,.28);border-radius:16px;padding:16px;box-shadow:0 18px 60px rgba(0,0,0,.28);color:#fffaf0}' +
+      '.ob-credit-promo-lock-inner strong{display:block;font-size:15px;margin-bottom:6px;color:#c8ff3d}' +
+      '.ob-credit-promo-lock-inner span{display:block;font-size:12px;line-height:1.55;color:rgba(255,250,240,.72)}' +
       '.ob-credit-dashboard-card .ob-credit-btn.secondary{background:rgba(255,250,245,.08);border-color:rgba(255,250,245,.18);color:#faf7f2}' +
       '.ob-credit-dashboard-card [style*="var(--brown)"]{color:#faf7f2!important}' +
       '.ob-credit-dashboard-card [style*="var(--gray-400)"],.ob-credit-dashboard-card [style*="var(--gray-500)"]{color:#b8afa6!important}' +
@@ -294,6 +302,57 @@
     return p && p.is_active ? 'Active' : 'Paused';
   }
 
+  function normalizePromoPlan(plan){
+    plan = String(plan || 'starter').trim().toLowerCase();
+    return plan === 'free' ? 'starter' : plan;
+  }
+
+  function promoPlanEligible(plan){
+    plan = normalizePromoPlan(plan);
+    return plan === 'pro' || plan === 'scale';
+  }
+
+  function planFromLocalBilling(){
+    try{
+      var raw = sessionStorage.getItem('ob_billing_snapshot_v1') || localStorage.getItem('ob_billing_snapshot_v1') || '';
+      var billing = raw ? JSON.parse(raw) : null;
+      if(billing && billing.current_plan && billing.current_plan.id) return billing.current_plan.id;
+    }catch(e){}
+    try{
+      var u = user() || {};
+      return u.subscription_plan || u.plan || u.current_plan || (u.expert && (u.expert.subscription_plan || u.expert.plan)) || 'starter';
+    }catch(e){}
+    return 'starter';
+  }
+
+  function setPromoEligibility(plan){
+    plan = normalizePromoPlan(plan);
+    state.promoPlan = plan;
+    state.promoEligible = promoPlanEligible(plan);
+    var group = document.getElementById('ob-credit-promo-group');
+    if(group) group.classList.toggle('ob-promo-locked', !state.promoEligible);
+    var count = document.getElementById('ob-credit-promo-count');
+    if(count && !state.promoEligible) count.textContent = 'Pro / Scale';
+    document.querySelectorAll('#ob-credit-promo-group input,#ob-credit-promo-group select,#ob-credit-promo-group button').forEach(function(el){
+      if(el.closest && el.closest('.ob-credit-promo-lock')) return;
+      el.disabled = !state.promoEligible;
+      el.setAttribute('aria-disabled', state.promoEligible ? 'false' : 'true');
+    });
+  }
+
+  async function loadPromoEligibility(){
+    setPromoEligibility(planFromLocalBilling());
+    try{
+      var d = await appApi('GET','/api/billing/me');
+      var plan = d && d.current_plan && d.current_plan.id;
+      setPromoEligibility(plan || 'starter');
+      return state.promoEligible;
+    }catch(e){
+      setPromoEligibility(planFromLocalBilling());
+      return state.promoEligible;
+    }
+  }
+
   function cssEsc(value){
     value = String(value || '');
     return window.CSS && CSS.escape ? CSS.escape(value) : value.replace(/\\/g,'\\\\').replace(/"/g,'\\"');
@@ -316,6 +375,7 @@
     var panel = document.getElementById('ob-credit-expert-panel');
     if(!panel) return;
     try{
+      var eligibility = loadPromoEligibility();
       var d = await creditApi('GET','/experts/me/settings');
       state.settings = d.settings || {};
       var amounts = state.settings.amounts || [];
@@ -327,6 +387,8 @@
       refreshAmountSummary(amounts);
       state.promotions = d.promotions || [];
       renderPromoList(state.promotions);
+      await eligibility;
+      setPromoEligibility(state.promoPlan);
     }catch(e){
       var msg = document.getElementById('ob-credit-settings-status');
       if(msg) msg.textContent = e.message || 'Could not load prepaid credit settings.';
@@ -398,21 +460,24 @@
           '<label style="display:flex;align-items:flex-start;gap:8px;margin-top:12px;font-size:13px;color:#faf7f2;line-height:1.45"><input id="ob-credit-ack" type="checkbox" style="margin-top:3px"> I understand client credit has no expiration and I am responsible for unused balances.</label>' +
           '<div class="ob-credit-row"><span id="ob-credit-settings-status" style="font-size:12px;color:#b8afa6"></span><button class="ob-credit-btn" onclick="obCreditSaveSettings()">Save prepaid credit</button></div>' +
         '</section>' +
-        '<section class="ob-credit-dashboard-group">' +
+        '<section id="ob-credit-promo-group" class="ob-credit-dashboard-group ob-promo-locked">' +
           '<div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap"><div><h3>Promotion Codes</h3><p class="ob-credit-sub">Pro and Scale experts can offer Shopify-style percentage discounts for prepaid credit, pay-by-minute sessions, or both. Clients see the code, discount, and total before paying.</p></div><span id="ob-credit-promo-count" class="ob-credit-toggle-pill" style="font-size:12px">0 codes</span></div>' +
-          '<details class="ob-credit-drill"><summary>Create a promotion code</summary><div class="ob-credit-drill-body"><div class="ob-credit-promo-form">' +
-            '<input id="ob-promo-code" class="ob-credit-input" placeholder="WELCOME20">' +
-            '<input id="ob-promo-percent" class="ob-credit-input" type="number" min="1" max="90" placeholder="% off">' +
-            '<select id="ob-promo-applies" class="ob-credit-input"><option value="credits">Prepaid credit</option><option value="sessions">Pay-by-minute sessions</option><option value="both">Credit + sessions</option></select>' +
-            '<input id="ob-promo-max" class="ob-credit-input" type="number" min="0" placeholder="Max uses">' +
-            '<button class="ob-credit-btn secondary" onclick="obCreditCreatePromo()">Create</button>' +
-          '</div></div></details>' +
-          '<div class="ob-credit-promo-toolbar">' +
-            '<input id="ob-credit-promo-search" class="ob-credit-input" placeholder="Search codes">' +
-            '<select id="ob-credit-promo-applies-filter" class="ob-credit-input"><option value="all">All code types</option><option value="credits">Prepaid credit</option><option value="sessions">Pay-by-minute</option><option value="both">Credit + sessions</option></select>' +
-            '<select id="ob-credit-promo-status-filter" class="ob-credit-input"><option value="all">All statuses</option><option value="active">Active</option><option value="paused">Paused</option></select>' +
+          '<div class="ob-credit-promo-lock-target">' +
+            '<details class="ob-credit-drill"><summary>Create a promotion code</summary><div class="ob-credit-drill-body"><div class="ob-credit-promo-form">' +
+              '<input id="ob-promo-code" class="ob-credit-input" placeholder="WELCOME20">' +
+              '<input id="ob-promo-percent" class="ob-credit-input" type="number" min="1" max="90" placeholder="% off">' +
+              '<select id="ob-promo-applies" class="ob-credit-input"><option value="credits">Prepaid credit</option><option value="sessions">Pay-by-minute sessions</option><option value="both">Credit + sessions</option></select>' +
+              '<input id="ob-promo-max" class="ob-credit-input" type="number" min="0" placeholder="Max uses">' +
+              '<button class="ob-credit-btn secondary" onclick="obCreditCreatePromo()">Create</button>' +
+            '</div></div></details>' +
+            '<div class="ob-credit-promo-toolbar">' +
+              '<input id="ob-credit-promo-search" class="ob-credit-input" placeholder="Search codes">' +
+              '<select id="ob-credit-promo-applies-filter" class="ob-credit-input"><option value="all">All code types</option><option value="credits">Prepaid credit</option><option value="sessions">Pay-by-minute</option><option value="both">Credit + sessions</option></select>' +
+              '<select id="ob-credit-promo-status-filter" class="ob-credit-input"><option value="all">All statuses</option><option value="active">Active</option><option value="paused">Paused</option></select>' +
+            '</div>' +
+            '<div id="ob-credit-promo-list" class="ob-credit-promo-list"></div>' +
           '</div>' +
-          '<div id="ob-credit-promo-list" class="ob-credit-promo-list"></div>' +
+          '<div class="ob-credit-promo-lock"><div class="ob-credit-promo-lock-inner"><strong>Available on Pro and Scale</strong><span>Promotion codes unlock after moving to a paid plan. Existing Starter settings stay safe, but clients cannot use expert promo codes until the plan is upgraded.</span></div></div>' +
         '</section>' +
       '</div>';
     var insertionAfter = after || null;
@@ -453,6 +518,7 @@
 
   window.obCreditCreatePromo = async function(){
     try{
+      if(!state.promoEligible) throw new Error('Promotion codes are available on Pro and Scale plans.');
       var d = await creditApi('POST','/promotions',{
         code:(document.getElementById('ob-promo-code')||{}).value,
         percent_off:Number((document.getElementById('ob-promo-percent')||{}).value || 0),

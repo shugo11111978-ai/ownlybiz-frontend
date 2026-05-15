@@ -37,6 +37,13 @@
     var u = user() || {};
     return String(u.role || '').toLowerCase() === 'expert';
   }
+  function preSessionPaymentLabel(freeMinutes){
+    var mode = normalizeCreditMode(window._obSelectedPaymentMode || window._obActiveSessionCreditMode || (state.bookingPayMode === 'topup' ? 'prepaid' : 'minute'));
+    var code = window._obSessionPromoCode || '';
+    if(mode === 'prepaid') return code ? 'Prepaid credit selected · promo ' + code : 'Prepaid credit selected';
+    return code ? 'Card authorized · promo ' + code : (Number(freeMinutes || 0) > 0 ? 'Card authorized · billing after free minutes' : 'Card authorized');
+  }
+  window.obCreditPreSessionPaymentLabel = preSessionPaymentLabel;
   function expertId(){
     var session = window._obClientSessionSnapshot || window._obActiveSession || window._currentSession || {};
     return (window._currentExpert && (window._currentExpert.user_id || window._currentExpert.id))
@@ -358,6 +365,7 @@
 
   async function loadPromoEligibility(){
     setPromoEligibility(planFromLocalBilling());
+    if(!isExpertCreditUser()) return state.promoEligible;
     try{
       var d = await appApi('GET','/api/billing/me');
       var plan = d && d.current_plan && d.current_plan.id;
@@ -388,6 +396,7 @@
 
   async function loadExpertCreditPanel(){
     if(!token()) return;
+    if(!isExpertCreditUser()) return;
     var panel = document.getElementById('ob-credit-expert-panel');
     if(!panel) return;
     try{
@@ -10851,7 +10860,7 @@ function _launchSession(isPaid) {
   el = document.getElementById('presess-channel-name'); if(el) el.textContent = ch.name;
   el = document.getElementById('presess-type'); if(el) el.textContent = ch.name + ' · Per-minute';
   el = document.getElementById('presess-rate'); if(el) el.textContent = ch.price;
-  el = document.getElementById('presess-payment'); if(el) el.textContent = isPaid ? (window._obSessionPromoCode ? 'Card authorized · promo ' + window._obSessionPromoCode : (fm > 0 ? 'Card authorized · billing after free minutes' : 'Card authorized')) : 'Free — card on file';
+  el = document.getElementById('presess-payment'); if(el) el.textContent = isPaid ? (window.obCreditPreSessionPaymentLabel ? window.obCreditPreSessionPaymentLabel(fm) : (window._obSessionPromoCode ? 'Card authorized · promo ' + window._obSessionPromoCode : (fm > 0 ? 'Card authorized · billing after free minutes' : 'Card authorized'))) : 'Free — card on file';
   var freeRow = document.getElementById('presess-free-row');
   var freeNote = document.getElementById('presess-free-note');
   var paidNote = document.getElementById('presess-paid-note');
@@ -21588,7 +21597,7 @@ window._handleRTCMessage=function(d){
     el=document.getElementById('presess-rate'); if(el) el.textContent = money(rate) + '/min' + (free > 0 ? ' · first ' + free + ' min free' : '');
     el=document.getElementById('presess-free'); if(el) el.textContent = obMinuteText(free,'free');
     el=document.getElementById('presess-free-mins'); if(el) el.textContent = obMinuteText(free);
-    el=document.getElementById('presess-payment'); if(el) el.textContent = window._obSessionPromoCode ? 'Card authorized · promo ' + window._obSessionPromoCode : (free > 0 ? 'Card authorized · billing after free minutes' : 'Card authorized');
+    el=document.getElementById('presess-payment'); if(el) el.textContent = window.obCreditPreSessionPaymentLabel ? window.obCreditPreSessionPaymentLabel(free) : (window._obSessionPromoCode ? 'Card authorized · promo ' + window._obSessionPromoCode : (free > 0 ? 'Card authorized · billing after free minutes' : 'Card authorized'));
     el=document.getElementById('presess-free-row'); if(el) el.style.display = free > 0 ? 'flex' : 'none';
     el=document.getElementById('presess-free-note'); if(el) el.style.display = free > 0 ? 'block' : 'none';
     el=document.getElementById('bk-total'); if(el) el.textContent = money(rate) + '/min' + (free > 0 ? ' · ' + free + ' min free' : '');
@@ -22493,7 +22502,7 @@ window._handleRTCMessage=function(d){
     setText('bk-total', label);
     setText('presess-free', obMinuteText(free,'free'));
     setText('presess-free-mins', obMinuteText(free));
-    setText('presess-payment', window._obSessionPromoCode ? 'Card authorized · promo ' + window._obSessionPromoCode : (free > 0 ? 'Card authorized. Billing starts after free minutes.' : 'Card authorized.'));
+    setText('presess-payment', window.obCreditPreSessionPaymentLabel ? window.obCreditPreSessionPaymentLabel(free) : (window._obSessionPromoCode ? 'Card authorized · promo ' + window._obSessionPromoCode : (free > 0 ? 'Card authorized. Billing starts after free minutes.' : 'Card authorized.')));
     show('presess-free-row', free > 0);
     show('presess-free-note', free > 0);
     var row = document.getElementById('bk-free-row');

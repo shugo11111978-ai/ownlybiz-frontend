@@ -362,26 +362,53 @@
   }
 
   function normalizePromoPlan(plan){
+    if(plan && typeof plan === 'object'){
+      plan = plan.id || plan.plan_id || plan.plan || plan.slug || plan.name || plan.subscription_plan || plan.current_plan || '';
+    }
     plan = String(plan || 'starter').trim().toLowerCase();
-    return plan === 'free' ? 'starter' : plan;
+    if(plan === 'free') return 'starter';
+    if(plan === 'professional') return 'pro';
+    if(plan === 'growth' || plan === 'enterprise') return 'scale';
+    if(plan === 'starter' || plan === 'pro' || plan === 'scale') return plan;
+    var words = plan.split(/[^a-z0-9]+/).filter(Boolean);
+    if(words.indexOf('scale') >= 0) return 'scale';
+    if(words.indexOf('pro') >= 0) return 'pro';
+    if(words.indexOf('starter') >= 0) return 'starter';
+    return 'starter';
   }
 
   function promoPlanEligible(plan){
     plan = normalizePromoPlan(plan);
     return plan === 'pro' || plan === 'scale';
   }
+  window.__obProdPromoProUnlock20260516 = true;
 
   function planFromLocalBilling(){
     try{
       var raw = sessionStorage.getItem('ob_billing_snapshot_v1') || localStorage.getItem('ob_billing_snapshot_v1') || '';
       var billing = raw ? JSON.parse(raw) : null;
-      if(billing && billing.current_plan && billing.current_plan.id) return billing.current_plan.id;
+      var billingPlan = planFromBillingPayload(billing);
+      if(billingPlan) return billingPlan;
     }catch(e){}
     try{
       var u = user() || {};
-      return u.subscription_plan || u.plan || u.current_plan || (u.expert && (u.expert.subscription_plan || u.expert.plan)) || 'starter';
+      return normalizePromoPlan(u.subscription_plan || u.plan || u.current_plan || (u.expert && (u.expert.subscription_plan || u.expert.plan)) || 'starter');
     }catch(e){}
     return 'starter';
+  }
+
+  function planFromBillingPayload(d){
+    if(!d) return '';
+    var raw =
+      (d.current_plan && typeof d.current_plan === 'object' && (d.current_plan.id || d.current_plan.plan_id || d.current_plan.plan || d.current_plan.slug || d.current_plan.name)) ||
+      (typeof d.current_plan === 'string' ? d.current_plan : '') ||
+      d.current_plan_id ||
+      d.plan_id ||
+      d.plan ||
+      d.subscription_plan ||
+      (d.subscription && (d.subscription.plan_id || d.subscription.plan || d.subscription.current_plan)) ||
+      '';
+    return raw ? normalizePromoPlan(raw) : '';
   }
 
   function setPromoEligibility(plan){
@@ -409,8 +436,8 @@
     if(!isExpertCreditUser()) return state.promoEligible;
     try{
       var d = await appApi('GET','/api/billing/me');
-      var plan = d && d.current_plan && d.current_plan.id;
-      setPromoEligibility(plan || 'starter');
+      var plan = planFromBillingPayload(d);
+      setPromoEligibility(plan || planFromLocalBilling());
       return state.promoEligible;
     }catch(e){
       setPromoEligibility(planFromLocalBilling());

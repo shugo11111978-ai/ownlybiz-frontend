@@ -659,6 +659,10 @@
   function selectedCreditMode(){
     return normalizeCreditMode(window._obSelectedPaymentMode || (state.bookingPayMode === 'topup' ? 'prepaid' : 'minute'));
   }
+  function currentSessionRequestCreditMode(){
+    return normalizeCreditMode(window._obSelectedPaymentMode || window._obActiveSessionCreditMode || (state.bookingPayMode === 'topup' ? 'prepaid' : 'minute'));
+  }
+  window.obCreditCurrentSessionRequestMode = currentSessionRequestCreditMode;
 
   function setSelectedCreditMode(mode){
     window._obSelectedPaymentMode = normalizeCreditMode(mode);
@@ -686,6 +690,7 @@
     var wasTopup = state.bookingPayMode === 'topup';
     state.bookingPayMode = mode === 'topup' ? 'topup' : 'minute';
     setSelectedCreditMode(state.bookingPayMode === 'topup' ? 'prepaid' : 'minute');
+    window._obActiveSessionCreditMode = selectedCreditMode();
     var overlay = document.getElementById('booking-overlay');
     if(overlay){
       overlay.classList.toggle('ob-credit-mode-topup', state.bookingPayMode === 'topup');
@@ -942,6 +947,7 @@
 
   window.obCreditStartWithCredit = function(){
     setSelectedCreditMode('prepaid');
+    if(typeof setBookingPaymentMode === 'function') setBookingPaymentMode('topup');
     if(typeof _bovGoStep === 'function') _bovGoStep(3);
     setTimeout(function(){ if(typeof _launchSession === 'function') _launchSession(true); }, 450);
   };
@@ -956,7 +962,7 @@
   window.obCreditBookLaterBalance = bookLaterCreditBalance;
 
   function setBookLaterPaymentMode(mode){
-    state.bookLaterPayMode = mode === 'prepaid' ? 'prepaid' : 'minute';
+    state.bookLaterPayMode = normalizeCreditMode(mode) === 'prepaid' ? 'prepaid' : 'minute';
     window._bflPaymentMode = state.bookLaterPayMode;
     var overlay = document.getElementById('bfl-overlay');
     if(overlay){
@@ -1372,8 +1378,15 @@
       setBookLaterPaymentMode('prepaid');
       return;
     }
+    if(completedContext === 'booking') {
+      var bookingModal = document.getElementById('ob-credit-modal');
+      if(bookingModal) bookingModal.style.display = 'none';
+      resetCreditPaymentMount();
+      setBookingPaymentMode('topup');
+      window.obCreditStartWithCredit();
+      return;
+    }
     window.obCreditCloseModal();
-    if(completedContext === 'booking') window.obCreditStartWithCredit();
   }
 
   async function completeCreditPurchase(paymentIntentId){
@@ -7555,9 +7568,10 @@ if (!window.toast) {
             <button class="sso-btn" type="button" data-ob-client-provider="google" style="display:none;background:white;color:#333;border-color:rgba(0,0,0,.15);">Continue with Google</button>
           </div>
           <div class="divider-line" style="display:none;" data-ob-email-divider><span>or email</span></div>
-          <input type="text" class="form-input" placeholder="Your name" style="margin-bottom:10px;" id="bov-name">
-          <input type="email" class="form-input" placeholder="Email address" style="margin-bottom:10px;" id="bov-email">
-          <input type="password" class="form-input" placeholder="Password" style="margin-bottom:16px;" id="bov-pass">
+          <input type="text" class="form-input" placeholder="Your name" style="margin-bottom:10px;" id="bov-name" autocomplete="name" required>
+          <input type="email" class="form-input" placeholder="Email address" style="margin-bottom:10px;" id="bov-email" autocomplete="email" required>
+          <input type="password" class="form-input" placeholder="Password (min 8 characters)" style="margin-bottom:16px;" id="bov-pass" autocomplete="new-password" minlength="8" required>
+          <div id="bov-auth-error" style="display:none;background:rgba(239,68,68,.08);border-radius:8px;padding:8px 12px;margin:-6px 0 12px;font-size:12px;color:#dc2626;font-weight:600;"></div>
           <button class="btn btn-primary" style="width:100%;padding:14px;" id="bov-signup-btn" onclick="bovSignup()">Continue →</button>
           <p style="font-size:11px;color:var(--gray-400);text-align:center;margin-top:10px;line-height:1.5;">By continuing you agree to our Terms. You won't be charged without confirmation.</p>
           <p style="font-size:12px;text-align:center;margin-top:8px;color:var(--gray-400);" id="bov-auth-toggle">Already have an account? <span style="color:var(--terra);font-weight:600;cursor:pointer;" onclick="bovToggleMode()">Sign in →</span></p>
@@ -7636,8 +7650,8 @@ if (!window.toast) {
             <button class="sso-btn" type="button" data-ob-client-provider="google" style="display:none;background:white;color:#333;border-color:rgba(0,0,0,.15);">Continue with Google</button>
           </div>
           <div class="divider-line" style="display:none;" data-ob-email-divider><span>or email</span></div>
-          <input type="email" class="form-input" placeholder="your@email.com" style="margin-bottom:12px;">
-          <input type="password" class="form-input" placeholder="Password" style="margin-bottom:16px;">
+          <input type="email" class="form-input" placeholder="your@email.com" style="margin-bottom:12px;" id="cl-email" autocomplete="email" required>
+          <input type="password" class="form-input" placeholder="Password" style="margin-bottom:16px;" id="cl-pass" autocomplete="current-password" required>
           <button class="btn btn-primary" style="width:100%;" onclick="completClientLogin()">Sign In & Confirm Booking →</button>
           <div style="text-align:center;margin-top:12px;font-size:13px;color:var(--gray-400);">No account? <span style="color:var(--terra);font-weight:600;cursor:pointer;" onclick="completClientLogin()">Sign up free →</span></div>
           <button class="btn" style="width:100%;color:var(--gray-400);margin-top:8px;" onclick="document.getElementById('client-login-gate').style.display='none';document.getElementById('booking-main-layout').style.display='grid';">← Back to booking</button>
@@ -10904,7 +10918,12 @@ function _launchSession(isPaid) {
   el = document.getElementById('presess-channel-name'); if(el) el.textContent = ch.name;
   el = document.getElementById('presess-type'); if(el) el.textContent = ch.name + ' · Per-minute';
   el = document.getElementById('presess-rate'); if(el) el.textContent = ch.price;
-  el = document.getElementById('presess-payment'); if(el) el.textContent = isPaid ? (fm > 0 ? 'Card authorized · billing after free minutes' : 'Card authorized') : 'Free — card on file';
+  el = document.getElementById('presess-payment');
+  if(el) {
+    el.textContent = typeof window.obCreditPreSessionPaymentLabel === 'function'
+      ? window.obCreditPreSessionPaymentLabel(fm)
+      : (isPaid ? (fm > 0 ? 'Card authorized · billing after free minutes' : 'Card authorized') : 'Free — card on file');
+  }
   var freeRow = document.getElementById('presess-free-row');
   var freeNote = document.getElementById('presess-free-note');
   var paidNote = document.getElementById('presess-paid-note');
@@ -13091,9 +13110,10 @@ async function savePaymentConfig() {
     if (!READY) return _origClientSignup?.();
     const name  = val('fname')||val('signup-name');
     const email = val('femail')||val('signup-email');
-    const pass  = val('fpass')||val('signup-pass')||'Temp1234!';
+    const pass  = val('fpass')||val('signup-pass')||'';
     const role  = window._signupRole||'expert';
     if(!name||!email) return toast('Name and email required','err');
+    if(!pass||pass.length<8) return toast('Password must be at least 8 characters','err');
     const btn=$$('[onclick*="clientSignup"]')[0];
     btnLoad(btn,true);
     try {
@@ -13872,16 +13892,21 @@ async function savePaymentConfig() {
   window.bovToggleMode = function(){
     window._bovLoginMode = !window._bovLoginMode;
     var nameRow = document.getElementById('bov-name');
+    var passRow = document.getElementById('bov-pass');
+    var errRow = document.getElementById('bov-auth-error');
     var title = document.querySelector('#bov-step1 h2');
     var btn = document.getElementById('bov-signup-btn');
     var toggle = document.getElementById('bov-auth-toggle');
+    if(errRow) errRow.style.display='none';
     if(window._bovLoginMode){
       if(nameRow) nameRow.style.display='none';
+      if(passRow){ passRow.placeholder='Password'; passRow.autocomplete='current-password'; }
       if(title) title.textContent='Sign in';
       if(btn) btn.textContent='Sign In →';
       if(toggle) toggle.innerHTML='New here? <span style="color:var(--terra);font-weight:600;cursor:pointer;" onclick="bovToggleMode()">Create account →</span>';
     } else {
       if(nameRow) nameRow.style.display='';
+      if(passRow){ passRow.placeholder='Password (min 8 characters)'; passRow.autocomplete='new-password'; }
       if(title) title.textContent='Create your account';
       if(btn) btn.textContent='Continue →';
       if(toggle) toggle.innerHTML='Already have an account? <span style="color:var(--terra);font-weight:600;cursor:pointer;" onclick="bovToggleMode()">Sign in →</span>';
@@ -13899,20 +13924,41 @@ async function savePaymentConfig() {
     toast('Signed out');
   };
   const _origBovSignup=window.bovSignup;
+  function showBovAuthError(message){
+    var err = document.getElementById('bov-auth-error');
+    if(err){ err.textContent = message; err.style.display = 'block'; }
+    if(typeof toast === 'function') toast(message,'err');
+  }
+  function clearBovAuthError(){
+    var err = document.getElementById('bov-auth-error');
+    if(err){ err.textContent = ''; err.style.display = 'none'; }
+  }
   window.bovSignup=async function(){
     const isLogin = window._bovLoginMode;
-    const name=val('bov-name'), email=val('bov-email'), pass=val('bov-pass')||'Temp1234!';
-    if(isLogin){ if(!email||!pass) return toast('Email and password required','err'); }
-    else { if(!name||!email) return toast('Name and email required','err'); }
+    const name=val('bov-name'), email=val('bov-email'), pass=val('bov-pass')||'';
+    clearBovAuthError();
+    if(isLogin){
+      if(!email||!pass) return showBovAuthError('Email and password are required.');
+    } else {
+      if(!name||!email||!pass) return showBovAuthError('Name, email, and password are required.');
+      if(pass.length < 8) return showBovAuthError('Password must be at least 8 characters.');
+    }
     const btn=$$('[onclick*="bovSignup"]')[0]; btnLoad(btn,true);
     try {
       let d;
-      try{
+      if(isLogin){
         d=await api('POST','/auth/login',{email,password:pass});
-      } catch{
-        d=await api('POST','/auth/signup',{name,email,password:pass,role:'client'});
+      } else {
+        try{
+          d=await api('POST','/auth/signup',{name,email,password:pass,role:'client'});
+        } catch(signupErr){
+          var msg = String(signupErr && signupErr.message || '').toLowerCase();
+          if(msg.indexOf('exist') >= 0 || msg.indexOf('already') >= 0) d=await api('POST','/auth/login',{email,password:pass});
+          else throw signupErr;
+        }
       }
       Auth.save(d.token,d.user);
+      clearBovAuthError();
       clientLoggedIn = true;
       WS.connect();
       _linkClientToCurrentExpert();
@@ -13946,8 +13992,7 @@ async function savePaymentConfig() {
         }, 600);
       } else _origBovSignup?.();
     } catch(err){
-      toast(err.message,'err');
-      _origBovSignup?.();
+      showBovAuthError(err.message || 'Account sign in failed.');
     } finally{
       btnLoad(btn,false);
     }
@@ -13956,8 +14001,8 @@ async function savePaymentConfig() {
   const _origCompleteClientLogin=window.completClientLogin;
   window.completClientLogin=async function(){
     const email=val('cl-email')||val('clogin-email');
-    const pass=val('cl-pass')||val('clogin-pass')||'Temp1234!';
-    if(!email) return toast('Email required','err');
+    const pass=val('cl-pass')||val('clogin-pass')||'';
+    if(!email||!pass) return toast('Email and password are required','err');
     try {
       let d;
       try{
@@ -13973,7 +14018,6 @@ async function savePaymentConfig() {
       else _origCompleteClientLogin?.();
     } catch(err){
       toast(err.message,'err');
-      _origCompleteClientLogin?.();
     }
   };
 
@@ -18258,6 +18302,7 @@ body.expert-page #mob-cta-bar{display:none!important;}
       if(sid&&(sid===window._obPendingSessId||!window._obPendingSessId)){
         stopStatusPoll();
         var ov=document.getElementById('ob-waiting-overlay');if(ov)ov.classList.remove('show');
+        if(d.session && typeof window.obCreditRememberSessionMode === 'function') window.obCreditRememberSessionMode(d.session);
         _sessId=sid;window._obActiveSessId=sid;
         if(role==='expert'){openExpertLivePanel(sid);}else{openClientChat(sid);}
       }
@@ -18316,9 +18361,15 @@ body.expert-page #mob-cta-bar{display:none!important;}
     document.getElementById('ob-wait-sub').textContent=channel.charAt(0).toUpperCase()+channel.slice(1)+' session requested';
     if(ov)ov.classList.add('show');
     window._obPendingChannel=channel;
-    fetch(BASE+'/api/sessions/request',{method:'POST',headers:hdr(),body:JSON.stringify({expert_id:expertId,channel:channel,message:''})})
+    var creditMode = typeof window.obCreditCurrentSessionRequestMode === 'function'
+      ? window.obCreditCurrentSessionRequestMode()
+      : ((window._obSelectedPaymentMode || window._obActiveSessionCreditMode) === 'prepaid' ? 'prepaid' : 'minute');
+    creditMode = String(creditMode || '').toLowerCase() === 'prepaid' ? 'prepaid' : 'minute';
+    window._obActiveSessionCreditMode = creditMode;
+    fetch(BASE+'/api/sessions/request',{method:'POST',headers:hdr(),body:JSON.stringify({expert_id:expertId,channel:channel,message:'',credit_mode:creditMode,payment_mode:creditMode})})
       .then(function(r){return r.json();}).then(function(d){
         if(d.session){
+          if(typeof window.obCreditRememberSessionMode === 'function') window.obCreditRememberSessionMode(d.session);
           _sessId=d.session.id;window._obPendingSessId=d.session.id;window._obPendingExpertName=expertName;
           // Mark client as having payment method (session accepted = authorized for billing)
           try{localStorage.setItem('ob_hpm','1');}catch(e){}
@@ -20277,26 +20328,26 @@ function loadClientCredit() {
       <div id="bfl-signup-fields">
         <div style="margin-bottom:12px;">
           <label style="font-size:12px;font-weight:700;color:var(--brown);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:8px;">Your Name</label>
-          <input type="text" id="bfl-name" style="width:100%;padding:12px 14px;border:1.5px solid var(--gray-200);border-radius:10px;font-size:14px;font-family:var(--font-body);background:var(--white);" placeholder="John Smith">
+          <input type="text" id="bfl-name" style="width:100%;padding:12px 14px;border:1.5px solid var(--gray-200);border-radius:10px;font-size:14px;font-family:var(--font-body);background:var(--white);" placeholder="John Smith" autocomplete="name" required>
         </div>
         <div style="margin-bottom:12px;">
           <label style="font-size:12px;font-weight:700;color:var(--brown);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:8px;">Your Email</label>
-          <input type="email" id="bfl-email" style="width:100%;padding:12px 14px;border:1.5px solid var(--gray-200);border-radius:10px;font-size:14px;font-family:var(--font-body);background:var(--white);" placeholder="john@example.com">
+          <input type="email" id="bfl-email" style="width:100%;padding:12px 14px;border:1.5px solid var(--gray-200);border-radius:10px;font-size:14px;font-family:var(--font-body);background:var(--white);" placeholder="john@example.com" autocomplete="email" required>
         </div>
         <div style="margin-bottom:16px;">
           <label style="font-size:12px;font-weight:700;color:var(--brown);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:8px;">Create Password</label>
-          <input type="password" id="bfl-password" style="width:100%;padding:12px 14px;border:1.5px solid var(--gray-200);border-radius:10px;font-size:14px;font-family:var(--font-body);background:var(--white);" placeholder="Min 8 characters">
+          <input type="password" id="bfl-password" style="width:100%;padding:12px 14px;border:1.5px solid var(--gray-200);border-radius:10px;font-size:14px;font-family:var(--font-body);background:var(--white);" placeholder="Min 8 characters" autocomplete="new-password" minlength="8" required>
         </div>
       </div>
       <!-- Login fields -->
       <div id="bfl-login-fields" style="display:none;">
         <div style="margin-bottom:12px;">
           <label style="font-size:12px;font-weight:700;color:var(--brown);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:8px;">Email</label>
-          <input type="email" id="bfl-login-email" style="width:100%;padding:12px 14px;border:1.5px solid var(--gray-200);border-radius:10px;font-size:14px;font-family:var(--font-body);background:var(--white);" placeholder="john@example.com">
+          <input type="email" id="bfl-login-email" style="width:100%;padding:12px 14px;border:1.5px solid var(--gray-200);border-radius:10px;font-size:14px;font-family:var(--font-body);background:var(--white);" placeholder="john@example.com" autocomplete="email" required>
         </div>
         <div style="margin-bottom:16px;">
           <label style="font-size:12px;font-weight:700;color:var(--brown);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:8px;">Password</label>
-          <input type="password" id="bfl-login-pass" style="width:100%;padding:12px 14px;border:1.5px solid var(--gray-200);border-radius:10px;font-size:14px;font-family:var(--font-body);background:var(--white);" placeholder="Your password">
+          <input type="password" id="bfl-login-pass" style="width:100%;padding:12px 14px;border:1.5px solid var(--gray-200);border-radius:10px;font-size:14px;font-family:var(--font-body);background:var(--white);" placeholder="Your password" autocomplete="current-password" required>
         </div>
       </div>
       <div id="bfl-auth-error" style="display:none;background:rgba(239,68,68,.08);border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:12px;color:#dc2626;font-weight:600;"></div>
@@ -22784,6 +22835,7 @@ window._handleRTCMessage=function(d){
     if(d.type === 'session_accepted' && sid){
       window._obActiveSessId = sid;
       if(d.session) window._obClientSessionSnapshot = d.session;
+      if(d.session && typeof window.obCreditRememberSessionMode === 'function') window.obCreditRememberSessionMode(d.session);
       if(roleName !== 'expert') window.openClientChat(sid);
       handled = true;
     }
@@ -22886,7 +22938,7 @@ window._handleRTCMessage=function(d){
     setText('bk-total', label);
     setText('presess-free', obMinuteText(free,'free'));
     setText('presess-free-mins', obMinuteText(free));
-    setText('presess-payment', free > 0 ? 'Card authorized. Billing starts after free minutes.' : 'Card authorized.');
+    setText('presess-payment', typeof window.obCreditPreSessionPaymentLabel === 'function' ? window.obCreditPreSessionPaymentLabel(free) : (free > 0 ? 'Card authorized. Billing starts after free minutes.' : 'Card authorized.'));
     show('presess-free-row', free > 0);
     show('presess-free-note', free > 0);
     var row = document.getElementById('bk-free-row');
@@ -22928,6 +22980,7 @@ window._handleRTCMessage=function(d){
     window.currentBookChannel = ch;
     window._obPendingRate = rate;
     window._obClientSessionSnapshot = Object.assign(window._obClientSessionSnapshot || {}, sess, {channel:ch, rate_per_min:rate, free_minutes:free});
+    if(typeof window.obCreditRememberSessionMode === 'function') window.obCreditRememberSessionMode(window._obClientSessionSnapshot);
     setClientFreeUi(ch, rate, free);
     var expertName = ((window._currentExpert && (window._currentExpert.name || window._currentExpert.display_name)) || sess.expert_name || 'Expert');
     setText('a4-session-title', expertName + ' - ' + ch.charAt(0).toUpperCase() + ch.slice(1));

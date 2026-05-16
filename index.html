@@ -51,6 +51,7 @@
   window.__obProdPromoSessionRedemption20260516 = true;
   window.__obProdExpertPromoPayoutDisplay20260516 = true;
   window.__obProdExpertEndDisplayCleanup20260516 = true;
+  window.__obProdBillingTruthReceiptOps20260516 = true;
 
   var BASE = (window.OWNLYBIZ_API_URL || window._OB_BACKEND || 'https://ownlybiz-backend-production.up.railway.app').replace(/\/+$/,'');
   var CREDIT_AMOUNTS = [10,20,30,50,75,100,150,200,250,500];
@@ -1774,19 +1775,25 @@
     var cardCharged = Number(sess.card_charged || sess.cardCharged || 0);
     var promoAmt = Number(sess.promo_discount || sess.promoDiscount || 0);
     var promoCode = sess.session_promo_code || sess.promo_code || sess.promoCode || '';
+    var promoPct = Number(sess.session_promo_percent_off || sess.promo_percent_off || 0);
+    var freeMins = Number(sess.free_minutes || 0);
     var total = document.getElementById('receipt-total');
     var totalRow = total && total.closest ? total.closest('.receipt-row') : null;
     if(totalRow && totalRow.children && totalRow.children[0]) totalRow.children[0].textContent = 'Total session cost';
     if(total && totalCharged >= 0 && (sess.total_charged != null || sess.charged != null)) total.textContent = money(totalCharged);
     setReceiptRow('receipt-payment-mode-row','Payment choice', mode === 'prepaid' ? 'Prepaid credit' : 'Pay by minute');
+    setReceiptRow('receipt-free-row','Free intro applied', freeMins > 0 ? freeMins.toFixed(0) + ' min first' : null);
     setReceiptRow('receipt-subtotal-row','Subtotal before promo', promoAmt > 0 ? money(totalCharged + promoAmt) : null);
     setReceiptRow('receipt-promo-row','Promotion', promoAmt > 0
-      ? ('-' + money(promoAmt) + (promoCode ? ' · ' + promoCode : ''))
-      : (promoCode ? promoCode + ' applied · no billable discount' : null));
+      ? ('-' + money(promoAmt) + (promoCode ? ' · ' + promoCode : '') + (promoPct > 0 ? ' · ' + promoPct.toFixed(0) + '%' : ''))
+      : (promoCode ? promoCode + ' ready · no billable discount after free minutes' : null));
     setReceiptRow('receipt-credit-row','Prepaid credit used', (creditUsed > 0 || mode === 'prepaid') ? (creditUsed > 0 ? '-' + money(creditUsed) : '$0.00 used') : null);
     setReceiptRow('receipt-card-row','Charged to card', (mode === 'minute' || creditUsed > 0 || cardCharged > 0 || promoAmt > 0) ? money(cardCharged) : null);
     setReceiptRow('receipt-balance-row','Credit remaining', null, {afterTotal:true});
-    setReceiptRow('receipt-credit-note-row','Credit note', mode === 'minute' && creditUsed <= 0 ? 'Prepaid credit is not used when Pay by minute is selected.' : (creditUsed > 0 ? 'Prepaid credit was applied before any card charge.' : null), {afterTotal:true});
+    var settlementNote = creditUsed > 0
+      ? 'Free minutes first, then promotion, then prepaid credit before any card charge.'
+      : (mode === 'prepaid' ? 'Free minutes first, then promotion if attached. No prepaid credit is used when the final bill is $0.00.' : 'Free minutes first, then promotion, then card for the final bill.');
+    setReceiptRow('receipt-credit-note-row','Settlement order', settlementNote, {afterTotal:true});
     if(expertId() && token()){
       loadClientCreditSummary().then(function(d){
         var balance = Number(d && d.balance || 0);
@@ -1794,9 +1801,9 @@
           setReceiptRow('receipt-balance-row','Credit remaining', money(balance) + ' · no expiration', {afterTotal:true});
         }
         if(mode === 'minute' && balance > 0 && creditUsed <= 0){
-          setReceiptRow('receipt-credit-note-row','Credit note', 'Existing prepaid balance was not used because Pay by minute was selected.', {afterTotal:true});
+          setReceiptRow('receipt-credit-note-row','Settlement order', 'Existing prepaid balance was not used because Pay by minute was selected. Free minutes and promotion were still applied first when eligible.', {afterTotal:true});
         } else if(creditUsed > 0) {
-          setReceiptRow('receipt-credit-note-row','Credit note', 'Prepaid credit was applied before any card charge.', {afterTotal:true});
+          setReceiptRow('receipt-credit-note-row','Settlement order', 'Free minutes first, then promotion, then prepaid credit before any card charge.', {afterTotal:true});
         }
       }).catch(function(){});
     }
@@ -5368,7 +5375,7 @@ if (!window.toast) {
             </div>
             <div style="background:var(--white);border:1px solid var(--gray-200);border-radius:12px;padding:16px;text-align:center;">
               <div style="font-size:22px;font-weight:700;color:var(--sage);font-family:var(--font-head);" id="live-sess-rate">—</div>
-              <div style="font-size:11px;color:var(--gray-400);margin-top:4px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;">Rate / min</div>
+              <div style="font-size:11px;color:var(--gray-400);margin-top:4px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;">Base rate / min</div>
             </div>
             <div style="background:var(--white);border:1px solid var(--gray-200);border-radius:12px;padding:16px;text-align:center;">
               <div style="font-size:22px;font-weight:700;color:var(--brown);font-family:var(--font-head);" id="live-sess-cut">—</div>
@@ -10676,6 +10683,12 @@ function obExpertPromoPercent(sess){
 }
 function obExpertSessionEstimate(opts){
   opts = opts || {};
+  function cents(value){
+    var n = parseFloat(value);
+    if(!Number.isFinite(n) || n <= 0) return 0;
+    return Math.round(n * 100);
+  }
+  function dollars(value){ return Number(((Number(value) || 0) / 100).toFixed(2)); }
   var elapsed = Math.max(0, parseFloat(opts.elapsedSecs || 0) || 0);
   var rate = Math.max(0, parseFloat(opts.rate || 0) || 0);
   var free = Math.max(0, parseFloat(opts.freeMins || 0) || 0);
@@ -10683,16 +10696,18 @@ function obExpertSessionEstimate(opts){
   if(!Number.isFinite(cut) || cut < 0 || cut > 1) cut = 0.8;
   var pct = obExpertPromoPercent(opts.session || { session_promo_percent_off: opts.promoPercent });
   var billableMins = Math.max(0, (elapsed / 60) - free);
-  var beforePromo = billableMins * rate;
-  var promoDiscount = beforePromo * (pct / 100);
-  var clientTotal = Math.max(0, beforePromo - promoDiscount);
-  var payout = Math.max(0, clientTotal * cut);
+  var grossCents = cents(billableMins * rate);
+  var promoDiscountCents = pct > 0 && grossCents > 0 ? Math.min(grossCents, Math.round(grossCents * (pct / 100))) : 0;
+  var clientTotalCents = Math.max(0, grossCents - promoDiscountCents);
+  var grossFeeCents = Math.max(0, cents(dollars(grossCents) * (1 - cut)));
+  var feeCents = grossCents > 0 ? Math.min(clientTotalCents, Math.max(0, Math.round(grossFeeCents * (clientTotalCents / grossCents)))) : 0;
+  var payoutCents = Math.max(0, clientTotalCents - feeCents);
   return {
     billableMins: billableMins,
-    beforePromo: beforePromo,
-    promoDiscount: promoDiscount,
-    clientTotal: clientTotal,
-    payout: payout,
+    beforePromo: dollars(grossCents),
+    promoDiscount: dollars(promoDiscountCents),
+    clientTotal: dollars(clientTotalCents),
+    payout: dollars(payoutCents),
     effectiveClientRate: rate * (1 - pct / 100),
     effectivePayoutRate: rate * (1 - pct / 100) * cut,
     promoPercent: pct
@@ -10700,6 +10715,97 @@ function obExpertSessionEstimate(opts){
 }
 window.obExpertPromoPercent = obExpertPromoPercent;
 window.obExpertSessionEstimate = obExpertSessionEstimate;
+function obExpertMoney(value){
+  var n = parseFloat(value || 0);
+  if(!Number.isFinite(n)) n = 0;
+  return '$' + n.toFixed(2);
+}
+function obExpertEsc(value){
+  return String(value == null ? '' : value).replace(/[&<>"']/g,function(ch){return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[ch];});
+}
+function obEnsureExpertBillingTruthStyle(){
+  if(document.getElementById('ob-expert-billing-truth-style')) return;
+  var st = document.createElement('style');
+  st.id = 'ob-expert-billing-truth-style';
+  st.textContent = [
+    '.ob-expert-billing-truth{margin:-8px 0 20px;padding:16px;border:1px solid rgba(200,255,61,.22);border-radius:14px;background:linear-gradient(135deg,rgba(200,255,61,.09),rgba(196,98,45,.07));color:var(--brown,#241813)}',
+    '.ob-expert-billing-truth-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px}',
+    '.ob-expert-billing-truth-title{font-size:13px;font-weight:950;text-transform:uppercase;letter-spacing:.08em;color:var(--terra,#c4622d)}',
+    '.ob-expert-billing-truth-sub{font-size:12px;line-height:1.45;color:var(--gray-500,#6b5a50);margin-top:3px}',
+    '.ob-expert-billing-truth-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:10px}',
+    '.ob-expert-billing-truth-cell{background:rgba(255,250,245,.72);border:1px solid rgba(36,24,19,.1);border-radius:11px;padding:10px}',
+    '.ob-expert-billing-truth-label{font-size:10px;font-weight:950;text-transform:uppercase;letter-spacing:.08em;color:rgba(36,24,19,.48);margin-bottom:5px}',
+    '.ob-expert-billing-truth-value{font-size:14px;font-weight:900;color:var(--brown,#241813);line-height:1.25}',
+    '.ob-expert-billing-truth-note{margin-top:10px;font-size:12px;line-height:1.45;color:var(--gray-500,#6b5a50)}',
+    'body.ob-ui-light .ob-expert-billing-truth{background:linear-gradient(135deg,rgba(200,255,61,.13),rgba(196,98,45,.08));color:#241813}',
+    '@media(max-width:760px){.ob-expert-billing-truth{margin:0 0 16px;padding:13px}.ob-expert-billing-truth-grid{grid-template-columns:1fr 1fr}.ob-expert-billing-truth-cell{padding:9px}}'
+  ].join('');
+  document.head.appendChild(st);
+}
+function obExpertBillingTruthMount(){
+  obEnsureExpertBillingTruthStyle();
+  var card = document.getElementById('ob-expert-billing-truth');
+  if(card) return card;
+  var stats = document.querySelector('#db-panel-live-session .ls-stats-row');
+  if(!stats || !stats.parentNode) return null;
+  card = document.createElement('section');
+  card.id = 'ob-expert-billing-truth';
+  card.className = 'ob-expert-billing-truth';
+  stats.insertAdjacentElement('afterend', card);
+  return card;
+}
+function obRenderExpertBillingTruth(opts){
+  opts = opts || {};
+  var sess = opts.session || opts;
+  var ch = String(opts.channel || sess.channel || window._expertSessChannel || window._obPendingChannel || 'chat').toLowerCase();
+  var rate = Math.max(0, parseFloat(opts.rate != null ? opts.rate : (sess.rate_per_min != null ? sess.rate_per_min : window._expertSessRate)) || 0);
+  var free = Math.max(0, parseFloat(opts.freeMins != null ? opts.freeMins : (sess.free_minutes != null ? sess.free_minutes : window._expertSessFreeMins)) || 0);
+  var cut = parseFloat(opts.cut != null ? opts.cut : window._expertSessCut);
+  if(!Number.isFinite(cut) || cut < 0 || cut > 1) cut = parseFloat(sess.expert_cut || sess.cut || 0.8) || 0.8;
+  var promoPct = obExpertPromoPercent({session_promo_percent_off: opts.promoPercent != null ? opts.promoPercent : (sess.session_promo_percent_off != null ? sess.session_promo_percent_off : sess.promo_percent_off)});
+  var promoCode = sess.session_promo_code || sess.promo_code || window._obSessionPromoCode || '';
+  var elapsed = opts.elapsedSecs != null ? parseFloat(opts.elapsedSecs || 0) : (sess.duration_secs != null ? parseFloat(sess.duration_secs || 0) : 0);
+  if(!elapsed && sess.started_at) elapsed = Math.max(0, Math.floor(Date.now()/1000) - parseInt(sess.started_at || 0, 10));
+  var est = obExpertSessionEstimate({elapsedSecs:elapsed,rate:rate,freeMins:free,cut:cut,promoPercent:promoPct});
+  if(sess.total_charged != null && Number(sess.total_charged) >= 0) est.clientTotal = Number(sess.total_charged) || 0;
+  if(sess.promo_discount != null && Number(sess.promo_discount) >= 0) est.promoDiscount = Number(sess.promo_discount) || 0;
+  if(sess.expert_earned != null && Number(sess.expert_earned) >= 0) est.payout = Number(sess.expert_earned) || 0;
+  var modeRaw = String(opts.paymentMode || sess.credit_mode || sess.payment_mode || window._obActiveSessionCreditMode || '').toLowerCase();
+  var mode = ['prepaid','credit','topup'].indexOf(modeRaw) !== -1 ? 'Prepaid credit' : 'Pay by minute';
+  var remainingFree = Math.max(0, (free * 60) - elapsed);
+  var note = remainingFree > 0
+    ? 'Free intro is active. Billing starts after free time; promotion and prepaid credit apply only to billable time.'
+    : (promoPct > 0 ? 'Free time is complete or unavailable. Promotion is now applied before payout and before prepaid credit/card split.' : 'Amounts shown here use the same cent rounding order as backend settlement before final Stripe/payment settlement.');
+  if(mode === 'Prepaid credit') note = remainingFree > 0
+    ? 'Free intro is active. After free time, promotion applies if attached, then prepaid credit is used before any card charge.'
+    : 'Promotion applies first if attached, then prepaid credit is used before any card charge.';
+  var promoValue = promoPct > 0
+    ? ((promoCode ? promoCode + ' · ' : '') + promoPct.toFixed(0) + '% after free intro')
+    : 'None attached';
+  var card = obExpertBillingTruthMount();
+  if(!card) return;
+  card.innerHTML =
+    '<div class="ob-expert-billing-truth-head">' +
+      '<div><div class="ob-expert-billing-truth-title">Billing math</div><div class="ob-expert-billing-truth-sub">' + obExpertEsc(ch.charAt(0).toUpperCase() + ch.slice(1)) + ' · ' + obExpertEsc(mode) + ' · backend settlement order</div></div>' +
+      '<div class="ob-expert-billing-truth-value">' + obExpertMoney(est.payout) + '</div>' +
+    '</div>' +
+    '<div class="ob-expert-billing-truth-grid">' +
+      '<div class="ob-expert-billing-truth-cell"><div class="ob-expert-billing-truth-label">Base session fee</div><div class="ob-expert-billing-truth-value">' + obExpertMoney(rate) + '/min</div></div>' +
+      '<div class="ob-expert-billing-truth-cell"><div class="ob-expert-billing-truth-label">Free intro</div><div class="ob-expert-billing-truth-value">' + (free > 0 ? free.toFixed(0) + ' min first' : 'None') + '</div></div>' +
+      '<div class="ob-expert-billing-truth-cell"><div class="ob-expert-billing-truth-label">Promotion</div><div class="ob-expert-billing-truth-value">' + obExpertEsc(promoValue) + '</div></div>' +
+      '<div class="ob-expert-billing-truth-cell"><div class="ob-expert-billing-truth-label">Billable now</div><div class="ob-expert-billing-truth-value">' + est.billableMins.toFixed(2) + ' min</div></div>' +
+      '<div class="ob-expert-billing-truth-cell"><div class="ob-expert-billing-truth-label">Client cost so far</div><div class="ob-expert-billing-truth-value">' + obExpertMoney(est.clientTotal) + '</div></div>' +
+      '<div class="ob-expert-billing-truth-cell"><div class="ob-expert-billing-truth-label">Your payout so far</div><div class="ob-expert-billing-truth-value">' + obExpertMoney(est.payout) + ' · ' + Math.round(cut * 100) + '%</div></div>' +
+    '</div><div class="ob-expert-billing-truth-note">' + obExpertEsc(note) + '</div>';
+  var earnRate = document.getElementById('live-earn-rate');
+  if(earnRate) earnRate.textContent = obExpertMoney(est.effectivePayoutRate) + '/billable min';
+  var rateLabel = document.getElementById('live-sess-rate');
+  if(rateLabel && rateLabel.parentNode){
+    var bits = rateLabel.parentNode.querySelectorAll('div');
+    if(bits.length > 1) bits[bits.length - 1].textContent = 'Base rate / min';
+  }
+}
+window.obRenderExpertBillingTruth = obRenderExpertBillingTruth;
 function obMinuteText(value, suffix){
   var n = parseInt(value || 0, 10) || 0;
   return n + ' minute' + (n === 1 ? '' : 's') + (suffix ? ' ' + suffix : '');
@@ -11893,6 +11999,7 @@ function startExpertSessionTimer(startedAt) {
     if(earnEl) earnEl.textContent = '$'+gross.toFixed(2);
     var netEl = document.getElementById('expert-net-earnings');
     if(netEl) netEl.textContent = '$'+net.toFixed(2);
+    if(typeof window.obRenderExpertBillingTruth === 'function') window.obRenderExpertBillingTruth({elapsedSecs:_expertSessSeconds,rate:rate,freeMins:freeMins,cut:cut,promoPercent:window._expertSessPromoPercent,channel:window._expertSessChannel,paymentMode:window._obActiveSessionCreditMode});
   }, 1000);
 }
 
@@ -13146,7 +13253,7 @@ async function savePaymentConfig() {
           // Set cooldown to prevent stale pending sessions from triggering popup
           window._sessionEndCooldown=Date.now();
         }
-        else { try{if(window._obClientWs&&window._obClientWs.readyState<=1)window._obClientWs.close();}catch(e){}try{if(window._obWs&&window._obWs.readyState<=1)window._obWs.close();}catch(e){}window._obClientWs=null;window._obWs=null;window._obWsHooked=false;window._obWsConnecting=false;var _s=d.session||{};if(d.charged!=null&&(!(_s.total_charged>0)||Number(d.charged)>Number(_s.total_charged||0)))_s.total_charged=d.charged;var _fm=_s.free_minutes||0;var _rt=parseFloat(_s.rate_per_min||0);var _bm=obBillableWholeMinutes(_s.duration_secs||0,_fm);var _tm=(_s.duration_secs||0)>0?Math.max(1,Math.ceil((_s.duration_secs||0)/60)):0;var _total=(typeof _s.total_charged==='number'&&!isNaN(_s.total_charged))?_s.total_charged:(_bm*_rt);var _re=document.getElementById('receipt-total');if(_re)_re.textContent=fmt$(_total);var _rd=document.getElementById('receipt-duration');if(_rd)_rd.textContent=_tm+' min'+(_fm>0?' ('+_fm+' free + '+_bm.toFixed(2)+' billed)':'');var _rr=document.getElementById('receipt-rate');if(_rr)_rr.textContent=_rt.toFixed(2)+'/min';if(typeof phoneGo==='function') phoneGo('A5');}
+        else { try{if(window._obClientWs&&window._obClientWs.readyState<=1)window._obClientWs.close();}catch(e){}try{if(window._obWs&&window._obWs.readyState<=1)window._obWs.close();}catch(e){}window._obClientWs=null;window._obWs=null;window._obWsHooked=false;window._obWsConnecting=false;var _s=d.session||{};['credit_applied','card_charged','promo_discount','session_promo_code','session_promo_id','session_promo_percent_off','payment_status','payout_status','credit_mode','payment_mode'].forEach(function(_k){if(d[_k]!=null&&_s[_k]==null)_s[_k]=d[_k];});if(d.charged!=null&&(!(_s.total_charged>0)||Number(d.charged)>Number(_s.total_charged||0)))_s.total_charged=d.charged;var _fm=_s.free_minutes||0;var _rt=parseFloat(_s.rate_per_min||0);var _bm=obBillableWholeMinutes(_s.duration_secs||0,_fm);var _tm=(_s.duration_secs||0)>0?Math.max(1,Math.ceil((_s.duration_secs||0)/60)):0;var _total=(typeof _s.total_charged==='number'&&!isNaN(_s.total_charged))?_s.total_charged:(_bm*_rt);var _re=document.getElementById('receipt-total');if(_re)_re.textContent=fmt$(_total);var _rd=document.getElementById('receipt-duration');if(_rd)_rd.textContent=_tm+' min'+(_fm>0?' ('+_fm+' free + '+_bm.toFixed(2)+' billed)':'');var _rr=document.getElementById('receipt-rate');if(_rr)_rr.textContent=_rt.toFixed(2)+'/min';try{if(typeof window.obCreditEnhanceReceipt==='function')window.obCreditEnhanceReceipt(_s);}catch(e){}if(typeof phoneGo==='function') phoneGo('A5');}
         break; }
       case 'message':    if(Auth.isExpert&&!(window._obMarkMessageSeen&&window._obMarkMessageSeen(d))) _appendMsg(d); break;
       case 'typing':     _showTyping(d); break;
@@ -22221,6 +22328,7 @@ window._handleRTCMessage=function(d){
     el=document.getElementById('receipt-duration'); if(el) el.textContent = (dur > 0 ? Math.max(1, Math.ceil(dur/60)) : 0) + ' min' + (free > 0 ? ' (' + free + ' free + ' + billed.toFixed(2) + ' billed)' : '');
     el=document.getElementById('receipt-rate'); if(el) el.textContent = money(rate) + '/min';
     el=document.getElementById('receipt-session-type'); if(el) el.textContent = (sess.channel || 'chat').charAt(0).toUpperCase() + (sess.channel || 'chat').slice(1) + ' with ' + ((window._currentExpert && window._currentExpert.name) || 'Expert');
+    try { if(typeof window.obCreditEnhanceReceipt === 'function') window.obCreditEnhanceReceipt(sess); } catch(e) {}
     window._obClientEndingSid = null;
     window._obClientEndingAt = 0;
     window._obClientEndingPromise = null;
@@ -22352,6 +22460,7 @@ window._handleRTCMessage=function(d){
     var earned = money(sess.expert_earned || 0);
     var el=document.getElementById('expert-session-earnings'); if(el) el.textContent = earned;
     el=document.getElementById('expert-net-earnings'); if(el) el.textContent = earned;
+    if(typeof window.obRenderExpertBillingTruth === 'function') window.obRenderExpertBillingTruth({session:sess,elapsedSecs:sess.duration_secs || 0});
     window._obActiveSessId = null; window._sid = null; window._sessId = null; window._expertSessActive = false;
     toastMsg('Session ended - earned: ' + earned, 'ok');
   }
@@ -22366,6 +22475,8 @@ window._handleRTCMessage=function(d){
     window._expertSessRate = rate;
     window._expertSessFreeMins = free;
     window._expertSessPromoPercent = num(sess.session_promo_percent_off || sess.promo_percent_off, 0);
+    window._expertSessChannel = ch;
+    window._obActiveSessionCreditMode = sess.credit_mode || sess.payment_mode || window._obActiveSessionCreditMode || 'minute';
     var sub=document.getElementById('live-sess-subtitle'); if(sub) sub.textContent = ch.charAt(0).toUpperCase() + ch.slice(1) + ' session with ' + (sess.client_name || 'Client');
     var rateEl=document.getElementById('live-sess-rate'); if(rateEl) rateEl.textContent = money(rate) + '/min';
     var fp=document.getElementById('live-free-period'); if(fp){ fp.style.display = free > 0 ? 'block' : 'none'; if(free > 0) fp.textContent = 'Free period: ' + free + ' min intro included'; }
@@ -22376,6 +22487,7 @@ window._handleRTCMessage=function(d){
       var earn=document.getElementById('expert-session-earnings'); if(earn) earn.textContent = '$0.00';
       var net=document.getElementById('expert-net-earnings'); if(net) net.textContent = '$0.00';
     }
+    if(typeof window.obRenderExpertBillingTruth === 'function') window.obRenderExpertBillingTruth({session:sess,elapsedSecs:sec,rate:rate,freeMins:free,channel:ch,paymentMode:window._obActiveSessionCreditMode});
     var chat=document.getElementById('expert-chat-area'), rtc=document.getElementById('expert-rtc-area');
     if(ch === 'voice' || ch === 'video'){
       if(chat) chat.style.display = 'none';
@@ -22684,6 +22796,7 @@ window._handleRTCMessage=function(d){
       if(bs) bs.textContent = free > 0
         ? (remaining > 0 ? 'Client is in free intro time' : ('Billing active after free intro' + (estimate.promoPercent > 0 ? ' with promotion' : '')))
         : ('Billing active' + (estimate.promoPercent > 0 ? ' with promotion' : ''));
+      if(typeof window.obRenderExpertBillingTruth === 'function') window.obRenderExpertBillingTruth({elapsedSecs:elapsed,rate:rate,freeMins:free,cut:cut,promoPercent:window._expertSessPromoPercent,channel:window._expertSessChannel,paymentMode:window._obActiveSessionCreditMode});
     }
     tick();
     window._expertSessInterval = setInterval(tick, 1000);
@@ -23461,6 +23574,7 @@ window._handleRTCMessage=function(d){
     }
     setText('expert-session-earnings', money(sess.expert_earned || 0));
     setText('expert-net-earnings', money(sess.expert_earned || 0));
+    if(typeof window.obRenderExpertBillingTruth === 'function') window.obRenderExpertBillingTruth({session:sess,elapsedSecs:sess.duration_secs || 0});
     window._obActiveSessId = null;
     window._sid = null;
     window._sessId = null;
@@ -23483,6 +23597,8 @@ window._handleRTCMessage=function(d){
     window._expertSessRate = rate;
     window._expertSessFreeMins = free;
     window._expertSessPromoPercent = num(sess.session_promo_percent_off || sess.promo_percent_off, 0);
+    window._expertSessChannel = ch;
+    window._obActiveSessionCreditMode = sess.credit_mode || sess.payment_mode || window._obActiveSessionCreditMode || 'minute';
     setText('live-sess-subtitle', ch.charAt(0).toUpperCase() + ch.slice(1) + ' session with ' + (sess.client_name || 'Client'));
     setText('live-sess-rate', money(rate) + '/min');
     var fp = document.getElementById('live-free-period');
@@ -23491,6 +23607,8 @@ window._handleRTCMessage=function(d){
     if(bs) bs.textContent = (ch === 'voice' || ch === 'video') && !sess.started_at
       ? 'Connecting - billing has not started'
       : (free > 0 ? 'Client is in free intro time' : 'Billing starts when client connects');
+    var sec = sess.started_at ? Math.max(0, Math.floor(Date.now()/1000) - int(sess.started_at, Math.floor(Date.now()/1000))) : int(sess.duration_secs, 0);
+    if(typeof window.obRenderExpertBillingTruth === 'function') window.obRenderExpertBillingTruth({session:sess,elapsedSecs:sec,rate:rate,freeMins:free,channel:ch,paymentMode:window._obActiveSessionCreditMode});
     var chat = document.getElementById('expert-chat-area');
     var rtc = document.getElementById('expert-rtc-area');
     if(ch === 'voice' || ch === 'video'){
@@ -34912,6 +35030,8 @@ body.ob-ui-dark .ob-connection-note,
     }
     if(updated) updated.textContent = 'Last updated ' + (data.generated_at || new Date().toISOString()) + ' - visible status: ' + state.toUpperCase() + (dismissedCount ? ' (' + dismissedCount + ' dismissed)' : '');
     body.innerHTML =
+      (window.__obOpsOwnerGuideHtml || '') +
+      (window.__obOpsActionCenterHtml || '') +
       '<div class="ob-ops-grid">' +
         card('System status', state.toUpperCase(), alertsVisible.length + ' visible alerts' + (dismissedCount ? ', ' + dismissedCount + ' dismissed' : '')) +
         card('API p95', fmt(s.api_p95_ms,'ms'), 'Error rate ' + fmt(s.api_error_rate_pct,'%') + ', 429s ' + fmt(s.api_429_count)) +
@@ -35219,6 +35339,11 @@ body.ob-ui-dark .ob-connection-note,
       guide.cause = 'Payment, billing, webhook, or settlement path reported a failure.';
       guide.owner_action = 'Do not manually retry charges. Check Stripe dashboard first, then copy the developer report with session/payment identifiers.';
       guide.auto_recovery = 'Sometimes for user card failures; not for webhook/settlement errors.';
+    } else if(text.indexOf('rtc_quality') !== -1 || text.indexOf('media quality') !== -1 || text.indexOf('rtc quality') !== -1){
+      guide.impact = 'Voice/video may look choppy, freeze, or reconnect while chat and payment still work.';
+      guide.cause = 'A participant browser reported poor WebRTC media quality. This usually points to device/network/TURN route conditions, not automatically to Stripe or database issues.';
+      guide.owner_action = 'Refresh Ops Monitor, test a lightweight chat request if safe, then retest voice/video on stable Wi-Fi or cellular. Copy the developer report if poor samples keep increasing.';
+      guide.auto_recovery = 'Often yes if the weak device/network recovers. Treat it as active only if the count keeps increasing during fresh tests.';
     }
     return guide;
   }
@@ -35294,8 +35419,6 @@ body.ob-ui-dark .ob-connection-note,
     if(role() !== 'admin') return;
     var body = document.getElementById('ob-ops-body');
     if(!body) return;
-    var old = document.getElementById('ob-ops-owner-guide');
-    if(old) old.remove();
     var data;
     try { data = await api('/admin/observability/overview?_=' + Date.now(), { method:'GET' }); } catch(e) { return; }
     var alerts = visibleAlerts((data && data.alerts) || []);
@@ -35309,7 +35432,11 @@ body.ob-ui-dark .ob-connection-note,
       html += '<div class="ob-owner-guide-note">Memory scale-up is intentionally not the first action. First run cleanup and check whether real RSS/container memory keeps rising. Only then consider buying more memory.</div>';
     }
     html += '</section>';
-    body.insertAdjacentHTML('afterbegin', html);
+    window.__obOpsOwnerGuideHtml = html;
+    var existing = document.getElementById('ob-ops-owner-guide');
+    if(existing && existing.outerHTML === html) return;
+    if(existing) existing.outerHTML = html;
+    else body.insertAdjacentHTML('afterbegin', html);
   }
   function wire(){
     if(role() !== 'admin') return;
@@ -38429,8 +38556,6 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   function renderOpsActionCenter(){
     var body = document.getElementById('ob-ops-body');
     if(!body) return;
-    var old = document.getElementById('ob-ops-action-center');
-    if(old) old.remove();
     var html = '<section id="ob-ops-action-center"><h3>Owner action center</h3><p>Use safe actions for routine incidents. Risky actions are guarded and should only be used when you are sure no real user session should continue.</p>' +
       '<div class="ob-ops-action-grid">' +
         '<article class="ob-ops-action-card"><strong>Refresh live telemetry</strong><span>Reload current Ops data without changing production.</span><button type="button" onclick="window.obOpsRunControl(&quot;refresh&quot;)">Refresh</button></article>' +
@@ -38440,17 +38565,21 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
         '<article class="ob-ops-action-card"><strong>Clean old pending requests</strong><span>Cancels live requests pending more than 5 minutes so clients are not stuck waiting.</span><button class="safe" type="button" onclick="window.obOpsRunControl(&quot;cleanup_pending&quot;)">Clean pending</button></article>' +
         '<article class="ob-ops-action-card"><strong>Emergency stop active sessions</strong><span>Risky: ends active sessions without billing unpaid time. Requires typed confirmation.</span><button class="danger" type="button" onclick="window.obOpsRunControl(&quot;stop_all&quot;)">Emergency stop</button></article>' +
       '</div><div id="ob-ops-action-result" class="ob-ops-action-result" aria-live="polite">No owner action run in this browser.</div></section>';
-    var guide = document.getElementById('ob-ops-owner-guide');
-    if(guide) guide.insertAdjacentHTML('afterend', html);
-    else body.insertAdjacentHTML('afterbegin', html);
+    window.__obOpsActionCenterHtml = html;
+    var old = document.getElementById('ob-ops-action-center');
+    if(old && old.outerHTML === html) return;
+    if(old) old.outerHTML = html;
+    else {
+      var guide = document.getElementById('ob-ops-owner-guide');
+      if(guide) guide.insertAdjacentHTML('afterend', html);
+      else body.insertAdjacentHTML('afterbegin', html);
+    }
   }
   var previousOpenOps = window.obOpenOpsDashboard;
   if(typeof previousOpenOps === 'function') {
     window.obOpenOpsDashboard = function(){
       var out = previousOpenOps.apply(this, arguments);
-      setTimeout(renderOpsActionCenter, 1100);
-      setTimeout(renderOpsActionCenter, 3600);
-      setTimeout(renderOpsActionCenter, 6500);
+      setTimeout(renderOpsActionCenter, 700);
       return out;
     };
   }
@@ -38458,9 +38587,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   if(typeof previousRefreshOps === 'function') {
     window.obRefreshOpsDashboard = function(){
       var out = previousRefreshOps.apply(this, arguments);
-      setTimeout(renderOpsActionCenter, 1100);
-      setTimeout(renderOpsActionCenter, 3600);
-      setTimeout(renderOpsActionCenter, 6500);
+      setTimeout(renderOpsActionCenter, 700);
       return out;
     };
   }
@@ -38482,7 +38609,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   setInterval(enforceLiveAdminPanel, 2200);
   setInterval(function(){
     var panel = document.getElementById('ob-ops-panel');
-    if(panel && panel.classList.contains('show')) renderOpsActionCenter();
+    if(panel && panel.classList.contains('show') && !document.getElementById('ob-ops-action-center')) renderOpsActionCenter();
   }, 2500);
 })();
 </script>

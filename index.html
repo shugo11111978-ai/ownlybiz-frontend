@@ -37919,6 +37919,89 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     } catch(err) { setContent('domain-registry', errorBox(err)); }
   }
 
+  function isEnabledSetting(settings, key){
+    return ['1','true','yes','on'].indexOf(String(settings && settings[key] || '').toLowerCase()) >= 0;
+  }
+  function setPlatformPaymentCheckbox(id, checked){
+    var el = document.getElementById(id);
+    if(el) el.checked = !!checked;
+  }
+  function platformPaymentCheckboxValue(id){
+    var el = document.getElementById(id);
+    return el && el.checked ? '1' : '0';
+  }
+  function platformPaymentServiceConfigHtml(){
+    return ''
+      + '<div class="ob-admin-live-empty" style="margin-top:20px;">Fee percentages and settlement math stay in Fee Configuration. Stripe service keys, webhook secrets, wallet toggles, and payment domains are managed below.</div>'
+      + '<div class="admin-card" id="ob-platform-stripe-config-card" style="margin-top:20px;">'
+      +   '<div class="admin-card-title">Stripe test/live keys <span class="admin-card-title-sub">Secret key, publishable key, webhook secret</span></div>'
+      +   '<div style="font-size:12px;color:rgba(246,241,233,.58);line-height:1.6;margin-bottom:16px;">Choose Test mode or Live mode, enter the Stripe keys for that mode, test the connection, then save. Saved secrets stay masked; leave a secret field blank to keep the current saved value.</div>'
+      +   '<div class="payment-account-card" id="stripe-account-card" style="background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.1);border-radius:12px;padding:18px;margin-bottom:16px;">'
+      +     '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">'
+      +       '<div>'
+      +         '<h4 style="margin:0 0 6px;color:#fff;">Stripe Connect account</h4>'
+      +         '<div id="stripe-account-info" style="color:rgba(246,241,233,.62);font-size:13px;">Loading Stripe settings...</div>'
+      +       '</div>'
+      +       '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">'
+      +         '<span id="stripe-status-badge" style="display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:700;color:#fbbf24;">Loading...</span>'
+      +         '<button class="admin-action-btn" type="button" onclick="configureStripe()">Show / hide keys</button>'
+      +       '</div>'
+      +     '</div>'
+      +   '</div>'
+      +   '<div id="stripe-config-panel" style="display:block;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:18px;">'
+      +     '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;">'
+      +       '<div><label class="ps-label" for="stripe-environment" style="display:block;margin-bottom:6px;">Keys to edit / active Stripe mode</label><select class="admin-input" id="stripe-environment" name="stripe_environment" style="width:100%;"><option value="test">Test mode keys</option><option value="live">Live mode keys</option></select></div>'
+      +       '<div><label class="ps-label" for="stripe-secret-key" style="display:block;margin-bottom:6px;">Secret Key</label><input class="admin-input" id="stripe-secret-key" type="password" autocomplete="off" placeholder="Leave blank to keep saved key" style="width:100%;"></div>'
+      +       '<div><label class="ps-label" for="stripe-pub-key" style="display:block;margin-bottom:6px;">Publishable Key</label><input class="admin-input" id="stripe-pub-key" autocomplete="off" placeholder="pk_test_..." style="width:100%;"></div>'
+      +       '<div><label class="ps-label" for="stripe-webhook-secret" style="display:block;margin-bottom:6px;">Webhook Secret</label><input class="admin-input" id="stripe-webhook-secret" type="password" autocomplete="off" placeholder="Leave blank to keep saved webhook secret" style="width:100%;"></div>'
+      +     '</div>'
+      +     '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:16px;"><button type="button" class="admin-action-btn" onclick="testPaymentGateway(&quot;stripe&quot;)">Test connection</button><button type="button" class="admin-action-btn" onclick="savePaymentGateway(&quot;stripe&quot;)">Save Stripe Config</button><span id="stripe-test-result" style="display:inline-block;font-size:12px;color:rgba(246,241,233,.55);"></span></div>'
+      +   '</div>'
+      + '</div>'
+      + '<div class="admin-card" id="ob-platform-wallet-config-card" style="margin-top:20px;">'
+      +   '<div class="admin-card-title">Client express checkout <span class="admin-card-title-sub">Apple Pay, Google Pay, and payment domains</span></div>'
+      +   '<div style="font-size:12px;color:rgba(246,241,233,.58);line-height:1.6;margin-bottom:16px;">Ownlybiz shows wallet buttons only when the toggle is on and Stripe confirms the client browser/device can use that wallet. Card checkout remains available as the fallback.</div>'
+      +   '<div class="platform-settings-grid">'
+      +     '<div class="platform-setting-block"><div class="ps-row"><div><div class="ps-label">Apple Pay</div><div style="font-size:11px;color:rgba(246,241,233,.48);line-height:1.45;">Requires every live checkout domain to be registered in Stripe Payment Method Domains.</div></div><label class="toggle-sm"><input type="checkbox" id="client_apple_pay_enabled" name="client_apple_pay_enabled"><div class="toggle-sm-track"></div><div class="toggle-sm-thumb"></div></label></div></div>'
+      +     '<div class="platform-setting-block"><div class="ps-row"><div><div class="ps-label">Google Pay</div><div style="font-size:11px;color:rgba(246,241,233,.48);line-height:1.45;">Requires Google Pay enabled in Stripe and a supported browser/device.</div></div><label class="toggle-sm"><input type="checkbox" id="client_google_pay_enabled" name="client_google_pay_enabled"><div class="toggle-sm-track"></div><div class="toggle-sm-thumb"></div></label></div></div>'
+      +     '<div class="platform-setting-block"><div class="ps-row"><div><div class="ps-label">Auto-register expert domains in Stripe</div><div style="font-size:11px;color:rgba(246,241,233,.48);line-height:1.45;">Adds approved expert subdomains and custom domains to Stripe Payment Method Domains in the active Stripe mode.</div></div><label class="toggle-sm"><input type="checkbox" id="client_payment_domain_auto_register_enabled" name="client_payment_domain_auto_register_enabled"><div class="toggle-sm-track"></div><div class="toggle-sm-thumb"></div></label></div></div>'
+      +   '</div>'
+      +   '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:14px;"><button type="button" class="admin-action-btn" onclick="obAdminSaveStripeServiceSettings()">Save wallet settings</button><button type="button" class="admin-action-btn" onclick="obSyncStripePaymentDomains()">Sync current expert domains</button><span id="ob-stripe-service-settings-status" style="font-size:12px;color:rgba(246,241,233,.55);"></span><span id="ob-stripe-domain-sync-status" style="font-size:12px;color:rgba(246,241,233,.55);"></span></div>'
+      +   '<div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:12px;"><a href="https://dashboard.stripe.com/settings/payment_methods" target="_blank" rel="noopener" style="color:#f4a261;font-size:12px;font-weight:700;">Open Stripe payment methods</a><a href="https://dashboard.stripe.com/settings/payment_method_domains" target="_blank" rel="noopener" style="color:#f4a261;font-size:12px;font-weight:700;">Open Stripe payment domains</a><a href="https://docs.stripe.com/apple-pay?platform=web" target="_blank" rel="noopener" style="color:#f4a261;font-size:12px;font-weight:700;">Apple Pay docs</a><a href="https://docs.stripe.com/google-pay" target="_blank" rel="noopener" style="color:#f4a261;font-size:12px;font-weight:700;">Google Pay docs</a></div>'
+      + '</div>';
+  }
+  async function hydratePlatformPaymentServiceSettings(){
+    try {
+      if(typeof window.loadAdminPaymentSettings === 'function') window.loadAdminPaymentSettings();
+      var d = await api('/admin/settings');
+      var settings = d.settings || {};
+      setPlatformPaymentCheckbox('client_apple_pay_enabled', isEnabledSetting(settings, 'client_apple_pay_enabled'));
+      setPlatformPaymentCheckbox('client_google_pay_enabled', isEnabledSetting(settings, 'client_google_pay_enabled'));
+      setPlatformPaymentCheckbox('client_payment_domain_auto_register_enabled', isEnabledSetting(settings, 'client_payment_domain_auto_register_enabled'));
+    } catch(err) {
+      var status = document.getElementById('ob-stripe-service-settings-status');
+      if(status) status.textContent = 'Could not load wallet settings.';
+    }
+  }
+  window.obAdminSaveStripeServiceSettings = async function(){
+    var status = document.getElementById('ob-stripe-service-settings-status');
+    try {
+      if(status) status.textContent = 'Saving wallet settings...';
+      await api('/admin/settings', {
+        method:'POST',
+        body:{
+          client_apple_pay_enabled: platformPaymentCheckboxValue('client_apple_pay_enabled'),
+          client_google_pay_enabled: platformPaymentCheckboxValue('client_google_pay_enabled'),
+          client_payment_domain_auto_register_enabled: platformPaymentCheckboxValue('client_payment_domain_auto_register_enabled')
+        }
+      });
+      delete readCache['/admin/settings'];
+      if(status) status.textContent = 'Wallet settings saved.';
+    } catch(err) {
+      if(status) status.textContent = err && err.message || 'Wallet settings save failed.';
+    }
+  };
+
   async function renderPlatformPayments(){
     loading('platform-payments');
     try {
@@ -37932,7 +38015,8 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
           card('Scale fee', num(f.fee_scale_pct || 5) + '%', 'Lowest standard fee') +
           card('Legacy fixed fee', num(f.platform_fee_fixed || 0) + '%', 'Shown for audit only') +
         '</div>' +
-        '<div class="ob-admin-live-empty">Use Fee Configuration for changes. This page is read-only to avoid accidental payment-model edits.</div>');
+        platformPaymentServiceConfigHtml());
+      setTimeout(hydratePlatformPaymentServiceSettings, 80);
     } catch(err) { setContent('platform-payments', errorBox(err)); }
   }
 

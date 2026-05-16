@@ -36426,6 +36426,12 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     .ob20-actions { grid-template-columns:1fr; }
     .ob20-move { min-width:54px; }
   }
+  body.ob-live-session-active #ownlybiz-prod-coach-v20,
+  body.ob-live-session-active #ownlybiz-prod-coach-mini-v20 {
+    display:none!important;
+    visibility:hidden!important;
+    pointer-events:none!important;
+  }
 </style>
 <script id="ownlybiz-production-floating-onboarding-v20">
 (function(){
@@ -36450,6 +36456,33 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   function dash(){ return /^\/dash\//.test(location.pathname || ''); }
   function slug(){ return (location.pathname.match(/\/dash\/([^\/]+)/) || [])[1] || 'expert'; }
   function panel(){ return (location.pathname.match(/\/dash\/[^\/]+\/([^\/?#]+)/) || [])[1] || ''; }
+  function visible(el){
+    try {
+      if(!el) return false;
+      var st = getComputedStyle(el);
+      var r = el.getBoundingClientRect();
+      return st.display !== 'none' && st.visibility !== 'hidden' && Number(st.opacity || 1) !== 0 && r.width > 0 && r.height > 0;
+    } catch(e) { return false; }
+  }
+  function liveSessionActive(){
+    try {
+      if(!dash()) return false;
+      if(window.OB_RTC && typeof window.OB_RTC.isActive === 'function' && window.OB_RTC.isActive()) return true;
+      var sid = String(window._obActiveSessId || window._sid || window._sessId || '').trim();
+      if(sid) return true;
+      var livePanel = document.getElementById('db-panel-live-session');
+      if(!(livePanel && livePanel.classList && livePanel.classList.contains('active') && visible(livePanel))) return false;
+      var sub = document.getElementById('live-sess-subtitle');
+      if(sub && /session with/i.test(sub.textContent || '') && !/no active/i.test(sub.textContent || '')) return true;
+      return visible(document.getElementById('expert-rtc-area')) && !/no active/i.test(sub && sub.textContent || '');
+    } catch(e) { return false; }
+  }
+  function syncLiveSessionCoachGuard(){
+    var active = liveSessionActive();
+    try { if(document.body) document.body.classList.toggle('ob-live-session-active', active); } catch(e) {}
+    if(active) hideCoach();
+    return active;
+  }
   function key(){ return 'ownlybiz_prod_onboarding_v20_' + slug(); }
   function read(){ var s={}; try { s=JSON.parse(localStorage.getItem(key()) || '') || {}; } catch(e) { s={}; } if(legacyHidden()) s.hidden=true; return s; }
   function write(s){ try { localStorage.setItem(key(), JSON.stringify(s || {})); } catch(e) {} }
@@ -36516,6 +36549,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   }
   function render(){
     if(!dash()) { hideCoach(); return; }
+    if(syncLiveSessionCoachGuard()) return;
     removeLegacy();
     var s=read();
     if(s.hidden){ hideCoach(); return; }
@@ -36734,6 +36768,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   window.ownlybizProdGuideOpen = openCoach;
   function boot(){
     if(!dash()) return;
+    if(syncLiveSessionCoachGuard()) return;
     removeLegacy();
     installDrag();
     refreshMe(false).then(function(){ render(); installSettingsEmailCard(); removeLegacy(); });
@@ -36743,6 +36778,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   [150,500,1200,2600,5000].forEach(function(ms){ setTimeout(boot,ms); });
   window.addEventListener('popstate',boot);
   window.addEventListener('hashchange',boot);
+  setInterval(syncLiveSessionCoachGuard, 1000);
   try{ new MutationObserver(function(){ clearTimeout(window.__ownlybizProductionCoachV20Timer); window.__ownlybizProductionCoachV20Timer=setTimeout(boot,120); }).observe(document.documentElement,{childList:true,subtree:true}); }catch(e){}
 })();
 </script>

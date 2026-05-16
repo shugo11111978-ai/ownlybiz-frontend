@@ -48,6 +48,7 @@
 (function(){
   if(window.__obCreditWalletV1) return;
   window.__obCreditWalletV1 = true;
+  window.__obProdPromoSessionRedemption20260516 = true;
 
   var BASE = (window.OWNLYBIZ_API_URL || window._OB_BACKEND || 'https://ownlybiz-backend-production.up.railway.app').replace(/\/+$/,'');
   var CREDIT_AMOUNTS = [10,20,30,50,75,100,150,200,250,500];
@@ -698,6 +699,18 @@
     return normalizeCreditMode(window._obSelectedPaymentMode || window._obActiveSessionCreditMode || (state.bookingPayMode === 'topup' ? 'prepaid' : 'minute'));
   }
   window.obCreditCurrentSessionRequestMode = currentSessionRequestCreditMode;
+  function currentSessionPromoCode(){
+    if(currentSessionRequestCreditMode() === 'prepaid') return '';
+    var code = state.sessionPromo && state.sessionPromo.code || window._obSessionPromoCode || '';
+    return String(code || '').trim();
+  }
+  window.obCreditCurrentSessionPromoCode = currentSessionPromoCode;
+  function clearSessionPromoSelection(){
+    state.sessionPromo = null;
+    state.promoError = null;
+    window._obSessionPromoCode = '';
+  }
+  window.obCreditClearSessionPromo = clearSessionPromoSelection;
 
   function setSelectedCreditMode(mode){
     window._obSelectedPaymentMode = normalizeCreditMode(mode);
@@ -18503,7 +18516,15 @@ body.expert-page #mob-cta-bar{display:none!important;}
       : ((window._obSelectedPaymentMode || window._obActiveSessionCreditMode) === 'prepaid' ? 'prepaid' : 'minute');
     creditMode = String(creditMode || '').toLowerCase() === 'prepaid' ? 'prepaid' : 'minute';
     window._obActiveSessionCreditMode = creditMode;
-    fetch(BASE+'/api/sessions/request',{method:'POST',headers:hdr(),body:JSON.stringify({expert_id:expertId,channel:channel,message:'',credit_mode:creditMode,payment_mode:creditMode})})
+    var sessionRequestPayload = {expert_id:expertId,channel:channel,message:'',credit_mode:creditMode,payment_mode:creditMode};
+    if(creditMode !== 'prepaid'){
+      var sessionPromoCode = typeof window.obCreditCurrentSessionPromoCode === 'function'
+        ? window.obCreditCurrentSessionPromoCode()
+        : (window._obSessionPromoCode || '');
+      sessionPromoCode = String(sessionPromoCode || '').trim();
+      if(sessionPromoCode) sessionRequestPayload.promo_code = sessionPromoCode;
+    }
+    fetch(BASE+'/api/sessions/request',{method:'POST',headers:hdr(),body:JSON.stringify(sessionRequestPayload)})
       .then(function(r){return r.json();}).then(function(d){
         if(d.session){
           if(typeof window.obCreditRememberSessionMode === 'function') window.obCreditRememberSessionMode(d.session);
@@ -18512,7 +18533,10 @@ body.expert-page #mob-cta-bar{display:none!important;}
           try{localStorage.setItem('ob_hpm','1');}catch(e){}
           var ws=window._obWs||window._obClientWs;if(ws&&ws.readyState===1)sendWsAuth(ws);
           startStatusPoll(d.session.id);ensureClientWS();
-        }else{obCancelWait();alert(d.error||'Could not request session');}
+        }else{
+          if(d.error && /promotion code/i.test(d.error) && typeof window.obCreditClearSessionPromo === 'function') window.obCreditClearSessionPromo();
+          obCancelWait();alert(d.error||'Could not request session');
+        }
       }).catch(function(){obCancelWait();alert('Network error - please try again');});
   };
   window.obCancelWait=function(){
@@ -19899,21 +19923,27 @@ function joinActiveBookingSession(sessionId, expertId, channel) {
             if(!_endedSid && sessionId) return;
             // Update receipt with real session data
             var _s = d.session || {};
+            ['credit_applied','card_charged','promo_discount','session_promo_code','session_promo_id','session_promo_percent_off','payment_status','payout_status','credit_mode','payment_mode'].forEach(function(_k){
+              if(d[_k] != null && _s[_k] == null) _s[_k] = d[_k];
+            });
             var _dur = Math.floor((_s.duration_secs || 0) / 60);
             var _rt = parseFloat(_s.rate_per_min || 0);
             var _fm = _s.free_minutes || 0;
             var _billed = obBillableWholeMinutes(_s.duration_secs || 0, _fm);
-            var _total = _billed * _rt;
+            var _settledTotal = parseFloat(_s.total_charged);
+            var _total = isFinite(_settledTotal) ? _settledTotal : _billed * _rt;
             var _re = document.getElementById('receipt-total'); if (_re) _re.textContent = '$' + _total.toFixed(2);
             var _rd = document.getElementById('receipt-duration'); if (_rd) _rd.textContent = (_dur===0&&(_s.duration_secs||0)>0?'< 1':_dur) + ' min' + (_fm > 0 ? ' (' + _fm + ' free + ' + _billed.toFixed(2) + ' billed)' : '');
             var _rr = document.getElementById('receipt-rate'); if (_rr) _rr.textContent = '$' + _rt.toFixed(2) + '/min';
             var _rst = document.getElementById('receipt-session-type'); if (_rst) _rst.textContent = (_s.channel || 'Chat') + ' with ' + ((window._currentExpert && window._currentExpert.name) || 'Expert');
+            try { if(typeof window.obCreditEnhanceReceipt === 'function') window.obCreditEnhanceReceipt(_s); } catch(e4) {}
             // Stop timers
             if (window.paidTimerInterval) { clearInterval(window.paidTimerInterval); window.paidTimerInterval = null; }
             // Show receipt screen
             if (typeof phoneGo === 'function') phoneGo('A5');
             // Clear session state
             window._obActiveSessId = null; window._obPendingSessId = null;
+            if(typeof window.obCreditClearSessionPromo === 'function') window.obCreditClearSessionPromo();
             // Clean up ob_hpm so next live session goes through full payment
             try { localStorage.removeItem('ob_hpm'); } catch(e3) {}
           }
@@ -22790,6 +22820,7 @@ window._handleRTCMessage=function(d){
     window._obActiveSessId = null;
     window._sessId = null;
     window._obPendingSessId = null;
+    if(typeof window.obCreditClearSessionPromo === 'function') window.obCreditClearSessionPromo();
     clearClientEndingState();
     pauseClientTimers(sess);
     if(typeof phoneGo === 'function') phoneGo('A5');
@@ -22816,6 +22847,9 @@ window._handleRTCMessage=function(d){
     if(d.expert_earned != null && (!(Number(sess.expert_earned) > 0) || Number(d.expert_earned) > Number(sess.expert_earned || 0))) sess.expert_earned = d.expert_earned;
     if(d.payment_status != null) sess.payment_status = d.payment_status;
     if(d.payout_status != null) sess.payout_status = d.payout_status;
+    ['credit_applied','card_charged','promo_discount','session_promo_code','session_promo_id','session_promo_percent_off','credit_mode','payment_mode'].forEach(function(key){
+      if(d[key] != null && sess[key] == null) sess[key] = d[key];
+    });
     return sess;
   }
   function handleSessionStarted(d){

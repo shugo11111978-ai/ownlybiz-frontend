@@ -18909,7 +18909,7 @@ window._obOpenClientChat = openClientChat;
     window._v5HandleWsMsg=handleWsMsg;
     window._obPendingSessId=null;window._obActiveSessId=null;
     var t=tok();if(!t)return;var role=myRole();
-    if(role==='expert'){expertPoll();_pollTimer=setInterval(expertPoll,8000);}
+    if(role==='expert'){expertPoll();_pollTimer=setInterval(expertPoll,12000);}
     setTimeout(hookWS,1200);if(role==='expert')setTimeout(fixExpertDashboard,1500);
     setTimeout(function(){var ws=window._obWs||window._obClientWs;if(ws&&ws.readyState<=1){var orig=ws.onmessage;ws.onmessage=function(evt){if(orig)orig.call(ws,evt);try{handleWsMsg(JSON.parse(evt.data));}catch(e){}};console.log('[v5] WS hooked');}},2500);
     // Hook client WS after 2s so api-v2 has time to connect
@@ -23452,12 +23452,12 @@ window._handleRTCMessage=function(d){
       schedulePendingRequestVisible();
     }).catch(function(){});
   }
-  [1200, 3500, 7000, 12000].forEach(function(ms){ setTimeout(pollPendingLiveRequestsFallback, ms); });
+  [2500, 8000, 16000].forEach(function(ms){ setTimeout(pollPendingLiveRequestsFallback, ms); });
   if(window._obPendingLiveRequestPoller) clearInterval(window._obPendingLiveRequestPoller);
   window._obPendingLiveRequestPoller = setInterval(function(){
     if(role() !== 'expert' || document.hidden) return;
     pollPendingLiveRequestsFallback();
-  }, 3500);
+  }, 10000);
   document.addEventListener('visibilitychange', function(){
     if(!document.hidden) setTimeout(pollPendingLiveRequestsFallback, 250);
   });
@@ -37578,17 +37578,27 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   function token(){ return sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || ''; }
   function role(){ try { return (JSON.parse(sessionStorage.getItem('ob_u') || localStorage.getItem('ob_u') || '{}').role || '').toLowerCase(); } catch(e){ return ''; } }
   function base(){ var b=''; try{ b = window.OWNLY_API || window.OWNLYBIZ_API_URL || window.BASE || BASE || ''; }catch(e){} return (b || 'https://ownlybiz-backend-production.up.railway.app').replace(/\/+$/,''); }
+  var readCache = {};
   function api(path, opts){
     opts = opts || {};
+    var method = String(opts.method || 'GET').toUpperCase();
+    var cacheKey = method === 'GET' ? path : '';
+    var now = Date.now();
+    if(cacheKey && readCache[cacheKey] && now - readCache[cacheKey].at < 6000) return readCache[cacheKey].promise;
     var headers = Object.assign({'Content-Type':'application/json', Authorization:'Bearer ' + token()}, opts.headers || {});
     var init = Object.assign({method:'GET', cache:'no-store', headers:headers}, opts);
     if(init.body && typeof init.body !== 'string') init.body = JSON.stringify(init.body);
-    return fetch(base() + '/api' + path, init).then(function(res){
+    var request = fetch(base() + '/api' + path, init).then(function(res){
       return res.json().catch(function(){ return {}; }).then(function(data){
         if(!res.ok) throw new Error(data.error || data.message || ('Request failed: ' + res.status));
         return data;
       });
     });
+    if(cacheKey) {
+      readCache[cacheKey] = {at: now, promise: request};
+      request.catch(function(){ delete readCache[cacheKey]; });
+    }
+    return request;
   }
   function panelNode(panel){
     if(panel === 'popup-waitlist') return document.getElementById('ob-admin-panel');
@@ -38073,6 +38083,219 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     var panel = document.getElementById('ob-ops-panel');
     if(panel && panel.classList.contains('show')) renderOpsActionCenter();
   }, 2500);
+})();
+</script>
+
+<style>
+  .ob-prod-credit-strip{
+    margin-top:16px;
+    padding:14px 16px;
+    border:1px solid rgba(122,140,110,.28);
+    border-radius:14px;
+    background:rgba(255,255,255,.9);
+    color:var(--brown);
+    box-shadow:0 10px 26px rgba(36,24,19,.08);
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:14px;
+    flex-wrap:wrap;
+    max-width:560px;
+  }
+  .ob-prod-credit-strip strong{display:block;font-size:15px;line-height:1.25;}
+  .ob-prod-credit-strip span{display:block;font-size:12px;color:var(--gray-500);line-height:1.45;margin-top:3px;}
+  .ob-prod-credit-actions{display:flex;gap:8px;flex-wrap:wrap;}
+  .ob-prod-credit-actions button{
+    border:1px solid rgba(36,24,19,.16);
+    border-radius:10px;
+    padding:9px 13px;
+    font-size:12px;
+    font-weight:800;
+    cursor:pointer;
+    background:var(--terra);
+    color:white;
+    font-family:var(--font-body);
+  }
+  .ob-prod-credit-actions button.secondary{background:var(--white);color:var(--brown);}
+  .ob-prod-data-note{
+    color:var(--gray-400);
+    font-size:13px;
+    line-height:1.5;
+    text-align:center;
+    padding:24px;
+  }
+</style>
+<script>
+/* PRODUCTION DATA-TRUST UX PATCH: broken media fallback, client credit strip, and live expert dashboard empty states */
+(function(){
+  if(window._obProdDataTrustUx20260516) return;
+  window._obProdDataTrustUx20260516 = true;
+
+  var BASE = (window.OWNLYBIZ_API_URL || window._OB_BACKEND || 'https://ownlybiz-backend-production.up.railway.app').replace(/\/+$/,'');
+  function token(){ return sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || localStorage.getItem('ob_client_token') || ''; }
+  function authUser(){ try { return JSON.parse(sessionStorage.getItem('ob_u') || localStorage.getItem('ob_u') || '{}'); } catch(e) { return {}; } }
+  function role(){ return String(authUser().role || '').toLowerCase(); }
+  function esc(value){ var d=document.createElement('div'); d.textContent = value == null ? '' : String(value); return d.innerHTML; }
+  function money(value){ return '$' + Number(value || 0).toFixed(2); }
+  function api(path, options){
+    options = options || {};
+    var headers = Object.assign({'Content-Type':'application/json'}, options.headers || {});
+    if(token()) headers.Authorization = 'Bearer ' + token();
+    return fetch(BASE + path, Object.assign({headers:headers, cache:'no-store'}, options)).then(function(res){
+      return res.json().catch(function(){ return {}; }).then(function(data){
+        if(!res.ok) throw new Error(data.error || data.message || ('HTTP ' + res.status));
+        return data;
+      });
+    });
+  }
+  function expertId(){
+    return window._currentExpertId || window._browseExpertId || (window._currentExpert && (window._currentExpert.user_id || window._currentExpert.id)) || '';
+  }
+  function expertName(){
+    return (window._currentExpert && (window._currentExpert.name || window._currentExpert.display_name)) || 'this expert';
+  }
+  function isExpertSiteVisible(){
+    var view = document.getElementById('view-4');
+    return !!(view && (view.classList.contains('active') || /^\/[^\/?#]+/.test(location.pathname || '')));
+  }
+
+  function hideBrokenMedia(img){
+    if(!img) return;
+    var id = img.id || '';
+    var isKnownExpertMedia = /^(expert-photo-img|ew-about-photo|nav-logo-img-el)$/.test(id) || img.classList.contains('ep-avatar');
+    if(!isKnownExpertMedia) return;
+    if(img.dataset.obBrokenHandled && getComputedStyle(img).display === 'none' && !img.getAttribute('src')) return;
+    img.dataset.obBrokenHandled = '1';
+    img.removeAttribute('src');
+    img.style.display = 'none';
+    if(id === 'expert-photo-img'){
+      var emoji = document.getElementById('expert-photo-emoji');
+      if(emoji) emoji.style.display = '';
+    }
+    if(id === 'ew-about-photo'){
+      var aboutEmoji = img.parentElement && img.parentElement.querySelector('.about-photo-emoji');
+      if(aboutEmoji) aboutEmoji.style.display = '';
+    }
+    if(id === 'nav-logo-img-el'){
+      var wrap = document.getElementById('nav-logo-img');
+      if(wrap) wrap.style.display = 'none';
+    }
+  }
+  document.addEventListener('error', function(event){
+    if(event && event.target && event.target.tagName === 'IMG') hideBrokenMedia(event.target);
+  }, true);
+  function scanBrokenMedia(){
+    document.querySelectorAll('#expert-photo-img,#ew-about-photo,#nav-logo-img-el,img.ep-avatar').forEach(function(img){
+      if(img.src && img.complete && img.naturalWidth === 0) hideBrokenMedia(img);
+    });
+  }
+
+  function ensureCreditStrip(data){
+    if(!isExpertSiteVisible()) return;
+    var eid = expertId();
+    if(!eid || !token() || role() === 'expert' || role() === 'admin') return;
+    var host = document.getElementById('ob-prod-credit-strip');
+    var heroButtons = document.querySelector('#ep-home .expert-hero-btns');
+    if(!heroButtons) return;
+    if(!host){
+      host = document.createElement('div');
+      host.id = 'ob-prod-credit-strip';
+      host.className = 'ob-prod-credit-strip';
+      heroButtons.insertAdjacentElement('afterend', host);
+    }
+    var balance = Number(data && data.balance || 0);
+    host.innerHTML =
+      '<div><strong>Prepaid credit with ' + esc(expertName()) + ': ' + money(balance) + '</strong>' +
+      '<span>Choose prepaid credit at checkout to use this balance. Pay by minute keeps this credit saved.</span></div>' +
+      '<div class="ob-prod-credit-actions">' +
+        '<button type="button" onclick="if(window.obCreditOpenTopup)window.obCreditOpenTopup(&quot;manual&quot;);">Add credit</button>' +
+        '<button type="button" class="secondary" onclick="showExpertPage(&quot;account&quot;);setTimeout(function(){var t=document.getElementById(&quot;client-credit-tab&quot;);if(t)t.click();},120);">View credit</button>' +
+      '</div>';
+  }
+  function loadCreditStrip(){
+    var eid = expertId();
+    if(!eid || !token() || role() === 'expert' || role() === 'admin') return;
+    api('/api/credits/experts/' + encodeURIComponent(eid) + '/client').then(ensureCreditStrip).catch(function(){});
+  }
+
+  function renderExpertAnalyticsTrust(){
+    var panel = document.getElementById('db-panel-analytics');
+    if(!panel || !panel.classList.contains('active')) return;
+    if(role() !== 'expert' && !window._adminViewingExpertId) return;
+    api('/api/experts/me/analytics?period=30').then(function(data){
+      var daily = data.daily || [];
+      var channels = data.by_channel || [];
+      var topClients = data.top_clients || [];
+      var revenue = daily.reduce(function(sum,row){ return sum + Number(row.revenue || 0); }, 0);
+      var sessions = daily.reduce(function(sum,row){ return sum + Number(row.sessions || 0); }, 0);
+      var weightedMinutes = channels.reduce(function(sum,row){ return sum + (Number(row.avg_min || 0) * Number(row.count || 0)); }, 0);
+      var channelCount = channels.reduce(function(sum,row){ return sum + Number(row.count || 0); }, 0);
+      var avgMin = channelCount ? Math.round(weightedMinutes / channelCount) + 'm' : '0m';
+      var cards = panel.querySelectorAll('.stat-sum-card');
+      function setCardValue(index, value){
+        var el = cards[index] && cards[index].querySelector('.stat-sum-val');
+        if(el) el.textContent = value;
+      }
+      if(cards[0]) setCardValue(0, money(revenue));
+      if(cards[1]) setCardValue(1, String(sessions));
+      if(cards[2]) {
+        setCardValue(2, String(topClients.length));
+        var label = cards[2].querySelector('.stat-sum-label');
+        if(label) label.textContent = topClients.length === 1 ? 'Client in report' : 'Clients in report';
+      }
+      if(cards[3]) setCardValue(3, avgMin);
+      var topList = panel.querySelector('.top-clients-list');
+      if(topList){
+        if(topClients.length){
+          topList.innerHTML = topClients.map(function(client, index){
+            var name = client.name || 'Client';
+            var initials = String(name).split(/\s+/).map(function(part){ return part.charAt(0); }).join('').slice(0,2).toUpperCase() || 'C';
+            return '<div class="top-client-row"><div class="top-client-rank">#' + (index + 1) + '</div><div class="top-client-avatar" style="background:var(--terra);">' + esc(initials) + '</div><div class="top-client-name">' + esc(name) + '</div><div class="top-client-revenue">' + Number(client.sessions || 0) + ' sessions</div></div>';
+          }).join('');
+        } else {
+          topList.innerHTML = '<div class="ob-prod-data-note">No completed client sessions yet.</div>';
+        }
+      }
+      if(!sessions){
+        var completion = Array.from(panel.querySelectorAll('.analytics-card')).find(function(card){ return /Session Completion Rate/i.test(card.textContent || ''); });
+        if(completion) completion.innerHTML = '<div class="analytics-card-title">Session Completion Rate</div><div class="ob-prod-data-note">Completion data appears after real scheduled sessions.</div>';
+        var returning = Array.from(panel.querySelectorAll('.analytics-card')).find(function(card){ return /New vs Returning Clients/i.test(card.textContent || ''); });
+        if(returning) returning.innerHTML = '<div class="analytics-card-title">New vs Returning Clients</div><div class="ob-prod-data-note">Client mix appears after more completed sessions.</div>';
+      }
+    }).catch(function(err){
+      var panel = document.getElementById('db-panel-analytics');
+      if(panel){
+        var chart = document.getElementById('big-revenue-chart');
+        if(chart) chart.innerHTML = '<div class="ob-prod-data-note">Could not load live analytics: ' + esc(err.message || 'Unknown error') + '</div>';
+      }
+    });
+  }
+
+  var previousDbNav = window.dbNav;
+  if(typeof previousDbNav === 'function'){
+    window.dbNav = function(el, section){
+      var out = previousDbNav.apply(this, arguments);
+      if(section === 'analytics') setTimeout(renderExpertAnalyticsTrust, 450);
+      if(section === 'clients') setTimeout(function(){
+        var count = document.getElementById('clients-count');
+        var rows = document.querySelectorAll('#db-clients-tbody tr');
+        if(count && rows.length === 1 && /No clients|Failed/i.test(rows[0].textContent || '')) count.textContent = '0 clients';
+      }, 900);
+      return out;
+    };
+  }
+
+  function boot(){
+    scanBrokenMedia();
+    loadCreditStrip();
+    renderExpertAnalyticsTrust();
+  }
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+  [800, 1800, 3600].forEach(function(ms){ setTimeout(boot, ms); });
+  setInterval(function(){
+    scanBrokenMedia();
+    if(isExpertSiteVisible()) loadCreditStrip();
+  }, 15000);
 })();
 </script>
 

@@ -20351,7 +20351,7 @@ function loadClientCredit() {
 window.OB_RTC = (function(){
   var pc=null, localStream=null, sid=null, ch=null, _role=null, _muted=false, _camOff=false;
   var _pendingOffer=null, _pendingIce=[], _pendingAnswer=null;
-  var _lastOfferSdp=null, _lastAnswerSdp=null, _lastLocalOfferSdp=null, _remoteAnswerSet=false, _answerApplying=false, _offerRetryTimer=null;
+  var _lastOfferSdp=null, _lastAnswerSdp=null, _lastLocalOfferSdp=null, _remoteAnswerSet=false, _answerApplying=false, _offerApplying=false, _offerRetryTimer=null;
   var _connectDeadlineTimer=null, _connectionIssueTimer=null, _billingReadyTimer=null, _connectedOnce=false, _endingForIssue=false, _iceRestartAttempted=false;
   var _localIce=[], _peerReady=false, _remoteMediaSeen=false, _remoteMediaKinds={audio:false,video:false}, _rtcConfigLoaded=false, _rtcConfigPromise=null;
   var _qualityTimer=null, _qualityBaseline={}, _qualityWeakSamples=0, _qualityGoodSamples=0, _qualityLevel='unknown', _qualityProfile='standard', _lastQualitySentAt=0, _connectionSignalHandler=null;
@@ -20938,7 +20938,7 @@ window.OB_RTC = (function(){
 	    _connectedOnce=false; _endingForIssue=false;
     _peerReady=false; _localIce=[]; _remoteMediaSeen=false; _remoteMediaKinds={audio:false,video:false};
     _iceRestartAttempted=false;
-    _lastOfferSdp=null; _lastAnswerSdp=null; _lastLocalOfferSdp=null; _remoteAnswerSet=false; _answerApplying=false;
+    _lastOfferSdp=null; _lastAnswerSdp=null; _lastLocalOfferSdp=null; _remoteAnswerSet=false; _answerApplying=false; _offerApplying=false;
     if(_offerRetryTimer){clearTimeout(_offerRetryTimer);_offerRetryTimer=null;}
     _clearConnectionTimers();
     // Don't clear buffers — offers may have arrived before start() was called
@@ -21005,6 +21005,11 @@ window.OB_RTC = (function(){
 	  async function handleOffer(sdp){
 	    if(window._rtcDbg)window._rtcDbg('handleOffer called, pc='+(!!pc));
 	    if(!pc){console.log('[RTC] Buffering offer (PC not ready)');_pendingOffer=sdp;if(window._rtcDbg)window._rtcDbg('Offer buffered');return;}
+    if(_offerApplying){
+      if(window._rtcDbg)window._rtcDbg('Ignoring offer while another offer is applying');
+      if(_lastAnswerSdp){_send({type:'rtc_answer',session_id:sid,sdp:_lastAnswerSdp});_sendLocalIceCandidates();}
+      return;
+    }
     if(_lastOfferSdp===sdp&&_lastAnswerSdp){
       if(window._rtcDbg)window._rtcDbg('Duplicate offer; resending cached answer');
       _send({type:'rtc_answer',session_id:sid,sdp:_lastAnswerSdp});
@@ -21016,6 +21021,7 @@ window.OB_RTC = (function(){
       return;
     }
 	    try{
+      _offerApplying=true;
 	      if(window._rtcDbg)window._rtcDbg('Processing offer directly...');
 	      await pc.setRemoteDescription({type:'offer',sdp:sdp});
       if(pc.signalingState&&pc.signalingState!=='have-remote-offer'&&pc.signalingState!=='have-local-pranswer'){
@@ -21032,7 +21038,15 @@ window.OB_RTC = (function(){
       _sendLocalIceCandidates();
 	      console.log('[RTC] Answer sent');
     if(typeof _dbg==='function')_dbg('Answer sent to client');
-    }catch(e){console.error('[RTC] handleOffer error:',e);if(window._rtcDbg)window._rtcDbg('ERROR in handleOffer: '+e.message);}
+    }catch(e){
+      if(e&&e.name==='InvalidStateError'){
+        if(window._rtcDbg)window._rtcDbg('Stale offer ignored: '+(e.message||'InvalidStateError'));
+        if(_lastAnswerSdp){_send({type:'rtc_answer',session_id:sid,sdp:_lastAnswerSdp});_sendLocalIceCandidates();}
+      }else{
+        console.error('[RTC] handleOffer error:',e);
+        if(window._rtcDbg)window._rtcDbg('ERROR in handleOffer: '+(e&&e.message?e.message:'unknown'));
+      }
+    }finally{_offerApplying=false;}
   }
 	  async function handleAnswer(sdp){
 	    if(!pc){console.log('[RTC] Buffering answer');_pendingAnswer=sdp;return;}

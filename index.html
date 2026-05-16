@@ -976,6 +976,19 @@
     if(cardSection) cardSection.style.display = state.bookLaterPayMode === 'prepaid' ? 'none' : '';
     if(state.bookLaterPayMode !== 'prepaid' && typeof window.mountBflCardElement === 'function') {
       setTimeout(function(){ window.mountBflCardElement(); }, 80);
+      setTimeout(function(){
+        var walletButton = document.getElementById('bfl-wallet-button');
+        var walletSection = document.getElementById('bfl-wallet-section');
+        if(walletButton && window._bflStripe && typeof window._obMountBflWallet === 'function'){
+          if(walletSection) {
+            walletSection.style.display = 'block';
+            walletSection.style.visibility = 'visible';
+          }
+          walletButton._obWalletMounted = false;
+          walletButton.innerHTML = '';
+          window._obMountBflWallet(window._bflStripe);
+        }
+      }, 260);
     }
     var emptyNote = document.getElementById('ob-credit-bfl-empty-note');
     if(emptyNote) {
@@ -1305,14 +1318,22 @@
         }
       });
       state.expressElement.on('ready', function(ev){
+        walletReadyFired = true;
         var methods = ev && ev.availablePaymentMethods || {};
         var ok = !!(methods.applePay || methods.apple_pay || methods.googlePay || methods.google_pay);
         var wrap = document.getElementById('ob-credit-express-wrap');
-        if(wrap) wrap.style.display = ok ? 'block' : 'none';
+        if(wrap) {
+          wrap.style.display = ok ? 'block' : 'none';
+          wrap.style.visibility = ok ? 'visible' : 'hidden';
+        }
       });
       state.expressElement.on('loaderror', function(){
+        walletReadyFired = true;
         var wrap = document.getElementById('ob-credit-express-wrap');
-        if(wrap) wrap.style.display = 'none';
+        if(wrap) {
+          wrap.style.display = 'none';
+          wrap.style.visibility = 'hidden';
+        }
       });
       state.expressElement.on('confirm', function(ev){
         (async function(){
@@ -1340,7 +1361,28 @@
           }
         })();
       });
+      var walletReadyFired = false;
+      var wrap = document.getElementById('ob-credit-express-wrap');
+      var expressHost = document.getElementById('ob-credit-express-element');
+      if(wrap) {
+        wrap.style.display = 'block';
+        wrap.style.visibility = 'visible';
+      }
+      if(expressHost) {
+        expressHost.innerHTML = '<div style="font-size:12px;color:#746a63;line-height:1.45;padding:10px 2px">Checking Apple Pay and Google Pay availability...</div>';
+        expressHost.innerHTML = '';
+      }
       state.expressElement.mount('#ob-credit-express-element');
+      setTimeout(function(){
+        if(walletReadyFired) return;
+        var w = document.getElementById('ob-credit-express-wrap');
+        var host = document.getElementById('ob-credit-express-element');
+        var hasFrame = !!(host && host.querySelector('iframe'));
+        if(w) {
+          w.style.display = hasFrame ? 'block' : 'none';
+          w.style.visibility = hasFrame ? 'visible' : 'hidden';
+        }
+      }, 12000);
     }catch(e){
       var wrap = document.getElementById('ob-credit-express-wrap');
       if(wrap) wrap.style.display = 'none';
@@ -28867,7 +28909,7 @@ window._handleRTCMessage=function(d){
           google_pay_enabled: ['1','true','yes','on', true].indexOf(p.google_pay_enabled) >= 0
         };
       })
-      .catch(function(){ return {apple_pay_enabled:false, google_pay_enabled:false}; });
+      .catch(function(){ return {apple_pay_enabled:true, google_pay_enabled:true, known:false}; });
     return clientPaymentConfigPromise;
   }
   function walletAllowed(result, cfg){
@@ -28879,12 +28921,20 @@ window._handleRTCMessage=function(d){
     if(!stripe || !stripe.elements || !stripe.confirmSetup || !opts || !opts.buttonId || !opts.sectionId) return;
     var section = document.getElementById(opts.sectionId);
     var mount = document.getElementById(opts.buttonId);
-    if(!section || !mount || mount._obWalletMounted) return;
+    if(!section || !mount) return;
+    if(mount._obWalletMounted) {
+      section.style.display = 'block';
+      section.style.visibility = 'visible';
+      return;
+    }
     clientPaymentConfig().then(function(cfg){
       if(!cfg.apple_pay_enabled && !cfg.google_pay_enabled) return;
       var elements;
       var express;
       var readyFired = false;
+      section.style.display = 'block';
+      section.style.visibility = 'visible';
+      mount.innerHTML = '<div style="font-size:12px;color:#746a63;line-height:1.45;padding:8px 2px">Checking Apple Pay and Google Pay availability...</div>';
       try {
         elements = stripe.elements({
           mode:'setup',
@@ -28920,6 +28970,7 @@ window._handleRTCMessage=function(d){
         section.style.visibility = available ? 'visible' : 'hidden';
       });
       express.on('loaderror', function(){
+        readyFired = true;
         section.style.display = 'none';
         section.style.visibility = 'hidden';
       });
@@ -28953,17 +29004,18 @@ window._handleRTCMessage=function(d){
         })();
       });
       section.style.display = 'block';
-      section.style.visibility = 'hidden';
+      section.style.visibility = 'visible';
       mount.innerHTML = '';
       try {
         express.mount('#' + opts.buttonId);
         mount._obWalletMounted = true;
         setTimeout(function(){
           if(!readyFired){
-            section.style.display = 'none';
-            section.style.visibility = 'hidden';
+            var hasFrame = !!mount.querySelector('iframe');
+            section.style.display = hasFrame ? 'block' : 'none';
+            section.style.visibility = hasFrame ? 'visible' : 'hidden';
           }
-        }, 3500);
+        }, 12000);
       } catch(e) {
         section.style.display = 'none';
         section.style.visibility = 'hidden';

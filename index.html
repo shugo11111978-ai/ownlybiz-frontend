@@ -181,6 +181,10 @@
       '.ob-credit-session-bar.is-low .ob-credit-session-progress span{background:#f87171}' +
       '.ob-credit-session-bar.is-minute{border-color:rgba(255,250,240,.22);background:rgba(36,24,19,.74)}' +
       '.ob-credit-session-bar.is-minute .ob-credit-session-progress span{background:#d8cfc5}' +
+      '.ob-credit-session-bar.is-media-call{left:12px;right:auto;top:auto;bottom:18px;width:auto;max-width:min(320px,calc(100% - 24px));z-index:18;padding:7px 9px;border-radius:14px;font-size:11px;background:rgba(14,20,16,.58);box-shadow:0 10px 26px rgba(0,0,0,.18)}' +
+      '.ob-credit-session-bar.is-media-call .ob-credit-session-copy{line-height:1.22;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}' +
+      '.ob-credit-session-bar.is-media-call .ob-credit-session-progress{height:3px}' +
+      '.ob-credit-session-bar.is-media-call .ob-credit-btn{min-height:32px;padding:5px 8px;font-size:10px;border-radius:10px}' +
       '#screen-A4,#screen-B3,#screen-VID{position:relative}' +
       '.ob-credit-promo-form{display:grid;grid-template-columns:minmax(140px,1.1fr) 110px minmax(160px,.9fr) 120px auto;gap:10px;align-items:end}' +
       '.ob-credit-dashboard-card{background:linear-gradient(180deg,rgba(255,255,255,.065),rgba(255,255,255,.03));border-color:rgba(255,250,245,.14);border-radius:18px;color:#faf7f2;box-shadow:none;padding:24px;width:100%;max-width:none}' +
@@ -1457,12 +1461,19 @@
     var pct = Math.max(3, Math.min(100, Math.round((displayBalance / pctBase) * 100)));
     var running = sessionElapsedSeconds(session) > 0;
     targets.forEach(function(screen){
+      var mediaScreen = screen.id === 'screen-B3' || screen.id === 'screen-VID' || ch === 'voice' || ch === 'video';
+      if(mediaScreen && mode !== 'prepaid'){
+        var oldBar = screen.querySelector('[id^="ob-credit-session-bar-"]');
+        if(oldBar && oldBar.parentNode) oldBar.parentNode.removeChild(oldBar);
+        return;
+      }
       var bar = ensureSessionCreditBar(screen);
       bar.style.display = 'flex';
       bar.classList.toggle('is-low', low);
       bar.classList.toggle('is-minute', mode !== 'prepaid');
+      bar.classList.toggle('is-media-call', mediaScreen);
       var copy = mode === 'prepaid'
-        ? ((low ? 'Credit running low: ' : (running ? 'Estimated credit left: ' : 'Prepaid credit left: ')) + '<strong>' + money(displayBalance) + '</strong><span style="opacity:.74"> · ' + esc(remainingText) + ' · no expiration</span>')
+        ? ((low ? 'Credit running low: ' : (mediaScreen ? 'Credit left: ' : (running ? 'Estimated credit left: ' : 'Prepaid credit left: '))) + '<strong>' + money(displayBalance) + '</strong><span style="opacity:.74"> · ' + esc(remainingText) + ' · no expiration</span>')
         : ('Pay-by-minute active. <strong>' + money(actualBalance) + '</strong><span style="opacity:.74"> prepaid credit is available but not used for this session.</span>');
       var buttonContext = mode === 'prepaid' ? 'session' : 'manual';
       bar.innerHTML =
@@ -1470,7 +1481,7 @@
           '<div class="ob-credit-session-copy">' + copy + '</div>' +
           '<div class="ob-credit-session-progress" aria-hidden="true"><span style="width:' + pct + '%"></span></div>' +
         '</div>' +
-        '<button class="ob-credit-btn secondary" style="padding:6px 9px;font-size:11px;white-space:nowrap" onclick="obCreditOpenTopup(&quot;' + buttonContext + '&quot;)">Add credit</button>';
+        '<button class="ob-credit-btn secondary" style="padding:6px 9px;font-size:11px;white-space:nowrap" onclick="obCreditOpenTopup(&quot;' + buttonContext + '&quot;)">' + (mediaScreen ? 'Add' : 'Add credit') + '</button>';
     });
   }
 
@@ -20419,12 +20430,16 @@ window.OB_RTC = (function(){
     if(!note){
       note=document.createElement('div');
       note.id='ob-rtc-quality-note';
-      note.style.cssText='margin:10px 0;padding:10px 12px;border-radius:12px;background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.28);color:#92400e;font-size:12px;font-weight:800;line-height:1.35;';
+      note.className='ob-connection-note ob-rtc-quality-banner';
       if(host.firstChild) host.insertBefore(note,host.firstChild); else host.appendChild(note);
     }
     var rtt=sample&&Number.isFinite(sample.rttMs)?Math.round(sample.rttMs)+'ms':'unknown';
     var loss=sample&&Number.isFinite(sample.lossPct)?sample.lossPct.toFixed(1)+'%':'unknown';
-    note.textContent=(level==='poor'?'Connection is very weak. ':'Connection is weak. ') + 'Keeping the session connected and reducing video load. RTT '+rtt+', loss '+loss+'.';
+    note.classList.toggle('is-poor', level==='poor');
+    note.title='Connection detail: RTT '+rtt+', packet loss '+loss+'.';
+    note.textContent=level==='poor'
+      ? 'Network is very unstable. We are reconnecting and keeping the session open.'
+      : 'Network is unstable. We are lowering video quality to keep the session connected.';
   }
   function _connectionInfo(){
     return navigator.connection || navigator.mozConnection || navigator.webkitConnection || null;
@@ -20632,6 +20647,58 @@ window.OB_RTC = (function(){
     if(ch==='video') return !!(_remoteMediaKinds.audio && _remoteMediaKinds.video);
     if(ch==='voice') return !!_remoteMediaKinds.audio;
     return true;
+  }
+  function _mediaElSnapshot(ids){
+    var out={present:false,live:false,audio:false,video:false,ready:false,width:0,height:0};
+    ids.forEach(function(id){
+      var el=document.getElementById(id);
+      if(!el) return;
+      out.present=true;
+      out.ready=out.ready || Number(el.readyState || 0) >= 2;
+      out.width=Math.max(out.width, Number(el.videoWidth || el.clientWidth || 0));
+      out.height=Math.max(out.height, Number(el.videoHeight || el.clientHeight || 0));
+      var stream=el.srcObject;
+      if(stream&&stream.getTracks){
+        stream.getTracks().forEach(function(t){
+          if(t.readyState==='live'&&t.enabled!==false){
+            out.live=true;
+            if(t.kind==='audio') out.audio=true;
+            if(t.kind==='video') out.video=true;
+          }
+        });
+      }
+    });
+    return out;
+  }
+  function _getMediaHealth(){
+    var localTracks=localStream&&localStream.getTracks?localStream.getTracks():[];
+    var localLive=localTracks.some(function(t){return t.readyState==='live'&&t.enabled!==false;});
+    var localVideo=_mediaElSnapshot(_role==='expert'?['expert-rtc-local-video','rtc-local-video']:['rtc-local-video','expert-rtc-local-video']);
+    var remoteVideo=_mediaElSnapshot(_role==='expert'?['expert-rtc-remote-video','rtc-remote-video']:['rtc-remote-video','expert-rtc-remote-video']);
+    var remoteAudio=_mediaElSnapshot(['rtc-remote-audio']);
+    var remoteLive=ch==='video'
+      ? (remoteVideo.live&&remoteVideo.video&&remoteVideo.ready&&remoteVideo.width>0&&remoteVideo.height>0)
+      : (remoteAudio.live&&remoteAudio.audio);
+    var localVideoOk=ch!=='video' || (localVideo.live&&localVideo.video&&localVideo.width>0&&localVideo.height>0);
+    var requiredLive=!!(pc&&localLive&&localVideoOk&&remoteLive&&_hasStableTransport());
+    return {
+      active:!!pc,
+      sid:sid,
+      channel:ch,
+      role:_role,
+      connection_state:pc?pc.connectionState:null,
+      ice_connection_state:pc?pc.iceConnectionState:null,
+      local_live:localLive,
+      local_video_ok:localVideoOk,
+      remote_live:remoteLive,
+      required_live:requiredLive,
+      remote_seen:_remoteMediaSeen,
+      remote_kinds:_remoteMediaKinds,
+      local_video:localVideo,
+      remote_video:remoteVideo,
+      remote_audio:remoteAudio,
+      age_ms:window._obRtcStartedAt?Date.now()-window._obRtcStartedAt:null
+    };
   }
   function _maybeMarkRtcConnected(trigger){
     if(_connectedOnce||_endingForIssue||!pc) return;
@@ -20947,7 +21014,7 @@ window.OB_RTC = (function(){
     sid=null;ch=null;_role=null;_muted=false;_camOff=false;_connectedOnce=false;_endingForIssue=false;_iceRestartAttempted=false;
   }
 
-  return{start:start,handleOffer:handleOffer,handleAnswer:handleAnswer,handleIce:handleIce,handleReady:handleReady,toggleMute:toggleMute,toggleCamera:toggleCamera,end:end,cleanup:cleanup,isActive:function(){return pc!==null;},getChannel:function(){return ch;},getSid:function(){return sid;},getQuality:function(){return{level:_qualityLevel,profile:_qualityProfile,weak_samples:_qualityWeakSamples,good_samples:_qualityGoodSamples};}};
+  return{start:start,handleOffer:handleOffer,handleAnswer:handleAnswer,handleIce:handleIce,handleReady:handleReady,toggleMute:toggleMute,toggleCamera:toggleCamera,end:end,cleanup:cleanup,isActive:function(){return pc!==null;},getChannel:function(){return ch;},getSid:function(){return sid;},getMediaHealth:_getMediaHealth,getQuality:function(){return{level:_qualityLevel,profile:_qualityProfile,weak_samples:_qualityWeakSamples,good_samples:_qualityGoodSamples};}};
 })();
 
 window._handleRTCMessage=function(d){
@@ -20978,10 +21045,13 @@ window._handleRTCMessage=function(d){
         if(!note){
           note=document.createElement('div');
           note.id='ob-rtc-peer-quality-note';
-          note.style.cssText='margin:10px 0;padding:10px 12px;border-radius:12px;background:rgba(96,165,250,.12);border:1px solid rgba(96,165,250,.28);color:#1e3a8a;font-size:12px;font-weight:800;line-height:1.35;';
+          note.className='ob-connection-note ob-rtc-quality-banner ob-rtc-peer-quality-banner';
           if(host&&host.firstChild)host.insertBefore(note,host.firstChild);else if(host)host.appendChild(note);
         }
-        note.textContent='The other side has a weak connection. Ownlybiz is keeping the session connected and lowering video load where possible.';
+        note.classList.toggle('is-poor', level==='poor');
+        note.textContent=level==='poor'
+          ? 'The other side is reconnecting. Keep this page open.'
+          : 'The other side has an unstable network. We are keeping the session connected.';
       }
     }catch(e){}
   }
@@ -32920,7 +32990,7 @@ body.ob-ui-dark .ob-connection-note,
     return document.querySelector('#view-5 .phone-screen.active') || document.getElementById('screen-A4') || document.getElementById('screen-B3') || document.getElementById('screen-VID');
   }
   window._obShowSessionConnectionIssue = function(sid, ch, reason, roleName){
-    var msg = 'Connection interrupted. Trying to reconnect - keep this page open. If the session is ended deliberately, the receipt will appear automatically.';
+    var msg = 'Reconnecting. Keep this page open - your session is still active.';
     if(roleName === 'expert' || (typeof role === 'function' && role() === 'expert')){
       var rtc = document.getElementById('expert-rtc-area');
       var parent = rtc && rtc.parentNode;
@@ -33363,6 +33433,67 @@ body.ob-ui-dark .ob-connection-note,
 #screen-A5 .ob-connection-note{
   display:none!important;
 }
+#screen-B3 .ob-rtc-quality-banner,
+#screen-VID .ob-rtc-quality-banner{
+  position:absolute!important;
+  left:12px!important;
+  right:12px!important;
+  top:calc(56px + env(safe-area-inset-top,0px))!important;
+  z-index:36!important;
+  margin:0!important;
+  padding:9px 11px!important;
+  border-radius:14px!important;
+  font-size:12px!important;
+  line-height:1.32!important;
+  font-weight:800!important;
+  background:rgba(255,250,240,.9)!important;
+  color:#5f341f!important;
+  border-color:rgba(196,98,45,.24)!important;
+  box-shadow:0 10px 28px rgba(20,12,8,.16)!important;
+}
+#screen-B3 .ob-rtc-quality-banner::before,
+#screen-VID .ob-rtc-quality-banner::before{
+  width:8px!important;
+  height:8px!important;
+  margin-top:4px!important;
+}
+#screen-B3 .ob-rtc-quality-banner.is-poor,
+#screen-VID .ob-rtc-quality-banner.is-poor{
+  background:rgba(255,246,232,.94)!important;
+  border-color:rgba(255,107,71,.32)!important;
+  color:#7a2e16!important;
+}
+.ob-mobile-reconnect-card{
+  position:absolute!important;
+  left:12px!important;
+  right:12px!important;
+  bottom:calc(18px + env(safe-area-inset-bottom,0px))!important;
+  z-index:42!important;
+  display:flex!important;
+  align-items:center!important;
+  justify-content:space-between!important;
+  gap:10px!important;
+  padding:10px 11px!important;
+  border-radius:16px!important;
+  background:rgba(11,9,8,.74)!important;
+  color:#fffaf5!important;
+  border:1px solid rgba(255,250,240,.18)!important;
+  box-shadow:0 16px 38px rgba(0,0,0,.22)!important;
+  backdrop-filter:blur(10px)!important;
+  font-size:12px!important;
+  line-height:1.32!important;
+  font-weight:800!important;
+}
+.ob-mobile-reconnect-card button{
+  border:none!important;
+  border-radius:12px!important;
+  background:#fffaf5!important;
+  color:#241813!important;
+  min-height:34px!important;
+  padding:7px 10px!important;
+  font-weight:900!important;
+  white-space:nowrap!important;
+}
 #screen-A5 .receipt-screen{
   box-sizing:border-box!important;
   min-height:100%!important;
@@ -33698,7 +33829,9 @@ body.ob-ui-dark .ob-connection-note,
 
   var wakeLock = null;
   var hiddenAt = 0;
+  var STORE_KEY = 'ob_realtime_resume_state_v2';
   var resumeState = { sid:'', channel:'', role:'', active:false, lastResumeAt:0, hardAttempts:0 };
+  var lastWatchdogResumeAt = 0;
 
   function now(){ return Date.now(); }
   function token(){ return sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || localStorage.getItem('ob_client_token') || sessionStorage.getItem('ob_client_token') || ''; }
@@ -33716,12 +33849,66 @@ body.ob-ui-dark .ob-connection-note,
       resumeState.channel || window._obPendingChannel || window.currentBookChannel || window._obRtcLastChannel || '').toLowerCase();
   }
   function isMediaChannel(channel){ return channel === 'voice' || channel === 'video'; }
+  function saveResumeState(){
+    if(!resumeState.sid) return;
+    try {
+      sessionStorage.setItem(STORE_KEY, JSON.stringify({
+        sid: resumeState.sid,
+        channel: resumeState.channel,
+        role: resumeState.role,
+        active: !!resumeState.active,
+        saved_at: now()
+      }));
+    } catch(e) {}
+  }
+  function restoreResumeState(){
+    try {
+      var saved = JSON.parse(sessionStorage.getItem(STORE_KEY) || '{}');
+      if(!saved || !saved.sid || now() - Number(saved.saved_at || 0) > 6 * 60 * 60 * 1000) return false;
+      if(!resumeState.sid) resumeState.sid = saved.sid;
+      if(!resumeState.channel) resumeState.channel = String(saved.channel || '').toLowerCase();
+      if(!resumeState.role) resumeState.role = String(saved.role || '').toLowerCase();
+      resumeState.active = resumeState.active || !!saved.active;
+      window._obRtcLastSid = window._obRtcLastSid || saved.sid;
+      window._obRtcLastChannel = window._obRtcLastChannel || resumeState.channel;
+      window._obRtcLastRole = window._obRtcLastRole || resumeState.role;
+      return true;
+    } catch(e) { return false; }
+  }
+  function clearResumeState(){
+    resumeState.active = false;
+    try { sessionStorage.removeItem(STORE_KEY); } catch(e) {}
+    hideReconnectPrompt();
+  }
   function setText(id, value){ var el=document.getElementById(id); if(el) el.textContent = value; }
   function status(value){
     setText('rtc-status', value);
     setText('b3-rtc-status', value);
     setText('a4-session-rate', value);
     setText('live-billing-status', value);
+  }
+  function reconnectHost(){
+    return document.getElementById('screen-VID') || document.getElementById('screen-B3') || document.getElementById('screen-A4') || document.body;
+  }
+  function showReconnectPrompt(message){
+    var host = reconnectHost();
+    if(!host) return;
+    var card = document.getElementById('ob-mobile-reconnect-card');
+    if(!card){
+      card = document.createElement('div');
+      card.id = 'ob-mobile-reconnect-card';
+      card.className = 'ob-mobile-reconnect-card';
+      card.innerHTML = '<span></span><button type="button">Reconnect</button>';
+      var btn = card.querySelector('button');
+      if(btn) btn.onclick = function(){ hardResume('manual_tap_reconnect'); };
+      host.appendChild(card);
+    }
+    var span = card.querySelector('span');
+    if(span) span.textContent = message || 'Restoring audio/video. Keep this page open.';
+  }
+  function hideReconnectPrompt(){
+    var card = document.getElementById('ob-mobile-reconnect-card');
+    if(card && card.parentNode) card.parentNode.removeChild(card);
   }
   function wsForRole(roleName){
     if(roleName === 'expert' && window._expertWs && window._expertWs.readyState === 1) return window._expertWs;
@@ -33793,18 +33980,22 @@ body.ob-ui-dark .ob-connection-note,
     window._obRtcLastSid = sessionId;
     window._obRtcLastChannel = resumeState.channel;
     window._obRtcLastRole = resumeState.role;
+    saveResumeState();
     requestWakeLock();
   }
   function softResume(reason){
+    restoreResumeState();
     var sid = activeSid();
     var channel = activeChannel();
     if(!sid) return;
+    saveResumeState();
     joinAndResume(reason);
     if(isMediaChannel(channel) && window.OB_RTC && window.OB_RTC.handleReady){
       try { window.OB_RTC.handleReady(); } catch(e) {}
     }
   }
   function hardResume(reason){
+    restoreResumeState();
     var sid = activeSid();
     var channel = activeChannel();
     var roleName = role() || resumeState.role || 'client';
@@ -33813,6 +34004,8 @@ body.ob-ui-dark .ob-connection-note,
     if(tooSoon) return;
     resumeState.lastResumeAt = now();
     resumeState.hardAttempts += 1;
+    saveResumeState();
+    showReconnectPrompt('Restoring audio/video. Keep this page open.');
     status('Reconnecting - restoring audio/video...');
     joinAndResume(reason || 'hard_resume');
     var start = function(){ window.OB_RTC.start(sid, channel, roleName); };
@@ -33822,6 +34015,7 @@ body.ob-ui-dark .ob-connection-note,
     setTimeout(start, 350);
   }
   function resumeAfterSleep(reason){
+    restoreResumeState();
     var sid = activeSid();
     var channel = activeChannel();
     if(!sid || !resumeState.active) return;
@@ -33829,7 +34023,9 @@ body.ob-ui-dark .ob-connection-note,
     softResume(reason || 'resume');
     if(isMediaChannel(channel)){
       var sleptMs = hiddenAt ? now() - hiddenAt : 0;
-      if(sleptMs > 12000 || !(window.OB_RTC && window.OB_RTC.isActive && window.OB_RTC.isActive())){
+      var health = window.OB_RTC && window.OB_RTC.getMediaHealth ? window.OB_RTC.getMediaHealth() : null;
+      if(sleptMs > 4500) showReconnectPrompt('Restoring audio/video after your phone was locked.');
+      if(sleptMs > 4500 || !(window.OB_RTC && window.OB_RTC.isActive && window.OB_RTC.isActive()) || (health && health.age_ms > 12000 && !health.required_live)){
         hardResume(reason || 'wake_resume');
       }
     } else if(typeof window.openClientChat === 'function' && role() !== 'expert') {
@@ -33852,7 +34048,7 @@ body.ob-ui-dark .ob-connection-note,
     if(typeof rtc.end === 'function'){
       var priorEnd = rtc.end;
       rtc.end = function(){
-        resumeState.active = false;
+        clearResumeState();
         releaseWakeLock();
         return priorEnd.apply(this, arguments);
       };
@@ -33866,6 +34062,7 @@ body.ob-ui-dark .ob-connection-note,
           resumeState.sid = sid;
           resumeState.role = 'client';
           resumeState.active = true;
+          saveResumeState();
         }
         return priorClient.apply(this, arguments);
       };
@@ -33878,6 +34075,7 @@ body.ob-ui-dark .ob-connection-note,
           resumeState.sid = sid;
           resumeState.role = 'expert';
           resumeState.active = true;
+          saveResumeState();
         }
         return priorExpert.apply(this, arguments);
       };
@@ -33885,19 +34083,45 @@ body.ob-ui-dark .ob-connection-note,
     }
   }
   function install(){
+    restoreResumeState();
     hookRtc();
     hookSessionOpeners();
     requestWakeLock();
   }
+  function mediaNeedsRestore(){
+    restoreResumeState();
+    if(document.hidden || !resumeState.active || !isMediaChannel(activeChannel())) return false;
+    if(!window.OB_RTC || typeof window.OB_RTC.isActive !== 'function') return true;
+    if(!window.OB_RTC.isActive()) return true;
+    if(typeof window.OB_RTC.getMediaHealth !== 'function') return false;
+    var health = window.OB_RTC.getMediaHealth();
+    if(!health || !health.active) return true;
+    if(health.age_ms != null && health.age_ms < 12000) return false;
+    return !health.required_live;
+  }
+  function watchdogResume(){
+    if(!mediaNeedsRestore()){
+      hideReconnectPrompt();
+      return;
+    }
+    showReconnectPrompt('Audio/video is reconnecting. If it does not return, tap Reconnect.');
+    if(now() - lastWatchdogResumeAt < 12000) return;
+    lastWatchdogResumeAt = now();
+    hardResume('media_watchdog');
+  }
   document.addEventListener('visibilitychange', function(){
-    if(document.hidden){ hiddenAt = now(); return; }
+    if(document.hidden){ hiddenAt = now(); saveResumeState(); return; }
     setTimeout(function(){ resumeAfterSleep('visibility_resume'); }, 200);
   });
+  window.addEventListener('pagehide', function(){ hiddenAt = now(); saveResumeState(); });
+  document.addEventListener('freeze', function(){ hiddenAt = now(); saveResumeState(); });
+  document.addEventListener('resume', function(){ setTimeout(function(){ resumeAfterSleep('page_lifecycle_resume'); }, 200); });
   window.addEventListener('pageshow', function(){ setTimeout(function(){ resumeAfterSleep('pageshow_resume'); }, 250); });
   window.addEventListener('focus', function(){ setTimeout(function(){ resumeAfterSleep('focus_resume'); }, 250); });
   window.addEventListener('online', function(){ setTimeout(function(){ resumeAfterSleep('network_online'); }, 250); });
   window.obStagingForceRealtimeResume = function(){ resumeAfterSleep('manual_qa_resume'); };
   install();
+  setInterval(watchdogResume, 5000);
   [300, 1200, 3000, 6000].forEach(function(ms){ setTimeout(install, ms); });
 })();
 </script>

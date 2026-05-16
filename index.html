@@ -10642,25 +10642,43 @@ function updateBookPerminFreeCopy(channel){
   if(note) note.style.display = fm > 0 ? 'inline' : 'none';
 }
 
+function obStoredClientBookingUser(){
+  try {
+    return JSON.parse(sessionStorage.getItem('ob_u') || localStorage.getItem('ob_u') || 'null');
+  } catch(e) {
+    return null;
+  }
+}
+function obClientBookingToken(){
+  var user = obStoredClientBookingUser();
+  var role = String((user && user.role) || '').toLowerCase();
+  var clientTok = localStorage.getItem('ob_client_token') || sessionStorage.getItem('ob_client_t') || '';
+  if(clientTok && (!role || role === 'client')) return clientTok;
+  var tok = sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || '';
+  return (tok && role === 'client') ? tok : '';
+}
+function obRefreshClientBookingAuthState(){
+  var tok = obClientBookingToken();
+  if(!tok){
+    clientLoggedIn = false;
+    return { token:'', user:null };
+  }
+  if(!sessionStorage.getItem('ob_t')) sessionStorage.setItem('ob_t', tok);
+  clientLoggedIn = true;
+  return { token:tok, user:obStoredClientBookingUser() };
+}
+window.__obProdLoggedOutCtaAuthGate20260516 = true;
+
 // ===== BOOKING OVERLAY (expert website) =====
 function openBookingOverlay(channelId) {
   // Clear stale session state from previous sessions
   window._obActiveSessId = null; window._obPendingSessId = null; window._pendingSid = null;
   window._userClickedBegin = false;
-  // Bridge unified client token → live session token
-  var _uniTok = localStorage.getItem('ob_client_token');
-  if (_uniTok && !sessionStorage.getItem('ob_t')) {
-    sessionStorage.setItem('ob_t', _uniTok);
-  }
-  // Pre-fill and flag logged-in if unified token exists
-  if (_uniTok || sessionStorage.getItem('ob_t')) {
-    clientLoggedIn = true;
-    // Pre-fill name/email from user data if available
-    var _cu = typeof _clientUser !== 'undefined' ? _clientUser : null;
-    if (_cu) {
-      var _bovN = document.getElementById('bov-name'); if (_bovN && _cu.name) _bovN.value = _cu.name;
-      var _bovE = document.getElementById('bov-email'); if (_bovE && _cu.email) _bovE.value = _cu.email;
-    }
+  var _authState = obRefreshClientBookingAuthState();
+  var _cu = _authState.user || (typeof _clientUser !== 'undefined' ? _clientUser : null);
+  if (_authState.token && _cu) {
+    var _bovN = document.getElementById('bov-name'); if (_bovN && _cu.name) _bovN.value = _cu.name;
+    var _bovE = document.getElementById('bov-email'); if (_bovE && _cu.email) _bovE.value = _cu.email;
   }
   // Keep free-minute copy aligned with this client's backend eligibility.
   // Free intro minutes are one-time per expert, not per payment mode or channel.
@@ -10712,10 +10730,9 @@ function openBookingOverlay(channelId) {
   }
 
   // If already logged in (check token in storage), skip signup
-  var _tok = sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || '';
-  var _loggedUser = null;
-  try{ _loggedUser=JSON.parse(sessionStorage.getItem('ob_u')||localStorage.getItem('ob_u')||'null'); }catch(e){}
-  if (_tok) clientLoggedIn = true;
+  var _tok = _authState.token || obClientBookingToken();
+  var _loggedUser = _authState.user || obStoredClientBookingUser();
+  clientLoggedIn = !!_tok;
   // Show logged-in indicator bar
   var _loggedBar = document.getElementById('bov-loggedin-bar');
   if(!_loggedBar){
@@ -12923,7 +12940,7 @@ async function savePaymentConfig() {
     get tok()     { return sessionStorage.getItem('ob_t'); },
     get user()    { try{ return JSON.parse(sessionStorage.getItem('ob_u')||'null'); }catch{ return null; } },
     save(t,u)     { sessionStorage.setItem('ob_t',t); try{localStorage.setItem('ob_client_token',t);}catch(e){} sessionStorage.setItem('ob_u',JSON.stringify(u)); },
-    clear()       { sessionStorage.removeItem('ob_t'); sessionStorage.removeItem('ob_u'); },
+    clear()       { sessionStorage.removeItem('ob_t'); sessionStorage.removeItem('ob_u'); try{localStorage.removeItem('ob_t');localStorage.removeItem('ob_u');localStorage.removeItem('ob_client_token');}catch(e){} window.clientLoggedIn=false; },
     get ok()      { return !!this.tok; },
     get isExpert(){ return this.user?.role==='expert'; },
     get isAdmin() { return this.user?.role==='admin'; },
@@ -14002,7 +14019,8 @@ async function savePaymentConfig() {
   };
   window.bovClientLogout = function(){
     sessionStorage.removeItem('ob_t'); sessionStorage.removeItem('ob_u');
-    localStorage.removeItem('ob_t'); localStorage.removeItem('ob_u');
+    sessionStorage.removeItem('ob_client_t');
+    localStorage.removeItem('ob_t'); localStorage.removeItem('ob_u'); localStorage.removeItem('ob_client_token');
     localStorage.removeItem('ob_hpm');
     clientLoggedIn=false;
     // Refresh the overlay to show step1 again
@@ -20023,11 +20041,14 @@ function setClientToken(token) {
 function clearClientToken() {
   try { localStorage.removeItem(_CLIENT_TOKEN_KEY); } catch(e) {}
   try { localStorage.removeItem('ob_t'); } catch(e) {}
+  try { localStorage.removeItem('ob_u'); } catch(e) {}
   try { sessionStorage.removeItem('ob_client_t'); } catch(e) {}
   try { sessionStorage.removeItem('ob_t'); } catch(e) {}
   try { sessionStorage.removeItem('ob_u'); } catch(e) {}
+  try { localStorage.removeItem('ob_hpm'); } catch(e) {}
   _clientUser = null;
   _bflClientToken = null;
+  window.clientLoggedIn = false;
 }
 
 function checkClientAuth() {

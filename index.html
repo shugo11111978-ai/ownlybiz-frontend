@@ -24932,6 +24932,7 @@ window._handleRTCMessage=function(d){
 (function(){
   if(window._obPaymentSessionPatch20260426) return;
   window._obPaymentSessionPatch20260426 = true;
+  window.__obStripeLiveStepUp20260517 = 'ob-stripe-live-stepup-20260517';
   var API = (window.OWNLYBIZ_API_URL || window._OB_BACKEND || 'https://ownlybiz-backend-production.up.railway.app') + '/api';
   var CHANNELS = ['chat','voice','video'];
 	  function token(){ return sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || localStorage.getItem('ob_client_token') || ''; }
@@ -25027,9 +25028,162 @@ window._handleRTCMessage=function(d){
         window._obStripeSettings = settings;
         updateStripeBadge(settings);
         fillStripeModeFields(settings, settings.stripe_mode || 'test');
+        refreshStripeStepUpStatus();
       }).catch(function(){});
   }
   window.loadAdminPaymentSettings = loadStripeSettings;
+  function b64urlToBuffer(value){
+    value = String(value || '').replace(/-/g, '+').replace(/_/g, '/');
+    while(value.length % 4) value += '=';
+    var binary = atob(value);
+    var bytes = new Uint8Array(binary.length);
+    for(var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return bytes.buffer;
+  }
+  function bufferToB64url(buffer){
+    var bytes = new Uint8Array(buffer || []);
+    var binary = '';
+    for(var i = 0; i < bytes.length; i += 0x8000){
+      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    }
+    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+  }
+  function credentialToJson(credential){
+    var response = credential.response || {};
+    var json = {
+      id: credential.id,
+      type: credential.type,
+      rawId: bufferToB64url(credential.rawId),
+      response: {
+        clientDataJSON: bufferToB64url(response.clientDataJSON)
+      },
+      clientExtensionResults: credential.getClientExtensionResults ? credential.getClientExtensionResults() : {}
+    };
+    if(credential.authenticatorAttachment) json.authenticatorAttachment = credential.authenticatorAttachment;
+    if(response.attestationObject) json.response.attestationObject = bufferToB64url(response.attestationObject);
+    if(response.authenticatorData) json.response.authenticatorData = bufferToB64url(response.authenticatorData);
+    if(response.signature) json.response.signature = bufferToB64url(response.signature);
+    if(response.userHandle) json.response.userHandle = bufferToB64url(response.userHandle);
+    if(response.getTransports) {
+      try { json.response.transports = response.getTransports(); } catch(e) {}
+    }
+    return json;
+  }
+  function creationOptionsFromJson(options){
+    var out = Object.assign({}, options || {});
+    out.challenge = b64urlToBuffer(out.challenge);
+    out.user = Object.assign({}, out.user || {}, { id: b64urlToBuffer(out.user && out.user.id) });
+    out.excludeCredentials = (out.excludeCredentials || []).map(function(item){
+      return Object.assign({}, item, { id: b64urlToBuffer(item.id) });
+    });
+    return out;
+  }
+  function requestOptionsFromJson(options){
+    var out = Object.assign({}, options || {});
+    out.challenge = b64urlToBuffer(out.challenge);
+    out.allowCredentials = (out.allowCredentials || []).map(function(item){
+      return Object.assign({}, item, { id: b64urlToBuffer(item.id) });
+    });
+    return out;
+  }
+  function stepUpFetch(path, body){
+    return fetch(API + '/admin/settings/stripe-step-up/' + path, {
+      method: body ? 'POST' : 'GET',
+      headers:{'Content-Type':'application/json', Authorization:'Bearer ' + token()},
+      body: body ? JSON.stringify(body) : undefined
+    }).then(function(r){
+      return r.json().then(function(d){
+        if(!r.ok || d.success === false) throw new Error(d.error || 'Verification failed');
+        return d;
+      });
+    });
+  }
+  function updateStepUpStatusText(status){
+    var el = document.getElementById('ob-stripe-stepup-status');
+    if(!el) return;
+    if(!window.PublicKeyCredential || !navigator.credentials){
+      el.textContent = 'This browser does not support passkeys. Use Safari/Chrome/Edge with Touch ID, Face ID, Windows Hello, Android screen lock, or a security key.';
+      el.style.color = '#fecaca';
+      return;
+    }
+    if(status && status.passkey_enrolled){
+      el.textContent = status.verified ? ('Passkey verified until ' + new Date(status.verified_until).toLocaleTimeString()) : ('Passkey ready: ' + status.passkey_count + ' registered.');
+      el.style.color = status.verified ? '#86efac' : 'rgba(246,241,233,.72)';
+    } else {
+      el.textContent = 'No admin passkey registered yet. Register one before saving live Stripe keys.';
+      el.style.color = '#fcd34d';
+    }
+  }
+  function refreshStripeStepUpStatus(){
+    if(!token() || !isAdminUser()) return Promise.resolve(null);
+    return stepUpFetch('status').then(function(status){
+      window.__obStripeStepUpStatus = status;
+      updateStepUpStatusText(status);
+      return status;
+    }).catch(function(e){
+      updateStepUpStatusText(null);
+      return null;
+    });
+  }
+  function promptAdminPasswordForPasskey(){
+    return new Promise(function(resolve){
+      var overlay = document.createElement('div');
+      overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.62);z-index:999999;display:flex;align-items:center;justify-content:center;padding:18px;';
+      overlay.innerHTML = '<div style="width:min(420px,100%);background:#15100d;border:1px solid rgba(246,241,233,.16);border-radius:14px;padding:18px;color:#f6f1e9;box-shadow:0 24px 70px rgba(0,0,0,.4);">'
+        + '<h3 style="margin:0 0 8px;font-size:18px;">Register admin passkey</h3>'
+        + '<p style="margin:0 0 14px;color:rgba(246,241,233,.66);font-size:13px;line-height:1.5;">Enter your current admin password, then your browser will ask for Touch ID, Face ID/passkey, Windows Hello, Android screen lock, or security key.</p>'
+        + '<input id="ob-passkey-password-input" type="password" autocomplete="current-password" placeholder="Current admin password" style="width:100%;box-sizing:border-box;padding:11px 12px;border-radius:10px;border:1px solid rgba(246,241,233,.18);background:rgba(255,255,255,.06);color:#fff;margin-bottom:14px;">'
+        + '<div style="display:flex;gap:10px;justify-content:flex-end;"><button id="ob-passkey-cancel" type="button" class="admin-action-btn">Cancel</button><button id="ob-passkey-submit" type="button" class="admin-action-btn">Continue</button></div>'
+        + '</div>';
+      document.body.appendChild(overlay);
+      var input = overlay.querySelector('#ob-passkey-password-input');
+      var cleanup = function(value){ overlay.remove(); resolve(value); };
+      overlay.querySelector('#ob-passkey-cancel').onclick = function(){ cleanup(''); };
+      overlay.querySelector('#ob-passkey-submit').onclick = function(){ cleanup(input.value || ''); };
+      input.addEventListener('keydown', function(e){ if(e.key === 'Enter') cleanup(input.value || ''); });
+      setTimeout(function(){ input.focus(); }, 50);
+    });
+  }
+  window.obRegisterStripePasskey = async function(){
+    try {
+      if(!window.PublicKeyCredential || !navigator.credentials) throw new Error('This browser does not support passkeys.');
+      var password = await promptAdminPasswordForPasskey();
+      if(!password) return;
+      var start = await stepUpFetch('register-options', { current_password: password });
+      var credential = await navigator.credentials.create({ publicKey: creationOptionsFromJson(start.options) });
+      await stepUpFetch('register-verify', { response: credentialToJson(credential), label: 'Admin passkey' });
+      toastSafe('Admin passkey registered for live Stripe changes','ok');
+      await refreshStripeStepUpStatus();
+    } catch(e) {
+      toastSafe(e.message || 'Passkey registration failed','err');
+    }
+  };
+  window.obVerifyStripeLiveStepUp = async function(){
+    try {
+      if(!window.PublicKeyCredential || !navigator.credentials) throw new Error('This browser does not support passkeys.');
+      var start = await stepUpFetch('authenticate-options', {});
+      var credential = await navigator.credentials.get({ publicKey: requestOptionsFromJson(start.options) });
+      var verified = await stepUpFetch('authenticate-verify', { response: credentialToJson(credential) });
+      window.__obStripeLiveStepUpToken = verified.verification_token;
+      window.__obStripeLiveStepUpExpiresAt = verified.expires_at;
+      toastSafe('Live Stripe verification complete','ok');
+      await refreshStripeStepUpStatus();
+      return verified.verification_token;
+    } catch(e) {
+      toastSafe(e.message || 'Passkey verification failed','err');
+      throw e;
+    }
+  };
+  async function requireLiveStripeStepUp(){
+    var status = await refreshStripeStepUpStatus();
+    if(!status || !status.passkey_enrolled) throw new Error('Register a passkey before saving live Stripe keys.');
+    var expiresAt = window.__obStripeLiveStepUpExpiresAt ? new Date(window.__obStripeLiveStepUpExpiresAt).getTime() : 0;
+    var stepUpToken = expiresAt > Date.now() + 10000 ? window.__obStripeLiveStepUpToken : '';
+    if(!stepUpToken) stepUpToken = await window.obVerifyStripeLiveStepUp();
+    var phrase = window.prompt ? window.prompt('Live Stripe keys affect real client payments. Type ENABLE LIVE STRIPE to continue.') : '';
+    if(phrase !== 'ENABLE LIVE STRIPE') throw new Error('Live Stripe save cancelled.');
+    return { token: stepUpToken, phrase: phrase };
+  }
   window.testPaymentGateway = function(provider){
     if(provider !== 'stripe'){ toastSafe((provider || 'Provider') + ' is not supported yet','err'); return; }
     var sel = stripeSelect();
@@ -25051,41 +25205,50 @@ window._handleRTCMessage=function(d){
         toastSafe(e.message || 'Network error','err');
       });
   };
-  window.savePaymentGateway = function(provider){
+  window.savePaymentGateway = async function(provider){
     if(provider !== 'stripe'){ toastSafe((provider || 'Provider') + ' is not supported yet','err'); return; }
-    var mode = normalizeMode((stripeSelect() || {}).value || 'test');
-    var settings = window._obStripeSettings || {};
-    var skEl = document.getElementById('stripe-secret-key');
-    var pkEl = document.getElementById('stripe-pub-key');
-    var whEl = document.getElementById('stripe-webhook-secret');
-    var sk = skEl ? String(skEl.value || '').trim() : '';
-    var pk = pkEl ? String(pkEl.value || '').trim() : '';
-    var wh = whEl ? String(whEl.value || '').trim() : '';
-    var hasSavedSecret = !!existingSetting(settings, mode, 'secret_key');
-    var hasSavedPublishable = !!existingSetting(settings, mode, 'publishable_key');
-    if(sk && sk.indexOf(prefix(mode, 'secret')) !== 0) return toastSafe('Secret key must start with ' + prefix(mode, 'secret'), 'err');
-    if(pk && pk.indexOf(prefix(mode, 'publishable')) !== 0) return toastSafe('Publishable key must start with ' + prefix(mode, 'publishable'), 'err');
-    if(!sk && !hasSavedSecret) return toastSafe('Enter a ' + mode + ' secret key first', 'err');
-    if(!pk && !hasSavedPublishable) return toastSafe('Enter a ' + mode + ' publishable key first', 'err');
-    var body = { stripe_mode: mode };
-    if(sk) body['stripe_' + mode + '_secret_key'] = sk;
-    if(pk) body['stripe_' + mode + '_publishable_key'] = pk;
-    if(wh) body['stripe_' + mode + '_webhook_secret'] = wh;
     var btn = Array.prototype.find.call(document.querySelectorAll('button'), function(b){ return /Save Stripe Config/i.test(b.textContent || ''); });
-    if(btn){ btn.disabled = true; btn.textContent = 'Saving...'; }
-    fetch(API + '/admin/settings', {
-      method:'POST',
-      headers:{'Content-Type':'application/json', Authorization:'Bearer ' + token()},
-      body:JSON.stringify(body)
-    }).then(function(r){ return r.json().then(function(d){ if(!r.ok || d.success === false) throw new Error(d.error || 'Save failed'); return d; }); })
-      .then(function(){
-        toastSafe('Stripe ' + mode + ' configuration saved','ok');
-        return loadStripeSettings();
-      }).catch(function(e){
-        toastSafe(e.message || 'Stripe save failed','err');
-      }).finally(function(){
-        if(btn){ btn.disabled = false; btn.textContent = 'Save Stripe Config'; }
-      });
+    try {
+      var mode = normalizeMode((stripeSelect() || {}).value || 'test');
+      var settings = window._obStripeSettings || {};
+      var skEl = document.getElementById('stripe-secret-key');
+      var pkEl = document.getElementById('stripe-pub-key');
+      var whEl = document.getElementById('stripe-webhook-secret');
+      var sk = skEl ? String(skEl.value || '').trim() : '';
+      var pk = pkEl ? String(pkEl.value || '').trim() : '';
+      var wh = whEl ? String(whEl.value || '').trim() : '';
+      var hasSavedSecret = !!existingSetting(settings, mode, 'secret_key');
+      var hasSavedPublishable = !!existingSetting(settings, mode, 'publishable_key');
+      if(sk && sk.indexOf(prefix(mode, 'secret')) !== 0) return toastSafe('Secret key must start with ' + prefix(mode, 'secret'), 'err');
+      if(pk && pk.indexOf(prefix(mode, 'publishable')) !== 0) return toastSafe('Publishable key must start with ' + prefix(mode, 'publishable'), 'err');
+      if(!sk && !hasSavedSecret) return toastSafe('Enter a ' + mode + ' secret key first', 'err');
+      if(!pk && !hasSavedPublishable) return toastSafe('Enter a ' + mode + ' publishable key first', 'err');
+      var body = { stripe_mode: mode };
+      if(sk) body['stripe_' + mode + '_secret_key'] = sk;
+      if(pk) body['stripe_' + mode + '_publishable_key'] = pk;
+      if(wh) body['stripe_' + mode + '_webhook_secret'] = wh;
+      if(mode === 'live') {
+        var stepUp = await requireLiveStripeStepUp();
+        body.stripe_stepup_token = stepUp.token;
+        body.stripe_live_confirm = stepUp.phrase;
+      }
+      if(btn){ btn.disabled = true; btn.textContent = 'Saving...'; }
+      await fetch(API + '/admin/settings', {
+        method:'POST',
+        headers:{'Content-Type':'application/json', Authorization:'Bearer ' + token()},
+        body:JSON.stringify(body)
+      }).then(function(r){ return r.json().then(function(d){ if(!r.ok || d.success === false) throw new Error(d.error || 'Save failed'); return d; }); });
+      if(mode === 'live') {
+        window.__obStripeLiveStepUpToken = '';
+        window.__obStripeLiveStepUpExpiresAt = '';
+      }
+      toastSafe('Stripe ' + mode + ' configuration saved','ok');
+      await loadStripeSettings();
+    } catch(e) {
+      toastSafe(e.message || 'Stripe save failed','err');
+    } finally {
+      if(btn){ btn.disabled = false; btn.textContent = 'Save Stripe Config'; }
+    }
   };
   window.savePaymentConfig = function(){ return window.savePaymentGateway('stripe'); };
 
@@ -38444,6 +38607,12 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       +       '<div><label class="ps-label" for="stripe-secret-key" style="display:block;margin-bottom:6px;">Secret Key</label><input class="admin-input" id="stripe-secret-key" type="password" autocomplete="off" placeholder="Leave blank to keep saved key" style="width:100%;"></div>'
       +       '<div><label class="ps-label" for="stripe-pub-key" style="display:block;margin-bottom:6px;">Publishable Key</label><input class="admin-input" id="stripe-pub-key" autocomplete="off" placeholder="pk_test_..." style="width:100%;"></div>'
       +       '<div><label class="ps-label" for="stripe-webhook-secret" style="display:block;margin-bottom:6px;">Webhook Secret</label><input class="admin-input" id="stripe-webhook-secret" type="password" autocomplete="off" placeholder="Leave blank to keep saved webhook secret" style="width:100%;"></div>'
+      +     '</div>'
+      +     '<div id="ob-stripe-live-stepup-card" style="margin-top:16px;border:1px solid rgba(248,113,113,.28);background:rgba(127,29,29,.13);border-radius:12px;padding:14px;">'
+      +       '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;">'
+      +         '<div><strong style="display:block;color:#fecaca;font-size:13px;margin-bottom:4px;">Live Stripe key protection</strong><div style="color:rgba(246,241,233,.62);font-size:12px;line-height:1.5;">Before saving live keys, verify with a passkey: Touch ID on Mac, Face ID/passkeys on Apple devices, Windows Hello, Android screen lock, or a security key. First setup requires your current admin password.</div><div id="ob-stripe-stepup-status" style="margin-top:8px;color:rgba(246,241,233,.58);font-size:12px;">Checking passkey status...</div></div>'
+      +         '<div style="display:flex;gap:8px;flex-wrap:wrap;"><button type="button" class="admin-action-btn" onclick="obRegisterStripePasskey()">Register passkey</button><button type="button" class="admin-action-btn" onclick="obVerifyStripeLiveStepUp()">Verify now</button></div>'
+      +       '</div>'
       +     '</div>'
       +     '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:16px;"><button type="button" class="admin-action-btn" onclick="testPaymentGateway(&quot;stripe&quot;)">Test connection</button><button type="button" class="admin-action-btn" onclick="savePaymentGateway(&quot;stripe&quot;)">Save Stripe Config</button><span id="stripe-test-result" style="display:inline-block;font-size:12px;color:rgba(246,241,233,.55);"></span></div>'
       +   '</div>'

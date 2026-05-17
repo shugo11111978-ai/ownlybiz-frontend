@@ -39799,4 +39799,98 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
 })();
 </script>
 
+<script id="ob-auth-noise-guard-20260517">
+(function(){
+  'use strict';
+  if(window.__obAuthNoiseGuard20260517) return;
+  window.__obAuthNoiseGuard20260517 = true;
+  var nativeFetch = window.fetch && window.fetch.bind(window);
+  if(!nativeFetch) return;
+  function token(){
+    try { return sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || localStorage.getItem('ob_client_token') || ''; }
+    catch(e) { return ''; }
+  }
+  function userRole(){
+    try {
+      var raw = sessionStorage.getItem('ob_u') || localStorage.getItem('ob_u') || '{}';
+      return String((JSON.parse(raw) || {}).role || '').toLowerCase();
+    } catch(e) { return ''; }
+  }
+  function appPath(){
+    return String((window.location && window.location.pathname) || '').replace(/\/+$/,'') || '/';
+  }
+  function isAdminContext(){
+    var path = appPath();
+    return userRole() === 'admin' || path === '/admin' || path.indexOf('/admin/') === 0;
+  }
+  function urlFromInput(input){
+    try {
+      if(typeof input === 'string') return new URL(input, window.location.origin);
+      if(input && input.url) return new URL(input.url, window.location.origin);
+    } catch(e) {}
+    return null;
+  }
+  function isOwnlyApi(url){
+    if(!url) return false;
+    var host = String(url.hostname || '').toLowerCase();
+    return host === 'ownlybiz-backend-production.up.railway.app' ||
+      host === 'victorious-wisdom-production-a6b0.up.railway.app' ||
+      host === String(window.location.hostname || '').toLowerCase();
+  }
+  function hasAuth(init, input){
+    if(token()) return true;
+    var headers = (init && init.headers) || (input && input.headers);
+    try {
+      if(headers && typeof headers.get === 'function') return !!headers.get('authorization');
+      if(headers && typeof headers === 'object') {
+        return !!(headers.Authorization || headers.authorization);
+      }
+    } catch(e) {}
+    return false;
+  }
+  function jsonResponse(status, payload){
+    return Promise.resolve(new Response(JSON.stringify(payload || {}), {
+      status: status,
+      headers: {'Content-Type':'application/json', 'X-Ownlybiz-Client-Skipped':'1'}
+    }));
+  }
+  function isPublicAdminEndpoint(path){
+    return path === '/api/admin/settings/popup-settings' || path.indexOf('/api/admin/settings/popup-settings?') === 0;
+  }
+  function isQuietAuthEndpoint(path){
+    return path === '/api/auth/me' ||
+      path.indexOf('/api/experts/me') === 0 ||
+      path === '/api/experts/rates' ||
+      path.indexOf('/api/experts/rates?') === 0 ||
+      path === '/api/billing/me' ||
+      path.indexOf('/api/bookings/client') === 0 ||
+      path.indexOf('/api/credits/') === 0 ||
+      path.indexOf('/api/sessions') === 0;
+  }
+  window.fetch = function(input, init){
+    var url = urlFromInput(input);
+    if(url && isOwnlyApi(url)){
+      var path = url.pathname + (url.search || '');
+      var apiPath = url.pathname;
+      var role = userRole();
+      if(apiPath.indexOf('/api/admin/') === 0 && !isPublicAdminEndpoint(apiPath) && !isAdminContext()){
+        return jsonResponse(role && role !== 'admin' ? 403 : 401, {
+          success:false,
+          skipped:true,
+          error: role && role !== 'admin' ? 'Admin request skipped for non-admin client.' : 'Admin request skipped until admin login is available.'
+        });
+      }
+      if(!hasAuth(init, input) && isQuietAuthEndpoint(apiPath) && !isAdminContext()){
+        return jsonResponse(401, {
+          success:false,
+          skipped:true,
+          error:'Authentication required.'
+        });
+      }
+    }
+    return nativeFetch(input, init);
+  };
+})();
+</script>
+
 </html>

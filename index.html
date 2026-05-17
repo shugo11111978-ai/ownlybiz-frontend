@@ -40068,7 +40068,9 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   }
 
   function aiStatusBadge(statusData){
-    if(!statusData || !statusData.enabled) return '<span class="ob-help-ai-badge warn">AI not enabled yet</span>';
+    if(!statusData) return '<span class="ob-help-ai-badge">Checking AI...</span>';
+    if(statusData.status_error) return '<span class="ob-help-ai-badge warn">AI status unavailable</span>';
+    if(!statusData.enabled) return '<span class="ob-help-ai-badge warn">AI not enabled yet</span>';
     if(!statusData.configured) return '<span class="ob-help-ai-badge warn">AI being configured</span>';
     return '<span class="ob-help-ai-badge">'+esc(statusData.provider_label || 'AI')+' - '+esc(statusData.model || 'model ready')+'</span>';
   }
@@ -40104,22 +40106,32 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       renderAiLog();
     }).catch(function(){
       var box = document.getElementById('ob-help-ai');
-      if(box) box.outerHTML = helpAiHtml({enabled:false,configured:false});
+      if(box) box.outerHTML = helpAiHtml({enabled:false,configured:false,status_error:true});
       renderAiLog();
     });
+  }
+  function replacePendingAssistant(content){
+    for(var i=aiMessages.length-1;i>=0;i--){
+      if(aiMessages[i] && aiMessages[i].role === 'assistant' && aiMessages[i].pending){
+        aiMessages[i] = {role:'assistant',content:content};
+        return;
+      }
+    }
+    aiMessages.push({role:'assistant',content:content});
   }
   function sendAiQuestion(text){
     text = String(text || '').trim();
     if(!text || aiBusy) return;
     aiBusy = true;
     aiMessages.push({role:'user',content:text});
+    aiMessages.push({role:'assistant',content:'Thinking...',pending:true});
     renderAiLog();
     var input = document.getElementById('ob-help-ai-input');
     if(input) input.value = '';
-    request('/api/ai/expert-assistant',{method:'POST',body:{messages:aiMessages.slice(-8)}}).then(function(data){
-      aiMessages.push({role:'assistant',content:data.answer || 'I could not answer that yet.'});
+    request('/api/ai/expert-assistant',{method:'POST',body:{messages:aiMessages.filter(function(m){ return !m.pending; }).slice(-8)}}).then(function(data){
+      replacePendingAssistant(data.answer || 'I could not answer that yet.');
     }).catch(function(err){
-      aiMessages.push({role:'assistant',content:(err.message || 'The AI assistant is not available yet.')});
+      replacePendingAssistant(err.message || 'The AI assistant is not available yet.');
     }).finally(function(){
       aiBusy = false;
       var send = document.querySelector('#ob-help-ai .ob-help-ai-send');
@@ -40261,6 +40273,8 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   .ob-ai-editor-row { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:10px; align-items:center; }
   .ob-ai-editor-check { align-items:center; display:flex; gap:8px; color:rgba(36,24,19,.70); font-size:13px; font-weight:850; }
   .ob-ai-editor-buttons { display:flex; flex-wrap:wrap; gap:10px; }
+  .ob-ai-editor-head-actions { align-items:flex-start; display:flex; gap:8px; }
+  .ob-ai-editor-close { background:#fff; border:1px solid rgba(36,24,19,.14); border-radius:999px; color:#241813; cursor:pointer; font-size:12px; font-weight:950; min-height:34px; padding:7px 10px; white-space:nowrap; }
   .ob-ai-editor-btn {
     border:1px solid rgba(36,24,19,.14);
     border-radius:999px;
@@ -40289,6 +40303,24 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   .ob-ai-result li { color:rgba(36,24,19,.70); font-size:13px; line-height:1.5; }
   .ob-ai-pack-row { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; }
   .ob-ai-pack-btn { background:#fff; border:1px solid rgba(36,24,19,.14); border-radius:12px; color:#241813; cursor:pointer; font-size:12px; font-weight:950; padding:10px 12px; }
+  .ob-ai-wand-label { align-items:center!important; display:flex!important; gap:8px!important; justify-content:space-between!important; }
+  .ob-ai-field-wand { align-items:center; background:#fff7ed; border:1px solid rgba(196,98,45,.28); border-radius:999px; color:#9b451d; cursor:pointer; display:inline-flex; font-size:14px; font-weight:950; height:30px; justify-content:center; margin-left:8px; min-width:30px; padding:0 8px; }
+  .ob-ai-field-wand:hover { background:#c4622d; color:#fff; }
+  .ob-ai-field-wand[disabled] { cursor:not-allowed; opacity:.5; }
+  .ob-ai-field-modal { align-items:center; background:rgba(20,12,8,.58); display:none; inset:0; justify-content:center; padding:18px; position:fixed; z-index:99980; }
+  .ob-ai-field-modal.open { display:flex; }
+  .ob-ai-field-card { background:#fffdf8; border:1px solid rgba(36,24,19,.12); border-radius:18px; box-shadow:0 28px 90px rgba(0,0,0,.34); max-width:560px; padding:18px; width:min(560px,100%); }
+  .ob-ai-field-head { align-items:flex-start; display:flex; gap:12px; justify-content:space-between; margin-bottom:12px; }
+  .ob-ai-field-head h3 { color:#241813; font-size:18px; font-weight:950; margin:0 0 4px; }
+  .ob-ai-field-head p { color:rgba(36,24,19,.62); font-size:13px; line-height:1.45; margin:0; }
+  .ob-ai-field-close { background:transparent; border:0; color:rgba(36,24,19,.48); cursor:pointer; font-size:20px; font-weight:950; line-height:1; }
+  .ob-ai-field-card textarea { border:1px solid rgba(36,24,19,.14); border-radius:14px; box-sizing:border-box; color:#241813; font:inherit; min-height:96px; padding:12px; resize:vertical; width:100%; }
+  .ob-ai-field-status { color:rgba(36,24,19,.62); font-size:13px; line-height:1.45; margin-top:10px; min-height:20px; }
+  .ob-ai-field-status.err { color:#b91c1c; }
+  .ob-ai-field-status.ok { color:#3e5b26; }
+  .ob-ai-field-result { background:rgba(122,140,110,.09); border:1px solid rgba(122,140,110,.18); border-radius:14px; color:#241813; display:none; font-size:13px; line-height:1.55; margin-top:12px; padding:12px; white-space:pre-wrap; }
+  .ob-ai-field-result.open { display:block; }
+  .ob-ai-field-result img { border-radius:12px; display:block; height:auto; max-width:100%; }
   .ob-ai-public-section {
     background:rgba(255,250,240,.76);
     border:1px solid rgba(36,24,19,.09);
@@ -40322,6 +40354,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     .ob-ai-credit-grid,
     .ob-ai-editor-row { grid-template-columns:1fr; }
     .ob-ai-editor-head { display:block; }
+    .ob-ai-editor-head-actions { margin-top:10px; }
   }
 </style>
 <script id="ob-staging-ai-website-editor-20260517">
@@ -40337,6 +40370,36 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   var lastPrompt = '';
   var lastMode = 'improve';
   var lastGenerateMedia = false;
+  var fieldBusy = false;
+  var fieldModal = { targetId:'', field:'', kind:'text', label:'', result:null };
+  var FIELD_WANDS = {
+    'we-hero-tagline': { field:'hero_tagline', kind:'text', label:'Hero tagline' },
+    'we-hero-cta': { field:'hero_cta', kind:'text', label:'CTA button text' },
+    'we-about-quote': { field:'about_quote', kind:'text', label:'Short quote' },
+    'we-about-bio': { field:'about_bio', kind:'text', label:'Full bio' },
+    'we-footer-name': { field:'footer_name', kind:'text', label:'Practice / business name' },
+    'we-footer-disclaimer': { field:'footer_disclaimer', kind:'text', label:'Footer disclaimer' },
+    'we-contact-heading': { field:'contact_heading', kind:'text', label:'Contact heading' },
+    'we-contact-desc': { field:'contact_desc', kind:'text', label:'Contact description' },
+    'we-contact-location': { field:'contact_location', kind:'text', label:'Location' },
+    'we-contact-hours': { field:'contact_hours', kind:'text', label:'Business hours' },
+    'we-contact-response': { field:'contact_response', kind:'text', label:'Response time' },
+    'we-nav-home': { field:'nav_home', kind:'text', label:'Home nav label' },
+    'we-nav-about': { field:'nav_about', kind:'text', label:'About nav label' },
+    'we-nav-services': { field:'nav_services', kind:'text', label:'Services nav label' },
+    'we-nav-reviews': { field:'nav_reviews', kind:'text', label:'Reviews nav label' },
+    'we-nav-book': { field:'nav_book', kind:'text', label:'Book nav label' },
+    'we-nav-contact': { field:'nav_contact', kind:'text', label:'Contact nav label' },
+    'we-about-title': { field:'about_title', kind:'text', label:'About page title' },
+    'we-svc-title': { field:'svc_title', kind:'text', label:'Services page title' },
+    'we-svc-subtitle': { field:'svc_subtitle', kind:'text', label:'Services page subtitle' },
+    'we-svc-chat-desc': { field:'svc_chat_desc', kind:'text', label:'Chat description' },
+    'we-svc-voice-desc': { field:'svc_voice_desc', kind:'text', label:'Voice description' },
+    'we-svc-video-desc': { field:'svc_video_desc', kind:'text', label:'Video description' },
+    'we-img-profile-preview': { field:'profile_image', kind:'image', label:'Profile photo' },
+    'we-img-logo-preview': { field:'logo_image', kind:'image', label:'Nav logo' },
+    'we-img-favicon-preview': { field:'favicon_image', kind:'image', label:'Browser icon' }
+  };
 
   function esc(value){
     return String(value == null ? '' : value).replace(/[&<>"']/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; });
@@ -40382,6 +40445,10 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     if(!isFinite(n)) n = 0;
     return '$' + n.toFixed(2);
   }
+  window.obAiCloseWebsiteStudio = window.obAiCloseWebsiteStudio || function(){
+    var shell = document.querySelector('.ob-ai-website-shell');
+    if(shell) shell.classList.remove('open');
+  };
   function providerDefaults(){
     return [
       {id:'primary_text',label:'Primary text model',kind:'chat',base_url:'https://api.openai.com/v1/chat/completions',model:'gpt-4o-mini',api_key:'',temperature:0.2,max_tokens:1200,size:'1024x1024'},
@@ -40588,7 +40655,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     var packs = c.packs || [];
     var disabled = eligible && configured ? '' : 'disabled';
     return '<section class="ob-ai-editor" id="ob-ai-website-editor">' +
-      '<div class="ob-ai-editor-head"><div><div class="ob-ai-editor-kicker">AI website studio</div><div class="ob-ai-editor-title">Create and improve your expert website with AI.</div><p class="ob-ai-editor-copy">Ask for new pages, stronger copy, extra sections, visual direction, or generated media. The assistant cannot change pricing, checkout, booking, live sessions, Stripe, auth, or admin settings.</p></div><div class="ob-help-ai-badge '+(eligible && configured ? '' : 'warn')+'">'+(eligible ? (configured ? 'Ready' : 'Model setup needed') : esc(statusData.reason || 'Pro and Scale only'))+'</div></div>' +
+      '<div class="ob-ai-editor-head"><div><div class="ob-ai-editor-kicker">AI website studio</div><div class="ob-ai-editor-title">Create and improve your expert website with AI.</div><p class="ob-ai-editor-copy">Ask for new pages, stronger copy, extra sections, visual direction, or generated media. The assistant cannot change pricing, checkout, booking, live sessions, Stripe, auth, or admin settings.</p></div><div class="ob-ai-editor-head-actions"><div class="ob-help-ai-badge '+(eligible && configured ? '' : 'warn')+'">'+(eligible ? (configured ? 'Ready' : 'Model setup needed') : esc(statusData.reason || 'Pro and Scale only'))+'</div><button class="ob-ai-editor-close" type="button" onclick="obAiCloseWebsiteStudio()">Close</button></div></div>' +
       '<div class="ob-ai-credit-grid">' +
         creditTile(c.available || 0,'available credits') +
         creditTile(c.included_remaining || 0,'included this month') +
@@ -40606,11 +40673,156 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       (packs.length ? '<div class="ob-ai-result"><h3>Buy more AI credits</h3><p>Credit purchases use Stripe Checkout and are added to this expert account after payment succeeds.</p><div class="ob-ai-pack-row">'+packs.map(function(p){ return '<button class="ob-ai-pack-btn" type="button" onclick="obAiBuyCredits(\''+esc(p.id)+'\')">'+esc(p.label)+' - '+esc(p.credits)+' credits / '+money(p.price_usd)+'</button>'; }).join('')+'</div></div>' : '') +
     '</section>';
   }
+  function aiReadyForFields(meta){
+    if(!editorStatus || !editorStatus.eligible || !editorStatus.configured) return false;
+    if(meta && meta.kind === 'image') return !!editorStatus.media_configured;
+    return true;
+  }
+  function syncFieldWands(){
+    Object.keys(FIELD_WANDS).forEach(function(id){
+      var meta = FIELD_WANDS[id];
+      var el = document.getElementById(id);
+      if(!el) return;
+      var existing = document.querySelector('[data-ob-ai-field-wand="'+id+'"]');
+      if(!aiReadyForFields(meta)){
+        if(existing) existing.remove();
+        return;
+      }
+      if(existing) return;
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'ob-ai-field-wand';
+      btn.setAttribute('data-ob-ai-field-wand', id);
+      btn.title = 'Use AI for ' + meta.label;
+      btn.setAttribute('aria-label', 'Use AI for ' + meta.label);
+      btn.textContent = '🪄';
+      btn.onclick = function(ev){ ev.preventDefault(); ev.stopPropagation(); window.obAiOpenFieldPrompt(id); };
+      var label = meta.kind === 'image'
+        ? el.parentElement && el.parentElement.querySelector('div')
+        : el.parentElement && el.parentElement.querySelector('label');
+      if(label) {
+        label.classList.add('ob-ai-wand-label');
+        label.appendChild(btn);
+      } else if(el.parentNode) {
+        el.parentNode.insertBefore(btn, el);
+      }
+    });
+  }
+  function ensureFieldModal(){
+    var modal = document.getElementById('ob-ai-field-modal');
+    if(modal) return modal;
+    modal = document.createElement('div');
+    modal.id = 'ob-ai-field-modal';
+    modal.className = 'ob-ai-field-modal';
+    modal.innerHTML =
+      '<div class="ob-ai-field-card" role="dialog" aria-modal="true" aria-labelledby="ob-ai-field-title">' +
+        '<div class="ob-ai-field-head"><div><h3 id="ob-ai-field-title">AI field helper</h3><p id="ob-ai-field-copy">Generate copy or media for this field only.</p></div><button class="ob-ai-field-close" type="button" onclick="obAiCloseFieldPrompt()">x</button></div>' +
+        '<textarea id="ob-ai-field-prompt" placeholder="Tell AI what you want for this field..."></textarea>' +
+        '<div class="ob-ai-editor-buttons" style="margin-top:10px;"><button class="ob-ai-editor-btn primary" id="ob-ai-field-run" type="button" onclick="obAiRunFieldPrompt()">Generate</button><button class="ob-ai-editor-btn secondary" id="ob-ai-field-use" type="button" style="display:none" onclick="obAiUseFieldSuggestion()">Use this</button></div>' +
+        '<div id="ob-ai-field-status" class="ob-ai-field-status"></div><div id="ob-ai-field-result" class="ob-ai-field-result"></div>' +
+      '</div>';
+    modal.addEventListener('click',function(ev){ if(ev.target === modal) window.obAiCloseFieldPrompt(); });
+    document.body.appendChild(modal);
+    return modal;
+  }
+  function currentFieldValue(targetId){
+    var el = document.getElementById(targetId);
+    if(!el) return '';
+    if(FIELD_WANDS[targetId] && FIELD_WANDS[targetId].kind === 'image') {
+      var img = el.querySelector && el.querySelector('img');
+      return img && img.src || '';
+    }
+    return el.value || '';
+  }
+  function setFieldStatus(msg, kind){
+    var el = document.getElementById('ob-ai-field-status');
+    if(!el) return;
+    el.className = 'ob-ai-field-status' + (kind ? ' ' + kind : '');
+    el.textContent = msg || '';
+  }
+  function renderCreditBuy(statusData){
+    var c = statusData && statusData.credits || editorStatus && editorStatus.credits || {};
+    var packs = c.packs || [];
+    if(!packs.length) return '';
+    return '<div class="ob-ai-pack-row">'+packs.map(function(p){ return '<button class="ob-ai-pack-btn" type="button" onclick="obAiBuyCredits(\''+esc(p.id)+'\')">'+esc(p.label)+' - '+esc(p.credits)+' credits / '+money(p.price_usd)+'</button>'; }).join('')+'</div>';
+  }
+  window.obAiOpenFieldPrompt = function(targetId){
+    var meta = FIELD_WANDS[targetId];
+    if(!meta || !aiReadyForFields(meta)) return;
+    fieldModal = { targetId:targetId, field:meta.field, kind:meta.kind, label:meta.label, result:null };
+    var modal = ensureFieldModal();
+    var title = document.getElementById('ob-ai-field-title');
+    var copy = document.getElementById('ob-ai-field-copy');
+    var prompt = document.getElementById('ob-ai-field-prompt');
+    var result = document.getElementById('ob-ai-field-result');
+    var use = document.getElementById('ob-ai-field-use');
+    if(title) title.textContent = 'AI for ' + meta.label;
+    if(copy) copy.textContent = meta.kind === 'image' ? 'Generate an image for this one website image field.' : 'Generate text for this one editable website field.';
+    if(prompt) {
+      prompt.value = meta.kind === 'image' ? 'Create a polished image that fits my expert website.' : 'Improve this field while keeping my voice and making it clearer.';
+      setTimeout(function(){ prompt.focus(); prompt.select(); }, 40);
+    }
+    if(result) { result.className = 'ob-ai-field-result'; result.innerHTML = ''; }
+    if(use) use.style.display = 'none';
+    setFieldStatus('Credits are checked and spent only on the server after AI returns a result.');
+    modal.classList.add('open');
+  };
+  window.obAiCloseFieldPrompt = function(){
+    var modal = document.getElementById('ob-ai-field-modal');
+    if(modal) modal.classList.remove('open');
+  };
+  window.obAiRunFieldPrompt = function(){
+    if(fieldBusy || !fieldModal.field) return;
+    var promptEl = document.getElementById('ob-ai-field-prompt');
+    var prompt = clean(promptEl && promptEl.value || '');
+    if(!prompt) { setFieldStatus('Tell AI what you want for this field first.','err'); return; }
+    fieldBusy = true;
+    fieldModal.result = null;
+    var run = document.getElementById('ob-ai-field-run');
+    var use = document.getElementById('ob-ai-field-use');
+    var result = document.getElementById('ob-ai-field-result');
+    if(run) { run.disabled = true; run.textContent = fieldModal.kind === 'image' ? 'Generating image...' : 'Generating...'; }
+    if(use) use.style.display = 'none';
+    if(result) { result.className = 'ob-ai-field-result'; result.innerHTML = ''; }
+    setFieldStatus(fieldModal.kind === 'image' ? 'Generating a field-specific image...' : 'Writing field-specific text...');
+    request('/api/ai/website-editor/field-preview',{method:'POST',body:{field:fieldModal.field,prompt:prompt,current_value:currentFieldValue(fieldModal.targetId)}}).then(function(data){
+      fieldModal.result = data;
+      editorStatus = data.credit_status || editorStatus;
+      if(result) {
+        result.className = 'ob-ai-field-result open';
+        result.innerHTML = data.type === 'image' && data.url ? '<img src="'+esc(data.url)+'" alt="AI generated image preview">' : esc(data.value || '');
+      }
+      if(use) { use.style.display = ''; use.textContent = data.type === 'image' ? 'Use image' : 'Use text'; }
+      setFieldStatus((data.note || 'Generated result ready.') + ' Credits spent: ' + (data.credits_spent || 0) + '.','ok');
+      syncFieldWands();
+    }).catch(function(err){
+      if(err.data && err.data.credit_status) editorStatus = err.data.credit_status;
+      var buy = err.data && err.data.code === 'ai_credits_required' ? renderCreditBuy(err.data.credit_status) : '';
+      if(result && buy) { result.className = 'ob-ai-field-result open'; result.innerHTML = '<strong>Buy more AI credits</strong>' + buy; }
+      setFieldStatus(err.message || 'AI field generation failed.','err');
+    }).finally(function(){
+      fieldBusy = false;
+      if(run) { run.disabled = false; run.textContent = 'Generate'; }
+    });
+  };
+  window.obAiUseFieldSuggestion = function(){
+    var data = fieldModal.result || {};
+    if(!data || !fieldModal.targetId) return;
+    var el = document.getElementById(fieldModal.targetId);
+    if(!el) return;
+    if(data.type === 'image' && data.url) {
+      el.innerHTML = '<img src="'+esc(data.url)+'" style="width:100%;height:100%;object-fit:cover;">';
+    } else if(data.value !== undefined) {
+      el.value = data.value || '';
+      try { el.dispatchEvent(new Event('input',{bubbles:true})); el.dispatchEvent(new Event('change',{bubbles:true})); } catch(e) {}
+    }
+    setFieldStatus('Inserted into this field only. Use Save All Changes to keep it on the website.','ok');
+  };
   function ensureWebsiteAi(){
     var content = document.querySelector('#db-panel-website-editor .db-content');
     if(!content) return;
     var existing = document.getElementById('ob-ai-website-editor');
-    if(existing) return;
+    if(existing) { syncFieldWands(); return; }
     var node = document.createElement('div');
     node.innerHTML = editorHtml(editorStatus);
     var header = content.firstElementChild;
@@ -40623,11 +40835,13 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       editorStatus = data;
       var existing = document.getElementById('ob-ai-website-editor');
       if(existing) existing.outerHTML = editorHtml(data);
+      syncFieldWands();
       confirmAiCreditsFromUrl();
     }).catch(function(err){
       editorStatus = {eligible:false,enabled:false,reason:err.message || 'Sign in as an expert to use AI website editing.',credits:{}};
       var existing = document.getElementById('ob-ai-website-editor');
       if(existing) existing.outerHTML = editorHtml(editorStatus);
+      syncFieldWands();
     });
   }
   function renderPlanResult(data){
@@ -40665,15 +40879,13 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       renderPlanResult(data);
       editorStatus = data.credit_status || editorStatus;
       status('ob-ai-editor-status', apply ? 'Website update applied. Review your site before launch.' : 'Preview ready. Review the changed fields before applying.','ok');
+      syncFieldWands();
       if(apply && typeof window.loadWebsiteEditor === 'function') setTimeout(window.loadWebsiteEditor, 250);
     }).catch(function(err){
       if(err.data && err.data.credit_status) editorStatus = err.data.credit_status;
       status('ob-ai-editor-status', err.message || 'AI website request failed.','err');
-      if(editorStatus) {
-        var existing = document.getElementById('ob-ai-website-editor');
-        if(existing) existing.outerHTML = editorHtml(editorStatus);
-      }
-    }).finally(function(){ editorBusy = false; loadWebsiteAiStatus(); });
+      syncFieldWands();
+    }).finally(function(){ editorBusy = false; });
   };
   window.obAiApplyLastWebsitePrompt = function(){
     var promptEl = document.getElementById('ob-ai-editor-prompt');
@@ -41136,7 +41348,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     var helpSource = useMaster ? 'master' : ((document.getElementById('ai-help-source') || {}).value || 'master');
     var websiteSource = useMaster ? 'master' : ((document.getElementById('ai-website-source') || {}).value || 'master');
     var payload = {
-      ai_assistant_enabled: (document.getElementById('ai-help-enabled') || {}).checked ? '1' : '0',
+      ai_assistant_enabled: (useMaster || (document.getElementById('ai-help-enabled') || {}).checked) ? '1' : '0',
       ai_provider_label: (PROVIDERS[helpSource === 'master' ? masterType : ((document.getElementById('ai-help-provider') || {}).value || masterType)] || PROVIDERS.openai).label,
       ai_provider_type: helpSource === 'master' ? masterType : ((document.getElementById('ai-help-provider') || {}).value || masterType),
       ai_base_url: helpSource === 'master' ? masterEndpoint : ((document.getElementById('ai-help-endpoint') || {}).value || masterEndpoint),
@@ -41149,7 +41361,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     if(helpSource === 'master' && masterKey) payload.ai_api_key = masterKey;
     if(helpSource === 'custom' && helpKey) payload.ai_api_key = helpKey;
     payload.editor = {
-      ai_editor_enabled: (document.getElementById('ai-website-enabled') || {}).checked ? '1' : '0',
+      ai_editor_enabled: (useMaster || (document.getElementById('ai-website-enabled') || {}).checked) ? '1' : '0',
       ai_editor_system_instructions: (document.getElementById('ai-website-instructions') || {}).value || '',
       providers: providers,
       feature_routes: {
@@ -41196,6 +41408,10 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   window.obAiOpenWebsiteStudio = function(){
     var shell = document.querySelector('.ob-ai-website-shell');
     if(shell) shell.classList.add('open');
+  };
+  window.obAiCloseWebsiteStudio = function(){
+    var shell = document.querySelector('.ob-ai-website-shell');
+    if(shell) shell.classList.remove('open');
   };
   function roleIsExpert(){
     try {
@@ -41253,14 +41469,24 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     if(!text || helpBusy) return;
     helpBusy = true;
     helpMessages.push({role:'user',content:text});
+    helpMessages.push({role:'assistant',content:'Thinking...',pending:true});
     renderHelpLog();
     var input = document.getElementById('ob-ai-help-input');
     if(input) input.value = '';
-    request('/api/ai/expert-assistant',{method:'POST',body:{messages:helpMessages.slice(-8)}}).then(function(data){
-      helpMessages.push({role:'assistant',content:data.answer || 'I could not answer that yet.'});
+    request('/api/ai/expert-assistant',{method:'POST',body:{messages:helpMessages.filter(function(m){ return !m.pending; }).slice(-8)}}).then(function(data){
+      replaceFloatingPending(data.answer || 'I could not answer that yet.');
     }).catch(function(err){
-      helpMessages.push({role:'assistant',content:err.message || 'AI help is not available yet.'});
+      replaceFloatingPending(err.message || 'AI help is not available yet.');
     }).finally(function(){ helpBusy = false; renderHelpLog(); });
+  }
+  function replaceFloatingPending(content){
+    for(var i=helpMessages.length-1;i>=0;i--){
+      if(helpMessages[i] && helpMessages[i].role === 'assistant' && helpMessages[i].pending){
+        helpMessages[i] = {role:'assistant',content:content};
+        return;
+      }
+    }
+    helpMessages.push({role:'assistant',content:content});
   }
   document.addEventListener('submit',function(ev){
     var form = ev.target && ev.target.closest && ev.target.closest('#ob-ai-help-form');

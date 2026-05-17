@@ -23527,24 +23527,37 @@ window._handleRTCMessage=function(d){
   window.clientEndSession = function(){
     var sid = window._obActiveSessId || window._sessId;
     if(window._obClientEndingSid && (!sid || sid === window._obClientEndingSid)) return window._obClientEndingPromise || false;
+    if(!sid || !tok()){
+      toastMsg('Could not find the active session. Please refresh and try again.','err');
+      return false;
+    }
     window._obClientEndingSid = sid || '';
     window._obClientEndingAt = Date.now();
     window._obClientEndingSnapshot = normalizeClientReceiptSession({id:sid});
-    markClientLocallyEnded(sid);
     setClientEndControlsEnding(true);
-    if(window._obClientSessionPoller){ clearInterval(window._obClientSessionPoller); window._obClientSessionPoller = null; }
-    if(window.OB_RTC && window.OB_RTC.isActive && window.OB_RTC.isActive()){
-      try { window.OB_RTC.end(); } catch(e) {}
-    }
-    showClientReceiptPending(window._obClientEndingSnapshot || {id:sid});
-    if(!sid || !tok()){
-      return false;
-    }
     window._obClientEndingPromise = api('/api/sessions/' + encodeURIComponent(sid) + '/end', {method:'POST', body:'{}'}).then(function(d){
+      if(window.OB_RTC && window.OB_RTC.isActive && window.OB_RTC.isActive()){
+        try { window.OB_RTC.end(); } catch(e) {}
+      }
       applyClientReceipt(mergeSessionEndedPayload(Object.assign({}, d || {}, {session: (d && d.session) || window._obClientEndingSnapshot || {id:sid}})));
       return d;
     }).catch(function(e){
-      toastMsg(e.message || 'Could not end session','err');
+      var message = e && e.message ? e.message : 'Could not end session';
+      return api('/api/sessions/' + encodeURIComponent(sid), {method:'GET'}).then(function(detail){
+        var sess = detail && detail.session;
+        if(sess && String(sess.status || '').toLowerCase() === 'ended'){
+          if(window.OB_RTC && window.OB_RTC.isActive && window.OB_RTC.isActive()){
+            try { window.OB_RTC.end(); } catch(_e) {}
+          }
+          applyClientReceipt(mergeSessionEndedPayload({session:sess}));
+          return detail;
+        }
+        clearClientEndingState();
+        toastMsg(message,'err');
+      }).catch(function(){
+        clearClientEndingState();
+        toastMsg(message,'err');
+      });
     });
     return window._obClientEndingPromise;
   };
@@ -39510,6 +39523,120 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   ['pointerup','touchend','click'].forEach(function(type){
     document.addEventListener(type, runEnd, true);
   });
+})();
+</script>
+
+<style id="ob-launch-blocker-guards-20260517">
+  body.ob-live-request-visible #ownlybiz-prod-coach-v20,
+  body.ob-live-request-visible #ownlybiz-prod-coach-mini-v20{
+    display:none!important;
+    pointer-events:none!important;
+  }
+  #db-panel-live-session [data-ob-empty-hidden="1"]{
+    display:none!important;
+  }
+</style>
+<script id="ob-launch-blocker-guards-20260517-script">
+(function(){
+  if(window.__obLaunchBlockerGuards20260517) return;
+  window.__obLaunchBlockerGuards20260517 = true;
+  function visible(el){
+    if(!el) return false;
+    var cs = window.getComputedStyle ? getComputedStyle(el) : null;
+    return !!(el.offsetParent || (cs && cs.position === 'fixed')) && (!cs || (cs.display !== 'none' && cs.visibility !== 'hidden' && cs.opacity !== '0'));
+  }
+  function syncRequestOverlayGuard(){
+    var overlay = document.getElementById('session-request-overlay');
+    var sheet = document.getElementById('session-request-sheet');
+    var isOpen = visible(overlay) && visible(sheet);
+    document.body.classList.toggle('ob-live-request-visible', !!isOpen);
+    if(isOpen){
+      ['ownlybiz-prod-coach-v20','ownlybiz-prod-coach-mini-v20'].forEach(function(id){
+        var el = document.getElementById(id);
+        if(el) el.style.display = 'none';
+      });
+    }
+  }
+  var previousShowSessionRequest = window.showSessionRequest;
+  if(typeof previousShowSessionRequest === 'function'){
+    window.showSessionRequest = function(){
+      var out = previousShowSessionRequest.apply(this, arguments);
+      [0, 80, 250, 700].forEach(function(delay){ setTimeout(syncRequestOverlayGuard, delay); });
+      return out;
+    };
+  }
+  if(window.MutationObserver){
+    new MutationObserver(syncRequestOverlayGuard).observe(document.body, {childList:true, subtree:true, attributes:true, attributeFilter:['style','class']});
+  }
+  document.addEventListener('click', function(){ setTimeout(syncRequestOverlayGuard, 80); }, true);
+  setInterval(syncRequestOverlayGuard, 1200);
+
+  function activeExpertSessionId(){
+    return String(window._obActiveSessId || window._sid || window._sessId || '').trim();
+  }
+  function livePanelVisible(){
+    var panel = document.getElementById('db-panel-live-session');
+    if(!panel) return false;
+    return panel.classList.contains('active') || /live-session/i.test(location.pathname || '');
+  }
+  function restoreEmptyHidden(panel){
+    if(!panel) return;
+    panel.querySelectorAll('[data-ob-empty-hidden="1"]').forEach(function(el){
+      el.style.display = el.dataset.obPreviousDisplay || '';
+      el.removeAttribute('data-ob-empty-hidden');
+      delete el.dataset.obPreviousDisplay;
+    });
+  }
+  function hideActiveOnlyControls(panel){
+    if(!panel) return;
+    panel.querySelectorAll('button,[role="button"],.btn,.vid-ctrl,.v-ctrl').forEach(function(el){
+      var text = (el.textContent || '').trim().toLowerCase();
+      var handler = (el.getAttribute('onclick') || '').toLowerCase();
+      var isEndControl = handler.indexOf('expertendsession') >= 0 || text === 'end call' || text === 'end session' || text === 'x end session' || text === '✕ end session';
+      if(!isEndControl || el.dataset.obEmptyHidden === '1') return;
+      el.dataset.obPreviousDisplay = el.style.display || '';
+      el.dataset.obEmptyHidden = '1';
+      el.style.display = 'none';
+    });
+  }
+  function syncExpertEmptyState(){
+    var panel = document.getElementById('db-panel-live-session');
+    if(!panel || !livePanelVisible()) return;
+    if(activeExpertSessionId()){
+      restoreEmptyHidden(panel);
+      return;
+    }
+    if(typeof window._obShowNoActiveExpertLiveSession === 'function'){
+      try { window._obShowNoActiveExpertLiveSession(); } catch(e) {}
+    }
+    hideActiveOnlyControls(panel);
+  }
+  document.addEventListener('click', function(){ setTimeout(syncExpertEmptyState, 100); }, true);
+  window.addEventListener('popstate', function(){ setTimeout(syncExpertEmptyState, 100); });
+  setInterval(syncExpertEmptyState, 1500);
+  setTimeout(syncExpertEmptyState, 500);
+
+  function refreshPreSessionFreeCopy(){
+    if(typeof window.obRefreshClientFreeAvailability === 'function'){
+      Promise.resolve(window.obRefreshClientFreeAvailability()).catch(function(){});
+    }
+    [250, 800, 1600].forEach(function(delay){
+      setTimeout(function(){
+        try {
+          if(typeof window.obApplyFreeIntroPreSession === 'function') window.obApplyFreeIntroPreSession({});
+        } catch(e) {}
+      }, delay);
+    });
+  }
+  var previousBovSignup = window.bovSignup;
+  if(typeof previousBovSignup === 'function' && !previousBovSignup.__obLaunchFreeCopyGuarded){
+    window.bovSignup = async function(){
+      var out = await previousBovSignup.apply(this, arguments);
+      refreshPreSessionFreeCopy();
+      return out;
+    };
+    window.bovSignup.__obLaunchFreeCopyGuarded = true;
+  }
 })();
 </script>
 

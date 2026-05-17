@@ -7336,9 +7336,13 @@ if (!window.toast) {
           <span style="font-size:13px;color:var(--gray-400);">Rate</span>
           <span style="font-size:14px;font-weight:700;color:var(--terra);" id="req-rate">$3.50/min</span>
         </div>
-        <div style="display:flex;justify-content:space-between;align-items:center;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
           <span style="font-size:13px;color:var(--gray-400);">Free intro</span>
           <span style="font-size:13px;font-weight:600;color:var(--sage);" id="req-free">3 min free</span>
+        </div>
+        <div id="req-promo-row" style="display:flex;justify-content:space-between;align-items:center;">
+          <span style="font-size:13px;color:var(--gray-400);">Promotion</span>
+          <span style="font-size:13px;font-weight:600;color:var(--terra);" id="req-promo">None</span>
         </div>
       </div>
       <!-- Timeout bar -->
@@ -13176,6 +13180,7 @@ async function savePaymentConfig() {
           var _n=d.client?.name||'Client';
           var _fm=d.session?.free_minutes!=null?d.session.free_minutes:0;
           showSessionRequest({
+            session: d.session || {},
             clientName: _n,
             clientSub: (d.session?.channel||'chat')+' session',
             initials: ((_n.match(/\b\w/g)||['C','L']).slice(0,2).join('').toUpperCase()),
@@ -38994,16 +38999,26 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
 	  }
   function applyExpert(expert){
     if(!expert || !expert.id && !expert.user_id) return;
+    window._obConfiguredFreeMinutes = {
+      chat: n(expert.chat_free_min != null ? expert.chat_free_min : expert.free_minutes),
+      voice: n(expert.voice_free_min != null ? expert.voice_free_min : expert.free_minutes_voice),
+      video: n(expert.video_free_min != null ? expert.video_free_min : expert.free_minutes_video)
+    };
+    window._obAvailableFreeMinutes = {
+      chat: available(expert, 'chat'),
+      voice: available(expert, 'voice'),
+      video: available(expert, 'video')
+    };
     window._currentExpert = Object.assign(window._currentExpert || {}, expert);
     window._currentExpertId = expert.user_id || expert.id || window._currentExpertId;
     if(typeof window.freeMinutes === 'object'){
-      window.freeMinutes.chat = available(expert, 'chat');
-      window.freeMinutes.voice = available(expert, 'voice');
-      window.freeMinutes.video = available(expert, 'video');
+      window.freeMinutes.chat = window._obAvailableFreeMinutes.chat;
+      window.freeMinutes.voice = window._obAvailableFreeMinutes.voice;
+      window.freeMinutes.video = window._obAvailableFreeMinutes.video;
     } else if(typeof freeMinutes === 'object') {
-      freeMinutes.chat = available(expert, 'chat');
-      freeMinutes.voice = available(expert, 'voice');
-      freeMinutes.video = available(expert, 'video');
+      freeMinutes.chat = window._obAvailableFreeMinutes.chat;
+      freeMinutes.voice = window._obAvailableFreeMinutes.voice;
+      freeMinutes.video = window._obAvailableFreeMinutes.video;
     }
     if(typeof window.obRefreshSessionStartModes === 'function') window.obRefreshSessionStartModes();
     if(typeof window.obRefreshPublicFreeMinuteCopy === 'function') window.obRefreshPublicFreeMinuteCopy(window._currentExpert);
@@ -39017,6 +39032,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       .then(function(data){ applyExpert(data.expert || data); })
       .catch(function(){});
   }
+  window.obRefreshClientFreeAvailability = refreshClientAvailability;
   function refreshOpenBookingFreeCopy(channel){
     var overlay = document.getElementById('booking-overlay');
     if(!overlay || overlay.style.display === 'none') return;
@@ -39056,6 +39072,199 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', refreshClientAvailability);
   else refreshClientAvailability();
   setTimeout(refreshClientAvailability, 900);
+})();
+</script>
+
+<script id="ob-free-intro-reason-session-ui-20260517">
+(function(){
+  if(window.__obFreeIntroReasonSessionUi20260517) return;
+  window.__obFreeIntroReasonSessionUi20260517 = true;
+  function n(value){
+    var out = parseInt(value, 10);
+    return Number.isFinite(out) && out > 0 ? out : 0;
+  }
+  function money(value){
+    var out = parseFloat(value);
+    if(!Number.isFinite(out)) out = 0;
+    return '$' + out.toFixed(2);
+  }
+  function setText(id, value){
+    var el = document.getElementById(id);
+    if(el) el.textContent = value;
+  }
+  function setHtml(id, value){
+    var el = document.getElementById(id);
+    if(el) el.innerHTML = value;
+  }
+  function esc(value){
+    return String(value == null ? '' : value).replace(/[&<>"']/g,function(ch){
+      return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[ch];
+    });
+  }
+  function channelFrom(sess, opts){
+    var raw = (sess && sess.channel) || (opts && (opts.channel || opts.session_type || opts.sessionType)) || window._obPendingChannel || window.currentBookChannel || (window.selectedChannel && window.selectedChannel.id) || 'chat';
+    raw = String(raw || 'chat').toLowerCase();
+    return (/voice|video|chat/.exec(raw) || ['chat'])[0];
+  }
+  function configuredFree(sess, ch){
+    var direct = sess && (sess.configured_free_minutes != null ? sess.configured_free_minutes : sess.free_minutes_configured);
+    if(direct != null) return n(direct);
+    if(window._obConfiguredFreeMinutes && window._obConfiguredFreeMinutes[ch] != null) return n(window._obConfiguredFreeMinutes[ch]);
+    var expert = window._currentExpert || {};
+    if(ch === 'chat') return n(expert.chat_free_min != null ? expert.chat_free_min : expert.free_minutes);
+    if(ch === 'voice') return n(expert.voice_free_min != null ? expert.voice_free_min : expert.free_minutes_voice);
+    return n(expert.video_free_min != null ? expert.video_free_min : expert.free_minutes_video);
+  }
+  function availableFree(ch){
+    if(window._obAvailableFreeMinutes && window._obAvailableFreeMinutes[ch] != null) return n(window._obAvailableFreeMinutes[ch]);
+    if(typeof window.freeMinutes === 'object' && window.freeMinutes[ch] != null) return n(window.freeMinutes[ch]);
+    if(typeof freeMinutes === 'object' && freeMinutes[ch] != null) return n(freeMinutes[ch]);
+    return 0;
+  }
+  function hasAvailability(ch){
+    if(window._obAvailableFreeMinutes && window._obAvailableFreeMinutes[ch] != null) return true;
+    var expert = window._currentExpert || {};
+    if(ch === 'chat') return expert.chat_free_min_available != null || expert.free_minutes_available != null;
+    if(ch === 'voice') return expert.voice_free_min_available != null;
+    return expert.video_free_min_available != null;
+  }
+  function appliedFree(sess, opts, ch){
+    if(sess && sess.free_minutes != null) return n(sess.free_minutes);
+    if(opts && opts.free_minutes != null) return n(opts.free_minutes);
+    if(opts && opts.freeMin != null) return n(opts.freeMin);
+    return availableFree(ch);
+  }
+  function introUsedReason(sess, ch, free, configured){
+    var reason = sess && (sess.free_minutes_skipped_reason || sess.freeMinutesSkippedReason);
+    if(reason === 'already_used_intro_with_expert') return true;
+    return configured > 0 && free <= 0 && hasAvailability(ch) && availableFree(ch) <= 0;
+  }
+  function freeIntroLabel(sess, opts){
+    var ch = channelFrom(sess, opts);
+    var free = appliedFree(sess, opts, ch);
+    var configured = configuredFree(sess, ch);
+    if(free > 0) return free + ' min included';
+    if(introUsedReason(sess, ch, free, configured)) return 'Already used';
+    if(configured > 0) return 'Not eligible';
+    return 'No free minutes';
+  }
+  function promoLabel(sess, opts){
+    sess = sess || {};
+    opts = opts || {};
+    var code = sess.session_promo_code || sess.promo_code || opts.promo_code || opts.promoCode || window._obSessionPromoCode || '';
+    var pct = parseFloat(sess.session_promo_percent_off != null ? sess.session_promo_percent_off : (sess.promo_percent_off != null ? sess.promo_percent_off : opts.promoPercent));
+    if(!Number.isFinite(pct) || pct <= 0) pct = 0;
+    var skipped = sess.promo_skipped_reason || sess.promoSkippedReason || '';
+    if(skipped) return 'Not applied';
+    if(pct > 0) return (code ? code + ' · ' : '') + pct.toFixed(0) + '% off';
+    if(code) return code;
+    return 'None';
+  }
+  function ensurePromoRow(){
+    var promo = document.getElementById('req-promo');
+    if(promo) return promo;
+    var free = document.getElementById('req-free');
+    if(!free || !free.parentNode || !free.parentNode.parentNode) return null;
+    var row = document.createElement('div');
+    row.id = 'req-promo-row';
+    row.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-top:8px;';
+    row.innerHTML = '<span style="font-size:13px;color:var(--gray-400);">Promotion</span><span style="font-size:13px;font-weight:600;color:var(--terra);" id="req-promo">None</span>';
+    free.parentNode.parentNode.appendChild(row);
+    return document.getElementById('req-promo');
+  }
+  function applyRequestInfo(sess, opts){
+    sess = sess || {};
+    opts = opts || {};
+    var ch = channelFrom(sess, opts);
+    var rawRate = sess.rate_per_min != null ? sess.rate_per_min : (opts.rate_per_min != null ? opts.rate_per_min : opts.rate);
+    var rate = parseFloat(String(rawRate == null ? '' : rawRate).replace(/[^0-9.]/g, ''));
+    if(!Number.isFinite(rate)) {
+      var expert = window._currentExpert || {};
+      rate = parseFloat(expert['rate_' + ch] || expert[ch + '_pm'] || (ch === 'chat' ? 3.5 : ch === 'voice' ? 4 : 5));
+    }
+    setText('req-session-type', ch);
+    setText('req-client-sub', ch + ' session');
+    setText('req-rate', money(rate) + '/min');
+    setText('req-free', freeIntroLabel(sess, opts));
+    ensurePromoRow();
+    setText('req-promo', promoLabel(sess, opts));
+  }
+  function applyPreSessionInfo(sess){
+    sess = sess || {};
+    var ch = channelFrom(sess, {});
+    var free = appliedFree(sess, {}, ch);
+    var configured = configuredFree(sess, ch);
+    var alreadyUsed = introUsedReason(sess, ch, free, configured);
+    var rate = parseFloat(sess.rate_per_min);
+    if(!Number.isFinite(rate)){
+      var expert = window._currentExpert || {};
+      rate = parseFloat(expert['rate_' + ch] || expert[ch + '_pm'] || (ch === 'chat' ? 3.5 : ch === 'voice' ? 4 : 5));
+    }
+    setText('presess-rate', money(rate) + '/min' + (free > 0 ? ' · first ' + free + ' min free' : ''));
+    var freeRow = document.getElementById('presess-free-row');
+    var freeNote = document.getElementById('presess-free-note');
+    var paidNote = document.getElementById('presess-paid-note');
+    if(free > 0){
+      if(freeRow) freeRow.style.display = 'flex';
+      setText('presess-free', free + ' minutes free');
+      setText('presess-free-mins', free + ' minutes');
+      if(freeNote){
+        freeNote.style.display = 'block';
+        freeNote.style.color = '#15803d';
+        freeNote.style.borderColor = 'rgba(34,197,94,.2)';
+        freeNote.style.background = 'rgba(34,197,94,.08)';
+        freeNote.innerHTML = '<strong>Intro minutes active.</strong> Your first <strong id="presess-free-mins">' + free + ' minutes</strong> are included. Billing starts only after intro time is complete.';
+      }
+      if(paidNote) paidNote.style.display = 'none';
+    } else if(alreadyUsed){
+      if(freeRow) freeRow.style.display = 'flex';
+      setText('presess-free', 'Already used with this expert');
+      if(freeNote) freeNote.style.display = 'none';
+      if(paidNote){
+        paidNote.style.display = 'block';
+        paidNote.innerHTML = '<strong>No intro minutes on this session.</strong> Intro minutes are only for your first started session with this expert. This session is billed from minute one.';
+      }
+    } else {
+      if(freeRow) freeRow.style.display = 'none';
+      if(freeNote) freeNote.style.display = 'none';
+      if(paidNote){
+        paidNote.style.display = 'block';
+        paidNote.innerHTML = '<strong>Billing starts when the session begins.</strong> You can end any time and only pay for time used.';
+      }
+    }
+    var baseLabel = typeof window.obCreditPreSessionPaymentLabel === 'function'
+      ? window.obCreditPreSessionPaymentLabel(free)
+      : (free > 0 ? 'Card authorized · billing after free minutes' : 'Card authorized');
+    if(free <= 0 && (alreadyUsed || configured > 0) && baseLabel.indexOf('billed from minute one') === -1) {
+      baseLabel += ' · billed from minute one';
+    }
+    setText('presess-payment', baseLabel);
+  }
+  var previousShowSessionRequest = window.showSessionRequest;
+  if(typeof previousShowSessionRequest === 'function'){
+    window.showSessionRequest = function(opts){
+      opts = opts || {};
+      var sess = opts.session || opts.sess || {};
+      var out = previousShowSessionRequest.apply(this, arguments);
+      [0, 60, 220, 700].forEach(function(delay){
+        setTimeout(function(){ applyRequestInfo(sess, opts); }, delay);
+      });
+      return out;
+    };
+  }
+  var previousLaunchSession = window._launchSession;
+  if(typeof previousLaunchSession === 'function'){
+    window._launchSession = function(){
+      var out = previousLaunchSession.apply(this, arguments);
+      applyPreSessionInfo({});
+      if(typeof window.obRefreshClientFreeAvailability === 'function'){
+        Promise.resolve(window.obRefreshClientFreeAvailability()).then(function(){ applyPreSessionInfo({}); });
+      }
+      return out;
+    };
+  }
+  window.obApplyFreeIntroPreSession = applyPreSessionInfo;
+  window.obApplySessionRequestBillingInfo = applyRequestInfo;
 })();
 </script>
 

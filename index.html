@@ -39628,6 +39628,140 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       }, delay);
     });
   }
+  function userRole(){
+    try { return String((JSON.parse(sessionStorage.getItem('ob_u') || localStorage.getItem('ob_u') || '{}') || {}).role || '').toLowerCase(); } catch(e) { return ''; }
+  }
+  function activeBookPage(){
+    var ep = document.getElementById('ep-book');
+    return /\/book(?:$|[?#/])/i.test(location.pathname || '') || !!(ep && ep.classList.contains('active'));
+  }
+  function stripFreeSuffix(text){
+    return String(text || '')
+      .replace(/\s*[·•-]\s*(?:first\s*)?\d+\s*(?:min(?:ute)?s?)?\s*free\b/ig, '')
+      .replace(/\s*[·•-]\s*\d+\s*(?:min(?:ute)?s?)?\s*included\b/ig, '')
+      .trim();
+  }
+  function applyReturningClientBookCopy(){
+    if(userRole() !== 'client') return;
+    var available = window._obAvailableFreeMinutes || {};
+    var configured = window._obConfiguredFreeMinutes || {};
+    ['chat','voice','video'].forEach(function(ch){
+      var free = Number(available[ch] || 0);
+      var hadConfigured = Number(configured[ch] || 0) > 0;
+      if(free > 0 || !hadConfigured) return;
+      var selectors = [
+        '#stype-grid .stype-btn[data-ch="' + ch + '"] .stype-btn-price',
+        '#stype-grid .stype-btn[data-ob-channel="' + ch + '"] .stype-btn-price',
+        '#stype-grid .stype-btn'
+      ];
+      document.querySelectorAll(selectors.join(',')).forEach(function(el){
+        var cardText = (el.closest && el.closest('.stype-btn') ? el.closest('.stype-btn').textContent : el.textContent) || '';
+        if(selectors[2] === '#stype-grid .stype-btn' && cardText.toLowerCase().indexOf(ch) < 0) return;
+        var price = el.classList && el.classList.contains('stype-btn') ? el.querySelector('.stype-btn-price') : el;
+        if(price) price.textContent = stripFreeSuffix(price.textContent);
+      });
+      var rateEls = ch === 'chat' ? '[data-rate="chat"],.ep-chat-rate,.service-mini-price' : ch === 'voice' ? '[data-rate="voice"],.ep-voice-rate,.service-mini-price' : '[data-rate="video"],.ep-video-rate,.service-mini-price';
+      document.querySelectorAll(rateEls).forEach(function(el){
+        var txt = (el.textContent || '').toLowerCase();
+        if(txt.indexOf('free') >= 0 && (txt.indexOf(ch) >= 0 || /^\$/.test(txt))) el.textContent = stripFreeSuffix(el.textContent);
+      });
+    });
+    var activeChannel = String(window.currentBookChannel || window._obPendingChannel || 'chat').toLowerCase();
+    if(Number((available || {})[activeChannel] || 0) <= 0){
+      var freeRow = document.getElementById('bk-free-row');
+      if(freeRow) freeRow.style.display = 'none';
+      var total = document.getElementById('bk-total');
+      if(total) total.textContent = stripFreeSuffix(total.textContent);
+      var perminCopy = document.getElementById('book-permin-free-copy');
+      if(perminCopy) perminCopy.textContent = ' You will be billed per minute after the session starts.';
+    }
+  }
+  function refreshBookCopyForClient(){
+    if(!activeBookPage()) return;
+    if(userRole() === 'client' && typeof window.obRefreshClientFreeAvailability === 'function'){
+      Promise.resolve(window.obRefreshClientFreeAvailability()).then(function(){
+        if(typeof window.obRefreshPublicFreeMinuteCopy === 'function') window.obRefreshPublicFreeMinuteCopy(window._currentExpert || {});
+        applyReturningClientBookCopy();
+      }).catch(applyReturningClientBookCopy);
+    } else {
+      applyReturningClientBookCopy();
+    }
+  }
+  function channelFromBookButton(btn){
+    if(!btn) return '';
+    var existing = btn.getAttribute('data-ch') || btn.getAttribute('data-ob-channel') || '';
+    if(existing) return existing.toLowerCase();
+    var txt = (btn.textContent || '').toLowerCase();
+    if(txt.indexOf('voice') >= 0) return 'voice';
+    if(txt.indexOf('video') >= 0) return 'video';
+    if(txt.indexOf('chat') >= 0) return 'chat';
+    return '';
+  }
+  function findBookButton(channel){
+    channel = String(channel || '').toLowerCase();
+    var buttons = Array.prototype.slice.call(document.querySelectorAll('#stype-grid .stype-btn[data-mode="permin"]'));
+    return buttons.find(function(btn){ return channelFromBookButton(btn) === channel; }) || buttons[0] || null;
+  }
+  function ensureBookSelection(){
+    if(!activeBookPage()) return;
+    var active = document.querySelector('#stype-grid .stype-btn.active,#stype-grid .stype-btn.selected');
+    var channel = channelFromBookButton(active) || String(window.currentBookChannel || window._obPendingChannel || '').toLowerCase();
+    if(!channel){
+      var summary = document.getElementById('bk-type');
+      channel = summary ? channelFromBookButton(summary) : '';
+    }
+    var btn = active || findBookButton(channel || 'chat');
+    if(btn && typeof window.selectStype === 'function'){
+      window._obLastBookSelectionAt = Date.now();
+      window.selectStype(btn, btn.getAttribute('data-mode') || 'permin');
+      channel = channelFromBookButton(btn) || channel || 'chat';
+    }
+    if(channel){
+      window.currentBookMode = 'permin';
+      window.currentBookChannel = channel;
+      window._obPendingChannel = channel;
+      window.stypeSelected = true;
+      var err = document.getElementById('stype-error');
+      if(err) err.style.display = 'none';
+      var confirm = document.getElementById('confirm-booking-btn');
+      if(confirm) confirm.textContent = 'Start Session \u2192';
+    }
+    refreshBookCopyForClient();
+  }
+  var previousSelectStype = window.selectStype;
+  if(typeof previousSelectStype === 'function' && !previousSelectStype.__obBookSelectionGuarded){
+    window.selectStype = function(el, mode){
+      window._obLastBookSelectionAt = Date.now();
+      var out = previousSelectStype.apply(this, arguments);
+      [0, 120, 520].forEach(function(ms){ setTimeout(refreshBookCopyForClient, ms); });
+      return out;
+    };
+    window.selectStype.__obBookSelectionGuarded = true;
+  }
+  var previousClearBookSelection = window.clearBookSelection;
+  if(typeof previousClearBookSelection === 'function' && !previousClearBookSelection.__obBookSelectionGuarded){
+    window.clearBookSelection = function(){
+      if(Date.now() - Number(window._obLastBookSelectionAt || 0) < 1200) return;
+      return previousClearBookSelection.apply(this, arguments);
+    };
+    window.clearBookSelection.__obBookSelectionGuarded = true;
+  }
+  var previousConfirmBooking = window.confirmBooking;
+  if(typeof previousConfirmBooking === 'function' && !previousConfirmBooking.__obBookSelectionGuarded){
+    window.confirmBooking = function(){
+      ensureBookSelection();
+      return previousConfirmBooking.apply(this, arguments);
+    };
+    window.confirmBooking.__obBookSelectionGuarded = true;
+  }
+  document.addEventListener('click', function(ev){
+    var btn = ev.target && ev.target.closest && ev.target.closest('#stype-grid .stype-btn[data-mode="permin"]');
+    if(!btn) return;
+    window._obLastBookSelectionAt = Date.now();
+    [150, 560, 900].forEach(function(ms){ setTimeout(function(){ if(activeBookPage()) ensureBookSelection(); }, ms); });
+  }, true);
+  [250, 900, 1800].forEach(function(ms){ setTimeout(refreshBookCopyForClient, ms); });
+  window.addEventListener('popstate', function(){ setTimeout(refreshBookCopyForClient, 350); });
   var previousBovSignup = window.bovSignup;
   if(typeof previousBovSignup === 'function' && !previousBovSignup.__obLaunchFreeCopyGuarded){
     window.bovSignup = async function(){

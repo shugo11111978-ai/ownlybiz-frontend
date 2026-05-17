@@ -39893,6 +39893,14 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   body.ob-ui-dark .ob-help-ai-msg.assistant { background:rgba(255,250,240,.08); color:#faf7f2; }
   body.ob-ui-dark .ob-help-ai-chip,
   body.ob-ui-dark .ob-help-ai-input { background:rgba(255,250,240,.08); border-color:rgba(255,250,240,.16); color:#faf7f2; }
+  #ob-prod-help-center-modal .ob-help-ai { background:#fffdf8!important; border-color:rgba(36,24,19,.10)!important; }
+  #ob-prod-help-center-modal .ob-help-ai-title { color:#241813!important; }
+  #ob-prod-help-center-modal .ob-help-ai-copy,
+  #ob-prod-help-center-modal .ob-help-ai-empty { color:rgba(36,24,19,.66)!important; }
+  #ob-prod-help-center-modal .ob-help-ai-msg.assistant { background:rgba(122,140,110,.12)!important; color:#2e2119!important; }
+  #ob-prod-help-center-modal .ob-help-ai-chip,
+  #ob-prod-help-center-modal .ob-help-ai-input { background:#fff!important; border-color:rgba(36,24,19,.14)!important; color:#241813!important; }
+  #ob-prod-help-center-modal .ob-help-ai-input::placeholder { color:rgba(36,24,19,.50)!important; }
   @media(max-width:860px){
     .ob-ai-admin-grid,
     .ob-ai-admin-two,
@@ -40835,12 +40843,14 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       editorStatus = data;
       var existing = document.getElementById('ob-ai-website-editor');
       if(existing) existing.outerHTML = editorHtml(data);
+      if(typeof window.obAiWrapWebsiteStudio === 'function') setTimeout(window.obAiWrapWebsiteStudio, 0);
       syncFieldWands();
       confirmAiCreditsFromUrl();
     }).catch(function(err){
       editorStatus = {eligible:false,enabled:false,reason:err.message || 'Sign in as an expert to use AI website editing.',credits:{}};
       var existing = document.getElementById('ob-ai-website-editor');
       if(existing) existing.outerHTML = editorHtml(editorStatus);
+      if(typeof window.obAiWrapWebsiteStudio === 'function') setTimeout(window.obAiWrapWebsiteStudio, 0);
       syncFieldWands();
     });
   }
@@ -41158,6 +41168,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   var friendlyConfig = null;
   var helpMessages = [];
   var helpBusy = false;
+  var helpBubbleLoading = false;
 
   var PROVIDERS = {
     openai: { label:'OpenAI', endpoint:'https://api.openai.com/v1/chat/completions', imageEndpoint:'https://api.openai.com/v1/images/generations', models:['gpt-4o-mini','gpt-4o','gpt-4.1-mini','gpt-4.1'], imageModels:['gpt-image-1','dall-e-3'], link:'https://platform.openai.com/api-keys' },
@@ -41405,21 +41416,48 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     card.parentNode.insertBefore(shell, card);
     shell.appendChild(card);
   }
+  window.obAiWrapWebsiteStudio = wrapWebsiteStudio;
   window.obAiOpenWebsiteStudio = function(){
+    wrapWebsiteStudio();
     var shell = document.querySelector('.ob-ai-website-shell');
     if(shell) shell.classList.add('open');
   };
   window.obAiCloseWebsiteStudio = function(){
+    wrapWebsiteStudio();
     var shell = document.querySelector('.ob-ai-website-shell');
     if(shell) shell.classList.remove('open');
+    else {
+      var card = document.getElementById('ob-ai-website-editor');
+      if(card) card.style.display = 'none';
+    }
   };
+  document.addEventListener('click',function(ev){
+    if(ev.target && ev.target.closest && ev.target.closest('.ob-ai-editor-close')){
+      ev.preventDefault();
+      window.obAiCloseWebsiteStudio();
+    }
+  },true);
   function roleIsExpert(){
     try {
       var raw = sessionStorage.getItem('ob_u') || localStorage.getItem('ob_u') || '{}';
       return String((JSON.parse(raw) || {}).role || '').toLowerCase() === 'expert';
     } catch(e) { return (location.pathname || '').indexOf('/dash') === 0; }
   }
+  function isExpertDashboardRoute(){
+    return /^\/dash(\/|$)/.test(location.pathname || '') && roleIsExpert();
+  }
+  function cleanupHelpBubble(){
+    var floats = Array.prototype.slice.call(document.querySelectorAll('#ob-ai-help-float'));
+    var panels = Array.prototype.slice.call(document.querySelectorAll('#ob-ai-help-panel'));
+    if(!isExpertDashboardRoute() || localStorage.getItem('ob_ai_help_bubble_hidden') === '1'){
+      floats.concat(panels).forEach(function(el){ if(el && el.parentNode) el.parentNode.removeChild(el); });
+      return;
+    }
+    floats.slice(1).forEach(function(el){ if(el && el.parentNode) el.parentNode.removeChild(el); });
+    panels.slice(1).forEach(function(el){ if(el && el.parentNode) el.parentNode.removeChild(el); });
+  }
   function renderHelpLog(){
+    cleanupHelpBubble();
     var log = document.getElementById('ob-ai-help-log');
     if(!log) return;
     if(!helpMessages.length) {
@@ -41430,11 +41468,17 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     log.scrollTop = log.scrollHeight;
   }
   function ensureHelpBubble(){
-    if(!roleIsExpert()) return;
+    cleanupHelpBubble();
+    if(!isExpertDashboardRoute()) return;
     if(localStorage.getItem('ob_ai_help_bubble_hidden') === '1') return;
     if(document.getElementById('ob-ai-help-float')) return;
+    if(helpBubbleLoading) return;
+    helpBubbleLoading = true;
     request('/api/ai/expert-assistant/status').then(function(data){
       if(!data.enabled || !data.configured) return;
+      cleanupHelpBubble();
+      if(document.getElementById('ob-ai-help-float')) return;
+      if(!isExpertDashboardRoute()) return;
       var btn = document.createElement('div');
       btn.id = 'ob-ai-help-float';
       btn.className = 'ob-ai-help-float';
@@ -41446,9 +41490,10 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       panel.innerHTML = '<div class="ob-ai-help-head"><div><h3>Ownlybiz AI help</h3><p>Quick answers while you set up your practice.</p></div><button class="ob-ai-help-close" type="button" onclick="obAiToggleHelpPanel(false)">x</button></div><div class="ob-ai-help-log" id="ob-ai-help-log"></div><form class="ob-ai-help-form" id="ob-ai-help-form"><input id="ob-ai-help-input" autocomplete="off" placeholder="Ask anything about setup..."><button type="submit">Send</button></form><button class="ob-ai-help-hide" type="button" onclick="obAiHideHelpBubble()">Hide this icon</button>';
       document.body.appendChild(panel);
       renderHelpLog();
-    }).catch(function(){});
+    }).catch(function(){}).finally(function(){ helpBubbleLoading = false; });
   }
   window.obAiToggleHelpPanel = function(open){
+    cleanupHelpBubble();
     var panel = document.getElementById('ob-ai-help-panel');
     if(!panel) return;
     panel.classList.toggle('open', open === undefined ? !panel.classList.contains('open') : !!open);
@@ -41456,8 +41501,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   };
   window.obAiHideHelpBubble = function(){
     localStorage.setItem('ob_ai_help_bubble_hidden','1');
-    var f=document.getElementById('ob-ai-help-float'); if(f) f.remove();
-    var p=document.getElementById('ob-ai-help-panel'); if(p) p.remove();
+    document.querySelectorAll('#ob-ai-help-float,#ob-ai-help-panel').forEach(function(el){ if(el && el.parentNode) el.parentNode.removeChild(el); });
   };
   window.obAiShowHelpBubbleAgain = function(){
     localStorage.removeItem('ob_ai_help_bubble_hidden');
@@ -41513,6 +41557,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   },true);
   function bootFriendly(){
     wrapWebsiteStudio();
+    cleanupHelpBubble();
     ensureHelpBubble();
   }
   if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded',bootFriendly); else bootFriendly();

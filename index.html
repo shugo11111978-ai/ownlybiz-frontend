@@ -35137,6 +35137,7 @@ body.ob-ui-dark .ob-connection-note,
   function render(data, trends){
     lastOpsData = data;
     lastOpsTrends = trends;
+    var priorBodyScroll = body ? body.scrollTop : 0;
     var s = data.summary || {};
     var http = data.http || {};
     var sys = data.system || {};
@@ -35161,11 +35162,11 @@ body.ob-ui-dark .ob-connection-note,
       if(launcherCount) launcherCount.textContent = alertsVisible.length ? '(' + alertsVisible.length + ')' : '';
     }
     if(updated) updated.textContent = 'Last updated ' + (data.generated_at || new Date().toISOString()) + ' - visible status: ' + state.toUpperCase() + (dismissedCount ? ' (' + dismissedCount + ' dismissed)' : '');
-	    var existingGuide = document.getElementById('ob-ops-owner-guide');
-	    var existingActions = document.getElementById('ob-ops-action-center');
-	    if(existingGuide && !window.__obOpsOwnerGuideHtml) window.__obOpsOwnerGuideHtml = existingGuide.outerHTML;
-	    if(existingActions && !window.__obOpsActionCenterHtml) window.__obOpsActionCenterHtml = existingActions.outerHTML;
-	    body.innerHTML =
+    var existingGuide = document.getElementById('ob-ops-owner-guide');
+    var existingActions = document.getElementById('ob-ops-action-center');
+    if(existingGuide && !window.__obOpsOwnerGuideHtml) window.__obOpsOwnerGuideHtml = existingGuide.outerHTML;
+    if(existingActions && !window.__obOpsActionCenterHtml) window.__obOpsActionCenterHtml = existingActions.outerHTML;
+    body.innerHTML =
       (window.__obOpsOwnerGuideHtml || '') +
       (window.__obOpsActionCenterHtml || '') +
       '<div class="ob-ops-grid">' +
@@ -35208,12 +35209,17 @@ body.ob-ui-dark .ob-connection-note,
       '</div>' +
       renderTrends(trends || {}, data);
     notifyIfNeeded(data);
+    if(body && priorBodyScroll > 0) {
+      requestAnimationFrame(function(){
+        try { body.scrollTop = Math.min(priorBodyScroll, Math.max(0, body.scrollHeight - body.clientHeight)); } catch(e) {}
+      });
+    }
   }
-	  async function refresh(){
-	    if(role() !== 'admin') return;
-	    if(launcher) launcher.classList.add('show');
-	    if(window.__obOpsRefreshInFlight) return window.__obOpsRefreshInFlight;
-	    window.__obOpsRefreshInFlight = (async function(){
+  async function refresh(){
+    if(role() !== 'admin') return;
+    if(launcher) launcher.classList.add('show');
+    if(window.__obOpsRefreshInFlight) return window.__obOpsRefreshInFlight;
+    window.__obOpsRefreshInFlight = (async function(){
 	    try {
 	      var overview = await fetchOverview();
 	      var trends = await fetchTrends().catch(function(){ return {}; });
@@ -35222,17 +35228,20 @@ body.ob-ui-dark .ob-connection-note,
 	    catch(e){ if(body) body.innerHTML = '<div class="ob-ops-empty">Ops monitor failed: '+esc(e.message)+'</div>'; }
 	    finally{ window.__obOpsRefreshInFlight = null; }
 	    })();
-	    return window.__obOpsRefreshInFlight;
-	  }
+    return window.__obOpsRefreshInFlight;
+  }
   window.obOpenOpsDashboard = function(){ if(panel) panel.classList.add('show'); refresh(); };
   window.obCloseOpsDashboard = function(){ if(panel) panel.classList.remove('show'); };
   window.obRefreshOpsDashboard = refresh;
   function boot(){
     if(role() !== 'admin') return;
     if(launcher) launcher.classList.add('show');
-    refresh();
-    if(window.__obOpsRefreshTimer) clearInterval(window.__obOpsRefreshTimer);
-    window.__obOpsRefreshTimer = setInterval(refresh, 15000);
+    if(!window.__obOpsRefreshTimer){
+      refresh();
+      window.__obOpsRefreshTimer = setInterval(refresh, 15000);
+    } else if(!lastOpsData) {
+      refresh();
+    }
   }
   [500,1800,4500].forEach(function(ms){ setTimeout(boot, ms); });
   window.addEventListener('storage', function(e){ if(e.key === 'ob_u') setTimeout(boot, 200); });
@@ -38162,11 +38171,12 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
 @media(max-width:760px){.ob-admin-live-two,.ob-admin-live-grid,.ob-ops-action-grid{grid-template-columns:1fr}}
 </style>
 <script id="ob-admin-live-ops-20260516-script">
-(function(){
-  if(window.__obAdminLiveOps20260516) return;
-  window.__obAdminLiveOps20260516 = true;
+	(function(){
+	  if(window.__obAdminLiveOps20260516) return;
+	  window.__obAdminLiveOps20260516 = true;
+	  window.__obAdminDashboardStability20260517 = 'ob-admin-dashboard-stability-20260517';
 
-  function esc(value){ return String(value == null ? '' : value).replace(/[&<>"']/g,function(ch){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[ch]; }); }
+	  function esc(value){ return String(value == null ? '' : value).replace(/[&<>"']/g,function(ch){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[ch]; }); }
   function num(value){ var n = Number(value || 0); return Number.isFinite(n) ? n : 0; }
   function money(value){ return '$' + num(value).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2}); }
   function dt(value){ if(!value) return '-'; var n = Number(value); var d = Number.isFinite(n) ? new Date(n * 1000) : new Date(value); return isNaN(d.getTime()) ? '-' : d.toLocaleString(); }
@@ -38217,7 +38227,11 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     return '<table class="ob-admin-live-table"><thead><tr>' + headers.map(function(h){ return '<th>' + esc(h) + '</th>'; }).join('') + '</tr></thead><tbody>' + rows.join('') + '</tbody></table>';
   }
   function badge(text, kind){ return '<span class="ob-admin-live-badge ' + esc(kind || '') + '">' + esc(text) + '</span>'; }
+  function allowAdminScrollReset(){
+    window.__obAdminAllowScrollResetUntil = Date.now() + 900;
+  }
   function resetAdminScroll(){
+    if(Date.now() > (window.__obAdminAllowScrollResetUntil || 0)) return;
     try { window.scrollTo(0,0); } catch(e) {}
     ['.admin-main','.admin-content','.admin-tab-panel.active','#ob-admin-panel.active'].forEach(function(sel){
       document.querySelectorAll(sel).forEach(function(el){ try { el.scrollTop = 0; } catch(e) {} });
@@ -38533,6 +38547,11 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     'platform-payments': renderPlatformPayments,
     'connectors-admin': renderConnectors
   };
+  var baseNavLoadedPanels = {
+    dashboard:true, experts:true, revenue:true, payouts:true, moderation:true,
+    support:true, promotions:true, 'domain-registry':true
+  };
+  var liveRenderState = {};
   function installLiveLoaders(){
     window.loadAdminDashboard = renderDashboard;
     window.loadAdminRevenue = renderRevenue;
@@ -38555,9 +38574,22 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       window.OwnlyAPI.loadAdminConnectors = renderConnectors;
     }
   }
-  function renderLivePanel(panel){
+  function renderLivePanel(panel, force){
     var fn = liveRenderers[panel];
-    if(fn) setTimeout(fn, 120);
+    if(!fn) return;
+    var now = Date.now();
+    var state = liveRenderState[panel] || {};
+    if(!force && state.running) return;
+    if(!force && state.last && now - state.last < 8000) return;
+    state.running = true;
+    state.last = now;
+    liveRenderState[panel] = state;
+    setTimeout(function(){
+      Promise.resolve()
+        .then(fn)
+        .catch(function(){})
+        .then(function(){ state.running = false; liveRenderState[panel] = state; });
+    }, 120);
   }
 
   function currentAdminPanel(){
@@ -38569,9 +38601,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   }
   function afterAdminNav(panel){
     setAdminContext(panel);
-    renderLivePanel(panel);
-    setTimeout(function(){ renderLivePanel(panel); }, 900);
-    setTimeout(function(){ renderLivePanel(panel); }, 2400);
+    if(!baseNavLoadedPanels[panel]) renderLivePanel(panel, true);
   }
   function enforceLiveAdminPanel(){
     var panel = currentAdminPanel();
@@ -38587,6 +38617,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   var previousAdminNav = window.adminNav;
   if(typeof previousAdminNav === 'function') {
     window.adminNav = function(el, panel){
+      allowAdminScrollReset();
       var out = previousAdminNav.apply(this, arguments);
       setTimeout(function(){ afterAdminNav(panel); }, 80);
       setTimeout(function(){ resetAdminScroll(); }, 260);
@@ -38596,6 +38627,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   var previousAdminTabSwitch = window.adminTabSwitch;
   if(typeof previousAdminTabSwitch === 'function') {
     window.adminTabSwitch = function(tabEl, panel){
+      if(tabEl) allowAdminScrollReset();
       var out = previousAdminTabSwitch.apply(this, arguments);
       setTimeout(function(){ setAdminContext(panel); }, 40);
       return out;
@@ -38604,6 +38636,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   var previousObAdminNav = window.obAdminNav;
   if(typeof previousObAdminNav === 'function') {
     window.obAdminNav = function(){
+      allowAdminScrollReset();
       var out = previousObAdminNav.apply(this, arguments);
       setTimeout(function(){ setAdminContext('popup-waitlist'); resetAdminScroll(); }, 60);
       return out;
@@ -38746,10 +38779,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   function boot(){
     installLiveLoaders();
     var panel = currentAdminPanel();
-    if(panel) {
-      setAdminContext(panel);
-      renderLivePanel(panel);
-    }
+    if(panel) setAdminContext(panel);
     setTimeout(enforceLiveAdminPanel, 450);
     setTimeout(enforceLiveAdminPanel, 1600);
     setTimeout(enforceLiveAdminPanel, 3600);

@@ -40696,6 +40696,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     var eligible = !!statusData.eligible;
     var configured = !!statusData.configured;
     var mediaConfigured = !!statusData.media_configured;
+    var mediaUsesMaster = !!statusData.media_uses_master;
     var packs = c.packs || [];
     var disabled = eligible && configured ? '' : 'disabled';
     return '<section class="ob-ai-editor" id="ob-ai-website-editor">' +
@@ -40708,7 +40709,8 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       '</div>' +
       (eligible ? '' : '<div class="ob-ai-result"><h3>Upgrade required</h3><p>'+esc(statusData.reason || 'AI website editing is available on Pro and Scale plans.')+'</p></div>') +
       (eligible && !configured ? '<div class="ob-ai-result"><h3>Admin setup needed</h3><p>The AI model route is not configured yet. Ask the platform admin to configure Admin -> AI.</p></div>' : '') +
-      (eligible && configured && !mediaConfigured ? '<div class="ob-ai-result"><h3>Media generation not ready</h3><p>Text editing is available. Image/media generation will unlock after Admin -> AI has an image model token.</p></div>' : '') +
+      (eligible && configured && !mediaConfigured ? '<div class="ob-ai-result"><h3>Media generation not ready</h3><p>Text editing is available. Image/media generation will unlock when Admin -> AI has an OpenAI master key or a separate image model token.</p></div>' : '') +
+      (eligible && configured && mediaConfigured && mediaUsesMaster ? '<div class="ob-ai-result"><h3>Images use Master AI</h3><p>Your Master OpenAI key is being used for text and image generation. Image credits are still checked server-side.</p></div>' : '') +
       '<div class="ob-ai-editor-form">' +
         '<select id="ob-ai-editor-mode" '+disabled+'><option value="improve">Improve the current website</option><option value="create_page">Create a new page</option><option value="add_section">Add a new section</option><option value="rewrite_services">Rewrite service explanations</option><option value="brand_media">Create visual/media direction</option><option value="launch_polish">Launch polish pass</option></select>' +
         '<textarea id="ob-ai-editor-prompt" '+disabled+' placeholder="Example: Create a warm FAQ page for clients, improve my homepage copy, add a section that explains how video sessions work, and suggest a calm visual style."></textarea>' +
@@ -41278,17 +41280,17 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     var media = firstProviderById(routes.website_media || 'image_media');
     var mediaType = media.provider_type || 'openai';
     return '<div class="ob-ai-friendly">' +
-      '<div class="ob-ai-friendly-hero"><h1>AI Settings</h1><p>Set one master AI key for all text features, or open each feature tab when you want a separate model. Tokens are stored only on the backend and never shown back in full.</p></div>' +
+      '<div class="ob-ai-friendly-hero"><h1>AI Settings</h1><p>Set one Master AI key for text and, when it is an OpenAI key, image generation too. Tokens are stored only on the backend and never shown back in full.</p></div>' +
       friendlyTabs('global') +
       '<section class="ob-ai-friendly-panel active" data-ai-friendly-panel="global">' +
-        '<div class="ob-ai-friendly-card"><h2>Master AI for all text features</h2><p>Use this when you want one provider and one token to power both the Help Assistant and Website Editor text work.</p>' +
-          '<div class="ob-ai-friendly-toggle"><input id="ai-master-enabled" type="checkbox" '+(helpUsesMaster && websiteUsesMaster ? 'checked' : '')+'><label for="ai-master-enabled">Use Master AI for Help Assistant and Website Editor</label></div>' +
+        '<div class="ob-ai-friendly-card"><h2>Master AI for text and images</h2><p>Use one OpenAI key to power the Help Assistant, Website Editor text, and Website Editor image generation. If you choose a non-image text provider, add an image token in Images / Media.</p>' +
+          '<div class="ob-ai-friendly-toggle"><input id="ai-master-enabled" type="checkbox" '+(helpUsesMaster && websiteUsesMaster ? 'checked' : '')+'><label for="ai-master-enabled">Use Master AI for Help Assistant, Website Editor, and OpenAI Images</label></div>' +
           '<div class="ob-ai-friendly-grid"><div class="ob-ai-friendly-field"><label>Provider</label><select id="ai-master-provider" onchange="obAiProviderChanged(\'master\')">'+providerOptions(masterType)+'</select></div><div class="ob-ai-friendly-field"><label>Default model</label><select id="ai-master-model">'+modelOptions(masterType, masterModel, false)+'</select></div></div>' +
           '<div class="ob-ai-friendly-field"><label>Master API key/token</label><input id="ai-master-key" type="password" placeholder="'+(master.api_key_saved || friendlyConfig.api_key_saved ? 'Saved on server' : 'Paste token from provider')+'" autocomplete="new-password"></div>' +
           '<details class="ob-ai-advanced"><summary>Advanced endpoint override</summary><div class="ob-ai-friendly-field" style="margin-top:12px;"><label>Endpoint URL</label><input id="ai-master-endpoint" value="'+esc(masterEndpoint)+'"></div></details>' +
           '<div class="ob-ai-friendly-links">'+providerLinks()+'</div>' +
         '</div>' +
-        '<div class="ob-ai-friendly-card"><h2>Smart routing</h2><p>Keep this simple: Master AI handles text, and the Images / Media tab handles image generation. For launch, this is the cleanest setup.</p><div class="ob-ai-friendly-note">You can still set a separate model per feature in the tabs below. That is useful only if you want cheaper help-chat answers and a stronger website-editing model.</div></div>' +
+        '<div class="ob-ai-friendly-card"><h2>Smart routing</h2><p>Keep this simple: Master AI handles Help, Website text, and OpenAI Images. The Images / Media tab is only needed when you want a separate image token or custom image endpoint.</p><div class="ob-ai-friendly-note">You can still set a separate model per feature in the tabs below. That is useful only if you want cheaper help-chat answers and a stronger website-editing model.</div></div>' +
       '</section>' +
       '<section class="ob-ai-friendly-panel" data-ai-friendly-panel="help">' +
         '<div class="ob-ai-friendly-card"><h2>Expert Help Assistant</h2><p>This answers expert questions about setup, plans, free minutes, promotions, billing explanations, Stripe Connect readiness, Email Center, publishing, and where to click. It cannot edit settings.</p>' +
@@ -41307,9 +41309,9 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
         '</div>' +
       '</section>' +
       '<section class="ob-ai-friendly-panel" data-ai-friendly-panel="media">' +
-        '<div class="ob-ai-friendly-card"><h2>Images and media</h2><p>Use this only if you want the Website Editor AI to generate profile, brand, or section images. Text-only website editing works without this.</p>' +
+        '<div class="ob-ai-friendly-card"><h2>Images and media</h2><p>When Master AI uses an OpenAI key, images can use that same key automatically. Add a separate token here only if you want a different image account, model, or endpoint.</p>' +
           '<div class="ob-ai-friendly-grid"><div class="ob-ai-friendly-field"><label>Image provider</label><select id="ai-media-provider" onchange="obAiProviderChanged(\'media\')"><option value="openai" '+(mediaType==='openai'?'selected':'')+'>OpenAI Images</option><option value="custom" '+(mediaType==='custom'?'selected':'')+'>Custom image endpoint</option></select></div><div class="ob-ai-friendly-field"><label>Image model</label><select id="ai-media-model">'+modelOptions(mediaType, media.model || 'gpt-image-1', true)+'</select></div></div>' +
-          '<div class="ob-ai-friendly-field"><label>Image API key/token</label><input id="ai-media-key" type="password" placeholder="'+(media.api_key_saved ? 'Saved on server' : 'Paste image provider token')+'"></div>' +
+          '<div class="ob-ai-friendly-field"><label>Optional separate image API key/token</label><input id="ai-media-key" type="password" placeholder="'+(media.api_key_saved ? 'Saved on server' : 'Leave blank to use Master OpenAI key')+'" autocomplete="new-password"></div>' +
           '<details class="ob-ai-advanced"><summary>Advanced image endpoint</summary><div class="ob-ai-friendly-field" style="margin-top:12px;"><label>Endpoint URL</label><input id="ai-media-endpoint" value="'+esc(media.base_url || PROVIDERS.openai.imageEndpoint)+'"></div><div class="ob-ai-friendly-field"><label>Image size</label><input id="ai-media-size" value="'+esc(media.size || '1024x1024')+'"></div></details>' +
         '</div>' +
       '</section>' +

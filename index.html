@@ -40163,6 +40163,23 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     }
     aiMessages.push({role:'assistant',content:content});
   }
+  function smartHelpCenterMessages(){
+    var messages = aiMessages.filter(function(m){ return !m.pending; }).slice(-8).map(function(m){ return { role:m.role, content:m.content }; });
+    for(var i=messages.length-1;i>=0;i--){
+      if(messages[i].role === 'user'){
+        messages[i].content = 'Answer style for this reply: sound like a smart human Ownlybiz coach. Use the dashboard context. Keep it short, specific, and practical. No Markdown, no bold text, no long checklist. Give the first thing to check, then the next best action.\nExpert question: ' + messages[i].content;
+        break;
+      }
+    }
+    return messages;
+  }
+  function compactHelpCenterAnswer(value){
+    var text = String(value || '').replace(/[<>]/g,'').replace(/\s+/g,' ').replace(/\*\*/g,'').replace(/^\s*["“]+|["”]+\s*$/g,'').replace(/\s+([,.!?;:])/g,'$1').trim();
+    if(text.length <= 620) return text;
+    var slice = text.slice(0,620);
+    var cut = Math.max(slice.lastIndexOf('. '), slice.lastIndexOf('? '), slice.lastIndexOf('! '));
+    return (cut > 180 ? slice.slice(0,cut+1) : slice.replace(/\s+\S*$/,'') + '...').trim();
+  }
   function sendAiQuestion(text){
     text = String(text || '').trim();
     if(!text || aiBusy) return;
@@ -40172,8 +40189,8 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     renderAiLog();
     var input = document.getElementById('ob-help-ai-input');
     if(input) input.value = '';
-    request('/api/ai/expert-assistant',{method:'POST',body:{messages:aiMessages.filter(function(m){ return !m.pending; }).slice(-8)}}).then(function(data){
-      replacePendingAssistant(data.answer || 'I could not answer that yet.');
+    request('/api/ai/expert-assistant',{method:'POST',body:{messages:smartHelpCenterMessages()}}).then(function(data){
+      replacePendingAssistant(compactHelpCenterAnswer(data.answer || 'I could not answer that yet.'));
     }).catch(function(err){
       replacePendingAssistant(err.message || 'The AI assistant is not available yet.');
     }).finally(function(){
@@ -40841,7 +40858,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     if(use) use.style.display = 'none';
     if(result) { result.className = 'ob-ai-field-result'; result.innerHTML = ''; }
     setFieldStatus(fieldModal.kind === 'image' ? 'Generating a field-specific image...' : 'Writing field-specific text...');
-    request('/api/ai/website-editor/field-preview',{method:'POST',body:{field:fieldModal.field,prompt:prompt,current_value:currentFieldValue(fieldModal.targetId)}}).then(function(data){
+    request('/api/ai/website-editor/field-preview',{method:'POST',body:{field:fieldModal.field,prompt:(window.obAiSmartWebsitePrompt ? window.obAiSmartWebsitePrompt(prompt,'field') : prompt),current_value:currentFieldValue(fieldModal.targetId)}}).then(function(data){
       fieldModal.result = data;
       editorStatus = data.credit_status || editorStatus;
       if(result) {
@@ -40937,7 +40954,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     lastMode = mode;
     lastGenerateMedia = media;
     status('ob-ai-editor-status', apply ? 'Applying a guarded AI website update...' : 'Preparing AI preview...');
-    request('/api/ai/website-editor/' + (apply ? 'apply' : 'preview'), {method:'POST', body:{prompt:prompt,mode:mode,generate_media:media}}).then(function(data){
+    request('/api/ai/website-editor/' + (apply ? 'apply' : 'preview'), {method:'POST', body:{prompt:(window.obAiSmartWebsitePrompt ? window.obAiSmartWebsitePrompt(prompt,mode) : prompt),mode:mode,generate_media:media}}).then(function(data){
       renderPlanResult(data);
       editorStatus = data.credit_status || editorStatus;
       status('ob-ai-editor-status', apply ? 'Website update applied. Review your site before launch.' : 'Preview ready. Review the changed fields before applying.','ok');
@@ -41274,6 +41291,27 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
 
   function esc(value){ return String(value == null ? '' : value).replace(/[&<>"']/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
   function clean(value){ return String(value == null ? '' : value).replace(/\s+/g,' ').trim(); }
+  function smartHelpPayloadMessages(){
+    var messages = helpMessages.filter(function(m){ return !m.pending; }).slice(-8).map(function(m){ return { role:m.role, content:m.content }; });
+    for(var i=messages.length-1;i>=0;i--){
+      if(messages[i].role === 'user'){
+        messages[i].content = 'Answer style for this reply: sound like a smart human Ownlybiz coach. Use the dashboard context. Keep it short, specific, and practical. No Markdown, no bold text, no long checklist. Give the first thing to check, then the next best action.\nExpert question: ' + messages[i].content;
+        break;
+      }
+    }
+    return messages;
+  }
+  function smartWebsitePrompt(prompt, mode){
+    return [prompt,'','Writing style: act like a senior human website strategist. Be concise, specific, credible, and warm. Preserve my voice and avoid generic marketing filler.','Avoid empty phrases like elevate, transform, unlock, empower, thrive, cutting-edge, competitive landscape, passion, tailored solutions, and new heights.',mode === 'site_setup' ? 'For this full-site setup, improve existing editable fields only and do not add pages.' : ''].filter(Boolean).join('\n');
+  }
+  window.obAiSmartWebsitePrompt = smartWebsitePrompt;
+  function compactAiAnswer(value){
+    var text = clean(value).replace(/\*\*/g,'').replace(/^\s*["“]+|["”]+\s*$/g,'').replace(/\s+([,.!?;:])/g,'$1');
+    if(text.length <= 620) return text;
+    var slice = text.slice(0,620);
+    var cut = Math.max(slice.lastIndexOf('. '), slice.lastIndexOf('? '), slice.lastIndexOf('! '));
+    return (cut > 180 ? slice.slice(0,cut+1) : slice.replace(/\s+\S*$/,'') + '...').trim();
+  }
   function baseUrl(){ return String(window.OWNLYBIZ_API_URL || window._OB_BACKEND || window.OWNLY_API || DEFAULT_BASE).replace(/\/+$/,''); }
   function token(){ try { return sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || localStorage.getItem('ob_client_token') || ''; } catch(e){ return ''; } }
   function request(path, opts){
@@ -41688,8 +41726,8 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     renderHelpLog();
     var input = document.getElementById('ob-ai-help-input');
     if(input) input.value = '';
-    request('/api/ai/expert-assistant',{method:'POST',body:{messages:helpMessages.filter(function(m){ return !m.pending; }).slice(-8)}}).then(function(data){
-      replaceFloatingPending(data.answer || 'I could not answer that yet.');
+    request('/api/ai/expert-assistant',{method:'POST',body:{messages:smartHelpPayloadMessages()}}).then(function(data){
+      replaceFloatingPending(compactAiAnswer(data.answer || 'I could not answer that yet.'));
     }).catch(function(err){
       replaceFloatingPending(err.message || 'AI help is not available yet.');
     }).finally(function(){ helpBusy = false; renderHelpLog(); });

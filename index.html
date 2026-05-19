@@ -1939,12 +1939,9 @@
               '<td style="padding:12px 8px;text-align:center">' + revenue + '</td>' +
               '<td style="padding:12px 8px;text-align:center">' + lastSess + '</td>' +
               '<td style="padding:12px 8px;text-align:center"><span style="color:#22c55e;font-size:12px">Active</span></td>' +
-              '<td style="padding:12px 8px;text-align:center"><button type="button" class="ob-credit-btn secondary" style="font-size:11px;padding:4px 8px" data-ob-credit-refund-client="' + attr(c.id || '') + '">Request refund</button></td>' +
+              '<td style="padding:12px 8px;text-align:center"><button type="button" class="ob-credit-btn secondary" style="font-size:11px;padding:4px 8px" onclick="typeof openClientDetail===&quot;function&quot; && openClientDetail(&quot;' + attr(c.id || '') + '&quot;)">View</button></td>' +
             '</tr>';
           }).join('');
-          tbody.querySelectorAll('[data-ob-credit-refund-client]').forEach(function(btn){
-            btn.onclick = function(){ refundClientCredit(this.getAttribute('data-ob-credit-refund-client')); };
-          });
           window.obCreditEnhanceClientRows && window.obCreditEnhanceClientRows(clients);
         })
         .catch(function(){
@@ -1960,7 +1957,7 @@
     tbody.__obCreditEnhanced = true;
     var observer = new MutationObserver(function(){
       tbody.querySelectorAll('tr').forEach(function(row){
-        if(row.querySelector('[data-ob-credit-refund]')) return;
+        row.querySelectorAll('[data-ob-credit-refund],[data-ob-credit-refund-client]').forEach(function(btn){ btn.remove(); });
         var btn = row.querySelector('button');
         var text = row.textContent || '';
         var email = (text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i) || [])[0];
@@ -1971,21 +1968,18 @@
           var existing = cells[cells.length-1];
           var idHint = row.getAttribute('data-client-id') || row.dataset.clientId || '';
           if(idHint) clientId = idHint;
-          if(existing && email){
-            var b = document.createElement('button');
-            b.type = 'button';
-            b.setAttribute('data-ob-credit-refund','1');
-            b.className = 'ob-credit-btn secondary';
-            b.style.cssText = 'font-size:11px;padding:4px 8px;margin-left:6px';
-            b.textContent = 'Request refund';
-            b.onclick = function(){
-              if(!clientId){
-                toastMsg('Open this client after the backend exposes row ids, then refund from client management.','err');
-                return;
-              }
-              refundClientCredit(clientId);
+          if(existing && email && clientId && !existing.querySelector('[data-ob-credit-open-client]')){
+            var open = document.createElement('button');
+            open.type = 'button';
+            open.setAttribute('data-ob-credit-open-client','1');
+            open.className = 'ob-credit-btn secondary';
+            open.style.cssText = 'font-size:11px;padding:4px 8px;margin-left:6px';
+            open.textContent = 'View';
+            open.onclick = function(ev){
+              if(ev) ev.stopPropagation();
+              if(typeof openClientDetail === 'function') openClientDetail(clientId);
             };
-            existing.appendChild(b);
+            existing.appendChild(open);
           }
         }
       });
@@ -18696,7 +18690,11 @@ body.expert-page #mob-cta-bar{display:none!important;}
     if(d.type==='typing'&&(d.sessionId||d.session_id)===window._obActiveSessId){
       var tiId=role==='expert'?'expert-typing-indicator':'ob-client-typing';
       var ti=document.getElementById(tiId);
-      if(ti){ti.textContent='typing...';clearTimeout(ti._t);ti._t=setTimeout(function(){ti.textContent='';},2000);}
+      if(ti){
+        clearTimeout(ti._t);
+        if(d.is_typing===false) ti.textContent='';
+        else { ti.textContent='typing...'; ti._t=setTimeout(function(){ti.textContent='';}, d.ai_typing ? 10000 : 2000); }
+      }
     }
   }
   var _origBegin=window._beginSession;
@@ -23342,11 +23340,16 @@ window._handleRTCMessage=function(d){
     if(d.type === 'typing' && (!sid || sid === window._obActiveSessId || sid === window._sid || sid === window._sessId)){
       var typingId = (roleName === 'expert' || (typeof role === 'function' && role() === 'expert')) ? 'expert-typing-indicator' : 'ob-client-typing';
       var typingEl = document.getElementById(typingId);
-      if(typingEl && d.sender_id !== myId()){
-        typingEl.textContent = 'typing...';
-        if(typingEl.parentNode) typingEl.parentNode.appendChild(typingEl);
+      var fromId = d.sender_id || d.user_id || '';
+      if(typingEl && fromId !== myId()){
         clearTimeout(typingEl._t);
-        typingEl._t = setTimeout(function(){ typingEl.textContent = ''; }, 1800);
+        if(d.is_typing === false){
+          typingEl.textContent = '';
+        } else {
+          typingEl.textContent = 'typing...';
+          if(typingEl.parentNode) typingEl.parentNode.appendChild(typingEl);
+          typingEl._t = setTimeout(function(){ typingEl.textContent = ''; }, d.ai_typing ? 10000 : 1800);
+        }
       }
       handled = true;
     }
@@ -24242,7 +24245,7 @@ window._handleRTCMessage=function(d){
   };
   document.addEventListener('click', function(e){
     var btn = e.target && e.target.closest && e.target.closest('.ob-admin-view-expert');
-    if(btn){ e.preventDefault(); window.adminViewExpertDashboard(btn.getAttribute('data-id'), btn.getAttribute('data-slug'), btn.getAttribute('data-name')); }
+    if(btn){ e.preventDefault(); e.stopImmediatePropagation(); window.adminViewExpertDashboard(btn.getAttribute('data-id'), btn.getAttribute('data-slug'), btn.getAttribute('data-name')); }
   }, true);
   document.addEventListener('keydown', function(e){
     if(e.key === 'Enter' && !e.shiftKey && e.target && e.target.id === 'expert-chat-input'){ e.preventDefault(); window.sendExpertMsg(); }
@@ -34737,6 +34740,22 @@ body.ob-ui-dark .ob-connection-note,
       fallback.onclose = function(){ if(window[prop] === fallback) window[prop] = null; };
     } catch(e) {}
   }
+  function notifySessionBackgrounded(reason){
+    restoreResumeState();
+    var sid = activeSid();
+    var channel = activeChannel();
+    if(!sid || !resumeState.active || !isMediaChannel(channel) || sessionEndedOrReceipt()) return;
+    var roleName = role() || resumeState.role || 'client';
+    var ws = wsForRole(roleName);
+    send(ws, {
+      type:'session_backgrounded',
+      session_id:sid,
+      sessionId:sid,
+      channel:channel,
+      role:roleName,
+      reason:reason || 'page_hidden'
+    });
+  }
   async function requestWakeLock(){
     if(!('wakeLock' in navigator) || document.hidden || !resumeState.active || !isMediaChannel(activeChannel())) return;
     try {
@@ -34901,11 +34920,11 @@ body.ob-ui-dark .ob-connection-note,
     hardResume('media_watchdog');
   }
   document.addEventListener('visibilitychange', function(){
-    if(document.hidden){ hiddenAt = now(); saveResumeState(); return; }
+    if(document.hidden){ hiddenAt = now(); saveResumeState(); notifySessionBackgrounded('visibility_hidden'); return; }
     setTimeout(function(){ resumeAfterSleep('visibility_resume'); }, 200);
   });
-  window.addEventListener('pagehide', function(){ hiddenAt = now(); saveResumeState(); });
-  document.addEventListener('freeze', function(){ hiddenAt = now(); saveResumeState(); });
+  window.addEventListener('pagehide', function(){ hiddenAt = now(); saveResumeState(); notifySessionBackgrounded('pagehide'); });
+  document.addEventListener('freeze', function(){ hiddenAt = now(); saveResumeState(); notifySessionBackgrounded('page_freeze'); });
   document.addEventListener('resume', function(){ setTimeout(function(){ resumeAfterSleep('page_lifecycle_resume'); }, 200); });
   window.addEventListener('pageshow', function(){ setTimeout(function(){ resumeAfterSleep('pageshow_resume'); }, 250); });
   window.addEventListener('focus', function(){ setTimeout(function(){ resumeAfterSleep('focus_resume'); }, 250); });
@@ -41384,6 +41403,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       ['global','Master AI'],
       ['help','Help Assistant'],
       ['website','Website Editor'],
+      ['ai_chat','AI Chat'],
       ['media','Images / Media'],
       ['credits','Credits']
     ];
@@ -41401,10 +41421,15 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     var masterEndpoint = master.base_url || (PROVIDERS[masterType] || PROVIDERS.openai).endpoint;
     var helpUsesMaster = !routes.help || routes.help === 'master_text' || routes.help === routes.website_editor;
     var websiteUsesMaster = !routes.website_editor || routes.website_editor === 'master_text';
+    var aiChatUsesMaster = !routes.ai_chat || routes.ai_chat === 'master_text';
     var help = helpUsesMaster ? master : firstProviderById(routes.help);
     var website = websiteUsesMaster ? master : firstProviderById(routes.website_editor);
+    var aiChat = aiChatUsesMaster ? master : firstProviderById(routes.ai_chat);
     var media = firstProviderById(routes.website_media || 'image_media');
     var mediaType = media.provider_type || 'openai';
+    var aiChatType = aiChat.provider_type || masterType;
+    var aiChatModel = aiChat.model || masterModel;
+    var aiChatEndpoint = aiChat.base_url || masterEndpoint;
     return '<div class="ob-ai-friendly">' +
       '<div class="ob-ai-friendly-hero"><h1>AI Settings</h1><p>Set one Master AI key for text and, when it is an OpenAI key, image generation too. Tokens are stored only on the backend and never shown back in full.</p></div>' +
       friendlyTabs('global') +
@@ -41432,6 +41457,14 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
           '<div class="ob-ai-friendly-field"><label>Model source</label><select id="ai-website-source" onchange="obAiToggleCustom(\'website\')"><option value="master" '+(websiteUsesMaster?'selected':'')+'>Use Master AI</option><option value="custom" '+(!websiteUsesMaster?'selected':'')+'>Use stronger/separate model for Website Editor</option></select></div>' +
           '<div id="ai-website-custom" style="'+(websiteUsesMaster?'display:none':'')+'"><div class="ob-ai-friendly-grid"><div class="ob-ai-friendly-field"><label>Provider</label><select id="ai-website-provider" onchange="obAiProviderChanged(\'website\')">'+providerOptions(website.provider_type || masterType)+'</select></div><div class="ob-ai-friendly-field"><label>Model</label><select id="ai-website-model">'+modelOptions(website.provider_type || masterType, website.model || masterModel, false)+'</select></div></div><div class="ob-ai-friendly-field"><label>API key/token</label><input id="ai-website-key" type="password" placeholder="'+(website.api_key_saved ? 'Saved on server' : 'Optional separate token')+'"></div><details class="ob-ai-advanced"><summary>Advanced endpoint</summary><div class="ob-ai-friendly-field" style="margin-top:12px;"><label>Endpoint URL</label><input id="ai-website-endpoint" value="'+esc(website.base_url || masterEndpoint)+'"></div></details></div>' +
           '<div class="ob-ai-friendly-field"><label>Website writing style and rules</label><textarea id="ai-website-instructions">'+esc(editor.system_instructions || WEBSITE_SMART_DEFAULT)+'</textarea></div>' +
+        '</div>' +
+      '</section>' +
+      '<section class="ob-ai-friendly-panel" data-ai-friendly-panel="ai_chat">' +
+        '<div class="ob-ai-friendly-card"><h2>Live AI chat replies</h2><p>Use this only for the expert chat feature. If no separate token is configured here, Ownlybiz falls back to Master AI.</p>' +
+          '<div class="ob-ai-friendly-field"><label>Model source</label><select id="ai-chat-source" onchange="obAiToggleCustom(\'chat\')"><option value="master" '+(aiChatUsesMaster?'selected':'')+'>Use Master AI</option><option value="custom" '+(!aiChatUsesMaster?'selected':'')+'>Use separate model for AI chat</option></select></div>' +
+          '<div id="ai-chat-custom" style="'+(aiChatUsesMaster?'display:none':'')+'"><div class="ob-ai-friendly-grid"><div class="ob-ai-friendly-field"><label>Provider</label><select id="ai-chat-provider" onchange="obAiProviderChanged(\'chat\')">'+providerOptions(aiChatType)+'</select></div><div class="ob-ai-friendly-field"><label>Model</label><select id="ai-chat-model">'+modelOptions(aiChatType, aiChatModel, false)+'</select></div></div><div class="ob-ai-friendly-field"><label>API key/token</label><input id="ai-chat-key" type="password" placeholder="'+(aiChat.api_key_saved ? 'Saved on server' : 'Optional separate token')+'"></div><details class="ob-ai-advanced"><summary>Advanced endpoint</summary><div class="ob-ai-friendly-field" style="margin-top:12px;"><label>Endpoint URL</label><input id="ai-chat-endpoint" value="'+esc(aiChatEndpoint)+'"></div></details></div>' +
+          '<div class="ob-ai-friendly-note">Per-expert admin controls still decide who is eligible and whether the feature is semi-AI or fully-AI. Eligible experts can then turn it on or off inside their own dashboard.</div>' +
+          '<button class="ob-ai-friendly-btn secondary" type="button" onclick="obAiFriendlyTestFeature(\'ai_chat\')">Test AI chat model</button>' +
         '</div>' +
       '</section>' +
       '<section class="ob-ai-friendly-panel" data-ai-friendly-panel="media">' +
@@ -41512,8 +41545,10 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     providers.push(master);
     var helpProvider = providerFrom('help','help_text','Help Assistant AI', master);
     var websiteProvider = providerFrom('website','website_text','Website Editor AI', master);
+    var aiChatProvider = providerFrom('chat','ai_chat_text','Live AI Chat Replies', master);
     if(helpProvider) providers.push(helpProvider);
     if(websiteProvider) providers.push(websiteProvider);
+    if(aiChatProvider) providers.push(aiChatProvider);
     var mediaType = (document.getElementById('ai-media-provider') || {}).value || 'openai';
     var mediaPreset = PROVIDERS[mediaType] || PROVIDERS.openai;
     var media = { id:'image_media', label:'Website image generator', kind:'image', provider_type:mediaType, base_url:(document.getElementById('ai-media-endpoint') || {}).value || mediaPreset.imageEndpoint || mediaPreset.endpoint, model:(document.getElementById('ai-media-model') || {}).value || 'gpt-image-1', size:(document.getElementById('ai-media-size') || {}).value || '1024x1024' };
@@ -41522,6 +41557,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     providers.push(media);
     var helpSource = useMaster ? 'master' : ((document.getElementById('ai-help-source') || {}).value || 'master');
     var websiteSource = useMaster ? 'master' : ((document.getElementById('ai-website-source') || {}).value || 'master');
+    var aiChatSource = ((document.getElementById('ai-chat-source') || {}).value || 'master');
     var payload = {
       ai_assistant_enabled: (useMaster || (document.getElementById('ai-help-enabled') || {}).checked) ? '1' : '0',
       ai_provider_label: (PROVIDERS[helpSource === 'master' ? masterType : ((document.getElementById('ai-help-provider') || {}).value || masterType)] || PROVIDERS.openai).label,
@@ -41543,6 +41579,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
         help: helpSource === 'custom' ? 'help_text' : 'master_text',
         website_editor: websiteSource === 'custom' ? 'website_text' : 'master_text',
         website_copy: websiteSource === 'custom' ? 'website_text' : 'master_text',
+        ai_chat: aiChatSource === 'custom' ? 'ai_chat_text' : 'master_text',
         website_media: 'image_media'
       },
       credit: {
@@ -41566,6 +41603,11 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   window.obAiFriendlyTest = function(){
     setStatus('Testing text model...');
     request('/api/ai/admin/test',{method:'POST',body:{feature:'website_editor'}}).then(function(data){ setStatus(data.answer || 'AI test succeeded.','ok'); })
+      .catch(function(err){ setStatus(err.message || 'AI test failed.','err'); });
+  };
+  window.obAiFriendlyTestFeature = function(feature){
+    setStatus('Testing ' + (feature === 'ai_chat' ? 'AI chat model' : 'text model') + '...');
+    request('/api/ai/admin/test',{method:'POST',body:{feature:feature || 'website_editor'}}).then(function(data){ setStatus(data.answer || 'AI test succeeded.','ok'); })
       .catch(function(err){ setStatus(err.message || 'AI test failed.','err'); });
   };
   window.saveAdminAiConfig = window.obAiFriendlySave;
@@ -41991,7 +42033,12 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     return '<span class="admin-badge" style="background:rgba(245,158,11,.16);color:#f59e0b;">Pending</span>';
   }
   function openDashboard(id, slug, name){
-    if(typeof originalAdminDashboardOpen === 'function') return originalAdminDashboardOpen(id, slug, name);
+    try {
+      var t = sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t');
+      var u = sessionStorage.getItem('ob_u') || localStorage.getItem('ob_u');
+      if(t) localStorage.setItem('ob_t', t);
+      if(u) localStorage.setItem('ob_u', u);
+    } catch(_copyAuthErr) {}
     if(slug) window.open(location.origin + '/dash/' + encodeURIComponent(slug) + '?admin=1&expertId=' + encodeURIComponent(id || '') + '&expertName=' + encodeURIComponent(name || ''), '_blank', 'noopener');
   }
   function expertDetailHtml(id, data){
@@ -42083,7 +42130,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     var btn = e.target && e.target.closest ? e.target.closest('.ob-admin-view-expert') : null;
     if(!btn) return;
     e.preventDefault();
-    e.stopPropagation();
+    e.stopImmediatePropagation();
     window.obAdminOpenExpertDetail(btn.getAttribute('data-id'), btn.getAttribute('data-slug'), btn.getAttribute('data-name'));
   }, true);
 
@@ -42168,13 +42215,36 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
 
   function expertAiChatPanel(){
     var area = document.getElementById('expert-chat-area');
-    if(!area || document.getElementById('ob-expert-ai-chat-panel')) return;
+    if(!area) return;
     api('/ai/expert-chat/status').then(function(d){
-      if(!d.enabled) return;
-      var html = '<div id="ob-expert-ai-chat-panel" style="padding:10px 14px;border-bottom:1px solid var(--gray-200);background:rgba(122,140,110,.1);font-size:12px;color:var(--gray-500);display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap;"><span>Chat AI mode: ' + (d.mode === 'fully_ai' ? 'fully AI handles client replies' : 'semi AI drafts replies for you') + '</span>' + (d.mode === 'fully_ai' ? '' : '<button type="button" class="ob-credit-btn secondary" style="font-size:11px;padding:5px 9px" onclick="obExpertAiSuggestReply()">Suggest reply</button>') + '</div>';
-      area.insertAdjacentHTML('afterbegin', html);
+      var existing = document.getElementById('ob-expert-ai-chat-panel');
+      if(!d.eligible && !d.admin_enabled){ if(existing) existing.remove(); return; }
+      var active = !!(d.enabled || d.expert_enabled);
+      var html = '<div id="ob-expert-ai-chat-panel" style="padding:10px 14px;border-bottom:1px solid var(--gray-200);background:rgba(122,140,110,.1);font-size:12px;color:var(--gray-500);display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap;"><span>AI chat: ' + (active ? (d.mode === 'fully_ai' ? 'on · auto replies' : 'on · draft mode') : 'off') + '</span><label style="display:flex;align-items:center;gap:6px;font-weight:700;color:var(--brown);"><input type="checkbox" '+(active?'checked':'')+' onchange="obExpertAiToggle(this.checked)"> Enable</label>' + (active && d.mode !== 'fully_ai' ? '<button type="button" class="ob-credit-btn secondary" style="font-size:11px;padding:5px 9px" onclick="obExpertAiSuggestReply()">Suggest reply</button>' : '') + '</div>';
+      if(existing) existing.outerHTML = html;
+      else area.insertAdjacentHTML('afterbegin', html);
     }).catch(function(){});
   }
+  function expertAiPreferenceCard(){
+    var host = document.querySelector('#db-panel-overview .db-content') || document.querySelector('#db-panel-settings .db-content');
+    if(!host) return;
+    api('/ai/expert-chat/status').then(function(d){
+      var existing = document.getElementById('ob-expert-ai-pref-card');
+      if(!d.eligible && !d.admin_enabled){ if(existing) existing.remove(); return; }
+      var active = !!(d.enabled || d.expert_enabled);
+      var html = '<div id="ob-expert-ai-pref-card" class="db-card" style="padding:16px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;"><div><div style="font-size:13px;font-weight:900;color:var(--brown);">AI chat replies</div><div style="font-size:12px;color:var(--gray-400);margin-top:3px;">' + (d.mode === 'fully_ai' ? 'Auto-reply mode' : 'Draft suggestion mode') + '</div></div><label style="display:flex;align-items:center;gap:8px;font-weight:800;color:var(--brown);"><input type="checkbox" '+(active?'checked':'')+' onchange="obExpertAiToggle(this.checked)"> Enabled</label></div>';
+      if(existing) existing.outerHTML = html;
+      else host.insertAdjacentHTML('afterbegin', html);
+    }).catch(function(){});
+  }
+  window.obExpertAiToggle = function(enabled){
+    api('/ai/expert-chat/status', {method:'PUT', body:{expert_enabled:!!enabled}}).then(function(){
+      notify(enabled ? 'AI chat enabled.' : 'AI chat disabled.', 'ok');
+      var panel = document.getElementById('ob-expert-ai-chat-panel'); if(panel) panel.remove();
+      var card = document.getElementById('ob-expert-ai-pref-card'); if(card) card.remove();
+      setTimeout(function(){ expertAiChatPanel(); expertAiPreferenceCard(); }, 250);
+    }).catch(function(err){ notify(err.message || 'Could not update AI chat.', 'err'); });
+  };
   window.obExpertAiSuggestReply = function(){
     var sid = window._obActiveSessId || window._sid || '';
     if(!sid){ notify('No active chat session.', 'err'); return; }
@@ -42185,6 +42255,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     }).catch(function(err){ notify(err.message, 'err'); });
   };
   setInterval(expertAiChatPanel, 2500);
+  setInterval(expertAiPreferenceCard, 3500);
 })();
 </script>
 

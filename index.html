@@ -18712,7 +18712,15 @@ body.expert-page #mob-cta-bar{display:none!important;}
           // Mark client as having payment method (session accepted = authorized for billing)
           try{localStorage.setItem('ob_hpm','1');}catch(e){}
           var ws=window._obWs||window._obClientWs;if(ws&&ws.readyState===1)sendWsAuth(ws);
-          startStatusPoll(d.session.id);ensureClientWS();
+          if(d.auto_accepted || d.session.status === 'active'){
+            stopStatusPoll();
+            if(ov)ov.classList.remove('show');
+            window._obActiveSessId=d.session.id;
+            ensureClientWS();
+            openClientChat(d.session.id);
+          } else {
+            startStatusPoll(d.session.id);ensureClientWS();
+          }
         }else{
           if(d.error && /promotion code/i.test(d.error) && typeof window.obCreditClearSessionPromo === 'function') window.obCreditClearSessionPromo();
           obCancelWait();alert(d.error||'Could not request session');
@@ -40885,8 +40893,13 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     api('/ai/expert-chat/status').then(function(d){
       var existing = document.getElementById('ob-expert-ai-chat-panel');
       if(!d.eligible && !d.admin_enabled){ if(existing) existing.remove(); return; }
-      var active = !!(d.enabled || d.expert_enabled);
-      var html = '<div id="ob-expert-ai-chat-panel" style="padding:10px 14px;border-bottom:1px solid var(--gray-200);background:rgba(122,140,110,.1);font-size:12px;color:var(--gray-500);display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap;"><span>AI chat: ' + (active ? (d.mode === 'fully_ai' ? 'on · auto replies' : 'on · draft mode') : 'off') + '</span><label style="display:flex;align-items:center;gap:6px;font-weight:700;color:var(--brown);"><input type="checkbox" '+(active?'checked':'')+' onchange="obExpertAiToggle(this.checked)"> Enable</label>' + (active && d.mode !== 'fully_ai' ? '<button type="button" class="ob-credit-btn secondary" style="font-size:11px;padding:5px 9px" onclick="obExpertAiSuggestReply()">Suggest reply</button>' : '') + '</div>';
+      var active = !!d.enabled;
+      var fullyAi = d.mode === 'fully_ai';
+      var autoOn = !!d.auto_accept_chat_requests;
+      var autoEffective = !!d.auto_accept_chat_effective;
+      var autoDisabled = active && fullyAi ? '' : 'disabled';
+      var autoTitle = active && fullyAi ? 'Only chat requests auto-accept. Voice and video stay manual.' : 'Auto-accept is available only in Fully AI auto-reply mode.';
+      var html = '<div id="ob-expert-ai-chat-panel" style="padding:10px 14px;border-bottom:1px solid var(--gray-200);background:rgba(122,140,110,.1);font-size:12px;color:var(--gray-500);display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap;"><span>AI chat: ' + (active ? (fullyAi ? 'on &middot; auto replies' : 'on &middot; draft mode') : 'off') + (autoEffective ? ' &middot; chat auto-accept' : '') + '</span><div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;"><label style="display:flex;align-items:center;gap:6px;font-weight:700;color:var(--brown);"><input type="checkbox" '+(active?'checked':'')+' onchange="obExpertAiToggle(this.checked)"> Enable</label><label title="'+autoTitle+'" style="display:flex;align-items:center;gap:6px;font-weight:700;color:var(--brown);opacity:'+(autoDisabled?'.55':'1')+';"><input type="checkbox" '+(autoOn?'checked':'')+' '+autoDisabled+' onchange="obExpertAiAutoAcceptToggle(this.checked)"> Auto-accept chat</label>' + (active && !fullyAi ? '<button type="button" class="ob-credit-btn secondary" style="font-size:11px;padding:5px 9px" onclick="obExpertAiSuggestReply()">Suggest reply</button>' : '') + '</div></div>';
       if(existing) existing.outerHTML = html;
       else area.insertAdjacentHTML('afterbegin', html);
     }).catch(function(){});
@@ -40902,20 +40915,38 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     api('/ai/expert-chat/status').then(function(d){
       var existing = document.getElementById('ob-expert-ai-pref-card');
       if(!d.eligible && !d.admin_enabled){ if(existing) existing.remove(); return; }
-      var active = !!(d.enabled || d.expert_enabled);
-      var html = '<div id="ob-expert-ai-pref-card" class="db-card" style="padding:16px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;"><div><div style="font-size:13px;font-weight:900;color:var(--brown);">AI chat replies</div><div style="font-size:12px;color:var(--gray-400);margin-top:3px;">' + (d.mode === 'fully_ai' ? 'Auto-reply mode' : 'Draft suggestion mode') + '</div></div><label style="display:flex;align-items:center;gap:8px;font-weight:800;color:var(--brown);"><input type="checkbox" '+(active?'checked':'')+' onchange="obExpertAiToggle(this.checked)"> Enabled</label></div>';
+      var active = !!d.enabled;
+      var fullyAi = d.mode === 'fully_ai';
+      var autoOn = !!d.auto_accept_chat_requests;
+      var autoEffective = !!d.auto_accept_chat_effective;
+      var autoDisabled = active && fullyAi ? '' : 'disabled';
+      var autoSub = active && fullyAi
+        ? (autoEffective ? 'New chat requests start automatically. Voice and video still require accept.' : 'Let Fully AI start paid chat requests without the popup.')
+        : 'Available only when AI chat is enabled in Fully AI auto-reply mode.';
+      var html = '<div id="ob-expert-ai-pref-card" class="db-card" style="padding:16px;margin-bottom:16px;display:flex;flex-direction:column;gap:14px;"><div style="display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;"><div><div style="font-size:13px;font-weight:900;color:var(--brown);">AI chat replies</div><div style="font-size:12px;color:var(--gray-400);margin-top:3px;">' + (fullyAi ? 'Auto-reply mode' : 'Draft suggestion mode') + '</div></div><label style="display:flex;align-items:center;gap:8px;font-weight:800;color:var(--brown);"><input type="checkbox" '+(active?'checked':'')+' onchange="obExpertAiToggle(this.checked)"> Enabled</label></div><div style="border-top:1px solid var(--gray-200);padding-top:12px;display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;"><div><div style="font-size:13px;font-weight:900;color:var(--brown);">Auto-accept chat requests</div><div style="font-size:12px;color:var(--gray-400);margin-top:3px;">'+autoSub+'</div></div><label style="display:flex;align-items:center;gap:8px;font-weight:800;color:var(--brown);opacity:'+(autoDisabled?'.55':'1')+';"><input type="checkbox" '+(autoOn?'checked':'')+' '+autoDisabled+' onchange="obExpertAiAutoAcceptToggle(this.checked)"> Enabled</label></div></div>';
       if(existing) existing.outerHTML = html;
       else host.insertAdjacentHTML('afterbegin', html);
     }).catch(function(){});
   }
   window.obExpertAiToggle = function(enabled){
     if(!hasExpertAuth()){ notify('Please sign in to update AI chat.', 'err'); return; }
-    api('/ai/expert-chat/status', {method:'PUT', body:{expert_enabled:!!enabled}}).then(function(){
+    var body = {expert_enabled:!!enabled};
+    if(!enabled) body.auto_accept_chat_requests = false;
+    api('/ai/expert-chat/status', {method:'PUT', body:body}).then(function(){
       notify(enabled ? 'AI chat enabled.' : 'AI chat disabled.', 'ok');
       var panel = document.getElementById('ob-expert-ai-chat-panel'); if(panel) panel.remove();
       var card = document.getElementById('ob-expert-ai-pref-card'); if(card) card.remove();
       setTimeout(function(){ expertAiChatPanel(); expertAiPreferenceCard(); }, 250);
     }).catch(function(err){ notify(err.message || 'Could not update AI chat.', 'err'); });
+  };
+  window.obExpertAiAutoAcceptToggle = function(enabled){
+    if(!hasExpertAuth()){ notify('Please sign in to update AI chat.', 'err'); return; }
+    api('/ai/expert-chat/status', {method:'PUT', body:{auto_accept_chat_requests:!!enabled}}).then(function(d){
+      notify(d.auto_accept_chat_effective ? 'Chat requests will auto-accept.' : (enabled ? 'Saved. Fully AI mode must be active before auto-accept starts.' : 'Chat auto-accept disabled.'), 'ok');
+      var panel = document.getElementById('ob-expert-ai-chat-panel'); if(panel) panel.remove();
+      var card = document.getElementById('ob-expert-ai-pref-card'); if(card) card.remove();
+      setTimeout(function(){ expertAiChatPanel(); expertAiPreferenceCard(); }, 250);
+    }).catch(function(err){ notify(err.message || 'Could not update auto-accept.', 'err'); });
   };
   window.obExpertAiSuggestReply = function(){
     if(!hasExpertAuth()){ notify('Please sign in to use AI chat.', 'err'); return; }

@@ -41168,6 +41168,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   window.__obSessionRefundDetailFlow = true;
   var BASE = (window.OWNLYBIZ_API_URL || window._OB_BACKEND || 'https://victorious-wisdom-production-a6b0.up.railway.app').replace(/\/+$/,'');
   var sessionCache = {};
+  var refreshState = {};
   function token(){ return sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || ''; }
   function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
   function attr(s){ return esc(s).replace(/"/g,'&quot;'); }
@@ -41240,15 +41241,23 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       '</div>';
     }).join('');
   }
-  function refreshSessionRefunds(clientId){
-    if(!clientId || !token()) return;
-    Promise.all([
+  function refreshSessionRefunds(clientId, options){
+    if(!clientId || !token()) return Promise.resolve();
+    var now = Date.now();
+    var state = refreshState[clientId] || (refreshState[clientId] = {});
+    if(!(options && options.force) && (state.inFlight || (state.lastAt && now - state.lastAt < 2500))){
+      return state.promise || Promise.resolve();
+    }
+    state.inFlight = true;
+    state.lastAt = now;
+    state.promise = Promise.all([
       api('GET','/api/experts/me/clients/' + encodeURIComponent(clientId)),
       api('GET','/api/credits/clients/' + encodeURIComponent(clientId) + '/refund-requests').catch(function(){ return {requests:[]}; })
     ]).then(function(results){
       renderSessionRows(clientId, (results[0] && results[0].sessions) || [], (results[1] && results[1].requests) || []);
       if(typeof window.obCreditRenderClientDetail === 'function') window.obCreditRenderClientDetail(clientId);
-    }).catch(function(){});
+    }).catch(function(){}).finally(function(){ state.inFlight = false; });
+    return state.promise;
   }
   function closeDialog(){
     var el = document.getElementById('ob-session-refund-modal');
@@ -41292,7 +41301,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       }).then(function(result){
         closeDialog();
         notify(result.duplicate ? 'A pending refund request already exists.' : 'Refund request sent to admin for approval.', 'ok');
-        refreshSessionRefunds(clientId);
+        refreshSessionRefunds(clientId, {force:true});
         if(typeof window.loadClients === 'function') setTimeout(window.loadClients, 500);
       }).catch(function(err){
         submit.disabled = false;

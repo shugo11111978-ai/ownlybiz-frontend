@@ -34765,17 +34765,34 @@ body.ob-ui-dark .ob-connection-note,
     });
   }
   async function requestWakeLock(){
-    if(!('wakeLock' in navigator) || document.hidden || !resumeState.active || !isMediaChannel(activeChannel())) return;
+    window._obWakeLockSupported = !!('wakeLock' in navigator);
+    if(!window._obWakeLockSupported || document.hidden || !resumeState.active || sessionEndedOrReceipt()) {
+      window._obWakeLockActive = false;
+      return;
+    }
     try {
-      if(wakeLock && !wakeLock.released) return;
+      if(wakeLock && !wakeLock.released) {
+        window._obWakeLockActive = true;
+        return;
+      }
       wakeLock = await navigator.wakeLock.request('screen');
-      wakeLock.addEventListener('release', function(){ wakeLock = null; });
-    } catch(e) {}
+      window._obWakeLockActive = true;
+      wakeLock.addEventListener('release', function(){
+        wakeLock = null;
+        window._obWakeLockActive = false;
+      });
+    } catch(e) {
+      window._obWakeLockActive = false;
+    }
   }
   function releaseWakeLock(){
-    if(!wakeLock) return;
+    if(!wakeLock) {
+      window._obWakeLockActive = false;
+      return;
+    }
     try { wakeLock.release(); } catch(e) {}
     wakeLock = null;
+    window._obWakeLockActive = false;
   }
   function remember(sessionId, channel, roleName){
     if(!sessionId || sessionEndedOrReceipt()) return;
@@ -34877,6 +34894,7 @@ body.ob-ui-dark .ob-connection-note,
           resumeState.role = 'client';
           resumeState.active = true;
           saveResumeState();
+          requestWakeLock();
         }
         return priorClient.apply(this, arguments);
       };
@@ -34892,6 +34910,7 @@ body.ob-ui-dark .ob-connection-note,
           resumeState.role = 'expert';
           resumeState.active = true;
           saveResumeState();
+          requestWakeLock();
         }
         return priorExpert.apply(this, arguments);
       };

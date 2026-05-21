@@ -41154,7 +41154,11 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
 .ob-session-refund-dialog{width:min(520px,100%);background:var(--white,#fffdf8);color:var(--brown,#241a15);border:1px solid var(--gray-200,#e7dfd4);border-radius:16px;box-shadow:0 24px 80px rgba(0,0,0,.34);padding:20px}
 .ob-session-refund-dialog h3{margin:0 0 7px;font-size:20px;letter-spacing:0}
 .ob-session-refund-dialog p{margin:0 0 14px;color:var(--gray-500,#5f554d);font-size:13px;line-height:1.45}
+.ob-session-refund-field{display:grid;gap:6px;margin:12px 0}
+.ob-session-refund-field label{font-size:11px;font-weight:900;text-transform:uppercase;letter-spacing:.06em;color:var(--gray-500,#5f554d)}
+.ob-session-refund-dialog input[type=number]{width:100%;border:1px solid var(--gray-200,#e7dfd4);border-radius:12px;background:var(--cream,#f7f1e8);color:var(--brown,#241a15);padding:11px 12px;font:800 16px var(--font-body,Arial,sans-serif);box-sizing:border-box}
 .ob-session-refund-dialog textarea{width:100%;min-height:110px;border:1px solid var(--gray-200,#e7dfd4);border-radius:12px;background:var(--cream,#f7f1e8);color:var(--brown,#241a15);padding:12px;font:500 14px var(--font-body,Arial,sans-serif);resize:vertical;box-sizing:border-box}
+.ob-session-refund-help{font-size:12px;color:var(--gray-500,#5f554d);line-height:1.45}
 .ob-session-refund-dialog .actions{display:flex;justify-content:flex-end;gap:10px;margin-top:14px;flex-wrap:wrap}
 @media(max-width:700px){.ob-session-refund-action{width:100%;justify-content:flex-start}.ob-session-refund-dialog{border-radius:14px}}
 </style>
@@ -41254,16 +41258,18 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     closeDialog();
     var sessions = sessionCache[clientId] || [];
     var sess = sessions.filter(function(s){ return s && s.id === sessionId; })[0] || {};
-    var label = (sess.channel ? sess.channel.charAt(0).toUpperCase() + sess.channel.slice(1) : 'Session') + ' · ' + money(amount);
+    var maxAmount = Math.max(0, Number(amount || 0));
+    var label = (sess.channel ? sess.channel.charAt(0).toUpperCase() + sess.channel.slice(1) : 'Session') + ' · up to ' + money(maxAmount);
     var modal = document.createElement('div');
     modal.id = 'ob-session-refund-modal';
     modal.className = 'ob-session-refund-modal';
     modal.innerHTML =
       '<div class="ob-session-refund-dialog" role="dialog" aria-modal="true" aria-labelledby="ob-session-refund-title">' +
         '<h3 id="ob-session-refund-title">Request session refund</h3>' +
-        '<p>This sends a refund request to admin review for the paid card charge. Stripe is not touched until an admin approves it.</p>' +
+        '<p>This sends the request to admin review under the platform refund, dispute, and risk conditions. Stripe is not touched until an admin approves it.</p>' +
         '<div style="font-size:13px;font-weight:900;margin-bottom:10px;color:var(--terra);">' + esc(label) + '</div>' +
-        '<textarea id="ob-session-refund-reason" placeholder="Reason for admin review">Client requested a refund for this paid session.</textarea>' +
+        '<div class="ob-session-refund-field"><label for="ob-session-refund-amount">Refund amount</label><input id="ob-session-refund-amount" type="number" min="0.01" max="' + maxAmount.toFixed(2) + '" step="0.01" value="' + maxAmount.toFixed(2) + '"><div class="ob-session-refund-help">Use the full card charge or enter a smaller fixed amount. Admin will review before any Stripe refund is created.</div></div>' +
+        '<div class="ob-session-refund-field"><label for="ob-session-refund-reason">Reason for admin review</label><textarea id="ob-session-refund-reason" placeholder="Reason for admin review">Client requested a refund for this paid session.</textarea></div>' +
         '<div class="actions"><button type="button" class="ob-credit-btn secondary" id="ob-session-refund-cancel">Cancel</button><button type="button" class="ob-credit-btn" id="ob-session-refund-submit">Send to admin</button></div>' +
       '</div>';
     modal.addEventListener('click', function(e){ if(e.target === modal) closeDialog(); });
@@ -41273,12 +41279,15 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     if(cancel) cancel.onclick = closeDialog;
     if(submit) submit.onclick = function(){
       var reason = (document.getElementById('ob-session-refund-reason') || {}).value || '';
+      var requestedAmount = Number((document.getElementById('ob-session-refund-amount') || {}).value || 0);
       if(!reason.trim()){ notify('Add a short reason for admin review.', 'err'); return; }
+      if(!(requestedAmount > 0)){ notify('Enter a refund amount greater than $0.00.', 'err'); return; }
+      if(requestedAmount > maxAmount){ notify('Refund amount cannot exceed ' + money(maxAmount) + '.', 'err'); return; }
       submit.disabled = true;
       submit.textContent = 'Sending...';
       api('POST','/api/credits/clients/' + encodeURIComponent(clientId) + '/refund-requests', {
         session_id:sessionId,
-        amount:Number(amount || 0),
+        amount:requestedAmount,
         reason:reason
       }).then(function(result){
         closeDialog();

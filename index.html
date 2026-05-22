@@ -17616,7 +17616,7 @@ function saveWebsiteContent() {
       logo_image: document.getElementById('we-img-logo-preview')?.querySelector('img')?.src || '',
       favicon_image: document.getElementById('we-img-favicon-preview')?.querySelector('img')?.src || '',
       ai_sections: Array.isArray(existingWc.ai_sections) ? existingWc.ai_sections : [],
-      ai_pages: Array.isArray(existingWc.ai_pages) ? existingWc.ai_pages : []
+      ai_pages: window.obCollectWebsiteContentPages ? window.obCollectWebsiteContentPages(existingWc.ai_pages) : (Array.isArray(existingWc.ai_pages) ? existingWc.ai_pages : [])
     })
   };
 
@@ -17730,6 +17730,7 @@ function loadWebsiteEditor() {
     g('we-svc-chat-desc', wc.svc_chat_desc || '');
     g('we-svc-voice-desc', wc.svc_voice_desc || '');
     g('we-svc-video-desc', wc.svc_video_desc || '');
+    if(window.obLoadContentPagesEditor) window.obLoadContentPagesEditor(wc, p, u);
 
     // Accent color
     var colorEl = document.getElementById('we-accent-color');
@@ -41174,6 +41175,29 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     if(/^https?:\/\//i.test(url) || /^\/api\/media\/website\//i.test(url) || /^\/uploads\//i.test(url)) return url;
     return '';
   }
+  function requestedAiPageSlug(){
+    var path = String(location.pathname || '').replace(/^\/+|\/+$/g,'');
+    if(!path) return '';
+    var parts = path.split('/').filter(Boolean);
+    var host = String(location.hostname || '').toLowerCase();
+    var sub = host.match(/^([^.]+)\.ownlybiz\.com$/i);
+    var reserved = {home:1,about:1,services:1,reviews:1,book:1,booking:1,contact:1,account:1,login:1,signup:1,admin:1,dash:1};
+    var candidate = '';
+    if(sub && sub[1] && sub[1] !== 'www' && parts[0]) candidate = parts[0];
+    else if(parts.length > 1) candidate = parts[1];
+    candidate = safeSlug(candidate);
+    return candidate && !reserved[candidate] ? candidate : '';
+  }
+  function aiPageHref(slug){
+    slug = safeSlug(slug);
+    if(!slug) return '#';
+    var host = String(location.hostname || '').toLowerCase();
+    var sub = host.match(/^([^.]+)\.ownlybiz\.com$/i);
+    if(sub && sub[1] && sub[1] !== 'www') return '/' + slug;
+    var expertSlug = (window._currentExpert && (window._currentExpert.slug || window._currentExpert.user_slug)) || window._browseExpert || '';
+    expertSlug = safeSlug(expertSlug) || String(location.pathname || '').replace(/^\/+|\/+$/g,'').split('/')[0] || '';
+    return '/' + expertSlug + '/' + slug;
+  }
   function parseWebsiteContent(data){
     try { return typeof data.website_content === 'string' ? JSON.parse(data.website_content || '{}') : (data.website_content || {}); }
     catch(e){ return {}; }
@@ -41204,12 +41228,17 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       wrap.innerHTML = homeSections.map(sectionHtml).join('');
       home.appendChild(wrap);
     }
-    var pages = Array.isArray(wc.ai_pages) ? wc.ai_pages : [];
+    var pages = (Array.isArray(wc.ai_pages) ? wc.ai_pages : []).filter(function(page){
+      return page && page.published !== false && page.published !== 0 && page.published !== '0';
+    });
     var parent = document.getElementById('view-4') || document.body;
     var before = document.getElementById('ep-book');
+    var requestedSlug = requestedAiPageSlug();
+    var hasRequestedPage = false;
     pages.forEach(function(page){
       var slug = safeSlug(page.slug);
       if(!slug) return;
+      if(slug === requestedSlug) hasRequestedPage = true;
       var pageEl = document.createElement('div');
       pageEl.className = 'expert-page ob-ai-custom-page';
       pageEl.id = 'ep-ai-' + slug;
@@ -41218,15 +41247,20 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       pageEl.innerHTML = '<div class="expert-page-hero"><h1>'+esc(page.title || page.nav_label || slug)+'</h1>'+(page.summary ? '<p>'+esc(page.summary)+'</p>' : '')+'</div>' + pageSections.map(sectionHtml).join('');
       if(before && before.parentNode) before.parentNode.insertBefore(pageEl, before);
       else parent.appendChild(pageEl);
+      if(page.meta_title || page.meta_description){
+        pageEl.dataset.metaTitle = page.meta_title || page.title || '';
+        pageEl.dataset.metaDescription = page.meta_description || page.summary || '';
+      }
       var links = document.getElementById('expert-site-links');
-      if(links){
+      if(links && page.show_in_nav !== false && page.show_in_nav !== 0 && page.show_in_nav !== '0'){
         var li = document.createElement('li');
-        li.innerHTML = '<a data-ai-page-link="'+esc(slug)+'" onclick="showExpertPage(\'ai-'+esc(slug)+'\')">'+esc(page.nav_label || page.title || slug)+'</a>';
+        li.innerHTML = '<a href="'+esc(aiPageHref(slug))+'" data-ai-page-link="'+esc(slug)+'" onclick="event.preventDefault();showExpertPage(\'ai-'+esc(slug)+'\')">'+esc(page.nav_label || page.title || slug)+'</a>';
         var bookLink = Array.prototype.slice.call(links.querySelectorAll('li')).find(function(item){ return String(item.innerHTML || '').indexOf("'book'") >= 0; });
         if(bookLink) links.insertBefore(li, bookLink);
         else links.appendChild(li);
       }
     });
+    if(hasRequestedPage) setTimeout(function(){ showExpertPage('ai-' + requestedSlug); }, 30);
   }
 
   function wireAdmin(){
@@ -41283,6 +41317,404 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   try { new MutationObserver(function(){ clearTimeout(window.__obAiWebsiteBootTimer); window.__obAiWebsiteBootTimer = setTimeout(boot,120); }).observe(document.documentElement,{childList:true,subtree:true}); } catch(e) {}
 })();
 </script>
+
+<script id="ownlybiz-content-pages-editor-20260522">
+(function(){
+  var state = { pages: [], active: '', allowed: false, plan: 'starter', expertSlug: '' };
+  var reservedSlugs = {home:1,about:1,services:1,reviews:1,book:1,booking:1,contact:1,account:1,admin:1,api:1,app:1,auth:1,billing:1,checkout:1,connect:1,dash:1,dashboard:1,login:1,logout:1,payment:1,payments:1,pricing:1,session:1,sessions:1,signup:1,stripe:1,support:1,wallet:1};
+  var templateLabels = {
+    content: 'Content page',
+    article: 'Article',
+    guide: 'Guide',
+    faq: 'FAQ',
+    resource: 'Resource page'
+  };
+
+  function esc(value){
+    return String(value == null ? '' : value).replace(/[&<>"']/g,function(c){
+      return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+    });
+  }
+  function text(value, max){
+    return String(value || '').replace(/[<>]/g,'').replace(/\u0000/g,'').trim().slice(0, max || 5000);
+  }
+  function line(value, max){
+    return text(value, max || 160).replace(/\s+/g,' ').trim();
+  }
+  function slugify(value){
+    return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,64);
+  }
+  function planAllowed(plan){
+    plan = String(plan || '').toLowerCase();
+    return plan === 'pro' || plan === 'scale';
+  }
+  function pageLimit(){
+    return String(state.plan || '').toLowerCase() === 'scale' ? 20 : 8;
+  }
+  function uniqueSlug(base, currentId){
+    base = slugify(base) || 'page';
+    if(reservedSlugs[base]) base += '-page';
+    var existing = {};
+    state.pages.forEach(function(page){
+      if(page.id !== currentId && page.slug) existing[page.slug] = 1;
+    });
+    var candidate = base;
+    var i = 2;
+    while(existing[candidate]){
+      candidate = base + '-' + i;
+      i += 1;
+    }
+    return candidate;
+  }
+  function pageUrl(slug){
+    slug = slugify(slug);
+    if(!slug) return '';
+    var host = String(location.hostname || '').toLowerCase();
+    var sub = host.match(/^([^.]+)\.ownlybiz\.com$/i);
+    if(sub && sub[1] && sub[1] !== 'www') return '/' + slug;
+    var expertSlug = slugify(state.expertSlug || window._browseExpert || (window._currentExpert && window._currentExpert.slug) || 'expert-slug');
+    return '/' + expertSlug + '/' + slug;
+  }
+  function defaultForTemplate(type){
+    type = templateLabels[type] ? type : 'content';
+    if(type === 'article') return {
+      template: 'article',
+      title: 'New Article',
+      nav_label: 'Article',
+      summary: 'A short introduction that tells visitors what they will learn.',
+      sections: [{ id:'main', type:'story', title:'Article', body:'Write the full article here. Use clear sections, practical examples, and a useful takeaway at the end.', items:[] }],
+      meta_title: '',
+      meta_description: ''
+    };
+    if(type === 'guide') return {
+      template: 'guide',
+      title: 'New Guide',
+      nav_label: 'Guide',
+      summary: 'A practical guide for clients who want to understand this topic before booking.',
+      sections: [{ id:'main', type:'list', title:'Guide overview', body:'Explain the topic in a structured way. Add steps, examples, or common mistakes below.', items:['Step 1: Describe the first useful action','Step 2: Add the next important point','Step 3: Invite visitors to book if they want personal help'] }],
+      meta_title: '',
+      meta_description: ''
+    };
+    if(type === 'faq') return {
+      template: 'faq',
+      title: 'Frequently Asked Questions',
+      nav_label: 'FAQ',
+      summary: 'Answers to common questions before booking a session.',
+      sections: [{ id:'main', type:'faq', title:'Common questions', body:'Use each line below for one question or answer point.', items:['What should I prepare before a session?','How do live sessions work?','Which session type should I choose?'] }],
+      meta_title: '',
+      meta_description: ''
+    };
+    if(type === 'resource') return {
+      template: 'resource',
+      title: 'Resources',
+      nav_label: 'Resources',
+      summary: 'Helpful links, notes, or materials for visitors and clients.',
+      sections: [{ id:'main', type:'resource', title:'Recommended resources', body:'Add context for the resources you share here.', items:['Resource or note 1','Resource or note 2','Resource or note 3'] }],
+      meta_title: '',
+      meta_description: ''
+    };
+    return {
+      template: 'content',
+      title: 'New Page',
+      nav_label: 'Page',
+      summary: 'A short subtitle for this page.',
+      sections: [{ id:'main', type:'story', title:'Main content', body:'Write the main page content here. Keep it clear, specific, and useful for visitors.', items:[] }],
+      meta_title: '',
+      meta_description: ''
+    };
+  }
+  function normalizePage(page, idx){
+    page = page || defaultForTemplate('content');
+    var firstSection = Array.isArray(page.sections) && page.sections[0] ? page.sections[0] : {};
+    var id = page.id || ('page-' + Date.now() + '-' + idx);
+    var title = line(page.title, 140) || 'Untitled page';
+    var slug = slugify(page.slug) || slugify(title) || ('page-' + (idx + 1));
+    if(reservedSlugs[slug]) slug += '-page';
+    return {
+      id: id,
+      template: templateLabels[page.template] ? page.template : 'content',
+      published: page.published !== false && page.published !== 0 && page.published !== '0',
+      show_in_nav: page.show_in_nav !== false && page.show_in_nav !== 0 && page.show_in_nav !== '0',
+      title: title,
+      slug: slug,
+      nav_label: line(page.nav_label, 40) || title.slice(0,40),
+      summary: text(page.summary, 700),
+      meta_title: line(page.meta_title, 70),
+      meta_description: line(page.meta_description, 180),
+      sections: [{
+        id: slug + '-main',
+        target_page: slug,
+        type: firstSection.type || (page.template === 'faq' ? 'faq' : 'story'),
+        title: line(firstSection.title, 140),
+        body: text(firstSection.body, 5000),
+        items: Array.isArray(firstSection.items) ? firstSection.items.map(function(item){ return text(item, 320); }).filter(Boolean) : [],
+        cta_label: line(firstSection.cta_label, 80),
+        cta_page: slugify(firstSection.cta_page),
+        image_url: line(firstSection.image_url, 900)
+      }]
+    };
+  }
+  function ensureEditor(){
+    if(document.getElementById('ob-content-pages-card')) return;
+    var firstPagesCard = document.querySelector('.we-tab-card[data-we-tab="pages"]');
+    if(!firstPagesCard || !firstPagesCard.parentNode) return;
+    var card = document.createElement('div');
+    card.id = 'ob-content-pages-card';
+    card.className = 'db-card we-tab-card';
+    card.setAttribute('data-we-tab','pages');
+    card.style.cssText = 'margin-bottom:16px;padding:24px;';
+    card.innerHTML =
+      '<div class="ob-cp-head">' +
+        '<div><div class="ob-cp-title">Content Pages</div><div class="ob-cp-sub">Add articles, guides, FAQs, resources, or any custom page for your public expert site.</div></div>' +
+        '<div class="ob-cp-actions"><select id="ob-cp-template-picker" class="settings-field-input ob-cp-template"><option value="content">Content page</option><option value="article">Article</option><option value="guide">Guide</option><option value="faq">FAQ</option><option value="resource">Resource page</option></select><button type="button" class="btn btn-primary btn-sm" id="ob-cp-add-btn" onclick="obAddContentPage()">Add Page</button></div>' +
+      '</div>' +
+      '<div id="ob-cp-locked" class="ob-cp-locked" style="display:none;"><strong>Pro / Scale feature</strong><span>Custom content pages are available on Pro and Scale plans. Starter experts can still edit the standard Home, About, Services, Reviews, and Contact pages.</span></div>' +
+      '<div id="ob-cp-manager" class="ob-cp-manager">' +
+        '<div class="ob-cp-list-wrap"><div class="ob-cp-list-top"><span id="ob-cp-count">0 pages</span><span id="ob-cp-limit">Pro limit: 8</span></div><div id="ob-cp-list" class="ob-cp-list"></div></div>' +
+        '<div id="ob-cp-editor" class="ob-cp-editor"></div>' +
+      '</div>';
+    firstPagesCard.parentNode.insertBefore(card, firstPagesCard.nextSibling);
+    if((window._obCurrentWeTab || '') === 'pages') card.classList.add('we-tab-visible');
+  }
+  function render(){
+    ensureEditor();
+    var card = document.getElementById('ob-content-pages-card');
+    if(!card) return;
+    var locked = document.getElementById('ob-cp-locked');
+    var manager = document.getElementById('ob-cp-manager');
+    var addBtn = document.getElementById('ob-cp-add-btn');
+    if(locked) locked.style.display = state.allowed ? 'none' : 'grid';
+    if(manager) manager.style.display = state.allowed ? 'grid' : 'none';
+    if(addBtn) addBtn.disabled = !state.allowed || state.pages.length >= pageLimit();
+    var limit = document.getElementById('ob-cp-limit');
+    if(limit) limit.textContent = (String(state.plan).toLowerCase() === 'scale' ? 'Scale' : 'Pro') + ' limit: ' + pageLimit();
+    renderList();
+    renderEditor();
+  }
+  function renderList(){
+    var count = document.getElementById('ob-cp-count');
+    if(count) count.textContent = state.pages.length + ' page' + (state.pages.length === 1 ? '' : 's');
+    var list = document.getElementById('ob-cp-list');
+    if(!list) return;
+    if(!state.pages.length){
+      list.innerHTML = '<div class="ob-cp-empty">No custom pages yet. Choose a template and add your first page.</div>';
+      return;
+    }
+    list.innerHTML = state.pages.map(function(page, idx){
+      var active = page.id === state.active ? ' active' : '';
+      var status = page.published ? (page.show_in_nav ? 'Published in nav' : 'Published, hidden from nav') : 'Draft';
+      return '<button type="button" class="ob-cp-list-item'+active+'" onclick="obSelectContentPage(\''+esc(page.id)+'\')">' +
+        '<span><strong>'+esc(page.nav_label || page.title)+'</strong><small>/'+esc(page.slug || '')+' · '+esc(templateLabels[page.template] || 'Page')+'</small></span>' +
+        '<em>'+esc(status)+'</em>' +
+      '</button>';
+    }).join('');
+  }
+  function activePage(){
+    return state.pages.find(function(page){ return page.id === state.active; }) || state.pages[0] || null;
+  }
+  function renderEditor(){
+    var editor = document.getElementById('ob-cp-editor');
+    if(!editor) return;
+    var page = activePage();
+    if(!page){
+      editor.innerHTML = '<div class="ob-cp-empty tall">Select a template and click Add Page.</div>';
+      return;
+    }
+    state.active = page.id;
+    var section = page.sections && page.sections[0] ? page.sections[0] : {title:'',body:'',items:[]};
+    editor.innerHTML =
+      '<div class="ob-cp-editor-top">' +
+        '<div><strong>Edit Page</strong><span>'+esc(pageUrl(page.slug))+'</span></div>' +
+        '<div class="ob-cp-mini-actions"><button type="button" onclick="obMoveContentPage(-1)">Up</button><button type="button" onclick="obMoveContentPage(1)">Down</button><button type="button" onclick="obDuplicateContentPage()">Duplicate</button><button type="button" class="danger" onclick="obDeleteContentPage()">Delete</button></div>' +
+      '</div>' +
+      '<div class="ob-cp-grid two">' +
+        field('Template','<select class="settings-field-input" onchange="obContentPageField(&quot;template&quot;,this.value)">'+Object.keys(templateLabels).map(function(key){ return '<option value="'+key+'"'+(page.template===key?' selected':'')+'>'+templateLabels[key]+'</option>'; }).join('')+'</select>') +
+        field('URL slug','<input class="settings-field-input" value="'+esc(page.slug)+'" oninput="obContentPageField(&quot;slug&quot;,this.value)" placeholder="my-page-slug">') +
+      '</div>' +
+      '<div class="ob-cp-grid two compact">' +
+        '<label class="ob-cp-check"><input type="checkbox" '+(page.published?'checked':'')+' onchange="obContentPageField(&quot;published&quot;,this.checked)">Published</label>' +
+        '<label class="ob-cp-check"><input type="checkbox" '+(page.show_in_nav?'checked':'')+' onchange="obContentPageField(&quot;show_in_nav&quot;,this.checked)">Show in navigation</label>' +
+      '</div>' +
+      field('Page title','<input class="settings-field-input" value="'+esc(page.title)+'" oninput="obContentPageField(&quot;title&quot;,this.value)" placeholder="Page title">') +
+      field('Navigation label','<input class="settings-field-input" value="'+esc(page.nav_label)+'" oninput="obContentPageField(&quot;nav_label&quot;,this.value)" placeholder="Short menu label">') +
+      field('Subtitle / intro','<textarea class="settings-field-input" rows="3" oninput="obContentPageField(&quot;summary&quot;,this.value)" placeholder="Short intro shown below the page title">'+esc(page.summary)+'</textarea>') +
+      field('Main content heading','<input class="settings-field-input" value="'+esc(section.title || '')+'" oninput="obContentPageSectionField(&quot;title&quot;,this.value)" placeholder="Main section heading">') +
+      field('Main content','<textarea class="settings-field-input ob-cp-main" rows="10" oninput="obContentPageSectionField(&quot;body&quot;,this.value)" placeholder="Write the full article, guide, content page, or resource copy here.">'+esc(section.body || '')+'</textarea>') +
+      field('Key points / FAQ items','<textarea class="settings-field-input" rows="5" oninput="obContentPageSectionField(&quot;items&quot;,this.value)" placeholder="One point per line. Useful for FAQs, guides, and resource pages.">'+esc((section.items || []).join('\\n'))+'</textarea>') +
+      '<div class="ob-cp-grid two">' +
+        field('SEO title','<input class="settings-field-input" value="'+esc(page.meta_title || '')+'" oninput="obContentPageField(&quot;meta_title&quot;,this.value)" maxlength="70" placeholder="Optional search title">') +
+        field('SEO description','<textarea class="settings-field-input" rows="2" oninput="obContentPageField(&quot;meta_description&quot;,this.value)" maxlength="180" placeholder="Optional search description">'+esc(page.meta_description || '')+'</textarea>') +
+      '</div>';
+  }
+  function field(label, inputHtml){
+    return '<label class="ob-cp-field"><span>'+esc(label)+'</span>'+inputHtml+'</label>';
+  }
+  function setActive(id){
+    state.active = id;
+    render();
+  }
+  window.obSelectContentPage = function(id){ setActive(id); };
+  window.obAddContentPage = function(){
+    if(!state.allowed) return;
+    if(state.pages.length >= pageLimit()){
+      if(typeof _showToast === 'function') _showToast('Page limit reached for this plan','red');
+      return;
+    }
+    var picker = document.getElementById('ob-cp-template-picker');
+    var page = normalizePage(defaultForTemplate(picker ? picker.value : 'content'), state.pages.length);
+    page.id = 'page-' + Date.now();
+    page.slug = uniqueSlug(page.slug || page.title, page.id);
+    state.pages.push(page);
+    state.active = page.id;
+    render();
+  };
+  window.obDeleteContentPage = function(){
+    var page = activePage();
+    if(!page) return;
+    if(!confirm('Delete this page?')) return;
+    state.pages = state.pages.filter(function(item){ return item.id !== page.id; });
+    state.active = state.pages[0] ? state.pages[0].id : '';
+    render();
+  };
+  window.obDuplicateContentPage = function(){
+    var page = activePage();
+    if(!page || state.pages.length >= pageLimit()) return;
+    var copy = normalizePage(JSON.parse(JSON.stringify(page)), state.pages.length);
+    copy.id = 'page-' + Date.now();
+    copy.title = copy.title + ' Copy';
+    copy.slug = uniqueSlug(copy.slug + '-copy', copy.id);
+    copy.nav_label = line(copy.nav_label + ' Copy', 40);
+    state.pages.push(copy);
+    state.active = copy.id;
+    render();
+  };
+  window.obMoveContentPage = function(direction){
+    var idx = state.pages.findIndex(function(page){ return page.id === state.active; });
+    var next = idx + direction;
+    if(idx < 0 || next < 0 || next >= state.pages.length) return;
+    var tmp = state.pages[idx];
+    state.pages[idx] = state.pages[next];
+    state.pages[next] = tmp;
+    render();
+  };
+  window.obContentPageField = function(fieldName, value){
+    var page = activePage();
+    if(!page) return;
+    if(fieldName === 'slug') page.slug = uniqueSlug(value, page.id);
+    else if(fieldName === 'template') page.template = templateLabels[value] ? value : 'content';
+    else if(fieldName === 'published' || fieldName === 'show_in_nav') page[fieldName] = !!value;
+    else {
+      page[fieldName] = value;
+      if(fieldName === 'title' && (!page.slug || /^new-(page|article|guide)$/.test(page.slug))) page.slug = uniqueSlug(value, page.id);
+      if(fieldName === 'title' && (!page.nav_label || ['Page','Article','Guide'].indexOf(page.nav_label) >= 0)) page.nav_label = line(value, 40);
+    }
+    renderList();
+    var top = document.querySelector('#ob-cp-editor .ob-cp-editor-top span');
+    if(top) top.textContent = pageUrl(page.slug);
+  };
+  window.obContentPageSectionField = function(fieldName, value){
+    var page = activePage();
+    if(!page) return;
+    page.sections = page.sections || [{ id: page.slug + '-main', target_page: page.slug, type: 'story', title: '', body: '', items: [] }];
+    var section = page.sections[0];
+    if(fieldName === 'items') section.items = String(value || '').split('\n').map(function(item){ return text(item, 320); }).filter(Boolean);
+    else section[fieldName] = value;
+  };
+  window.obCollectWebsiteContentPages = function(existingPages){
+    if(!state.allowed) return Array.isArray(existingPages) ? existingPages : [];
+    return state.pages.map(function(page, idx){
+      var normalized = normalizePage(page, idx);
+      normalized.slug = uniqueSlug(normalized.slug, page.id);
+      normalized.sections = (normalized.sections || []).map(function(section){
+        section.target_page = normalized.slug;
+        section.id = normalized.slug + '-main';
+        return section;
+      });
+      return normalized;
+    });
+  };
+  window.obLoadContentPagesEditor = function(wc, profile, user){
+    ensureEditor();
+    profile = profile || {};
+    user = user || {};
+    state.plan = String(profile.subscription_plan || 'starter').toLowerCase();
+    state.allowed = planAllowed(state.plan);
+    state.expertSlug = profile.slug || user.slug || window._browseExpert || '';
+    state.pages = (Array.isArray(wc && wc.ai_pages) ? wc.ai_pages : []).map(normalizePage);
+    state.active = state.pages[0] ? state.pages[0].id : '';
+    render();
+  };
+  function wrapShowExpertPage(){
+    if(typeof window.showExpertPage !== 'function' || window.showExpertPage.__obContentPagesWrapped) return;
+    var old = window.showExpertPage;
+    window.showExpertPage = function(page){
+      var result = old.apply(this, arguments);
+      if(String(page || '').indexOf('ai-') === 0){
+        var el = document.getElementById('ep-' + page);
+        if(el){
+          if(el.dataset.metaTitle) document.title = el.dataset.metaTitle;
+          var desc = document.querySelector('meta[name="description"]');
+          if(desc && el.dataset.metaDescription) desc.setAttribute('content', el.dataset.metaDescription);
+        }
+      }
+      return result;
+    };
+    window.showExpertPage.__obContentPagesWrapped = true;
+  }
+  function boot(){
+    ensureEditor();
+    wrapShowExpertPage();
+  }
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+  [400,1200,2600].forEach(function(ms){ setTimeout(boot, ms); });
+})();
+</script>
+
+<style id="ownlybiz-content-pages-editor-20260522-css">
+  #ob-content-pages-card .ob-cp-head{align-items:flex-start;display:flex;gap:16px;justify-content:space-between;margin-bottom:18px;}
+  #ob-content-pages-card .ob-cp-title{color:var(--brown);font-size:15px;font-weight:800;}
+  #ob-content-pages-card .ob-cp-sub{color:var(--gray-400);font-size:12px;line-height:1.45;margin-top:3px;}
+  #ob-content-pages-card .ob-cp-actions{align-items:center;display:flex;gap:8px;flex-wrap:wrap;}
+  #ob-content-pages-card .ob-cp-template{font-size:13px;min-height:36px;width:150px;}
+  #ob-content-pages-card .ob-cp-locked{background:rgba(196,98,45,.08);border:1px solid rgba(196,98,45,.22);border-radius:14px;color:var(--brown);gap:4px;padding:16px;}
+  #ob-content-pages-card .ob-cp-locked strong{font-size:14px;}
+  #ob-content-pages-card .ob-cp-locked span{color:var(--gray-400);font-size:12px;line-height:1.55;}
+  #ob-content-pages-card .ob-cp-manager{display:grid;gap:16px;grid-template-columns:minmax(210px,280px) 1fr;}
+  #ob-content-pages-card .ob-cp-list-wrap{border:1px solid var(--gray-200);border-radius:14px;overflow:hidden;}
+  #ob-content-pages-card .ob-cp-list-top{align-items:center;background:var(--cream);border-bottom:1px solid var(--gray-200);color:var(--gray-400);display:flex;font-size:11px;font-weight:800;justify-content:space-between;padding:10px 12px;text-transform:uppercase;}
+  #ob-content-pages-card .ob-cp-list{display:grid;gap:0;}
+  #ob-content-pages-card .ob-cp-list-item{background:var(--white);border:0;border-bottom:1px solid var(--gray-100);color:var(--brown);cursor:pointer;display:flex;font:inherit;gap:10px;justify-content:space-between;padding:12px;text-align:left;width:100%;}
+  #ob-content-pages-card .ob-cp-list-item.active{background:rgba(196,98,45,.09);}
+  #ob-content-pages-card .ob-cp-list-item strong{display:block;font-size:13px;margin-bottom:3px;}
+  #ob-content-pages-card .ob-cp-list-item small{color:var(--gray-400);display:block;font-size:11px;line-height:1.35;}
+  #ob-content-pages-card .ob-cp-list-item em{color:var(--terra);font-size:10px;font-style:normal;font-weight:800;white-space:nowrap;}
+  #ob-content-pages-card .ob-cp-empty{align-items:center;color:var(--gray-400);display:flex;font-size:13px;justify-content:center;line-height:1.5;min-height:92px;padding:16px;text-align:center;}
+  #ob-content-pages-card .ob-cp-empty.tall{background:var(--cream);border:1px dashed var(--gray-200);border-radius:14px;min-height:240px;}
+  #ob-content-pages-card .ob-cp-editor{border:1px solid var(--gray-200);border-radius:14px;display:grid;gap:14px;padding:16px;}
+  #ob-content-pages-card .ob-cp-editor-top{align-items:flex-start;display:flex;gap:12px;justify-content:space-between;}
+  #ob-content-pages-card .ob-cp-editor-top strong{color:var(--brown);display:block;font-size:14px;}
+  #ob-content-pages-card .ob-cp-editor-top span{color:var(--terra);display:block;font-size:12px;margin-top:3px;}
+  #ob-content-pages-card .ob-cp-mini-actions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;}
+  #ob-content-pages-card .ob-cp-mini-actions button{background:var(--cream);border:1px solid var(--gray-200);border-radius:8px;color:var(--brown);cursor:pointer;font-size:11px;font-weight:800;padding:7px 9px;}
+  #ob-content-pages-card .ob-cp-mini-actions button.danger{color:#b42318;}
+  #ob-content-pages-card .ob-cp-grid{display:grid;gap:12px;}
+  #ob-content-pages-card .ob-cp-grid.two{grid-template-columns:1fr 1fr;}
+  #ob-content-pages-card .ob-cp-grid.compact{align-items:center;grid-template-columns:repeat(2,minmax(0,1fr));}
+  #ob-content-pages-card .ob-cp-field{display:grid;gap:6px;}
+  #ob-content-pages-card .ob-cp-field>span{color:var(--gray-400);font-size:11px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;}
+  #ob-content-pages-card textarea.settings-field-input{min-height:0;}
+  #ob-content-pages-card .ob-cp-main{min-height:170px;}
+  #ob-content-pages-card .ob-cp-check{align-items:center;background:var(--cream);border:1px solid var(--gray-200);border-radius:10px;color:var(--brown);display:flex;font-size:13px;font-weight:700;gap:8px;padding:10px 12px;}
+  @media(max-width:760px){
+    #ob-content-pages-card .ob-cp-head,
+    #ob-content-pages-card .ob-cp-actions,
+    #ob-content-pages-card .ob-cp-editor-top{display:grid;}
+    #ob-content-pages-card .ob-cp-manager,
+    #ob-content-pages-card .ob-cp-grid.two,
+    #ob-content-pages-card .ob-cp-grid.compact{grid-template-columns:1fr;}
+    #ob-content-pages-card .ob-cp-template{width:100%;}
+  }
+</style>
 
 <style id="ob-ai-friendly-settings-20260517-css">
   .ob-ai-friendly { display:grid; gap:18px; }

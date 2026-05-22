@@ -13210,7 +13210,10 @@ async function savePaymentConfig() {
         if(d.session?.channel) window._obPendingChannel = d.session.channel;
         WS.send({type:'join',session_id:d.session.id});
         toast('Session started! 🚀');
-        if(typeof window.openClientChat==='function') {
+        if(Auth.isExpert && typeof window.openExpertLivePanel==='function') {
+          window._obActiveSessId = d.session.id;
+          window.openExpertLivePanel(d.session.id);
+        } else if(typeof window.openClientChat==='function') {
           window.openClientChat(d.session.id);
         } else if(typeof _launchSession==='function') {
           _launchSession(true);
@@ -18633,7 +18636,9 @@ body.expert-page #mob-cta-bar{display:none!important;}
         if(sess.status==='active'){
           stopStatusPoll();
           var ov=document.getElementById('ob-waiting-overlay');if(ov)ov.classList.remove('show');
-          _sessId=sid;window._obActiveSessId=sid;openClientChat(sid);
+          _sessId=sid;window._obActiveSessId=sid;
+          if(typeof myRole==='function'&&myRole()==='expert'&&typeof openExpertLivePanel==='function')openExpertLivePanel(sid);
+          else openClientChat(sid);
         }else if(sess.status==='declined'){
           stopStatusPoll();
           var ov2=document.getElementById('ob-waiting-overlay');if(ov2)ov2.classList.remove('show');
@@ -18654,7 +18659,7 @@ body.expert-page #mob-cta-bar{display:none!important;}
         var ov=document.getElementById('ob-waiting-overlay');if(ov)ov.classList.remove('show');
         if(d.session && typeof window.obCreditRememberSessionMode === 'function') window.obCreditRememberSessionMode(d.session);
         _sessId=sid;window._obActiveSessId=sid;
-        if(role==='expert'){openExpertLivePanel(sid);}else{openClientChat(sid);}
+        if(role==='expert'||(/^\/dash\//.test(location.pathname||'')&&typeof openExpertLivePanel==='function')){openExpertLivePanel(sid);}else{openClientChat(sid);}
       }
     }
 	    if(d.type==='session_declined'||d.type==='session_expired'){
@@ -22792,6 +22797,20 @@ window._handleRTCMessage=function(d){
   }
   function myId(){ try { return JSON.parse(atob(tok().split('.')[1])).id; } catch(e) { return null; } }
   function role(){ try { return (JSON.parse(sessionStorage.getItem('ob_u') || localStorage.getItem('ob_u') || '{}').role || '').toLowerCase(); } catch(e) { return ''; } }
+  function isExpertSessionContext(roleName){
+    return roleName === 'expert' || role() === 'expert' || /^\/dash\//.test(location.pathname || '');
+  }
+  function routeAcceptedSessionByRole(sid, roleName){
+    if(!sid) return;
+    window._obActiveSessId = sid;
+    if(isExpertSessionContext(roleName) && typeof window.openExpertLivePanel === 'function'){
+      window._sid = sid;
+      window._sessId = sid;
+      window.openExpertLivePanel(sid);
+      return;
+    }
+    if(typeof window.openClientChat === 'function') window.openClientChat(sid);
+  }
   function esc(s){ var d=document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; }
   function num(v, fallback){ var n=parseFloat(v); return isFinite(n) ? n : (fallback || 0); }
   function int(v, fallback){ var n=parseInt(v, 10); return isFinite(n) ? n : (fallback || 0); }
@@ -23333,12 +23352,12 @@ window._handleRTCMessage=function(d){
       window._obActiveSessId = sid;
       if(d.session) window._obClientSessionSnapshot = d.session;
       if(d.session && typeof window.obCreditRememberSessionMode === 'function') window.obCreditRememberSessionMode(d.session);
-      if(roleName !== 'expert') window.openClientChat(sid);
+      routeAcceptedSessionByRole(sid, roleName);
       handled = true;
     }
     if(d.type === 'booking_session_started' && (d.session_id || d.sessionId)){
       window._obPendingChannel = (d.channel || 'chat').toLowerCase();
-      window.openClientChat(d.session_id || d.sessionId);
+      routeAcceptedSessionByRole(d.session_id || d.sessionId, roleName);
       handled = true;
     }
     if(d.type === 'message'){
@@ -23539,6 +23558,12 @@ window._handleRTCMessage=function(d){
   }
   window.openClientChat = function(sid){
     if(!sid) return;
+    if(isExpertSessionContext('') && typeof window.openExpertLivePanel === 'function'){
+      window._sid = sid;
+      window._sessId = sid;
+      window._obActiveSessId = sid;
+      return window.openExpertLivePanel(sid);
+    }
     if(clientRecentlyEndedLocal(sid)) return;
     if(window._obClientEndingSid && sid !== window._obClientEndingSid) clearClientEndingState();
     if(!/[?&]booking=/.test(location.search)) document.documentElement.classList.remove('ob-session-boot');

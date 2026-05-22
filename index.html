@@ -22719,7 +22719,7 @@ window._handleRTCMessage=function(d){
 	      window.openExpertLivePanel = criticalOpenExpertLivePanel;
 	    }
 	    if(window.sendExpertMsg !== criticalSendExpertMsg) window.sendExpertMsg = criticalSendExpertMsg;
-	    // The final staging flow stabilizer owns showSessionRequest. Reinstalling
+	    // The final live-flow stabilizer owns showSessionRequest. Reinstalling
 	    // this older wrapper after it loads creates a recursive wrapper loop.
 	    if(window.adminNav !== criticalAdminNav){
 	      _origAdminNavCritical = window.adminNav;
@@ -32191,7 +32191,7 @@ body:has(#view-2.active) .privacy-consent.active{
 })();
 </script>
 <style id="ownlybiz-v3-contrast-click-finalizer">
-/* Final staging redesign guardrails: keep the new visual language readable without touching payment/session logic. */
+/* Final redesign guardrails: keep the new visual language readable without touching payment/session logic. */
 #view-4 :where(.cat-btn-icon,.channel-toggle-icon,.page-card-icon,.model-card-icon,.billing-icon,.type-emoji,.rate-config-icon,.stype-btn-icon,.service-option-icon,.pay-proc-icon,.contact-info-icon,.receipt-icon,.conf-icon,.cred-icon)[data-ob-line-icon],
 #view-4 .stype-btn-icon{
   font-size:0!important;
@@ -40222,8 +40222,16 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   }
   function adminAiHtml(config){
     config = config || {};
+    window.__obAiAdminConfig = config;
     var enabled = !!config.enabled;
     var hasKey = !!config.api_key_saved;
+    var editor = config.editor || {};
+    var providers = Array.isArray(editor.providers) ? editor.providers : [];
+    var routes = editor.feature_routes || {};
+    var chatRoute = routes.ai_chat || 'master_text';
+    var chatProvider = providers.find(function(p){ return p && p.id === chatRoute; }) || {};
+    var chatCustom = chatRoute === 'ai_chat_text';
+    var chatHasKey = !!chatProvider.api_key_saved;
     return '<div class="ob-ai-admin-wrap">' +
       '<div class="ob-ai-admin-hero"><h1>AI</h1><p>Configure the production AI assistant for experts. This release deploys the dashboard helper only; site-editing automation remains off production until a separate approval.</p></div>' +
       '<div class="ob-ai-admin-grid">' +
@@ -40235,6 +40243,13 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
           '<div class="ob-ai-admin-row"><label for="ai-api-key">API key or token</label><input id="ai-api-key" type="password" value="" placeholder="'+(hasKey?'Saved on server':'Provider API key or token')+'" autocomplete="new-password"></div>' +
           '<div class="ob-ai-admin-two"><div class="ob-ai-admin-row"><label for="ai-temperature">Temperature</label><input id="ai-temperature" type="number" min="0" max="1.5" step="0.1" value="'+esc(config.temperature == null ? 0.2 : config.temperature)+'"></div><div class="ob-ai-admin-row"><label for="ai-max-tokens">Max tokens</label><input id="ai-max-tokens" type="number" min="200" max="2000" step="50" value="'+esc(config.max_tokens || 700)+'"></div></div>' +
           '<div class="ob-ai-admin-row"><label for="ai-system-instructions">Admin guidance for answers</label><textarea id="ai-system-instructions" placeholder="Optional extra guidance experts are allowed to know. Do not paste secrets.">'+esc(config.system_instructions || '')+'</textarea></div>' +
+          '<div style="height:1px;background:rgba(255,250,240,.12);margin:18px 0;"></div>' +
+          '<h2>AI Chat Feature</h2><p>Use a dedicated model/token for live AI chat replies, or leave this on Master AI so chat falls back to the main provider above.</p>' +
+          '<div class="ob-ai-admin-row"><label for="ai-chat-source">AI chat source</label><select id="ai-chat-source"><option value="master" '+(!chatCustom?'selected':'')+'>Use Master AI fallback</option><option value="custom" '+(chatCustom?'selected':'')+'>Use separate AI Chat model/token</option></select></div>' +
+          '<div class="ob-ai-admin-two"><div class="ob-ai-admin-row"><label for="ai-chat-provider-type">AI chat provider</label><select id="ai-chat-provider-type">'+providerTypeOptions(chatProvider.provider_type || config.provider_type)+'</select></div><div class="ob-ai-admin-row"><label for="ai-chat-model">AI chat model</label><input id="ai-chat-model" value="'+esc(chatProvider.model || config.model || 'gpt-4o-mini')+'" placeholder="gpt-4o-mini"></div></div>' +
+          '<div class="ob-ai-admin-row"><label for="ai-chat-base-url">AI chat endpoint URL</label><input id="ai-chat-base-url" value="'+esc(chatProvider.base_url || config.base_url || 'https://api.openai.com/v1/chat/completions')+'" placeholder="https://api.openai.com/v1/chat/completions" autocomplete="off"></div>' +
+          '<div class="ob-ai-admin-row"><label for="ai-chat-api-key">AI chat API key or token</label><input id="ai-chat-api-key" type="password" value="" placeholder="'+(chatHasKey?'Saved on server':'Leave empty to keep using Master AI')+'" autocomplete="new-password"></div>' +
+          '<div class="ob-ai-admin-actions"><button class="ob-ai-admin-btn secondary" type="button" onclick="testAdminAiChatConfig()">Test AI chat model</button></div>' +
           '<div class="ob-ai-admin-actions"><button class="ob-ai-admin-btn primary" type="button" onclick="saveAdminAiConfig()">Save AI config</button><button class="ob-ai-admin-btn secondary" type="button" onclick="testAdminAiConfig()">Test model</button><button class="ob-ai-admin-btn secondary" type="button" onclick="loadAdminAi(true)">Refresh</button></div>' +
           '<div id="admin-ai-status" class="ob-ai-admin-status"></div>' +
         '</section>' +
@@ -40262,6 +40277,29 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   };
   window.saveAdminAiConfig = function(){
     var key = ((document.getElementById('ai-api-key') || {}).value || '').trim();
+    var previousEditor = (window.__obAiAdminConfig && window.__obAiAdminConfig.editor) || {};
+    var providers = (Array.isArray(previousEditor.providers) ? previousEditor.providers : []).map(function(p){ return Object.assign({}, p); });
+    var chatSource = ((document.getElementById('ai-chat-source') || {}).value || 'master').trim();
+    var chatKey = ((document.getElementById('ai-chat-api-key') || {}).value || '').trim();
+    function upsertProvider(provider){
+      var idx = providers.findIndex(function(p){ return p && p.id === provider.id; });
+      if(idx >= 0) providers[idx] = Object.assign({}, providers[idx], provider);
+      else providers.push(provider);
+    }
+    if(chatSource === 'custom'){
+      var chatProvider = {
+        id: 'ai_chat_text',
+        label: 'Live AI Chat Replies',
+        kind: 'chat',
+        provider_type: ((document.getElementById('ai-chat-provider-type') || {}).value || 'openai').trim(),
+        base_url: ((document.getElementById('ai-chat-base-url') || {}).value || 'https://api.openai.com/v1/chat/completions').trim(),
+        model: ((document.getElementById('ai-chat-model') || {}).value || 'gpt-4o-mini').trim(),
+        temperature: 0.2,
+        max_tokens: 900
+      };
+      if(chatKey) chatProvider.api_key = chatKey;
+      upsertProvider(chatProvider);
+    }
     var payload = {
       ai_assistant_enabled: (document.getElementById('ai-enabled') || {}).checked ? '1' : '0',
       ai_provider_type: ((document.getElementById('ai-provider-type') || {}).value || '').trim(),
@@ -40270,7 +40308,13 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       ai_model: ((document.getElementById('ai-model') || {}).value || '').trim(),
       ai_temperature: ((document.getElementById('ai-temperature') || {}).value || '').trim(),
       ai_max_tokens: ((document.getElementById('ai-max-tokens') || {}).value || '').trim(),
-      ai_system_instructions: ((document.getElementById('ai-system-instructions') || {}).value || '').trim()
+      ai_system_instructions: ((document.getElementById('ai-system-instructions') || {}).value || '').trim(),
+      editor: {
+        providers: providers,
+        feature_routes: Object.assign({}, previousEditor.feature_routes || {}, {
+          ai_chat: chatSource === 'custom' ? 'ai_chat_text' : 'master_text'
+        })
+      }
     };
     if(key) payload.ai_api_key = key;
     status('admin-ai-status','Saving AI configuration...');
@@ -40286,6 +40330,12 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     request('/api/ai/admin/test',{method:'POST',body:{}}).then(function(data){
       status('admin-ai-status', data.answer || 'AI test succeeded.','ok');
     }).catch(function(err){ status('admin-ai-status', err.message || 'AI test failed.','err'); });
+  };
+  window.testAdminAiChatConfig = function(){
+    status('admin-ai-status','Testing AI chat model...');
+    request('/api/ai/admin/test',{method:'POST',body:{feature:'ai_chat'}}).then(function(data){
+      status('admin-ai-status', data.answer || 'AI chat test succeeded.','ok');
+    }).catch(function(err){ status('admin-ai-status', err.message || 'AI chat test failed.','err'); });
   };
 
   function wireAdmin(){
@@ -41017,7 +41067,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
 })();
 </script>
 
-<style id="ob-staging-request-popup-polish-20260520">
+<style id="ob-production-request-popup-polish-20260520">
   #ob-expert-incoming{display:none!important;}
   #session-request-overlay.ob-request-stable-overlay{
     position:fixed!important;
@@ -41088,7 +41138,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     #session-request-sheet.ob-request-stable-sheet .ob-request-drag-handle{display:none!important;}
   }
 </style>
-<script id="ob-staging-request-popup-polish-20260520-script">
+<script id="ob-production-request-popup-polish-20260520-script">
 (function(){
   if(window.__obStagingRequestPopupPolish20260520) return;
   window.__obStagingRequestPopupPolish20260520 = true;
@@ -41252,7 +41302,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
 (function(){
   if(window.__obSessionRefundDetailFlow) return;
   window.__obSessionRefundDetailFlow = true;
-  var BASE = (window.OWNLYBIZ_API_URL || window._OB_BACKEND || 'https://victorious-wisdom-production-a6b0.up.railway.app').replace(/\/+$/,'');
+  var BASE = (window.OWNLYBIZ_API_URL || window._OB_BACKEND || 'https://ownlybiz-backend-production.up.railway.app').replace(/\/+$/,'');
   var sessionCache = {};
   var refreshState = {};
   function token(){ return sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || ''; }

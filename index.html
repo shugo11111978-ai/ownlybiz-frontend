@@ -40636,6 +40636,12 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     'we-img-logo-preview': { field:'logo_image', kind:'image', label:'Nav logo' },
     'we-img-favicon-preview': { field:'favicon_image', kind:'image', label:'Browser icon' }
   };
+  window.obRegisterWebsiteAiField = function(targetId, meta){
+    if(!targetId || !meta) return;
+    FIELD_WANDS[targetId] = meta;
+    setTimeout(syncFieldWands, 0);
+  };
+  window.obSyncWebsiteAiFieldWands = function(){ syncFieldWands(); };
 
   function esc(value){
     return String(value == null ? '' : value).replace(/[&<>"']/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; });
@@ -40934,8 +40940,8 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       btn.textContent = '🪄';
       btn.onclick = function(ev){ ev.preventDefault(); ev.stopPropagation(); window.obAiOpenFieldPrompt(id); };
       var label = meta.kind === 'image'
-        ? el.parentElement && el.parentElement.querySelector('div')
-        : el.parentElement && el.parentElement.querySelector('label');
+        ? el.parentElement && (el.parentElement.querySelector('[data-ob-ai-image-label]') || el.parentElement.querySelector('div'))
+        : el.parentElement && ((el.parentElement.matches && el.parentElement.matches('label')) ? el.parentElement : el.parentElement.querySelector('label'));
       if(label) {
         label.classList.add('ob-ai-wand-label');
         label.appendChild(btn);
@@ -41056,6 +41062,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       el.value = data.value || '';
       try { el.dispatchEvent(new Event('input',{bubbles:true})); el.dispatchEvent(new Event('change',{bubbles:true})); } catch(e) {}
 	    }
+	    try { document.dispatchEvent(new CustomEvent('ob-ai-field-applied',{detail:{targetId:fieldModal.targetId,data:data}})); } catch(e) {}
 	    var use = document.getElementById('ob-ai-field-use');
 	    if(use) use.textContent = 'Applied';
 	    setFieldStatus('Applied to this field only. Use Save All Changes to keep it on the website.','ok');
@@ -41198,6 +41205,11 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     expertSlug = safeSlug(expertSlug) || String(location.pathname || '').replace(/^\/+|\/+$/g,'').split('/')[0] || '';
     return '/' + expertSlug + '/' + slug;
   }
+  function aiPageKey(slug){
+    slug = safeSlug(slug || 'book') || 'book';
+    var standard = {home:1,about:1,services:1,reviews:1,book:1,contact:1};
+    return standard[slug] ? slug : 'ai-' + slug;
+  }
   function parseWebsiteContent(data){
     try { return typeof data.website_content === 'string' ? JSON.parse(data.website_content || '{}') : (data.website_content || {}); }
     catch(e){ return {}; }
@@ -41244,7 +41256,15 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       pageEl.id = 'ep-ai-' + slug;
       pageEl.setAttribute('data-ob-ai-public-extra','page');
       var pageSections = Array.isArray(page.sections) ? page.sections : [];
-      pageEl.innerHTML = '<div class="expert-page-hero"><h1>'+esc(page.title || page.nav_label || slug)+'</h1>'+(page.summary ? '<p>'+esc(page.summary)+'</p>' : '')+'</div>' + pageSections.map(sectionHtml).join('');
+      var headerImg = safeImage(page.header_image_url);
+      var ctaLabel = clean(page.cta_label);
+      var ctaPage = aiPageKey(page.cta_page || 'book');
+      pageEl.innerHTML =
+        '<div class="expert-page-hero">' +
+          '<div class="ob-cp-hero-copy"><h1>'+esc(page.title || page.nav_label || slug)+'</h1>'+(page.summary ? '<p>'+esc(page.summary)+'</p>' : '') +
+          (ctaLabel ? '<div class="ob-cp-hero-actions"><button class="btn btn-primary btn-sm" onclick="showExpertPage(\''+esc(ctaPage)+'\')">'+esc(ctaLabel)+'</button></div>' : '') + '</div>' +
+          (headerImg ? '<div class="ob-cp-hero-image"><img src="'+esc(headerImg)+'" alt="'+esc(page.title || page.nav_label || 'Page header')+'"></div>' : '') +
+        '</div>' + pageSections.map(sectionHtml).join('');
       if(before && before.parentNode) before.parentNode.insertBefore(pageEl, before);
       else parent.appendChild(pageEl);
       if(page.meta_title || page.meta_description){
@@ -41340,6 +41360,11 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   }
   function line(value, max){
     return text(value, max || 160).replace(/\s+/g,' ').trim();
+  }
+  function imageValue(value){
+    value = String(value || '').trim();
+    if(/^data:image\/(png|jpe?g|webp|gif);base64,/i.test(value)) return value;
+    return line(value, 900);
   }
   function slugify(value){
     return String(value || '').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,64);
@@ -41439,6 +41464,9 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       slug: slug,
       nav_label: line(page.nav_label, 40) || title.slice(0,40),
       summary: text(page.summary, 700),
+      header_image_url: imageValue(page.header_image_url),
+      cta_label: line(page.cta_label, 80),
+      cta_page: slugify(page.cta_page || 'book') || 'book',
       meta_title: line(page.meta_title, 70),
       meta_description: line(page.meta_description, 180),
       sections: [{
@@ -41450,7 +41478,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
         items: Array.isArray(firstSection.items) ? firstSection.items.map(function(item){ return text(item, 320); }).filter(Boolean) : [],
         cta_label: line(firstSection.cta_label, 80),
         cta_page: slugify(firstSection.cta_page),
-        image_url: line(firstSection.image_url, 900)
+        image_url: imageValue(firstSection.image_url)
       }]
     };
   }
@@ -41490,6 +41518,8 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     if(limit) limit.textContent = (String(state.plan).toLowerCase() === 'scale' ? 'Scale' : 'Pro') + ' limit: ' + pageLimit();
     renderList();
     renderEditor();
+    renderVisibility();
+    registerDynamicAiFields();
   }
   function renderList(){
     var count = document.getElementById('ob-cp-count');
@@ -41535,12 +41565,17 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
         '<label class="ob-cp-check"><input type="checkbox" '+(page.published?'checked':'')+' onchange="obContentPageField(&quot;published&quot;,this.checked)">Published</label>' +
         '<label class="ob-cp-check"><input type="checkbox" '+(page.show_in_nav?'checked':'')+' onchange="obContentPageField(&quot;show_in_nav&quot;,this.checked)">Show in navigation</label>' +
       '</div>' +
-      field('Page title','<input class="settings-field-input" value="'+esc(page.title)+'" oninput="obContentPageField(&quot;title&quot;,this.value)" placeholder="Page title">') +
-      field('Navigation label','<input class="settings-field-input" value="'+esc(page.nav_label)+'" oninput="obContentPageField(&quot;nav_label&quot;,this.value)" placeholder="Short menu label">') +
-      field('Subtitle / intro','<textarea class="settings-field-input" rows="3" oninput="obContentPageField(&quot;summary&quot;,this.value)" placeholder="Short intro shown below the page title">'+esc(page.summary)+'</textarea>') +
-      field('Main content heading','<input class="settings-field-input" value="'+esc(section.title || '')+'" oninput="obContentPageSectionField(&quot;title&quot;,this.value)" placeholder="Main section heading">') +
-      field('Main content','<textarea class="settings-field-input ob-cp-main" rows="10" oninput="obContentPageSectionField(&quot;body&quot;,this.value)" placeholder="Write the full article, guide, content page, or resource copy here.">'+esc(section.body || '')+'</textarea>') +
-      field('Key points / FAQ items','<textarea class="settings-field-input" rows="5" oninput="obContentPageSectionField(&quot;items&quot;,this.value)" placeholder="One point per line. Useful for FAQs, guides, and resource pages.">'+esc((section.items || []).join('\\n'))+'</textarea>') +
+      field('Page title','<input id="ob-cp-title-input" class="settings-field-input" value="'+esc(page.title)+'" oninput="obContentPageField(&quot;title&quot;,this.value)" placeholder="Page title">') +
+      field('Navigation label','<input id="ob-cp-nav-label-input" class="settings-field-input" value="'+esc(page.nav_label)+'" oninput="obContentPageField(&quot;nav_label&quot;,this.value)" placeholder="Short menu label">') +
+      field('Subtitle / intro','<textarea id="ob-cp-summary-input" class="settings-field-input" rows="3" oninput="obContentPageField(&quot;summary&quot;,this.value)" placeholder="Short intro shown below the page title">'+esc(page.summary)+'</textarea>') +
+      '<div class="ob-cp-field"><span>Header image</span><div class="ob-cp-image-row"><div id="ob-cp-header-image-preview" class="ob-cp-image-preview" data-ob-ai-image-label="Header image">'+(page.header_image_url ? '<img src="'+esc(page.header_image_url)+'" alt="Header image preview">' : '<span>Header image</span>')+'</div><div class="ob-cp-image-tools"><label class="ob-cp-upload-btn"><input type="file" accept="image/png,image/jpeg,image/webp,image/gif" onchange="obContentPageHeaderImageFile(this)">Upload image</label><input class="settings-field-input" id="ob-cp-header-image-url" value="'+esc(page.header_image_url || '')+'" oninput="obContentPageField(&quot;header_image_url&quot;,this.value);obContentPageSyncHeaderPreview(this.value)" placeholder="https://... or upload an image"></div></div></div>' +
+      '<div class="ob-cp-grid two">' +
+        field('CTA button text','<input id="ob-cp-cta-label-input" class="settings-field-input" value="'+esc(page.cta_label || '')+'" oninput="obContentPageField(&quot;cta_label&quot;,this.value)" placeholder="Book a session">') +
+        field('CTA destination','<input class="settings-field-input" value="'+esc(page.cta_page || 'book')+'" oninput="obContentPageField(&quot;cta_page&quot;,this.value)" placeholder="book, contact, services, or page slug">') +
+      '</div>' +
+      field('Main content heading','<input id="ob-cp-section-title-input" class="settings-field-input" value="'+esc(section.title || '')+'" oninput="obContentPageSectionField(&quot;title&quot;,this.value)" placeholder="Main section heading">') +
+      field('Main content','<textarea id="ob-cp-body-input" class="settings-field-input ob-cp-main" rows="10" oninput="obContentPageSectionField(&quot;body&quot;,this.value)" placeholder="Write the full article, guide, content page, or resource copy here.">'+esc(section.body || '')+'</textarea>') +
+      field('Key points / FAQ items','<textarea id="ob-cp-items-input" class="settings-field-input" rows="5" oninput="obContentPageSectionField(&quot;items&quot;,this.value)" placeholder="One point per line. Useful for FAQs, guides, and resource pages.">'+esc((section.items || []).join('\\n'))+'</textarea>') +
       '<div class="ob-cp-grid two">' +
         field('SEO title','<input class="settings-field-input" value="'+esc(page.meta_title || '')+'" oninput="obContentPageField(&quot;meta_title&quot;,this.value)" maxlength="70" placeholder="Optional search title">') +
         field('SEO description','<textarea class="settings-field-input" rows="2" oninput="obContentPageField(&quot;meta_description&quot;,this.value)" maxlength="180" placeholder="Optional search description">'+esc(page.meta_description || '')+'</textarea>') +
@@ -41549,11 +41584,84 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   function field(label, inputHtml){
     return '<label class="ob-cp-field"><span>'+esc(label)+'</span>'+inputHtml+'</label>';
   }
+  function ensureVisibilityHost(){
+    var firstPagesCard = document.querySelector('.we-tab-card[data-we-tab="pages"]');
+    if(!firstPagesCard) return null;
+    var host = document.getElementById('ob-cp-visibility-list');
+    if(host) return host;
+    var rows = firstPagesCard.querySelector('div[style*="flex-direction:column"]');
+    if(!rows) return null;
+    host = document.createElement('div');
+    host.id = 'ob-cp-visibility-list';
+    host.className = 'ob-cp-visibility-list';
+    rows.appendChild(host);
+    return host;
+  }
+  function renderVisibility(){
+    var host = ensureVisibilityHost();
+    if(!host) return;
+    if(!state.allowed || !state.pages.length){
+      host.innerHTML = '';
+      return;
+    }
+    host.innerHTML = '<div class="ob-cp-vis-title">Custom pages</div>' + state.pages.map(function(page){
+      var status = page.published ? (page.show_in_nav ? 'Visible in navigation' : 'Visible, hidden from nav') : 'Hidden from website';
+      return '<div class="ob-cp-vis-row">' +
+        '<div><div class="ob-cp-vis-name">'+esc(page.nav_label || page.title || 'Custom page')+'</div><div class="ob-cp-vis-meta">/'+esc(page.slug || '')+' - '+esc(status)+'</div></div>' +
+        '<label class="toggle-sm"><input type="checkbox" '+(page.published ? 'checked' : '')+' onchange="obToggleContentPageVisibility(\''+esc(page.id)+'\',this.checked)"><div class="toggle-sm-track"></div><div class="toggle-sm-thumb"></div></label>' +
+      '</div>';
+    }).join('');
+  }
+  function registerDynamicAiFields(){
+    if(typeof window.obRegisterWebsiteAiField !== 'function' || !activePage()) return;
+    window.obRegisterWebsiteAiField('ob-cp-title-input', { field:'custom_page_title', kind:'text', label:'Custom page title' });
+    window.obRegisterWebsiteAiField('ob-cp-nav-label-input', { field:'custom_page_nav_label', kind:'text', label:'Custom page nav label' });
+    window.obRegisterWebsiteAiField('ob-cp-summary-input', { field:'custom_page_summary', kind:'text', label:'Custom page intro' });
+    window.obRegisterWebsiteAiField('ob-cp-section-title-input', { field:'custom_page_section_title', kind:'text', label:'Custom page section heading' });
+    window.obRegisterWebsiteAiField('ob-cp-body-input', { field:'custom_page_body', kind:'text', label:'Custom page main content' });
+    window.obRegisterWebsiteAiField('ob-cp-items-input', { field:'custom_page_items', kind:'text', label:'Custom page key points' });
+    window.obRegisterWebsiteAiField('ob-cp-cta-label-input', { field:'custom_page_cta_label', kind:'text', label:'Custom page CTA' });
+    window.obRegisterWebsiteAiField('ob-cp-header-image-preview', { field:'custom_page_header_image', kind:'image', label:'Custom page header image' });
+    if(typeof window.obSyncWebsiteAiFieldWands === 'function') setTimeout(window.obSyncWebsiteAiFieldWands, 0);
+  }
   function setActive(id){
     state.active = id;
     render();
   }
   window.obSelectContentPage = function(id){ setActive(id); };
+  window.obToggleContentPageVisibility = function(id, visible){
+    var page = state.pages.find(function(item){ return item.id === id; });
+    if(!page) return;
+    page.published = !!visible;
+    renderList();
+    renderEditor();
+    renderVisibility();
+    registerDynamicAiFields();
+  };
+  window.obContentPageSyncHeaderPreview = function(value){
+    var preview = document.getElementById('ob-cp-header-image-preview');
+    if(!preview) return;
+    value = String(value || '').trim();
+    preview.innerHTML = value ? '<img src="'+esc(value)+'" alt="Header image preview">' : '<span>Header image</span>';
+    registerDynamicAiFields();
+  };
+  window.obContentPageHeaderImageFile = function(input){
+    var file = input && input.files && input.files[0];
+    if(!file) return;
+    if(file.size > 8 * 1024 * 1024) {
+      if(typeof _showToast === 'function') _showToast('Header image must be under 8MB','red');
+      return;
+    }
+    var reader = new FileReader();
+    reader.onload = function(ev){
+      var value = ev && ev.target ? ev.target.result : '';
+      window.obContentPageField('header_image_url', value);
+      var urlInput = document.getElementById('ob-cp-header-image-url');
+      if(urlInput) urlInput.value = value;
+      window.obContentPageSyncHeaderPreview(value);
+    };
+    reader.readAsDataURL(file);
+  };
   window.obAddContentPage = function(){
     if(!state.allowed) return;
     if(state.pages.length >= pageLimit()){
@@ -41601,6 +41709,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     var page = activePage();
     if(!page) return;
     if(fieldName === 'slug') page.slug = uniqueSlug(value, page.id);
+    else if(fieldName === 'cta_page') page.cta_page = slugify(value) || 'book';
     else if(fieldName === 'template') page.template = templateLabels[value] ? value : 'content';
     else if(fieldName === 'published' || fieldName === 'show_in_nav') page[fieldName] = !!value;
     else {
@@ -41644,6 +41753,18 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     state.active = state.pages[0] ? state.pages[0].id : '';
     render();
   };
+  document.addEventListener('ob-ai-field-applied', function(ev){
+    var detail = ev && ev.detail || {};
+    if(detail.targetId !== 'ob-cp-header-image-preview') return;
+    var page = activePage();
+    var url = detail.data && detail.data.url || '';
+    if(page && url) {
+      page.header_image_url = url;
+      var input = document.getElementById('ob-cp-header-image-url');
+      if(input) input.value = url;
+      window.obContentPageSyncHeaderPreview(url);
+    }
+  });
   function wrapShowExpertPage(){
     if(typeof window.showExpertPage !== 'function' || window.showExpertPage.__obContentPagesWrapped) return;
     var old = window.showExpertPage;
@@ -41686,6 +41807,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     padding:92px 24px 44px;
     text-align:center;
   }
+  #view-4 .ob-ai-custom-page .ob-cp-hero-copy{margin:0 auto;max-width:980px;}
   #view-4 .ob-ai-custom-page .expert-page-hero h1{
     color:var(--ob-site-text,var(--brown))!important;
     font-family:var(--font-head);
@@ -41703,6 +41825,27 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     line-height:1.68;
     margin:0 auto;
     max-width:760px;
+  }
+  #view-4 .ob-ai-custom-page .ob-cp-hero-actions{
+    align-items:center;
+    display:flex;
+    justify-content:center;
+    margin-top:22px;
+  }
+  #view-4 .ob-ai-custom-page .ob-cp-hero-image{
+    border:1px solid color-mix(in srgb,var(--ob-site-text,var(--brown)),transparent 86%);
+    border-radius:22px;
+    box-shadow:0 22px 70px rgba(42,28,18,.14);
+    margin:34px auto 0;
+    max-width:980px;
+    overflow:hidden;
+  }
+  #view-4 .ob-ai-custom-page .ob-cp-hero-image img{
+    aspect-ratio:16/7;
+    display:block;
+    height:auto;
+    object-fit:cover;
+    width:100%;
   }
   #view-4 .ob-ai-custom-page .ob-ai-public-section{
     background:var(--ob-site-surface,var(--white));
@@ -41778,6 +41921,18 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   #ob-content-pages-card textarea.settings-field-input{min-height:0;}
   #ob-content-pages-card .ob-cp-main{min-height:170px;}
   #ob-content-pages-card .ob-cp-check{align-items:center;background:var(--cream);border:1px solid var(--gray-200);border-radius:10px;color:var(--brown);display:flex;font-size:13px;font-weight:700;gap:8px;padding:10px 12px;}
+  #ob-content-pages-card .ob-cp-image-row{display:grid;gap:12px;grid-template-columns:180px 1fr;align-items:stretch;}
+  #ob-content-pages-card .ob-cp-image-preview{align-items:center;background:var(--cream);border:1.5px dashed var(--gray-200);border-radius:14px;color:var(--gray-400);display:flex;font-size:12px;font-weight:800;justify-content:center;min-height:112px;overflow:hidden;position:relative;text-align:center;}
+  #ob-content-pages-card .ob-cp-image-preview img{height:100%;min-height:112px;object-fit:cover;width:100%;}
+  #ob-content-pages-card .ob-cp-image-preview .ob-ai-field-wand{bottom:10px;position:absolute;right:10px;z-index:2;}
+  #ob-content-pages-card .ob-cp-image-tools{display:grid;gap:10px;align-content:start;}
+  #ob-content-pages-card .ob-cp-upload-btn{align-items:center;background:var(--cream);border:1px solid var(--gray-200);border-radius:10px;color:var(--brown);cursor:pointer;display:inline-flex;font-size:12px;font-weight:800;justify-content:center;min-height:38px;padding:8px 12px;width:max-content;}
+  #ob-content-pages-card .ob-cp-upload-btn input{display:none;}
+  #ob-cp-visibility-list{border-top:1px solid var(--gray-200);display:grid;gap:10px;margin-top:10px;padding-top:12px;}
+  #ob-cp-visibility-list .ob-cp-vis-title{color:var(--gray-400);font-size:11px;font-weight:900;letter-spacing:.06em;text-transform:uppercase;}
+  #ob-cp-visibility-list .ob-cp-vis-row{align-items:center;background:var(--cream);border-radius:10px;display:flex;justify-content:space-between;padding:10px 14px;}
+  #ob-cp-visibility-list .ob-cp-vis-name{color:var(--brown);font-size:13px;font-weight:700;}
+  #ob-cp-visibility-list .ob-cp-vis-meta{color:var(--gray-400);font-size:11px;line-height:1.35;margin-top:2px;}
   @media(max-width:760px){
     #view-4 .ob-ai-custom-page{padding-bottom:52px;}
     #view-4 .ob-ai-custom-page .expert-page-hero{padding:64px 18px 34px;}
@@ -41792,7 +41947,8 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     #ob-content-pages-card .ob-cp-editor-top{display:grid;}
     #ob-content-pages-card .ob-cp-manager,
     #ob-content-pages-card .ob-cp-grid.two,
-    #ob-content-pages-card .ob-cp-grid.compact{grid-template-columns:1fr;}
+    #ob-content-pages-card .ob-cp-grid.compact,
+    #ob-content-pages-card .ob-cp-image-row{grid-template-columns:1fr;}
     #ob-content-pages-card .ob-cp-template{width:100%;}
   }
 </style>

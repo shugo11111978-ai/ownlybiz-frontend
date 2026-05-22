@@ -18668,6 +18668,7 @@ body.expert-page #mob-cta-bar{display:none!important;}
       }
     }
     if(d.type==='typing'&&(d.sessionId||d.session_id)===window._obActiveSessId){
+      if(window.obRenderTypingEvent && window.obRenderTypingEvent(d, role)) return;
       var tiId=role==='expert'?'expert-typing-indicator':'ob-client-typing';
       var ti=document.getElementById(tiId);
       if(ti){
@@ -20160,6 +20161,7 @@ function joinActiveBookingSession(sessionId, expertId, channel) {
             try { localStorage.removeItem('ob_hpm'); } catch(e3) {}
           }
           if (d.type === 'typing' && (d.sessionId || d.session_id) === window._obActiveSessId) {
+            if(window.obRenderTypingEvent && window.obRenderTypingEvent(d, 'client')) return;
             var _ti = document.getElementById('ob-client-typing');
             if (_ti) { _ti.textContent = 'typing...'; clearTimeout(_ti._t); _ti._t = setTimeout(function(){ _ti.textContent = ''; }, d.ai_typing ? 90000 : 2000); }
           }
@@ -23349,6 +23351,7 @@ window._handleRTCMessage=function(d){
       }
     }
     if(d.type === 'typing' && (!sid || sid === window._obActiveSessId || sid === window._sid || sid === window._sessId)){
+      if(window.obRenderTypingEvent && window.obRenderTypingEvent(d, roleName)) { handled = true; return handled; }
       var typingId = (roleName === 'expert' || (typeof role === 'function' && role() === 'expert')) ? 'expert-typing-indicator' : 'ob-client-typing';
       var typingEl = document.getElementById(typingId);
       var fromId = d.sender_id || d.user_id || '';
@@ -33618,6 +33621,46 @@ body.ob-ui-dark .ob-connection-note,
 	    el.classList.add('is-visible');
 	    el.innerHTML = '<span class="ob-typing-label">'+label+'</span><span class="ob-typing-dots" aria-hidden="true"><i></i><i></i><i></i></span>';
 	  }
+	  window.obRenderTypingEvent = function(d, fallbackRole){
+	    d = d || {};
+	    var sid = d.session_id || d.sessionId || '';
+	    var active = window._obActiveSessId || window._sid || window._sessId || '';
+	    if(sid && active && sid !== active) return false;
+	    var roleValue = fallbackRole || (typeof role === 'function' ? role() : role) || (typeof myRole === 'function' ? myRole() : '');
+	    var expertSide = roleValue === 'expert';
+	    var elId = expertSide ? 'expert-typing-indicator' : 'ob-client-typing';
+	    var container = document.getElementById(expertSide ? 'expert-chat-messages' : 'paid-chat-messages');
+	    var el = document.getElementById(elId);
+	    if(!el && container){
+	      el = document.createElement('div');
+	      el.id = elId;
+	      el.className = 'ob-typing-indicator';
+	      container.appendChild(el);
+	    }
+	    if(!el) return false;
+	    var fromId = d.sender_id || d.user_id || '';
+	    var selfId = '';
+	    try { selfId = typeof myId === 'function' ? myId() : ''; } catch(e) {}
+	    var shouldRender = d.ai_typing ? !expertSide : (!fromId || fromId !== selfId);
+	    if(!shouldRender) return false;
+	    clearTimeout(el._t);
+	    if(d.is_typing === false){
+	      el.textContent = '';
+	      el.innerHTML = '';
+	      el.classList.remove('is-visible');
+	      return true;
+	    }
+	    var label = expertSide ? 'Client is typing' : 'Expert is typing';
+	    el.classList.add('is-visible');
+	    el.innerHTML = '<span class="ob-typing-label">'+label+'</span><span class="ob-typing-dots" aria-hidden="true"><i></i><i></i><i></i></span>';
+	    if(container && el.parentNode !== container) container.appendChild(el);
+	    el._t = setTimeout(function(){
+	      el.textContent = '';
+	      el.innerHTML = '';
+	      el.classList.remove('is-visible');
+	    }, d.ai_typing ? 90000 : 1800);
+	    return true;
+	  };
 	  function tuneVoiceMeters(){
 	    document.querySelectorAll('#view-5 .waveform').forEach(function(wave){
 	      var bars = Array.prototype.slice.call(wave.children);

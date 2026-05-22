@@ -33665,6 +33665,28 @@ body.ob-ui-dark .ob-connection-note,
 	    }, d.ai_typing ? 90000 : 1800);
 	    return true;
 	  };
+	  window.obTapTypingSockets = function(){
+	    [
+	      [window._obClientWs, 'client'],
+	      [window._obWs, (typeof myRole === 'function' ? myRole() : 'client')],
+	      [window._expertWs, 'expert'],
+	      [window._rtcWs, (typeof myRole === 'function' ? myRole() : 'client')]
+	    ].forEach(function(pair){
+	      var ws = pair[0], roleName = pair[1] || 'client';
+	      if(!ws || ws.__obTypingTapInstalled) return;
+	      ws.__obTypingTapInstalled = true;
+	      try {
+	        ws.addEventListener('message', function(evt){
+	          try {
+	            var data = JSON.parse(evt.data);
+	            if(data && data.type === 'typing' && window.obRenderTypingEvent) {
+	              window.obRenderTypingEvent(data, roleName);
+	            }
+	          } catch(e) {}
+	        });
+	      } catch(e) {}
+	    });
+	  };
 	  function tuneVoiceMeters(){
 	    document.querySelectorAll('#view-5 .waveform').forEach(function(wave){
 	      var bars = Array.prototype.slice.call(wave.children);
@@ -33858,6 +33880,7 @@ body.ob-ui-dark .ob-connection-note,
 	    installLineIcons();
 	    polishPreSession();
 	    placeTypingIndicators();
+	    if(window.obTapTypingSockets) window.obTapTypingSockets();
 	    tuneVoiceMeters();
 	    hookClientPhoneGo();
 	    normalizeClientSessionSurfaces();
@@ -33865,6 +33888,11 @@ body.ob-ui-dark .ob-connection-note,
   ready(function(){
     run();
     [200,700,1500,3000].forEach(function(ms){ setTimeout(run, ms); });
+    var typingTapStarted = Date.now();
+    var typingTapTimer = setInterval(function(){
+      if(window.obTapTypingSockets) window.obTapTypingSockets();
+      if(Date.now() - typingTapStarted > 120000) clearInterval(typingTapTimer);
+    }, 500);
     try {
       var pending = false;
       new MutationObserver(function(){

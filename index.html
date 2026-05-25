@@ -2694,6 +2694,36 @@ h1 em,h2 em,h3 em,h4 em,.panel-title em,.hero h1 em,.section-head h2 em,.brand-n
 .time-slot:hover{border-color:var(--terra);}
 .time-slot.selected{background:var(--terra);color:var(--white);border-color:var(--terra);}
 .time-slot.booked{background:var(--gray-100);color:var(--gray-300);cursor:not-allowed;}
+#bfl-overlay{
+  --bfl-bg:#fffaf2;
+  --bfl-surface:#ffffff;
+  --bfl-text:#241813;
+  --bfl-muted:#6f6257;
+  --bfl-border:rgba(36,24,19,.18);
+}
+#bfl-overlay .bfl-slot-btn{
+  background:var(--bfl-surface)!important;
+  border-color:var(--bfl-border)!important;
+  color:var(--bfl-text)!important;
+  text-shadow:none!important;
+}
+#bfl-overlay .bfl-slot-btn:hover,
+#bfl-overlay .bfl-slot-btn:focus-visible{
+  border-color:var(--terra)!important;
+  box-shadow:0 0 0 3px rgba(196,98,45,.14)!important;
+  outline:none!important;
+}
+#bfl-overlay .bfl-slot-btn.is-selected{
+  background:var(--terra)!important;
+  border-color:var(--terra)!important;
+  color:#fff!important;
+}
+#bfl-overlay label,
+#bfl-overlay input,
+#bfl-overlay textarea,
+#bfl-overlay select{
+  color:var(--bfl-text)!important;
+}
 /* Booking Summary */
 .booking-summary{background:var(--white);border-radius:var(--radius-lg);padding:28px;border:1px solid var(--gray-200);position:sticky;top:160px;}
 .booking-expert{display:flex;align-items:center;gap:12px;margin-bottom:20px;padding-bottom:20px;border-bottom:1px solid var(--gray-200);}
@@ -19649,8 +19679,10 @@ window.selectBflChannel = function(el) {
 
 window.selectBflSlot = function(btn, time) {
   document.querySelectorAll('.bfl-slot-btn').forEach(function(b) {
+    b.classList.remove('is-selected');
     b.style.background = 'var(--white)'; b.style.borderColor = 'var(--gray-200)'; b.style.color = 'var(--brown)';
   });
+  btn.classList.add('is-selected');
   btn.style.background = 'var(--terra)'; btn.style.borderColor = 'var(--terra)'; btn.style.color = '#fff';
   _bflSelectedTime = time;
   var nb = document.getElementById('bfl-next-1'); if (nb) { nb.disabled = false; nb.style.opacity = '1'; }
@@ -37397,6 +37429,29 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   function storedUser(){ var keys=['ownlybiz_user','ob_u']; for(var i=0;i<keys.length;i++){ try{ var raw=localStorage.getItem(keys[i])||sessionStorage.getItem(keys[i])||'{}'; var u=JSON.parse(raw); if(u&&u.user) u=u.user; if(u&&u.email) return u; }catch(e){} } return {}; }
   function accountEmail(s){ var u=storedUser(); return s.accountEmail || u.email || 'your signup email'; }
   function verifiedFrom(data){ var u=data&&data.user||{}; var p=data&&data.profile||{}; return Number(u.is_verified||0)===1 || u.is_verified===true || Number(p.email_verified||0)===1 || p.email_verified===true; }
+  function createdSeconds(value){
+    if(!value) return 0;
+    if(/^\d+$/.test(String(value))) return Number(value);
+    var parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? Math.floor(parsed / 1000) : 0;
+  }
+  function isEstablishedExpert(s){
+    if(!s || s.open || s.hidden) return false;
+    if(s.websitePublished || s.publicAvailable) return true;
+    var created = createdSeconds(s.profileCreatedAt || s.userCreatedAt);
+    var ageDays = created ? ((Date.now() / 1000) - created) / 86400 : 0;
+    return ageDays > 21 && (doneCount(s) > 0 || verifiedFrom({user:{is_verified:s.emailVerified}}));
+  }
+  function suppressEstablishedAutoGuide(s){
+    if(!isEstablishedExpert(s)) return false;
+    s.hidden = true;
+    s.minimized = false;
+    s.autoHiddenReason = s.websitePublished || s.publicAvailable ? 'published_expert' : 'established_expert';
+    write(s);
+    setLegacyHidden(true);
+    hideCoach();
+    return true;
+  }
   var refreshBusy=false, refreshAt=0, refreshPromise=null;
 
   function refreshMe(force){
@@ -37409,7 +37464,9 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       if(d&&d.user){
         var s=read(), p=d.profile||{}, changed=false;
         if(d.user.email&&s.accountEmail!==d.user.email){s.accountEmail=d.user.email; changed=true;}
+        if(d.user.created_at&&s.userCreatedAt!==d.user.created_at){s.userCreatedAt=d.user.created_at; changed=true;}
         if(p.slug&&s.publicSlug!==p.slug){s.publicSlug=p.slug; changed=true;}
+        if(p.created_at&&s.profileCreatedAt!==p.created_at){s.profileCreatedAt=p.created_at; changed=true;}
         if(String(p.approval_status||'')&&s.approvalStatus!==p.approval_status){s.approvalStatus=p.approval_status; changed=true;}
         var wp=Number(p.website_published||0)===1; if(!!s.websitePublished!==wp){s.websitePublished=wp; changed=true;}
         var v=verifiedFrom(d); if(!!s.emailVerified!==!!v){s.emailVerified=v; changed=true;}
@@ -37450,6 +37507,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     removeLegacy();
     var s=read();
     if(s.hidden){ hideCoach(); return; }
+    if(suppressEstablishedAutoGuide(s)) return;
     var root=document.getElementById('ownlybiz-prod-coach-v20');
     var m=document.getElementById('ownlybiz-prod-coach-mini-v20');
     if(root && root.getAttribute('data-ob20-dragging')==='1') return;
@@ -40243,6 +40301,13 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       });
     });
   }
+  window.obAiWebsiteRequest = request;
+  window.obAiWebsiteStatus = function(){ return editorStatus || {}; };
+  window.obAiSetWebsiteStatus = function(statusData){
+    editorStatus = statusData || editorStatus;
+    updateAiUi();
+  };
+  window.obAiWebsiteRefreshStatus = function(){ return loadWebsiteAiStatus(true); };
   function status(id,msg,kind){
     var el = document.getElementById(id);
     if(!el) return;
@@ -40925,6 +40990,45 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   .ob-ai-field-card .ob-ai-editor-btn { min-width:112px; text-align:center; }
   .ob-ai-field-card .ob-ai-editor-btn.secondary { background:#fff7ed; border-color:rgba(196,98,45,.38); color:#6f2f13; }
   .ob-ai-field-card .ob-ai-editor-btn.secondary:disabled { background:#f3eadf; border-color:rgba(36,24,19,.16); color:rgba(36,24,19,.68); }
+  .ob-ai-website-credits {
+    align-items:center;
+    background:#fffdf8;
+    border:1px solid rgba(36,24,19,.10);
+    border-radius:14px;
+    display:flex;
+    gap:12px;
+    justify-content:space-between;
+    margin:-10px 0 18px;
+    padding:12px 14px;
+  }
+  .ob-ai-website-credits strong { color:#241813; display:block; font-size:13px; font-weight:950; }
+  .ob-ai-website-credits span { color:rgba(36,24,19,.62); display:block; font-size:12px; line-height:1.45; margin-top:2px; }
+  .ob-ai-section-wand,
+  .ob-ai-page-wand {
+    align-items:center;
+    background:#fff7ed;
+    border:1px solid rgba(196,98,45,.30);
+    border-radius:999px;
+    color:#7c3417;
+    cursor:pointer;
+    display:inline-flex;
+    font-size:12px;
+    font-weight:950;
+    gap:6px;
+    justify-content:center;
+    min-height:34px;
+    padding:8px 12px;
+    white-space:nowrap;
+  }
+  .ob-ai-section-wand:hover,
+  .ob-ai-page-wand:hover { background:#c4622d; color:#fff; }
+  .ob-ai-section-wand[disabled],
+  .ob-ai-page-wand[disabled] { cursor:not-allowed; opacity:.55; }
+  .ob-ai-section-status { color:rgba(36,24,19,.62); font-size:13px; line-height:1.45; min-height:20px; }
+  .ob-ai-section-status.err { color:#b91c1c; }
+  .ob-ai-section-status.ok { color:#3e5b26; }
+  #ob-ai-website-editor,
+  .ob-ai-website-shell { display:none!important; }
   .ob-ai-public-section {
     background:rgba(255,250,240,.76);
     border:1px solid rgba(36,24,19,.09);
@@ -40953,6 +41057,10 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   body.ob-ui-dark .ob-ai-pack-btn { background:rgba(255,250,240,.08); border-color:rgba(255,250,240,.15); color:#faf7f2; }
   body.ob-ui-dark .ob-ai-field-card .ob-ai-editor-btn.secondary { background:#fff7ed; border-color:rgba(196,98,45,.38); color:#6f2f13; }
   body.ob-ui-dark .ob-ai-field-card .ob-ai-editor-btn.secondary:disabled { background:#f3eadf; border-color:rgba(36,24,19,.16); color:rgba(36,24,19,.68); }
+  body.ob-ui-dark .ob-ai-website-credits { background:rgba(255,250,240,.065); border-color:rgba(255,250,240,.14); }
+  body.ob-ui-dark .ob-ai-website-credits strong { color:#faf7f2; }
+  body.ob-ui-dark .ob-ai-website-credits span,
+  body.ob-ui-dark .ob-ai-section-status { color:rgba(255,250,240,.66); }
   @media(max-width:900px){
     .ob-ai-admin-layout,
     .ob-ai-admin-grid,
@@ -40972,12 +41080,16 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   var DEFAULT_BASE = 'https://ownlybiz-backend-production.up.railway.app';
   var adminLoaded = false;
   var editorStatus = null;
+  var editorStatusLoading = false;
+  var editorStatusLoadedAt = 0;
   var editorBusy = false;
   var lastPrompt = '';
   var lastMode = 'improve';
   var lastGenerateMedia = false;
   var fieldBusy = false;
   var fieldModal = { targetId:'', field:'', kind:'text', label:'', result:null };
+  var sectionBusy = false;
+  var sectionModal = { key:'', group:null };
   var FIELD_WANDS = {
     'we-hero-tagline': { field:'hero_tagline', kind:'text', label:'Hero tagline' },
     'we-hero-cta': { field:'hero_cta', kind:'text', label:'CTA button text' },
@@ -41258,6 +41370,245 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   };
 
   function creditTile(value,label){ return '<div class="ob-ai-credit-tile"><div class="ob-ai-credit-value">'+esc(value)+'</div><div class="ob-ai-credit-label">'+esc(label)+'</div></div>'; }
+  function creditSummary(statusData){
+    var c = statusData && statusData.credits || {};
+    var available = Number(c.available || 0);
+    var included = Number(c.included_remaining || 0);
+    var includedLimit = Number(c.included_monthly_limit || 0);
+    var previewCost = Number(c.preview_cost || 4);
+    var imageCost = Number(c.image_cost || 24);
+    return { available:available, included:included, includedLimit:includedLimit, previewCost:previewCost, imageCost:imageCost };
+  }
+  function aiReady(kind){
+    if(!editorStatus || !editorStatus.eligible || !editorStatus.configured) return false;
+    if(kind === 'image') return !!editorStatus.media_configured;
+    return true;
+  }
+  function creditStripHtml(statusData){
+    statusData = statusData || {};
+    var c = creditSummary(statusData);
+    var ready = statusData.eligible && statusData.configured;
+    var title = ready ? 'AI section tools' : (statusData.eligible ? 'AI not available yet' : 'AI section tools are Pro / Scale only');
+    var detail = ready
+      ? c.available + ' credits available · ' + c.included + ' of ' + c.includedLimit + ' monthly credits left · section/page draft costs ' + c.previewCost + ' credits' + (statusData.media_configured ? ' · page image costs ' + c.imageCost : '')
+      : (statusData.reason || 'Upgrade to Pro or Scale to use AI website editing.');
+    return '<div class="ob-ai-website-credits" id="ob-ai-website-credits"><div><strong>'+esc(title)+'</strong><span>'+esc(detail)+'</span></div><div class="ob-help-ai-badge '+(ready ? '' : 'warn')+'">'+(ready ? 'Ready' : 'Unavailable')+'</div></div>';
+  }
+  function ensureAiCreditStrip(){
+    var content = document.querySelector('#db-panel-website-editor .db-content');
+    if(!content) return;
+    document.querySelectorAll('#ob-ai-website-editor,.ob-ai-website-shell').forEach(function(el){ el.remove(); });
+    var tabs = document.getElementById('we-tabs');
+    if(!tabs) return;
+    var html = creditStripHtml(editorStatus || {eligible:false,configured:false,reason:'Checking AI access...',credits:{}});
+    var existing = document.getElementById('ob-ai-website-credits');
+    if(existing) existing.outerHTML = html;
+    else {
+      var wrapper = document.createElement('div');
+      wrapper.innerHTML = html;
+      tabs.parentNode.insertBefore(wrapper.firstElementChild, tabs.nextSibling);
+    }
+  }
+  function setInputValue(id,value){
+    var el = document.getElementById(id);
+    if(!el || value === undefined || value === null || value === '') return false;
+    el.value = value;
+    try { el.dispatchEvent(new Event('input',{bubbles:true})); el.dispatchEvent(new Event('change',{bubbles:true})); } catch(e) {}
+    return true;
+  }
+  var SECTION_GROUPS = {
+    hero: {
+      label:'Hero section',
+      anchor:'we-hero-tagline',
+      prompt:'Improve only the homepage hero tagline and main CTA text. Keep it clear, warm, and conversion-focused. Do not change pricing, booking, payments, Stripe, auth, publish status, or admin settings.',
+      fields:[
+        {source:'website', key:'hero_tagline', id:'we-hero-tagline'},
+        {source:'website', key:'hero_cta', id:'we-hero-cta'}
+      ]
+    },
+    about: {
+      label:'About section',
+      anchor:'we-about-quote',
+      prompt:'Improve only the short homepage quote and full About bio. Keep it human, specific, and credible. Do not invent credentials, testimonials, guarantees, pricing, or regulated claims.',
+      fields:[
+        {source:'profile', key:'hero_tagline', id:'we-about-quote'},
+        {source:'profile', key:'about_text', id:'we-about-bio'}
+      ]
+    },
+    footer: {
+      label:'Footer',
+      anchor:'we-footer-name',
+      prompt:'Improve only the footer business name and disclaimer. Keep it concise and safe. Do not add legal, medical, financial, or guaranteed-result claims.',
+      fields:[
+        {source:'profile', key:'footer_text', id:'we-footer-name'},
+        {source:'website', key:'footer_disclaimer', id:'we-footer-disclaimer'}
+      ]
+    },
+    contact: {
+      label:'Contact page',
+      anchor:'we-contact-heading',
+      prompt:'Improve only the contact page heading, description, location, hours, and response-time copy. Keep it simple, trustworthy, and accurate.',
+      fields:[
+        {source:'website', key:'contact_heading', id:'we-contact-heading'},
+        {source:'website', key:'contact_desc', id:'we-contact-desc'},
+        {source:'website', key:'contact_location', id:'we-contact-location'},
+        {source:'website', key:'contact_hours', id:'we-contact-hours'},
+        {source:'website', key:'contact_response', id:'we-contact-response'}
+      ]
+    },
+    nav: {
+      label:'Navigation labels',
+      anchor:'we-nav-home',
+      prompt:'Improve only the website navigation labels. Keep every label short, plain, and easy to scan.',
+      fields:[
+        {source:'nav', key:'home', id:'we-nav-home'},
+        {source:'nav', key:'about', id:'we-nav-about'},
+        {source:'nav', key:'services', id:'we-nav-services'},
+        {source:'nav', key:'reviews', id:'we-nav-reviews'},
+        {source:'nav', key:'book', id:'we-nav-book'},
+        {source:'nav', key:'contact', id:'we-nav-contact'}
+      ]
+    },
+    services: {
+      label:'Services page',
+      anchor:'we-svc-title',
+      prompt:'Improve only the Services page title, subtitle, and chat/voice/video descriptions. Do not change rates, billing, free minutes, payments, Stripe, booking rules, or session behavior.',
+      fields:[
+        {source:'website', key:'svc_title', id:'we-svc-title'},
+        {source:'website', key:'svc_subtitle', id:'we-svc-subtitle'},
+        {source:'website', key:'svc_chat_desc', id:'we-svc-chat-desc'},
+        {source:'website', key:'svc_voice_desc', id:'we-svc-voice-desc'},
+        {source:'website', key:'svc_video_desc', id:'we-svc-video-desc'}
+      ]
+    },
+    aboutPage: {
+      label:'About page title',
+      anchor:'we-about-title',
+      prompt:'Improve only the About page title. Keep it clear, short, and specific to the expert.',
+      fields:[{source:'website', key:'about_title', id:'we-about-title'}]
+    }
+  };
+  function sectionPrompt(group, prompt){
+    return group.prompt + '\n\nExpert request: ' + clean(prompt || '') + '\n\nReturn changes only for this section. Leave all unrelated website fields empty.';
+  }
+  function applySectionPlan(plan, group){
+    var changes = plan && plan.changes || {};
+    var profile = changes.profile_patch || {};
+    var wc = changes.website_content_patch || {};
+    var nav = wc.nav_labels || {};
+    var changed = [];
+    group.fields.forEach(function(field){
+      var value = field.source === 'profile' ? profile[field.key] : field.source === 'nav' ? nav[field.key] : wc[field.key];
+      if(setInputValue(field.id, value)) changed.push(field.id);
+    });
+    return changed;
+  }
+  function renderCreditBuyInline(statusData){
+    var c = statusData && statusData.credits || {};
+    var packs = c.packs || [];
+    return packs.length ? '<div class="ob-ai-pack-row">'+packs.map(function(p){ return '<button class="ob-ai-pack-btn" type="button" onclick="obAiBuyCredits(\''+esc(p.id)+'\')">'+esc(p.label)+' - '+esc(p.credits)+' credits / '+money(p.price_usd)+'</button>'; }).join('')+'</div>' : '';
+  }
+  function ensureSectionModal(){
+    var modal = document.getElementById('ob-ai-section-modal');
+    if(modal) return modal;
+    modal = document.createElement('div');
+    modal.id = 'ob-ai-section-modal';
+    modal.className = 'ob-ai-field-modal';
+    modal.innerHTML =
+      '<div class="ob-ai-field-card" role="dialog" aria-modal="true" aria-labelledby="ob-ai-section-title">' +
+        '<div class="ob-ai-field-head"><div><h3 id="ob-ai-section-title">AI section helper</h3><p id="ob-ai-section-copy">Describe what this section should say. AI fills the fields in this section only.</p></div><button class="ob-ai-field-close" type="button" onclick="obAiCloseSectionPrompt()">x</button></div>' +
+        '<textarea id="ob-ai-section-prompt" placeholder="Example: make this section warmer, clearer, and focused on spiritual clarity for first-time visitors."></textarea>' +
+        '<div class="ob-ai-editor-buttons" style="margin-top:10px;"><button class="ob-ai-editor-btn primary" id="ob-ai-section-run" type="button" onclick="obAiRunSectionPrompt()">Generate section draft</button></div>' +
+        '<div id="ob-ai-section-status" class="ob-ai-section-status"></div><div id="ob-ai-section-result" class="ob-ai-field-result"></div>' +
+      '</div>';
+    modal.addEventListener('click',function(ev){ if(ev.target === modal) window.obAiCloseSectionPrompt(); });
+    document.body.appendChild(modal);
+    return modal;
+  }
+  function setSectionStatus(msg, kind){
+    var el = document.getElementById('ob-ai-section-status');
+    if(!el) return;
+    el.className = 'ob-ai-section-status' + (kind ? ' ' + kind : '');
+    el.textContent = msg || '';
+  }
+  window.obAiOpenSectionPrompt = function(key){
+    var group = SECTION_GROUPS[key];
+    if(!group || !aiReady()) return;
+    sectionModal = { key:key, group:group };
+    var modal = ensureSectionModal();
+    var title = document.getElementById('ob-ai-section-title');
+    var copy = document.getElementById('ob-ai-section-copy');
+    var prompt = document.getElementById('ob-ai-section-prompt');
+    var result = document.getElementById('ob-ai-section-result');
+    if(title) title.textContent = 'AI for ' + group.label;
+    if(copy) copy.textContent = 'One prompt updates the fields in this section. Review the draft, then Save All Changes to keep it.';
+    if(prompt) { prompt.value = ''; setTimeout(function(){ prompt.focus(); }, 40); }
+    if(result) { result.className = 'ob-ai-field-result'; result.innerHTML = ''; }
+    setSectionStatus('Available credits: ' + creditSummary(editorStatus).available + '. Section drafts cost ' + creditSummary(editorStatus).previewCost + ' credits.');
+    modal.classList.add('open');
+  };
+  window.obAiCloseSectionPrompt = function(){
+    var modal = document.getElementById('ob-ai-section-modal');
+    if(modal) modal.classList.remove('open');
+  };
+  window.obAiRunSectionPrompt = function(){
+    if(sectionBusy || !sectionModal.group) return;
+    var prompt = clean((document.getElementById('ob-ai-section-prompt') || {}).value || '');
+    if(!prompt) { setSectionStatus('Tell AI what you want for this section first.','err'); return; }
+    sectionBusy = true;
+    var run = document.getElementById('ob-ai-section-run');
+    var result = document.getElementById('ob-ai-section-result');
+    if(run) { run.disabled = true; run.textContent = 'Generating...'; }
+    if(result) { result.className = 'ob-ai-field-result'; result.innerHTML = ''; }
+    setSectionStatus('Generating a section-level draft...');
+    request('/api/ai/website-editor/preview',{method:'POST',body:{prompt:sectionPrompt(sectionModal.group,prompt),mode:'improve',generate_media:false}}).then(function(data){
+      editorStatus = data.credit_status || editorStatus;
+      var changed = applySectionPlan(data.plan || {}, sectionModal.group);
+      updateAiUi();
+      if(result) {
+        result.className = 'ob-ai-field-result open';
+        result.innerHTML = esc((data.plan && data.plan.summary) || 'Section draft applied to the editor fields.');
+      }
+      setSectionStatus(changed.length ? 'Draft filled ' + changed.length + ' field(s). Review, then Save All Changes.' : 'AI returned no usable fields for this section. Try a more specific prompt.','ok');
+    }).catch(function(err){
+      if(err.data && err.data.credit_status) editorStatus = err.data.credit_status;
+      if(result && err.data && err.data.code === 'ai_credits_required') {
+        result.className = 'ob-ai-field-result open';
+        result.innerHTML = '<strong>Buy more AI credits</strong>' + renderCreditBuyInline(err.data.credit_status);
+      }
+      updateAiUi();
+      setSectionStatus(err.message || 'AI section generation failed.','err');
+    }).finally(function(){
+      sectionBusy = false;
+      if(run) { run.disabled = false; run.textContent = 'Generate section draft'; }
+    });
+  };
+  function syncSectionWands(){
+    Object.keys(SECTION_GROUPS).forEach(function(key){
+      var group = SECTION_GROUPS[key];
+      var anchor = document.getElementById(group.anchor);
+      var card = anchor && anchor.closest && anchor.closest('.we-tab-card');
+      if(!card) return;
+      var existing = card.querySelector('[data-ob-ai-section="'+key+'"]');
+      var ready = aiReady();
+      if(!ready && existing) { existing.remove(); return; }
+      if(!ready || existing) return;
+      var head = card.firstElementChild || card;
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'ob-ai-section-wand';
+      btn.setAttribute('data-ob-ai-section', key);
+      btn.textContent = 'AI polish section';
+      btn.title = 'Use AI for the whole ' + group.label;
+      btn.onclick = function(ev){ ev.preventDefault(); ev.stopPropagation(); window.obAiOpenSectionPrompt(key); };
+      head.appendChild(btn);
+    });
+  }
+  function updateAiUi(){
+    ensureAiCreditStrip();
+    syncSectionWands();
+    if(typeof window.obSyncContentPageAiTools === 'function') window.obSyncContentPageAiTools();
+  }
   function editorHtml(statusData){
     statusData = statusData || {};
     var c = statusData.credits || {};
@@ -41291,6 +41642,10 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     return true;
   }
   function syncFieldWands(){
+    document.querySelectorAll('.ob-ai-field-wand').forEach(function(btn){ btn.remove(); });
+    syncSectionWands();
+    if(typeof window.obSyncContentPageAiTools === 'function') window.obSyncContentPageAiTools();
+    return;
     Object.keys(FIELD_WANDS).forEach(function(id){
       var meta = FIELD_WANDS[id];
       var el = document.getElementById(id);
@@ -41440,30 +41795,26 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   function ensureWebsiteAi(){
     var content = document.querySelector('#db-panel-website-editor .db-content');
     if(!content) return;
-    var existing = document.getElementById('ob-ai-website-editor');
-    if(existing) { syncFieldWands(); return; }
-    var node = document.createElement('div');
-    node.innerHTML = editorHtml(editorStatus);
-    var header = content.firstElementChild;
-    if(header && header.nextSibling) content.insertBefore(node.firstChild, header.nextSibling);
-    else content.insertBefore(node.firstChild, content.firstChild);
+    ensureAiCreditStrip();
     loadWebsiteAiStatus();
   }
-  function loadWebsiteAiStatus(){
+  function loadWebsiteAiStatus(force){
+    if(editorStatusLoading) return;
+    if(!force && editorStatus && Date.now() - editorStatusLoadedAt < 30000) {
+      updateAiUi();
+      return;
+    }
+    editorStatusLoading = true;
     request('/api/ai/website-editor/status').then(function(data){
       editorStatus = data;
-      var existing = document.getElementById('ob-ai-website-editor');
-      if(existing) existing.outerHTML = editorHtml(data);
-      if(typeof window.obAiWrapWebsiteStudio === 'function') setTimeout(window.obAiWrapWebsiteStudio, 0);
-      syncFieldWands();
+      editorStatusLoadedAt = Date.now();
+      updateAiUi();
       confirmAiCreditsFromUrl();
     }).catch(function(err){
       editorStatus = {eligible:false,enabled:false,reason:err.message || 'Sign in as an expert to use AI website editing.',credits:{}};
-      var existing = document.getElementById('ob-ai-website-editor');
-      if(existing) existing.outerHTML = editorHtml(editorStatus);
-      if(typeof window.obAiWrapWebsiteStudio === 'function') setTimeout(window.obAiWrapWebsiteStudio, 0);
-      syncFieldWands();
-    });
+      editorStatusLoadedAt = Date.now();
+      updateAiUi();
+    }).finally(function(){ editorStatusLoading = false; });
   }
   function renderPlanResult(data){
     var box = document.getElementById('ob-ai-editor-result');
@@ -41864,7 +42215,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     card.innerHTML =
       '<div class="ob-cp-head">' +
         '<div><div class="ob-cp-title">Content Pages</div><div class="ob-cp-sub">Add articles, guides, FAQs, resources, or any custom page for your public expert site.</div></div>' +
-        '<div class="ob-cp-actions"><select id="ob-cp-template-picker" class="settings-field-input ob-cp-template"><option value="content">Content page</option><option value="article">Article</option><option value="guide">Guide</option><option value="faq">FAQ</option><option value="resource">Resource page</option></select><button type="button" class="btn btn-primary btn-sm" id="ob-cp-add-btn" onclick="obAddContentPage()">Add Page</button></div>' +
+        '<div class="ob-cp-actions"><select id="ob-cp-template-picker" class="settings-field-input ob-cp-template"><option value="content">Content page</option><option value="article">Article</option><option value="guide">Guide</option><option value="faq">FAQ</option><option value="resource">Resource page</option></select><button type="button" class="ob-ai-page-wand" id="ob-cp-ai-page-btn" onclick="obAiOpenContentPagePrompt()">AI build page</button><button type="button" class="btn btn-primary btn-sm" id="ob-cp-add-btn" onclick="obAddContentPage()">Add Page</button></div>' +
       '</div>' +
       '<div id="ob-cp-locked" class="ob-cp-locked" style="display:none;"><strong>Pro / Scale feature</strong><span>Custom content pages are available on Pro and Scale plans. Starter experts can still edit the standard Home, About, Services, Reviews, and Contact pages.</span></div>' +
       '<div id="ob-cp-manager" class="ob-cp-manager">' +
@@ -41890,6 +42241,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     renderEditor();
     renderVisibility();
     registerDynamicAiFields();
+    syncContentPageAiTools();
   }
   function renderList(){
     var count = document.getElementById('ob-cp-count');
@@ -41925,7 +42277,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     editor.innerHTML =
       '<div class="ob-cp-editor-top">' +
         '<div><strong>Edit Page</strong><span>'+esc(pageUrl(page.slug))+'</span></div>' +
-        '<div class="ob-cp-mini-actions"><button type="button" onclick="obMoveContentPage(-1)">Up</button><button type="button" onclick="obMoveContentPage(1)">Down</button><button type="button" onclick="obDuplicateContentPage()">Duplicate</button><button type="button" class="danger" onclick="obDeleteContentPage()">Delete</button></div>' +
+        '<div class="ob-cp-mini-actions"><button type="button" class="ob-ai-page-wand" onclick="obAiOpenContentPagePrompt()">AI draft page</button><button type="button" onclick="obMoveContentPage(-1)">Up</button><button type="button" onclick="obMoveContentPage(1)">Down</button><button type="button" onclick="obDuplicateContentPage()">Duplicate</button><button type="button" class="danger" onclick="obDeleteContentPage()">Delete</button></div>' +
       '</div>' +
       '<div class="ob-cp-grid two">' +
         field('Template','<select class="settings-field-input" onchange="obContentPageField(&quot;template&quot;,this.value)">'+Object.keys(templateLabels).map(function(key){ return '<option value="'+key+'"'+(page.template===key?' selected':'')+'>'+templateLabels[key]+'</option>'; }).join('')+'</select>') +
@@ -41994,6 +42346,153 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     window.obRegisterWebsiteAiField('ob-cp-header-image-preview', { field:'custom_page_header_image', kind:'image', label:'Custom page header image' });
     if(typeof window.obSyncWebsiteAiFieldWands === 'function') setTimeout(window.obSyncWebsiteAiFieldWands, 0);
   }
+  function aiStatus(){
+    return typeof window.obAiWebsiteStatus === 'function' ? (window.obAiWebsiteStatus() || {}) : {};
+  }
+  function aiReady(kind){
+    var s = aiStatus();
+    if(!s.eligible || !s.configured) return false;
+    if(kind === 'image') return !!s.media_configured;
+    return true;
+  }
+  function aiCreditsText(){
+    var c = aiStatus().credits || {};
+    var available = Number(c.available || 0);
+    var preview = Number(c.preview_cost || 4);
+    var image = Number(c.image_cost || 24);
+    return available + ' credits available. Page draft costs ' + preview + ' credits' + (aiReady('image') ? '; header image costs ' + image + ' more.' : '.');
+  }
+  function syncContentPageAiTools(){
+    var ready = aiReady();
+    document.querySelectorAll('#ob-content-pages-card .ob-ai-page-wand').forEach(function(btn){
+      btn.disabled = !ready || !state.allowed;
+      btn.title = !state.allowed ? 'Custom pages are Pro / Scale only' : (!ready ? ((aiStatus().reason || 'AI website editing is not available yet')) : aiCreditsText());
+    });
+  }
+  window.obSyncContentPageAiTools = syncContentPageAiTools;
+  function ensurePageAiModal(){
+    var modal = document.getElementById('ob-ai-page-modal');
+    if(modal) return modal;
+    modal = document.createElement('div');
+    modal.id = 'ob-ai-page-modal';
+    modal.className = 'ob-ai-field-modal';
+    modal.innerHTML =
+      '<div class="ob-ai-field-card" role="dialog" aria-modal="true" aria-labelledby="ob-ai-page-title">' +
+        '<div class="ob-ai-field-head"><div><h3 id="ob-ai-page-title">AI custom page builder</h3><p>Describe the page you want. AI prepares the slug, title, nav label, intro, header image, main content, CTA, key points, and SEO draft where possible.</p></div><button class="ob-ai-field-close" type="button" onclick="obAiCloseContentPagePrompt()">x</button></div>' +
+        '<textarea id="ob-ai-page-prompt" placeholder="Example: Create a page that explains psychic readings for first-time clients, with a warm intro, practical sections, and a CTA to book a session."></textarea>' +
+        '<label class="ob-ai-editor-check"><input id="ob-ai-page-image" type="checkbox"> Generate a header image when available</label>' +
+        '<div class="ob-ai-editor-buttons" style="margin-top:10px;"><button class="ob-ai-editor-btn primary" id="ob-ai-page-run" type="button" onclick="obAiRunContentPagePrompt()">Generate page draft</button></div>' +
+        '<div id="ob-ai-page-status" class="ob-ai-section-status"></div><div id="ob-ai-page-result" class="ob-ai-field-result"></div>' +
+      '</div>';
+    modal.addEventListener('click',function(ev){ if(ev.target === modal) window.obAiCloseContentPagePrompt(); });
+    document.body.appendChild(modal);
+    return modal;
+  }
+  function setPageAiStatus(msg, kind){
+    var el = document.getElementById('ob-ai-page-status');
+    if(!el) return;
+    el.className = 'ob-ai-section-status' + (kind ? ' ' + kind : '');
+    el.textContent = msg || '';
+  }
+  function renderAiBuy(statusData){
+    var c = statusData && statusData.credits || {};
+    var packs = c.packs || [];
+    return packs.length ? '<div class="ob-ai-pack-row">'+packs.map(function(p){ return '<button class="ob-ai-pack-btn" type="button" onclick="obAiBuyCredits(\''+esc(p.id)+'\')">'+esc(p.label)+' - '+esc(p.credits)+' credits</button>'; }).join('')+'</div>' : '';
+  }
+  function pageAiPrompt(prompt){
+    var template = (document.getElementById('ob-cp-template-picker') || {}).value || 'content';
+    return [
+      'Create exactly one complete custom content page for this expert website.',
+      'Use the selected template: ' + template + '.',
+      'Return one ai_pages item with slug, title, nav_label, summary, cta_label, cta_page, and one strong main section with title, body, and useful items.',
+      'The page must be safe for an independent expert website: no invented testimonials, no fake credentials, no guarantees, no pricing changes, no payment or Stripe changes, no booking/session/auth/admin changes.',
+      'Make the URL slug short, lowercase, and relevant. Make the CTA point to book unless the user asks otherwise.',
+      'Expert request: ' + line(prompt, 1800)
+    ].join('\n');
+  }
+  function pickGeneratedPage(data){
+    var pages = data && data.plan && data.plan.changes && data.plan.changes.website_content_patch && data.plan.changes.website_content_patch.ai_pages || [];
+    if(!Array.isArray(pages) || !pages.length) return null;
+    var existing = {};
+    state.pages.forEach(function(page){ if(page.slug) existing[page.slug] = true; });
+    return pages.find(function(page){ return page && page.slug && !existing[page.slug]; }) || pages[pages.length - 1];
+  }
+  function addGeneratedPage(raw, imageUrl){
+    if(!raw) return null;
+    var page = normalizePage(raw, state.pages.length);
+    page.id = 'page-' + Date.now();
+    page.slug = uniqueSlug(page.slug || page.title, page.id);
+    page.meta_title = page.meta_title || page.title;
+    page.meta_description = page.meta_description || page.summary;
+    if(imageUrl) page.header_image_url = imageUrl;
+    state.pages.push(page);
+    state.active = page.id;
+    render();
+    return page;
+  }
+  window.obAiOpenContentPagePrompt = function(){
+    if(!state.allowed) {
+      if(typeof _showToast === 'function') _showToast('Custom AI pages are available on Pro and Scale plans','red');
+      return;
+    }
+    if(!aiReady()) {
+      if(typeof _showToast === 'function') _showToast(aiStatus().reason || 'AI website editing is not available yet','red');
+      return;
+    }
+    var modal = ensurePageAiModal();
+    var prompt = document.getElementById('ob-ai-page-prompt');
+    var image = document.getElementById('ob-ai-page-image');
+    var result = document.getElementById('ob-ai-page-result');
+    if(prompt) prompt.value = '';
+    if(image) { image.checked = aiReady('image'); image.disabled = !aiReady('image'); }
+    if(result) { result.className = 'ob-ai-field-result'; result.innerHTML = ''; }
+    setPageAiStatus(aiCreditsText());
+    modal.classList.add('open');
+    setTimeout(function(){ if(prompt) prompt.focus(); }, 40);
+  };
+  window.obAiCloseContentPagePrompt = function(){
+    var modal = document.getElementById('ob-ai-page-modal');
+    if(modal) modal.classList.remove('open');
+  };
+  window.obAiRunContentPagePrompt = function(){
+    var prompt = line((document.getElementById('ob-ai-page-prompt') || {}).value || '', 1800);
+    if(!prompt) { setPageAiStatus('Tell AI what page you want first.','err'); return; }
+    var request = typeof window.obAiWebsiteRequest === 'function' ? window.obAiWebsiteRequest : null;
+    if(!request) { setPageAiStatus('AI website tools are not ready yet.','err'); return; }
+    var run = document.getElementById('ob-ai-page-run');
+    var result = document.getElementById('ob-ai-page-result');
+    var wantImage = !!((document.getElementById('ob-ai-page-image') || {}).checked) && aiReady('image');
+    if(run) { run.disabled = true; run.textContent = 'Generating...'; }
+    if(result) { result.className = 'ob-ai-field-result'; result.innerHTML = ''; }
+    setPageAiStatus(wantImage ? 'Generating page copy, then header image...' : 'Generating a complete page draft...');
+    request('/api/ai/website-editor/preview',{method:'POST',body:{prompt:pageAiPrompt(prompt),mode:'add_custom_page',generate_media:false}}).then(function(data){
+      if(data.credit_status && typeof window.obAiSetWebsiteStatus === 'function') window.obAiSetWebsiteStatus(data.credit_status);
+      var raw = pickGeneratedPage(data);
+      if(!raw) throw new Error('AI did not return a usable custom page. Try a more specific prompt.');
+      if(!wantImage) return { raw:raw, imageUrl:'' };
+      return request('/api/ai/website-editor/field-preview',{method:'POST',body:{field:'custom_page_header_image',prompt:'Create a polished header image for this custom page. Page request: '+prompt+'. Page title: '+(raw.title || '')+'. No text, no logo, no claims.',current_value:''}}).then(function(img){
+        if(img.credit_status && typeof window.obAiSetWebsiteStatus === 'function') window.obAiSetWebsiteStatus(img.credit_status);
+        return { raw:raw, imageUrl:img.url || '' };
+      }).catch(function(){ return { raw:raw, imageUrl:'' }; });
+    }).then(function(out){
+      var page = addGeneratedPage(out.raw, out.imageUrl);
+      if(result) {
+        result.className = 'ob-ai-field-result open';
+        result.innerHTML = 'Created draft page: ' + esc(page && page.title || 'Custom page') + '. Review it, then Save All Changes.';
+      }
+      setPageAiStatus('Page draft is ready in the editor. Review before publishing, then Save All Changes.','ok');
+    }).catch(function(err){
+      if(err.data && err.data.credit_status && typeof window.obAiSetWebsiteStatus === 'function') window.obAiSetWebsiteStatus(err.data.credit_status);
+      if(result && err.data && err.data.code === 'ai_credits_required') {
+        result.className = 'ob-ai-field-result open';
+        result.innerHTML = '<strong>Buy more AI credits</strong>' + renderAiBuy(err.data.credit_status);
+      }
+      setPageAiStatus(err.message || 'AI page generation failed.','err');
+    }).finally(function(){
+      if(run) { run.disabled = false; run.textContent = 'Generate page draft'; }
+      syncContentPageAiTools();
+    });
+  };
   function setActive(id){
     state.active = id;
     render();

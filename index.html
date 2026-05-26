@@ -9021,6 +9021,21 @@ if (!window.toast) {
         <div class="admin-content">
           <div class="platform-settings-grid">
             <div class="platform-setting-block">
+              <div class="ps-block-title">Service Pause</div>
+              <div class="ps-row">
+                <div>
+                  <div class="ps-label">Pause expert services</div>
+                  <div style="font-size:11px;color:rgba(246,241,233,.45);line-height:1.45;">Experts can still log in. Clients cannot start sessions or create bookings unless the expert is allowed from Admin &gt; Experts.</div>
+                </div>
+                <label class="toggle-sm"><input type="checkbox" id="platform_service_paused" name="platform_service_paused"><div class="toggle-sm-track"></div><div class="toggle-sm-thumb"></div></label>
+              </div>
+              <label class="ps-label" for="platform_service_pause_message" style="display:block;margin:10px 0 6px;">Expert login notice</label>
+              <textarea class="admin-input" id="platform_service_pause_message" name="platform_service_pause_message" style="width:100%;min-height:72px;resize:vertical;">Ownlybiz is temporarily down for construction. You can log in, but service actions are paused. Please try again soon.</textarea>
+              <label class="ps-label" for="platform_service_pause_client_message" style="display:block;margin:10px 0 6px;">Client booking/session notice</label>
+              <textarea class="admin-input" id="platform_service_pause_client_message" name="platform_service_pause_client_message" style="width:100%;min-height:72px;resize:vertical;">This expert is temporarily unable to receive new sessions or bookings while Ownlybiz is under construction. Please try again soon.</textarea>
+              <div style="font-size:11px;color:rgba(246,241,233,.48);line-height:1.55;margin-top:10px;">Admin always keeps access. Use each expert detail page to allow a specific expert to keep operating while the platform is paused.</div>
+            </div>
+            <div class="platform-setting-block">
               <div class="ps-block-title">Platform Name & Branding</div>
               <div class="ps-row"><div class="ps-label">Platform Name</div><input type="text" class="admin-input" style="width:140px;" value="Ownlybiz"></div>
               <div class="ps-row"><div class="ps-label">Platform Domain</div><input type="text" class="admin-input" style="width:140px;" value="ownlybiz.com"></div>
@@ -13049,6 +13064,7 @@ async function savePaymentConfig() {
 
         // Toast
         if (typeof toast === 'function') toast('Welcome back, ' + d.user.name + '! 👋');
+        if (d.service_pause && d.service_pause.blocked && typeof toast === 'function') toast(d.service_pause.message || 'Ownlybiz services are temporarily paused.', 'err');
 
 	        // Navigate based on role
 	        setTimeout(function() {
@@ -13075,6 +13091,7 @@ async function savePaymentConfig() {
 	            fetch(BASE + '/api/experts/me/dashboard', { headers: { 'Authorization': 'Bearer ' + d.token } })
 	              .then(function(r){ return r.json(); })
 	              .then(function(ed){
+	                if (typeof window.obRenderServicePauseBanner === 'function') window.obRenderServicePauseBanner(ed && (ed.service_pause || (ed.profile && ed.profile.service_pause)));
 	                var slug = ed && ed.profile && ed.profile.slug ? ed.profile.slug : '';
 	                if (slug) {
 	                  window._myExpertSlug = slug;
@@ -13494,6 +13511,7 @@ async function savePaymentConfig() {
       ]);
       _applyProfile(me);
       _applyDashStats(dash);
+      if (typeof window.obRenderServicePauseBanner === 'function') window.obRenderServicePauseBanner(dash.service_pause || (dash.profile && dash.profile.service_pause));
       _renderSessionsList($('sessions-full-list'), dash.recent_sessions||[]);
       _renderOverviewMsgs(dash.recent_sessions||[]);
       _renderBarChart($('revenue-chart'), (dash.monthly_revenue||[]).slice(-7), 'revenue');
@@ -44116,6 +44134,13 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     var slug = profile.slug || '';
     var name = user.name || 'Expert';
     var enabled = Number(ai.enabled || 0) === 1;
+    var pause = profileData.service_pause || profile.service_pause || dashboardData.service_pause || {};
+    var pauseAllowed = !!pause.allowed;
+    var pausePaused = !!pause.paused;
+    var pauseBtnLabel = pauseAllowed ? 'Remove pause access' : 'Allow during service pause';
+    var pauseNote = pauseAllowed
+      ? 'This expert can keep using sessions and bookings while the platform service pause is on.'
+      : 'This expert follows the platform service pause. Allowing access lets this expert keep operating while other experts remain paused.';
     return ''
       + '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px;">'
       +   '<button class="admin-action-btn" type="button" onclick="obAdminExpertBackToList()">Back to expert list</button>'
@@ -44124,6 +44149,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       +     '<button class="admin-action-btn danger" type="button" onclick="obAdminExpertAction(&quot;' + attr(id) + '&quot;,&quot;suspend&quot;)">Suspend</button>'
       +     '<button class="admin-action-btn" type="button" onclick="obAdminExpertAction(&quot;' + attr(id) + '&quot;,&quot;restore&quot;)">Restore</button>'
       +     '<button class="admin-action-btn" type="button" onclick="obAdminOpenExpertDashboard(&quot;' + attr(id) + '&quot;,&quot;' + attr(slug) + '&quot;,&quot;' + attr(name) + '&quot;)">Open expert dashboard</button>'
+      +     '<button class="admin-action-btn" type="button" onclick="obAdminExpertPauseAccess(&quot;' + attr(id) + '&quot;,' + (!pauseAllowed) + ')">' + esc(pauseBtnLabel) + '</button>'
       +   '</div>'
       + '</div>'
       + '<div class="admin-card" style="padding:22px;">'
@@ -44145,6 +44171,13 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       +   kpi('Voice rate', money(rates.voice_pm || profile.rate_voice || 0), int(rates.voice_free_min || profile.free_minutes_voice || 0) + ' free min')
       +   kpi('Video rate', money(rates.video_pm || profile.rate_video || 0), int(rates.video_free_min || profile.free_minutes_video || 0) + ' free min')
       +   kpi('AI chat', enabled ? 'Enabled' : 'Off', ai.mode || 'semi_ai')
+      + '</div>'
+      + '<div class="admin-card" style="padding:18px;margin-top:18px;border-color:' + (pauseAllowed ? 'rgba(34,197,94,.26)' : 'rgba(255,255,255,.08)') + ';">'
+      +   '<div class="admin-card-title">Service pause access <span class="admin-card-title-sub">' + (pausePaused ? 'Global pause is on' : 'Global pause is off') + '</span></div>'
+      +   '<div style="display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;">'
+      +     '<div style="font-size:12px;color:rgba(246,241,233,.58);line-height:1.55;max-width:760px;">' + esc(pauseNote) + '</div>'
+      +     '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">' + (pauseAllowed ? badge('Allowed during pause','ok') : badge('Paused by default','info')) + '<button class="admin-action-btn" type="button" onclick="obAdminExpertPauseAccess(&quot;' + attr(id) + '&quot;,' + (!pauseAllowed) + ')">' + esc(pauseBtnLabel) + '</button></div>'
+      +   '</div>'
       + '</div>'
       + refundsTable(id, refundData.requests || [])
       + sessionsTable(dashboard.recent_sessions || [])
@@ -44194,6 +44227,12 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       openExpertDetail(id, activeExpertDetail && activeExpertDetail.slug, activeExpertDetail && activeExpertDetail.name);
     }).catch(function(err){ notify(err.message || 'Expert action failed.', 'err'); });
   };
+  window.obAdminExpertPauseAccess = function(id, allowed){
+    api('/admin/experts/' + encodeURIComponent(id) + '/service-pause-access', {method:'PUT', body:{allowed:!!allowed}}).then(function(){
+      notify(allowed ? 'Expert can operate during service pause.' : 'Expert now follows service pause.', 'ok');
+      openExpertDetail(id, activeExpertDetail && activeExpertDetail.slug, activeExpertDetail && activeExpertDetail.name);
+    }).catch(function(err){ notify(err.message || 'Service pause access update failed.', 'err'); });
+  };
   window.obAdminSaveExpertAiChat = function(id){
     var status = document.getElementById('ob-ai-chat-save-status');
     if(status) status.textContent = 'Saving...';
@@ -44241,6 +44280,98 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   install();
   if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', install);
   [250, 900, 1800, 3600, 7000].forEach(function(ms){ setTimeout(install, ms); });
+})();
+</script>
+<script id="ownlybiz-service-pause-ui-20260526">
+(function(){
+  if(window.__obServicePauseUi20260526) return;
+  window.__obServicePauseUi20260526 = true;
+
+  function esc(v){ return String(v == null ? '' : v).replace(/[&<>"']/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  function paused(status){ return !!(status && status.paused && status.blocked); }
+  function statusFrom(data){
+    return (data && data.service_pause) || (data && data.expert && data.expert.service_pause) || (window._currentExpert && window._currentExpert.service_pause) || null;
+  }
+  function showToast(message){
+    if(typeof toast === 'function') toast(message, 'err');
+    else if(typeof toastMsg === 'function') toastMsg(message, 'err');
+    else alert(message);
+  }
+  function removeNode(id){
+    var el = document.getElementById(id);
+    if(el && el.parentNode) el.parentNode.removeChild(el);
+  }
+  window.obRenderServicePauseBanner = function(status){
+    var root = document.querySelector('#view-3 .db-main') || document.getElementById('view-3');
+    if(!root) return;
+    if(!paused(status)){ removeNode('ob-service-pause-banner'); return; }
+    var banner = document.getElementById('ob-service-pause-banner');
+    if(!banner){
+      banner = document.createElement('div');
+      banner.id = 'ob-service-pause-banner';
+      banner.style.cssText = 'margin:0;padding:14px 22px;background:linear-gradient(90deg,rgba(245,158,11,.18),rgba(245,158,11,.08));border-bottom:1px solid rgba(245,158,11,.28);color:rgba(246,241,233,.9);font-size:13px;line-height:1.55;';
+      root.insertBefore(banner, root.firstChild);
+    }
+    banner.innerHTML = '<strong style="display:block;font-size:14px;color:#fbbf24;margin-bottom:2px;">Service is temporarily paused</strong>' + esc(status.message || 'Ownlybiz services are temporarily paused.');
+  };
+  function renderPublicPause(status){
+    var root = document.querySelector('#ep-book .book-inner') || document.getElementById('ep-book') || document.getElementById('view-4');
+    var blocked = paused(status);
+    window.__obCurrentServicePauseStatus = status || null;
+    document.body.classList.toggle('ob-service-paused-public', !!blocked);
+    if(root){
+      var banner = document.getElementById('ob-public-service-pause-banner');
+      if(blocked && !banner){
+        banner = document.createElement('div');
+        banner.id = 'ob-public-service-pause-banner';
+        banner.style.cssText = 'margin:0 0 20px;padding:16px 18px;border:1px solid rgba(196,98,45,.24);border-radius:12px;background:rgba(196,98,45,.09);color:var(--brown);font-size:14px;line-height:1.6;';
+        var sub = root.querySelector('.book-inner-sub');
+        if(sub && sub.nextSibling) root.insertBefore(banner, sub.nextSibling);
+        else root.insertBefore(banner, root.firstChild);
+      }
+      if(!blocked) removeNode('ob-public-service-pause-banner');
+      else banner.innerHTML = '<strong style="display:block;margin-bottom:4px;">Temporarily unavailable</strong>' + esc(status.client_message || status.message || 'This expert cannot receive new sessions right now.');
+    }
+    document.querySelectorAll('#confirm-booking-btn,button[onclick*="obGuardedBookLaterTap"],button[onclick*="openBookingOverlay"]').forEach(function(btn){
+      if(blocked){
+        if(!btn.dataset.obPauseText) btn.dataset.obPauseText = btn.textContent || '';
+        btn.dataset.obServicePaused = '1';
+        btn.disabled = true;
+        btn.style.opacity = '.55';
+        btn.style.pointerEvents = 'auto';
+        btn.title = status.client_message || status.message || 'Temporarily unavailable';
+      } else if(btn.dataset.obServicePaused){
+        btn.disabled = false;
+        btn.style.opacity = '';
+        btn.style.pointerEvents = '';
+        btn.title = '';
+        delete btn.dataset.obServicePaused;
+      }
+    });
+  }
+  function installPublicWrap(){
+    if(!window._applyExpertWebsite || window._applyExpertWebsite.__obServicePauseWrapped) return false;
+    var previous = window._applyExpertWebsite;
+    window._applyExpertWebsite = function(data){
+      var result = previous.apply(this, arguments);
+      renderPublicPause(statusFrom(data));
+      return result;
+    };
+    window._applyExpertWebsite.__obServicePauseWrapped = true;
+    return true;
+  }
+  document.addEventListener('click', function(ev){
+    var status = window.__obCurrentServicePauseStatus;
+    if(!paused(status)) return;
+    var target = ev.target && ev.target.closest && ev.target.closest('#confirm-booking-btn,button[onclick*="obGuardedBookLaterTap"],button[onclick*="openBookingOverlay"],.stype-btn');
+    if(!target) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    if(ev.stopImmediatePropagation) ev.stopImmediatePropagation();
+    showToast(status.client_message || status.message || 'This expert cannot receive new sessions right now.');
+  }, true);
+  installPublicWrap();
+  [250, 900, 1800, 3600].forEach(function(ms){ setTimeout(installPublicWrap, ms); });
 })();
 </script>
 </html>

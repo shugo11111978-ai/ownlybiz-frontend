@@ -44435,8 +44435,65 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     catch(e){ return {}; }
   }
   function currentRole(){ return String(parseStoredUser().role || '').toLowerCase(); }
+  async function resolvedRole(){
+    var existing = currentRole();
+    if(existing) return existing;
+    try {
+      var data = await jsonFetch('/api/auth/me', {method:'GET'});
+      var user = data.user || data || {};
+      if(user.role){
+        try {
+          var stored = parseStoredUser();
+          stored.role = user.role;
+          if(user.name) stored.name = user.name;
+          if(user.slug) stored.slug = user.slug;
+          sessionStorage.setItem('ob_u', JSON.stringify(stored));
+        } catch(e){}
+        return String(user.role || '').toLowerCase();
+      }
+    } catch(e){}
+    return '';
+  }
+  function dashSlug(){
+    var match = String(location.pathname || '').match(/\/dash\/([^/?#]+)/);
+    return match ? decodeURIComponent(match[1]) : '';
+  }
+  function storedAdminCtx(){
+    try { return JSON.parse(localStorage.getItem('ob_admin_view_expert') || '{}') || {}; }
+    catch(e){ return {}; }
+  }
+  function adminViewSlug(){
+    var stored = storedAdminCtx();
+    return window._adminViewingExpertSlug || dashSlug() || stored.slug || value('sfield-slug') || '';
+  }
   function isAdminViewingExpert(){
     return currentRole() === 'admin' && !!window._adminViewingExpertId;
+  }
+  async function resolveAdminExpertId(){
+    var slug = adminViewSlug();
+    var stored = storedAdminCtx();
+    if(window._adminViewingExpertId) return window._adminViewingExpertId;
+    if(stored.id && (!slug || !stored.slug || stored.slug === slug)){
+      window._adminViewingExpertId = stored.id;
+      if(stored.slug) window._adminViewingExpertSlug = stored.slug;
+      if(stored.name) window._adminViewingExpertName = stored.name;
+      return stored.id;
+    }
+    if(!slug) throw new Error('Could not identify which expert profile is open.');
+    var resolved = await jsonFetch('/api/admin/experts/by-slug/' + encodeURIComponent(slug), {method:'GET'});
+    var expert = resolved.expert || {};
+    if(!expert.id) throw new Error('Could not identify which expert profile is open.');
+    window._adminViewingExpertId = expert.id;
+    window._adminViewingExpertSlug = expert.slug || slug;
+    window._adminViewingExpertName = expert.name || window._adminViewingExpertName || '';
+    try {
+      localStorage.setItem('ob_admin_view_expert', JSON.stringify({
+        id: window._adminViewingExpertId,
+        slug: window._adminViewingExpertSlug,
+        name: window._adminViewingExpertName
+      }));
+    } catch(e){}
+    return expert.id;
   }
   function notify(message, kind){
     if(typeof toastMsg === 'function') return toastMsg(message, kind || 'ok');
@@ -44516,8 +44573,15 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     window._currentExpert = Object.assign(window._currentExpert || {}, payload);
   }
   async function refreshProfileUi(){
-    if(isAdminViewingExpert()) return;
     try {
+      if(await resolvedRole() === 'admin'){
+        var adminId = await resolveAdminExpertId();
+        var adminData = await jsonFetch('/api/admin/experts/' + encodeURIComponent(adminId) + '/profile', {method:'GET'});
+        var adminUser = adminData.user || {};
+        var adminProfile = adminData.profile || {};
+        syncProfileUi(Object.assign({}, adminProfile, {name:adminUser.name, title:adminProfile.title}));
+        return;
+      }
       var data = await jsonFetch('/api/auth/me', {method:'GET'});
       var user = data.user || {};
       var profile = data.profile || {};
@@ -44541,9 +44605,14 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     }
     setSaveState('saving');
     try {
-      var path = isAdminViewingExpert()
-        ? '/api/admin/experts/' + encodeURIComponent(window._adminViewingExpertId) + '/profile'
-        : '/api/experts/me/profile';
+      var role = await resolvedRole();
+      var path;
+      if(role === 'admin'){
+        var adminId = await resolveAdminExpertId();
+        path = '/api/admin/experts/' + encodeURIComponent(adminId) + '/profile';
+      } else {
+        path = '/api/experts/me/profile';
+      }
       await jsonFetch(path, {method:'PUT', body:payload});
       syncProfileUi(payload);
       refreshProfileUi();

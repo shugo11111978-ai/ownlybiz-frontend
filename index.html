@@ -24227,19 +24227,144 @@ window._handleRTCMessage=function(d){
     if(previousLoadExpertDashboardV2) return previousLoadExpertDashboardV2.apply(this, arguments);
   };
   if(window.OwnlyAPI) window.OwnlyAPI.loadExpertDashboard = window.loadExpertDashboard;
-  window.adminViewExpertDashboard = function(expertId, slug, name){
+  function adminExpertMoney(v){ return (typeof money === 'function') ? money(v || 0) : ('$' + Number(v || 0).toFixed(2)); }
+  function adminExpertWhen(v){
+    if(!v) return '-';
+    var n = Number(v);
+    var d = Number.isFinite(n) ? new Date(n * 1000) : new Date(v);
+    return isNaN(d.getTime()) ? '-' : d.toLocaleString();
+  }
+  function adminExpertPill(text, tone){
+    var map = {
+      ok:'background:rgba(34,197,94,.14);color:#86efac;border-color:rgba(34,197,94,.24);',
+      warn:'background:rgba(245,158,11,.14);color:#fbbf24;border-color:rgba(245,158,11,.24);',
+      bad:'background:rgba(248,113,113,.14);color:#fecaca;border-color:rgba(248,113,113,.24);',
+      info:'background:rgba(148,163,184,.14);color:#cbd5e1;border-color:rgba(148,163,184,.24);'
+    };
+    return '<span style="display:inline-flex;border:1px solid rgba(255,255,255,.12);border-radius:999px;padding:5px 10px;font-size:11px;font-weight:900;' + (map[tone] || map.info) + '">' + esc(text) + '</span>';
+  }
+  function adminExpertKpi(label, value, sub){
+    return '<div class="admin-kpi" style="min-height:88px;"><div class="admin-kpi-label">' + esc(label) + '</div><div class="admin-kpi-val">' + esc(value) + '</div>' + (sub ? '<div style="font-size:11px;color:rgba(246,241,233,.45);margin-top:4px;">' + esc(sub) + '</div>' : '') + '</div>';
+  }
+  function adminExpertStatus(user, profile){
+    var approval = String(profile && profile.approval_status || '').toLowerCase();
+    if(Number(user && user.is_active) === 0 || approval === 'suspended') return adminExpertPill('Suspended','bad');
+    if(approval === 'pending' || approval === 'draft' || approval === 'pending_approval' || Number(profile && profile.approval_required || 0)) return adminExpertPill('Waiting approval','warn');
+    if(Number(user && user.is_verified) || approval === 'approved') return adminExpertPill('Approved','ok');
+    return adminExpertPill('Review needed','warn');
+  }
+  function adminExpertInfoGrid(user, profile){
+    var rows = [
+      ['Email', user.email || '-'], ['Slug', profile.slug ? 'ownlybiz.com/' + profile.slug : '-'], ['Title', profile.title || '-'], ['Location', profile.location || '-'],
+      ['Plan', profile.subscription_plan || 'starter'], ['Subscription', profile.subscription_status || '-'], ['Website', Number(profile.website_published || 0) ? 'Published' : 'Not published'],
+      ['Stripe Connect', profile.stripe_account_id ? 'Connected' : 'Not connected'], ['Online', Number(profile.is_online || 0) ? 'Online' : 'Offline'],
+      ['Created', adminExpertWhen(user.created_at)], ['Approved', adminExpertWhen(profile.approved_at)], ['Published at', adminExpertWhen(profile.website_published_at)]
+    ];
+    return '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin-top:18px;">' + rows.map(function(r){
+      return '<div style="border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.035);border-radius:10px;padding:12px;"><div style="font-size:10px;font-weight:900;text-transform:uppercase;letter-spacing:.06em;color:rgba(246,241,233,.42);">' + esc(r[0]) + '</div><div style="font-size:13px;color:rgba(246,241,233,.82);margin-top:6px;word-break:break-word;">' + esc(r[1]) + '</div></div>';
+    }).join('') + '</div>';
+  }
+  function adminExpertRefundRows(requests){
+    return (requests || []).map(function(r){
+      var status = String(r.status || 'pending').toLowerCase();
+      var badge = status === 'approved' ? adminExpertPill('Approved','ok') : (status === 'declined' || status === 'failed' ? adminExpertPill(status,'bad') : adminExpertPill('Pending','warn'));
+      var action = status === 'pending'
+        ? '<button class="admin-action-btn" type="button" onclick="obAdminExpertApproveRefund(&quot;' + esc(r.id || '') + '&quot;)">Approve</button> <button class="admin-action-btn danger" type="button" onclick="obAdminExpertDeclineRefund(&quot;' + esc(r.id || '') + '&quot;)">Decline</button>'
+        : esc(r.error_message || r.decline_reason || r.admin_note || '-');
+      return '<tr><td>' + esc(r.client_name || r.client_id || '-') + '<br><small>' + esc(r.client_email || '') + '</small></td><td>' + esc(r.request_type || '-') + '</td><td>' + adminExpertMoney(r.amount_requested || 0) + '</td><td>' + badge + '</td><td>' + esc(r.expert_reason || '-') + '</td><td>' + action + '</td></tr>';
+    }).join('');
+  }
+  function adminExpertSessionsRows(sessions){
+    return (sessions || []).slice(0, 10).map(function(s){
+      return '<tr><td>' + esc(s.client_name || s.client_id || '-') + '</td><td>' + esc(s.channel || '-') + '</td><td>' + esc(s.status || '-') + '</td><td>' + adminExpertMoney(s.total_charged || 0) + '</td><td>' + adminExpertMoney(s.expert_earned || 0) + '</td><td>' + adminExpertWhen(s.created_at) + '</td></tr>';
+    }).join('');
+  }
+  function adminExpertPackagesRows(packages){
+    return (packages || []).map(function(p){
+      return '<tr><td>' + esc(p.name || p.title || '-') + '</td><td>' + adminExpertMoney(p.price || p.amount || 0) + '</td><td>' + esc(p.type || p.kind || '-') + '</td><td>' + (Number(p.active || 0) ? adminExpertPill('Active','ok') : adminExpertPill('Inactive','info')) + '</td></tr>';
+    }).join('');
+  }
+  function adminExpertDetailHtml(expertId, profileData, dashData, refundData){
+    var user = profileData.user || dashData.user || {};
+    var profile = Object.assign({}, dashData.profile || {}, profileData.profile || {});
+    var rates = profileData.rates || {};
+    var dash = dashData.dashboard || {};
+    var stats = dash.stats || {};
+    var ai = profileData.ai_chat || {};
+    var slug = profile.slug || '';
+    var name = user.name || profile.name || 'Expert';
+    var refunds = adminExpertRefundRows(refundData.requests || []);
+    var sessions = adminExpertSessionsRows(dash.recent_sessions || []);
+    var packages = adminExpertPackagesRows(profileData.packages || []);
+    return '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px;"><button class="admin-action-btn" type="button" onclick="obAdminExpertBackToList()">Back to expert list</button><div style="display:flex;gap:8px;flex-wrap:wrap;"><button class="admin-action-btn" type="button" onclick="obAdminExpertAction(&quot;' + esc(expertId) + '&quot;,&quot;approve&quot;)">Approve</button><button class="admin-action-btn danger" type="button" onclick="obAdminExpertAction(&quot;' + esc(expertId) + '&quot;,&quot;suspend&quot;)">Suspend</button><button class="admin-action-btn" type="button" onclick="obAdminExpertAction(&quot;' + esc(expertId) + '&quot;,&quot;restore&quot;)">Restore</button><button class="admin-action-btn" type="button" onclick="obAdminOpenExpertDashboard(&quot;' + esc(expertId) + '&quot;,&quot;' + esc(slug) + '&quot;,&quot;' + esc(name) + '&quot;)">Open expert dashboard</button></div></div>'
+      + '<div class="admin-card" style="padding:22px;"><div style="display:flex;align-items:flex-start;justify-content:space-between;gap:18px;flex-wrap:wrap;"><div><div style="font-size:30px;font-weight:950;color:rgba(246,241,233,.96);letter-spacing:0;">' + esc(name) + '</div><div style="font-size:13px;color:rgba(246,241,233,.58);margin-top:6px;">' + esc(user.email || '-') + '</div></div><div style="display:flex;gap:8px;flex-wrap:wrap;">' + adminExpertStatus(user, profile) + adminExpertPill(profile.subscription_plan || 'starter','info') + (Number(profile.website_published || 0) ? adminExpertPill('Website published','ok') : adminExpertPill('Website not published','warn')) + '</div></div>' + adminExpertInfoGrid(user, profile) + '<div style="margin-top:16px;font-size:12px;color:rgba(246,241,233,.58);line-height:1.6;"><strong style="display:block;color:rgba(246,241,233,.78);margin-bottom:4px;">Bio</strong>' + esc(profile.bio || 'No bio saved.') + '</div></div>'
+      + '<div class="ob-admin-live-grid" style="margin-top:18px;">' + adminExpertKpi('Total sessions', int(stats.total_sessions || 0), 'Chat ' + int(stats.chat_sessions || 0) + ' / Voice ' + int(stats.voice_sessions || 0) + ' / Video ' + int(stats.video_sessions || 0)) + adminExpertKpi('Total earned', adminExpertMoney(stats.total_earnings || 0), 'Pending payout ' + adminExpertMoney(dash.pending_payout || 0)) + adminExpertKpi('Active sessions', int(stats.active_sessions || 0), 'Current active session count') + adminExpertKpi('Reviews', String(stats.avg_rating || 0) + ' avg', int(stats.review_count || 0) + ' reviews') + '</div>'
+      + '<div class="ob-admin-live-grid" style="margin-top:12px;">' + adminExpertKpi('Chat rate', adminExpertMoney(rates.chat_pm || profile.rate_chat || 0), int(rates.chat_free_min || profile.free_minutes || 0) + ' free min') + adminExpertKpi('Voice rate', adminExpertMoney(rates.voice_pm || profile.rate_voice || 0), int(rates.voice_free_min || profile.free_minutes_voice || 0) + ' free min') + adminExpertKpi('Video rate', adminExpertMoney(rates.video_pm || profile.rate_video || 0), int(rates.video_free_min || profile.free_minutes_video || 0) + ' free min') + adminExpertKpi('AI chat', Number(ai.enabled || 0) === 1 ? 'Enabled' : 'Off', ai.mode || 'semi_ai') + '</div>'
+      + '<div class="admin-card" style="padding:18px;margin-top:18px;"><div class="admin-card-title">Refund requests <span class="admin-card-title-sub">Review this expert without leaving their record</span></div><div style="font-size:12px;color:rgba(246,241,233,.55);line-height:1.55;margin-bottom:12px;">Approving a pending refund can touch Stripe in the active Stripe mode. Declining records the decision without touching Stripe.</div><div style="overflow:auto;"><table class="experts-table" style="width:100%;"><thead><tr><th>Client</th><th>Type</th><th>Amount</th><th>Status</th><th>Expert note</th><th>Action / decision</th></tr></thead><tbody>' + (refunds || '<tr><td colspan="6" style="padding:24px;text-align:center;color:rgba(246,241,233,.45);">No refund requests for this expert.</td></tr>') + '</tbody></table></div></div>'
+      + '<div class="admin-card" style="padding:18px;margin-top:18px;"><div class="admin-card-title">Recent sessions <span class="admin-card-title-sub">Last 10 sessions for this expert</span></div><div style="overflow:auto;"><table class="experts-table" style="width:100%;"><thead><tr><th>Client</th><th>Channel</th><th>Status</th><th>Charged</th><th>Expert earned</th><th>Date</th></tr></thead><tbody>' + (sessions || '<tr><td colspan="6" style="padding:24px;text-align:center;color:rgba(246,241,233,.45);">No recent sessions.</td></tr>') + '</tbody></table></div></div>'
+      + '<div class="admin-card" style="padding:18px;margin-top:18px;"><div class="admin-card-title">Packages</div><div style="overflow:auto;"><table class="experts-table" style="width:100%;"><thead><tr><th>Name</th><th>Price</th><th>Type</th><th>Status</th></tr></thead><tbody>' + (packages || '<tr><td colspan="4" style="padding:24px;text-align:center;color:rgba(246,241,233,.45);">No packages configured.</td></tr>') + '</tbody></table></div></div>';
+  }
+  function openAdminExpertDetail(expertId, slug, name){
+    if(!expertId){ toastMsg('Expert id missing','err'); return; }
+    var panel = document.getElementById('admin-panel-experts');
+    var content = panel && (panel.querySelector('.admin-content') || panel);
+    if(!content) return;
+    window.__obAdminExpertDetailCore20260526 = true;
+    window.__obAdminExpertDetailActive = {id:expertId, slug:slug || '', name:name || ''};
+    content.innerHTML = '<div class="admin-card" style="padding:28px;color:rgba(246,241,233,.65);">Loading expert details...</div>';
+    Promise.all([
+      api('/api/admin/experts/' + encodeURIComponent(expertId) + '/profile'),
+      api('/api/admin/experts/' + encodeURIComponent(expertId) + '/dashboard').catch(function(){ return {}; }),
+      api('/api/admin/refund-requests?expert_id=' + encodeURIComponent(expertId) + '&limit=100').catch(function(){ return {requests:[]}; })
+    ]).then(function(all){
+      content.innerHTML = adminExpertDetailHtml(expertId, all[0] || {}, all[1] || {}, all[2] || {requests:[]});
+      try { content.scrollIntoView({block:'start'}); } catch(e) {}
+    }).catch(function(e){
+      content.innerHTML = '<div class="admin-card" style="padding:28px;color:#fecaca;">Expert details failed: ' + esc(e.message || e) + '</div>';
+    });
+  }
+  window.obAdminOpenExpertDashboard = function(expertId, slug, name){
     copyAdminAuthForNewTab();
+    slug = slug || '';
+    if(!slug){ toastMsg('Expert slug not found','err'); return; }
+    writeAdminViewCtx({id:expertId, slug:slug, name:name || ''});
+    window.open(location.origin + '/dash/' + encodeURIComponent(slug) + '?admin=1&expertId=' + encodeURIComponent(expertId || '') + '&expertName=' + encodeURIComponent(name || ''), '_blank', 'noopener');
+  };
+  window.obAdminExpertBackToList = function(){
+    window.__obAdminExpertDetailActive = null;
+    if(typeof window.loadAdminExperts === 'function') window.loadAdminExperts();
+    else renderAdminExperts();
+  };
+  window.obAdminExpertAction = function(expertId, action){
+    var isActive = action === 'approve' || action === 'restore';
+    api('/api/admin/experts/' + encodeURIComponent(expertId), {method:'PUT', body:JSON.stringify({is_active:isActive, is_verified:isActive})})
+      .then(function(){ toastMsg(action === 'suspend' ? 'Expert suspended.' : 'Expert approved/restored.'); var ctx = window.__obAdminExpertDetailActive || {}; openAdminExpertDetail(expertId, ctx.slug, ctx.name); })
+      .catch(function(e){ toastMsg(e.message || 'Expert action failed','err'); });
+  };
+  window.obAdminExpertApproveRefund = function(refundId){
+    if(!confirm('Approve this refund request? This can create a Stripe refund in the active Stripe mode.')) return;
+    var note = prompt('Admin note for this approval (optional):') || '';
+    api('/api/admin/refund-requests/' + encodeURIComponent(refundId) + '/approve', {method:'POST', body:JSON.stringify({note:note})})
+      .then(function(){ toastMsg('Refund approved.'); var ctx = window.__obAdminExpertDetailActive || {}; if(ctx.id) openAdminExpertDetail(ctx.id, ctx.slug, ctx.name); })
+      .catch(function(e){ toastMsg(e.message || 'Refund approval failed','err'); });
+  };
+  window.obAdminExpertDeclineRefund = function(refundId){
+    var reason = prompt('Reason for declining this refund request:') || '';
+    if(!reason.trim()) return;
+    api('/api/admin/refund-requests/' + encodeURIComponent(refundId) + '/decline', {method:'POST', body:JSON.stringify({reason:reason})})
+      .then(function(){ toastMsg('Refund request declined.'); var ctx = window.__obAdminExpertDetailActive || {}; if(ctx.id) openAdminExpertDetail(ctx.id, ctx.slug, ctx.name); })
+      .catch(function(e){ toastMsg(e.message || 'Refund decline failed','err'); });
+  };
+  window.adminViewExpertDashboard = function(expertId, slug, name){
     slug = slug || '';
     if(!slug && expertId){
       api('/api/admin/experts?limit=100').then(function(d){
         var e = (d.experts || []).find(function(x){ return x.id === expertId; });
-        if(e && e.slug) window.adminViewExpertDashboard(expertId, e.slug, e.name || name);
-        else toastMsg('Expert slug not found','err');
+        openAdminExpertDetail(expertId, e && e.slug, e && (e.name || name));
       }).catch(function(e){ toastMsg(e.message || 'Could not open expert','err'); });
       return;
     }
-    writeAdminViewCtx({id:expertId, slug:slug, name:name || ''});
-    window.open(location.origin + '/dash/' + encodeURIComponent(slug) + '?admin=1&expertId=' + encodeURIComponent(expertId || '') + '&expertName=' + encodeURIComponent(name || ''), '_blank', 'noopener');
+    openAdminExpertDetail(expertId, slug, name || '');
   };
   function setAdminPanelContent(panel, html){
     var root = document.getElementById('admin-panel-' + panel);

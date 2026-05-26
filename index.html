@@ -44420,4 +44420,209 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   [250, 900, 1800, 3600].forEach(function(ms){ setTimeout(installPublicWrap, ms); });
 })();
 </script>
+<script id="ownlybiz-settings-stripe-stabilizer-20260526">
+(function(){
+  if(window.__obSettingsStripeStabilizer20260526) return;
+  window.__obSettingsStripeStabilizer20260526 = true;
+
+  var BASE = (window.OWNLYBIZ_API_URL || window._OB_BACKEND || 'https://ownlybiz-backend-production.up.railway.app').replace(/\/+$/,'');
+
+  function byId(id){ return document.getElementById(id); }
+  function token(){ return sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || ''; }
+  function apiUrl(path){ return /^https?:\/\//.test(path) ? path : BASE + (path.charAt(0) === '/' ? path : '/' + path); }
+  function parseStoredUser(){
+    try { return JSON.parse(sessionStorage.getItem('ob_u') || localStorage.getItem('ob_u') || '{}') || {}; }
+    catch(e){ return {}; }
+  }
+  function currentRole(){ return String(parseStoredUser().role || '').toLowerCase(); }
+  function isAdminViewingExpert(){
+    return currentRole() === 'admin' && !!window._adminViewingExpertId;
+  }
+  function notify(message, kind){
+    if(typeof toastMsg === 'function') return toastMsg(message, kind || 'ok');
+    if(typeof toast === 'function') return toast(message, kind || 'ok');
+    if(typeof _showToast === 'function') return _showToast(message, kind === 'err' ? 'red' : 'green');
+  }
+  function setText(selector, value){
+    if(value === undefined || value === null) return;
+    document.querySelectorAll(selector).forEach(function(el){ el.textContent = value; });
+  }
+  function value(id){
+    var el = byId(id);
+    return el ? String(el.value || '').trim() : undefined;
+  }
+  function fieldPayload(map){
+    var out = {};
+    Object.keys(map).forEach(function(key){
+      var v = value(map[key]);
+      if(v !== undefined) out[key] = v;
+    });
+    return out;
+  }
+  async function jsonFetch(path, opts){
+    opts = opts || {};
+    var t = token();
+    if(!t) throw new Error('Please log in again before saving.');
+    var headers = Object.assign({'Content-Type':'application/json', 'Authorization':'Bearer ' + t}, opts.headers || {});
+    var body = opts.body;
+    if(body && typeof body !== 'string') body = JSON.stringify(body);
+    var response = await fetch(apiUrl(path), Object.assign({}, opts, {headers:headers, body:body}));
+    var data = await response.json().catch(function(){ return {}; });
+    if(!response.ok || data.success === false) throw new Error(data.error || 'Save failed.');
+    return data;
+  }
+  function setSaveState(state){
+    var status = byId('save-status-profile');
+    var btn = Array.prototype.slice.call(document.querySelectorAll('button,[onclick]')).find(function(el){
+      return String(el.getAttribute('onclick') || '').indexOf("saveSettingsBlock('profile')") >= 0;
+    });
+    if(status){
+      status.textContent = state === 'saving' ? 'Saving...' : (state === 'saved' ? 'Saved' : (state === 'error' ? 'Error' : ''));
+      status.style.color = state === 'saved' ? 'var(--sage,#22c55e)' : (state === 'error' ? '#ef4444' : 'var(--gray-400)');
+    }
+    if(btn){
+      btn.disabled = state === 'saving';
+      if(!btn.dataset.obOriginalText) btn.dataset.obOriginalText = btn.textContent || 'Save Profile';
+      btn.textContent = state === 'saving' ? 'Saving...' : btn.dataset.obOriginalText;
+    }
+  }
+  function updateStoredUserName(name){
+    ['sessionStorage','localStorage'].forEach(function(storeName){
+      try {
+        var store = window[storeName];
+        var raw = store.getItem('ob_u');
+        if(!raw) return;
+        var u = JSON.parse(raw);
+        if(u && typeof u === 'object'){
+          u.name = name;
+          store.setItem('ob_u', JSON.stringify(u));
+        }
+      } catch(e){}
+    });
+  }
+  function syncProfileUi(payload){
+    payload = payload || {};
+    if(payload.name){
+      setText('.db-expert-name,.expert-name-display,[data-bind="expert-name"]', payload.name);
+      if(isAdminViewingExpert()) window._adminViewingExpertName = payload.name;
+      else updateStoredUserName(payload.name);
+    }
+    if(payload.title) setText('.db-expert-role,.expert-title-display,[data-bind="expert-title"]', payload.title);
+    var subtitle = byId('settings-profile-sub');
+    var slug = value('sfield-slug') || (window._currentExpert && window._currentExpert.slug) || window._adminViewingExpertSlug || '';
+    if(subtitle){
+      subtitle.textContent = (payload.title || value('sfield-title') || 'Expert') + (slug ? ' - ' + slug + '.ownlybiz.com' : '');
+    }
+    window._currentExpert = Object.assign(window._currentExpert || {}, payload);
+  }
+  async function refreshProfileUi(){
+    if(isAdminViewingExpert()) return;
+    try {
+      var data = await jsonFetch('/api/auth/me', {method:'GET'});
+      var user = data.user || {};
+      var profile = data.profile || {};
+      var payload = Object.assign({}, profile, {name:user.name, title:profile.title});
+      syncProfileUi(payload);
+    } catch(e){}
+  }
+  async function saveProfileSettings(){
+    var payload = fieldPayload({
+      name:'sfield-name',
+      title:'sfield-title',
+      bio:'sfield-bio',
+      location:'sfield-location',
+      phone:'sfield-phone',
+      tagline:'sfield-tagline',
+      timezone:'sfield-timezone'
+    });
+    if(!payload.name){
+      notify('Display name is required.', 'err');
+      return false;
+    }
+    setSaveState('saving');
+    try {
+      var path = isAdminViewingExpert()
+        ? '/api/admin/experts/' + encodeURIComponent(window._adminViewingExpertId) + '/profile'
+        : '/api/experts/me/profile';
+      await jsonFetch(path, {method:'PUT', body:payload});
+      syncProfileUi(payload);
+      refreshProfileUi();
+      setSaveState('saved');
+      notify('Profile saved.', 'ok');
+      return true;
+    } catch(err) {
+      setSaveState('error');
+      notify(err.message || 'Profile save failed.', 'err');
+      return false;
+    }
+  }
+
+  var previousSaveSettingsBlock = window.saveSettingsBlock;
+  window.saveSettingsBlock = function(section){
+    if(section === 'profile') return saveProfileSettings();
+    if(typeof previousSaveSettingsBlock === 'function') return previousSaveSettingsBlock.apply(this, arguments);
+  };
+
+  function stripeState(data, forced){
+    if(forced === 'loading') return {key:'loading', label:'Checking Stripe...', color:'rgba(246,241,233,.62)', border:'rgba(246,241,233,.12)'};
+    if(!data && forced === 'unknown') return {key:'unknown', label:'Stripe Status Unknown', color:'#fbbf24', border:'rgba(251,191,36,.28)'};
+    if(!data && forced === 'none') return {key:'none', label:'Stripe Not Connected', color:'#f87171', border:'rgba(248,113,113,.26)'};
+    data = data || {};
+    var connected = !!(data.connected || data.configured || (data.details_submitted && data.charges_enabled && data.payouts_enabled));
+    var pending = !!(data.pending || data.stripe_account_id || data.account_id);
+    if(connected) return {key:'connected', label:'Stripe Connected', color:'#4ade80', border:'rgba(74,222,128,.28)'};
+    if(pending) return {key:'pending', label:'Stripe Pending Setup', color:'#fbbf24', border:'rgba(251,191,36,.28)'};
+    return {key:'none', label:'Stripe Not Connected', color:'#f87171', border:'rgba(248,113,113,.26)'};
+  }
+  function syncSidebarStripeStatus(data, forced){
+    var state = stripeState(data, forced);
+    document.querySelectorAll('.db-stripe-status').forEach(function(el){
+      el.textContent = state.label;
+      el.style.color = state.color;
+      el.dataset.obStripeState = state.key;
+    });
+    document.querySelectorAll('.db-stripe-badge').forEach(function(el){
+      el.dataset.obStripeState = state.key;
+      el.style.borderColor = state.border;
+    });
+    return state;
+  }
+  function normalizePaymentProcessorState(data){
+    var state = stripeState(data);
+    var card = document.querySelector('.pay-processor[onclick*="stripe"]') || document.querySelector('.pay-processor.connected');
+    if(card){
+      card.dataset.obStripeState = state.key;
+      card.classList.toggle('connected', state.key === 'connected');
+    }
+  }
+  async function loadSidebarStripeStatus(){
+    if(!token()){ syncSidebarStripeStatus(null, 'none'); return; }
+    syncSidebarStripeStatus(null, 'loading');
+    try {
+      var data = await jsonFetch('/api/experts/stripe/status', {method:'GET'});
+      syncSidebarStripeStatus(data);
+      normalizePaymentProcessorState(data);
+    } catch(e) {
+      syncSidebarStripeStatus(null, 'unknown');
+    }
+  }
+  var previousUpdateStripeUI = window.updateStripeUI;
+  window.updateStripeUI = function(data){
+    var result;
+    if(typeof previousUpdateStripeUI === 'function') result = previousUpdateStripeUI.apply(this, arguments);
+    syncSidebarStripeStatus(data);
+    normalizePaymentProcessorState(data);
+    return result;
+  };
+  window.obRefreshSidebarStripeStatus = loadSidebarStripeStatus;
+
+  function boot(){
+    syncSidebarStripeStatus(null, 'loading');
+    setTimeout(loadSidebarStripeStatus, 250);
+    setTimeout(loadSidebarStripeStatus, 1800);
+  }
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
+  else boot();
+})();
+</script>
 </html>

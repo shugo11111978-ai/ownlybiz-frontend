@@ -43705,4 +43705,269 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   [300, 900, 1800, 3500, 7000].forEach(function(ms){ setTimeout(install, ms); });
 })();
 </script>
+<script id="ownlybiz-admin-expert-detail-correct-flow-20260526">
+(function(){
+  if(window.__obAdminExpertDetailCorrectFlow20260526) return;
+  window.__obAdminExpertDetailCorrectFlow20260526 = true;
+
+  var API_ROOT = (window.OWNLYBIZ_API_URL || 'https://ownlybiz-backend-production.up.railway.app').replace(/\/+$/,'') + '/api';
+  var activeExpertDetail = null;
+
+  function token(){ return sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || ''; }
+  function esc(v){ return String(v == null ? '' : v).replace(/[&<>"']/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  function attr(v){ return esc(v).replace(/"/g,'&quot;'); }
+  function money(v){ var n = Number(v || 0); return '$' + (Number.isFinite(n) ? n : 0).toFixed(2); }
+  function int(v){ var n = Number(v || 0); return Number.isFinite(n) ? Math.round(n) : 0; }
+  function api(path, opts){
+    opts = opts || {};
+    var headers = {'Content-Type':'application/json'};
+    if(token()) headers.Authorization = 'Bearer ' + token();
+    return fetch(API_ROOT + path, {
+      method: opts.method || 'GET',
+      headers: headers,
+      body: opts.body ? JSON.stringify(opts.body) : undefined
+    }).then(function(r){
+      return r.json().catch(function(){ return {}; }).then(function(d){
+        if(!r.ok) throw new Error(d.error || d.message || ('Request failed: ' + r.status));
+        return d;
+      });
+    });
+  }
+  function notify(msg, kind){
+    if(typeof toastMsg === 'function') toastMsg(msg, kind);
+    else if(typeof toast === 'function') toast(msg, kind);
+    else console.log(msg);
+  }
+  function panelContent(){
+    var panel = document.getElementById('admin-panel-experts');
+    if(!panel) return null;
+    var content = panel.querySelector('.admin-content');
+    if(!content){
+      content = document.createElement('div');
+      content.className = 'admin-content';
+      panel.appendChild(content);
+    }
+    return content;
+  }
+  function when(v){
+    if(!v) return '-';
+    var n = Number(v);
+    var d = Number.isFinite(n) ? new Date(n * 1000) : new Date(v);
+    return isNaN(d.getTime()) ? '-' : d.toLocaleString();
+  }
+  function badge(text, tone){
+    var map = {
+      ok:'background:rgba(34,197,94,.14);color:#86efac;border-color:rgba(34,197,94,.24);',
+      warn:'background:rgba(245,158,11,.14);color:#fbbf24;border-color:rgba(245,158,11,.24);',
+      bad:'background:rgba(248,113,113,.14);color:#fecaca;border-color:rgba(248,113,113,.24);',
+      info:'background:rgba(148,163,184,.14);color:#cbd5e1;border-color:rgba(148,163,184,.24);'
+    };
+    return '<span style="display:inline-flex;align-items:center;border:1px solid rgba(255,255,255,.12);border-radius:999px;padding:5px 10px;font-size:11px;font-weight:900;' + (map[tone] || map.info) + '">' + esc(text) + '</span>';
+  }
+  function expertStatus(user, profile){
+    var active = Number(user && user.is_active) !== 0;
+    var verified = Number(user && user.is_verified) !== 0;
+    var approval = String(profile && profile.approval_status || '').toLowerCase();
+    if(!active || approval === 'suspended') return badge('Suspended','bad');
+    if(approval === 'pending' || approval === 'draft' || approval === 'pending_approval' || Number(profile && profile.approval_required || 0)) return badge('Waiting approval','warn');
+    if(verified || approval === 'approved') return badge('Approved','ok');
+    return badge('Review needed','warn');
+  }
+  function refundStatus(s){
+    s = String(s || 'pending').toLowerCase();
+    if(s === 'approved') return badge('Approved','ok');
+    if(s === 'declined' || s === 'failed') return badge(s === 'failed' ? 'Failed' : 'Declined','bad');
+    return badge('Pending','warn');
+  }
+  function openDashboard(id, slug, name){
+    try {
+      var t = sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t');
+      var u = sessionStorage.getItem('ob_u') || localStorage.getItem('ob_u');
+      if(t) localStorage.setItem('ob_t', t);
+      if(u) localStorage.setItem('ob_u', u);
+    } catch(e) {}
+    if(!slug){ notify('This expert does not have a slug yet.', 'err'); return; }
+    window.open(location.origin + '/dash/' + encodeURIComponent(slug) + '?admin=1&expertId=' + encodeURIComponent(id || '') + '&expertName=' + encodeURIComponent(name || ''), '_blank', 'noopener');
+  }
+  function kpi(label, value, sub){
+    return '<div class="admin-kpi" style="min-height:88px;"><div class="admin-kpi-label">' + esc(label) + '</div><div class="admin-kpi-val">' + esc(value) + '</div>' + (sub ? '<div style="font-size:11px;color:rgba(246,241,233,.45);margin-top:4px;">' + esc(sub) + '</div>' : '') + '</div>';
+  }
+  function infoGrid(user, profile){
+    var rows = [
+      ['Email', user.email || '-'],
+      ['Slug', profile.slug ? 'ownlybiz.com/' + profile.slug : '-'],
+      ['Title', profile.title || '-'],
+      ['Location', profile.location || '-'],
+      ['Plan', profile.subscription_plan || 'starter'],
+      ['Subscription', profile.subscription_status || '-'],
+      ['Website', Number(profile.website_published || 0) ? 'Published' : 'Not published'],
+      ['Stripe Connect', profile.stripe_account_id ? 'Connected' : 'Not connected'],
+      ['Online', Number(profile.is_online || 0) ? 'Online' : 'Offline'],
+      ['Created', when(user.created_at)],
+      ['Approved', when(profile.approved_at)],
+      ['Published at', when(profile.website_published_at)]
+    ];
+    return '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin-top:18px;">' + rows.map(function(row){
+      return '<div style="border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.035);border-radius:10px;padding:12px;"><div style="font-size:10px;font-weight:900;text-transform:uppercase;letter-spacing:.06em;color:rgba(246,241,233,.42);">' + esc(row[0]) + '</div><div style="font-size:13px;color:rgba(246,241,233,.82);margin-top:6px;word-break:break-word;">' + esc(row[1]) + '</div></div>';
+    }).join('') + '</div>';
+  }
+  function sessionsTable(sessions){
+    var rows = (sessions || []).slice(0,10).map(function(s){
+      return '<tr><td>' + esc(s.client_name || s.client_id || '-') + '</td><td>' + esc(s.channel || '-') + '</td><td>' + esc(s.status || '-') + '</td><td>' + money(s.total_charged || 0) + '</td><td>' + money(s.expert_earned || 0) + '</td><td>' + when(s.created_at) + '</td></tr>';
+    }).join('');
+    return '<div class="admin-card" style="padding:18px;margin-top:18px;"><div class="admin-card-title">Recent sessions <span class="admin-card-title-sub">Last 10 sessions for this expert</span></div><div style="overflow:auto;"><table class="experts-table" style="width:100%;"><thead><tr><th>Client</th><th>Channel</th><th>Status</th><th>Charged</th><th>Expert earned</th><th>Date</th></tr></thead><tbody>' + (rows || '<tr><td colspan="6" style="padding:24px;text-align:center;color:rgba(246,241,233,.45);">No recent sessions.</td></tr>') + '</tbody></table></div></div>';
+  }
+  function refundsTable(expertId, requests){
+    var rows = (requests || []).map(function(r){
+      var pending = String(r.status || '').toLowerCase() === 'pending';
+      var action = pending
+        ? '<button class="admin-action-btn" type="button" onclick="obAdminExpertApproveRefund(&quot;' + attr(r.id) + '&quot;)">Approve</button> <button class="admin-action-btn danger" type="button" onclick="obAdminExpertDeclineRefund(&quot;' + attr(r.id) + '&quot;)">Decline</button>'
+        : esc(r.error_message || r.decline_reason || r.admin_note || '-');
+      return '<tr><td>' + esc(r.client_name || r.client_id || '-') + '<br><small>' + esc(r.client_email || '') + '</small></td><td>' + esc(r.request_type || '-') + '</td><td>' + money(r.amount_requested || 0) + '</td><td>' + refundStatus(r.status) + '</td><td>' + esc(r.expert_reason || '-') + '</td><td>' + action + '</td></tr>';
+    }).join('');
+    return '<div class="admin-card" id="ob-admin-expert-detail-refunds" style="padding:18px;margin-top:18px;"><div class="admin-card-title">Refund requests <span class="admin-card-title-sub">Review this expert without leaving their record</span></div><div style="font-size:12px;color:rgba(246,241,233,.55);line-height:1.55;margin-bottom:12px;">Approving a pending refund can touch Stripe in the active Stripe mode. Declining records the decision without touching Stripe.</div><div style="overflow:auto;"><table class="experts-table" style="width:100%;"><thead><tr><th>Client</th><th>Type</th><th>Amount</th><th>Status</th><th>Expert note</th><th>Action / decision</th></tr></thead><tbody>' + (rows || '<tr><td colspan="6" style="padding:24px;text-align:center;color:rgba(246,241,233,.45);">No refund requests for this expert.</td></tr>') + '</tbody></table></div></div>';
+  }
+  function packagesHtml(packages){
+    var rows = (packages || []).map(function(p){
+      return '<tr><td>' + esc(p.name || p.title || '-') + '</td><td>' + money(p.price || p.amount || 0) + '</td><td>' + esc(p.type || p.kind || '-') + '</td><td>' + (Number(p.active || 0) ? badge('Active','ok') : badge('Inactive','info')) + '</td></tr>';
+    }).join('');
+    return '<div class="admin-card" style="padding:18px;margin-top:18px;"><div class="admin-card-title">Packages</div><div style="overflow:auto;"><table class="experts-table" style="width:100%;"><thead><tr><th>Name</th><th>Price</th><th>Type</th><th>Status</th></tr></thead><tbody>' + (rows || '<tr><td colspan="4" style="padding:24px;text-align:center;color:rgba(246,241,233,.45);">No packages configured.</td></tr>') + '</tbody></table></div></div>';
+  }
+  function detailHtml(id, profileData, dashboardData, refundData){
+    var user = profileData.user || dashboardData.user || {};
+    var profile = Object.assign({}, dashboardData.profile || {}, profileData.profile || {});
+    var rates = profileData.rates || {};
+    var stats = dashboardData.dashboard && dashboardData.dashboard.stats || {};
+    var dashboard = dashboardData.dashboard || {};
+    var ai = profileData.ai_chat || {};
+    var slug = profile.slug || '';
+    var name = user.name || 'Expert';
+    var enabled = Number(ai.enabled || 0) === 1;
+    return ''
+      + '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px;">'
+      +   '<button class="admin-action-btn" type="button" onclick="obAdminExpertBackToList()">Back to expert list</button>'
+      +   '<div style="display:flex;gap:8px;flex-wrap:wrap;">'
+      +     '<button class="admin-action-btn" type="button" onclick="obAdminExpertAction(&quot;' + attr(id) + '&quot;,&quot;approve&quot;)">Approve</button>'
+      +     '<button class="admin-action-btn danger" type="button" onclick="obAdminExpertAction(&quot;' + attr(id) + '&quot;,&quot;suspend&quot;)">Suspend</button>'
+      +     '<button class="admin-action-btn" type="button" onclick="obAdminExpertAction(&quot;' + attr(id) + '&quot;,&quot;restore&quot;)">Restore</button>'
+      +     '<button class="admin-action-btn" type="button" onclick="obAdminOpenExpertDashboard(&quot;' + attr(id) + '&quot;,&quot;' + attr(slug) + '&quot;,&quot;' + attr(name) + '&quot;)">Open expert dashboard</button>'
+      +   '</div>'
+      + '</div>'
+      + '<div class="admin-card" style="padding:22px;">'
+      +   '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:18px;flex-wrap:wrap;">'
+      +     '<div><div style="font-size:30px;font-weight:950;color:rgba(246,241,233,.96);letter-spacing:0;">' + esc(name) + '</div><div style="font-size:13px;color:rgba(246,241,233,.58);margin-top:6px;">' + esc(user.email || '-') + '</div></div>'
+      +     '<div style="display:flex;gap:8px;flex-wrap:wrap;">' + expertStatus(user, profile) + badge(profile.subscription_plan || 'starter','info') + (Number(profile.website_published || 0) ? badge('Website published','ok') : badge('Website not published','warn')) + '</div>'
+      +   '</div>'
+      +   infoGrid(user, profile)
+      +   '<div style="margin-top:16px;font-size:12px;color:rgba(246,241,233,.58);line-height:1.6;"><strong style="display:block;color:rgba(246,241,233,.78);margin-bottom:4px;">Bio</strong>' + esc(profile.bio || 'No bio saved.') + '</div>'
+      + '</div>'
+      + '<div class="ob-admin-live-grid" style="margin-top:18px;">'
+      +   kpi('Total sessions', int(stats.total_sessions || 0), 'Chat ' + int(stats.chat_sessions || 0) + ' / Voice ' + int(stats.voice_sessions || 0) + ' / Video ' + int(stats.video_sessions || 0))
+      +   kpi('Total earned', money(stats.total_earnings || 0), 'Pending payout ' + money(dashboard.pending_payout || 0))
+      +   kpi('Active sessions', int(stats.active_sessions || 0), 'Current active session count')
+      +   kpi('Reviews', String(stats.avg_rating || 0) + ' avg', int(stats.review_count || 0) + ' reviews')
+      + '</div>'
+      + '<div class="ob-admin-live-grid" style="margin-top:12px;">'
+      +   kpi('Chat rate', money(rates.chat_pm || profile.rate_chat || 0), int(rates.chat_free_min || profile.free_minutes || 0) + ' free min')
+      +   kpi('Voice rate', money(rates.voice_pm || profile.rate_voice || 0), int(rates.voice_free_min || profile.free_minutes_voice || 0) + ' free min')
+      +   kpi('Video rate', money(rates.video_pm || profile.rate_video || 0), int(rates.video_free_min || profile.free_minutes_video || 0) + ' free min')
+      +   kpi('AI chat', enabled ? 'Enabled' : 'Off', ai.mode || 'semi_ai')
+      + '</div>'
+      + refundsTable(id, refundData.requests || [])
+      + sessionsTable(dashboard.recent_sessions || [])
+      + packagesHtml(profileData.packages || [])
+      + '<div class="admin-card" style="padding:18px;margin-top:18px;"><div class="admin-card-title">Expert AI chat mode <span class="admin-card-title-sub">Admin-only per-expert control</span></div>'
+      +   '<div style="display:grid;grid-template-columns:minmax(180px,220px) minmax(180px,220px) 1fr;gap:14px;align-items:end;">'
+      +     '<label style="font-size:13px;color:rgba(246,241,233,.75);"><input id="ob-ai-chat-enabled" type="checkbox" ' + (enabled ? 'checked' : '') + '> Enable for this expert</label>'
+      +     '<label style="font-size:12px;color:rgba(246,241,233,.55);">Mode<select id="ob-ai-chat-mode" class="admin-input" style="margin-top:6px;width:100%;"><option value="semi_ai" ' + (ai.mode !== 'fully_ai' ? 'selected' : '') + '>Semi AI</option><option value="fully_ai" ' + (ai.mode === 'fully_ai' ? 'selected' : '') + '>Fully AI</option></select></label>'
+      +     '<div style="font-size:12px;color:rgba(246,241,233,.55);line-height:1.5;">Semi AI drafts expert replies. Fully AI can reply during active chat sessions through backend controls.</div>'
+      +   '</div>'
+      +   '<label style="display:block;font-size:12px;color:rgba(246,241,233,.55);margin-top:14px;">Extra expert training/context<textarea id="ob-ai-chat-context" class="admin-input" style="width:100%;min-height:120px;margin-top:7px;resize:vertical;">' + esc(ai.admin_context || '') + '</textarea></label>'
+      +   '<div style="display:flex;gap:10px;align-items:center;margin-top:12px;flex-wrap:wrap;"><button class="admin-action-btn" type="button" onclick="obAdminSaveExpertAiChat(&quot;' + attr(id) + '&quot;)">Save AI mode</button><span id="ob-ai-chat-save-status" style="font-size:12px;color:rgba(246,241,233,.55);"></span></div>'
+      + '</div>';
+  }
+  function openExpertDetail(id, slug, name){
+    if(!id){ notify('Expert id missing.', 'err'); return; }
+    activeExpertDetail = { id:id, slug:slug || '', name:name || '' };
+    var content = panelContent();
+    if(!content) return;
+    content.innerHTML = '<div class="admin-card" style="padding:28px;color:rgba(246,241,233,.65);">Loading expert details...</div>';
+    Promise.all([
+      api('/admin/experts/' + encodeURIComponent(id) + '/profile'),
+      api('/admin/experts/' + encodeURIComponent(id) + '/dashboard').catch(function(){ return {}; }),
+      api('/admin/refund-requests?expert_id=' + encodeURIComponent(id) + '&limit=100').catch(function(){ return {requests:[]}; })
+    ]).then(function(all){
+      content.innerHTML = detailHtml(id, all[0] || {}, all[1] || {}, all[2] || {requests:[]});
+      try { content.scrollIntoView({block:'start'}); } catch(e) {}
+    }).catch(function(err){
+      content.innerHTML = '<div class="admin-card" style="padding:28px;color:#fecaca;">Expert details failed: ' + esc(err.message || err) + '</div>';
+    });
+  }
+  function install(){
+    window.obAdminOpenExpertDashboard = openDashboard;
+    window.obAdminOpenExpertDetail = openExpertDetail;
+    window.adminViewExpertDashboard = openExpertDetail;
+    if(window.OwnlyAPI) window.OwnlyAPI.adminViewExpertDashboard = openExpertDetail;
+  }
+  window.obAdminExpertBackToList = function(){
+    activeExpertDetail = null;
+    if(typeof window.loadAdminExperts === 'function') window.loadAdminExperts();
+    else if(typeof window.obRenderAdminExpertsEnhanced === 'function') window.obRenderAdminExpertsEnhanced();
+  };
+  window.obAdminExpertAction = function(id, action){
+    var active = action === 'approve' || action === 'restore';
+    api('/admin/experts/' + encodeURIComponent(id), {method:'PUT', body:{is_active:active, is_verified:active}}).then(function(){
+      notify(action === 'suspend' ? 'Expert suspended.' : 'Expert approved/restored.', 'ok');
+      openExpertDetail(id, activeExpertDetail && activeExpertDetail.slug, activeExpertDetail && activeExpertDetail.name);
+    }).catch(function(err){ notify(err.message || 'Expert action failed.', 'err'); });
+  };
+  window.obAdminSaveExpertAiChat = function(id){
+    var status = document.getElementById('ob-ai-chat-save-status');
+    if(status) status.textContent = 'Saving...';
+    api('/admin/experts/' + encodeURIComponent(id) + '/ai-chat', {
+      method:'PUT',
+      body:{
+        enabled: !!((document.getElementById('ob-ai-chat-enabled') || {}).checked),
+        mode: (document.getElementById('ob-ai-chat-mode') || {}).value || 'semi_ai',
+        admin_context: (document.getElementById('ob-ai-chat-context') || {}).value || ''
+      }
+    }).then(function(){
+      if(status) status.textContent = 'Saved.';
+      notify('Expert AI chat mode saved.', 'ok');
+    }).catch(function(err){
+      if(status) status.textContent = err.message || 'Save failed.';
+      notify(err.message || 'Expert AI save failed.', 'err');
+    });
+  };
+  window.obAdminExpertApproveRefund = function(id){
+    if(!confirm('Approve this refund request? This can create a Stripe refund in the active Stripe mode.')) return;
+    var note = prompt('Admin note for this approval (optional):') || '';
+    api('/admin/refund-requests/' + encodeURIComponent(id) + '/approve', {method:'POST', body:{note:note}}).then(function(){
+      notify('Refund approved.', 'ok');
+      if(activeExpertDetail) openExpertDetail(activeExpertDetail.id, activeExpertDetail.slug, activeExpertDetail.name);
+      if(typeof window.obAdminLoadRefundQueue === 'function') window.obAdminLoadRefundQueue();
+    }).catch(function(err){ notify(err.message || 'Refund approval failed.', 'err'); });
+  };
+  window.obAdminExpertDeclineRefund = function(id){
+    var reason = prompt('Reason for declining this refund request:') || '';
+    if(!reason.trim()) return;
+    api('/admin/refund-requests/' + encodeURIComponent(id) + '/decline', {method:'POST', body:{reason:reason}}).then(function(){
+      notify('Refund request declined.', 'ok');
+      if(activeExpertDetail) openExpertDetail(activeExpertDetail.id, activeExpertDetail.slug, activeExpertDetail.name);
+      if(typeof window.obAdminLoadRefundQueue === 'function') window.obAdminLoadRefundQueue();
+    }).catch(function(err){ notify(err.message || 'Refund decline failed.', 'err'); });
+  };
+  document.addEventListener('click', function(ev){
+    var btn = ev.target && ev.target.closest ? ev.target.closest('.ob-admin-view-expert') : null;
+    if(!btn) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    if(ev.stopImmediatePropagation) ev.stopImmediatePropagation();
+    openExpertDetail(btn.getAttribute('data-id'), btn.getAttribute('data-slug'), btn.getAttribute('data-name'));
+  }, true);
+  install();
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', install);
+  [250, 900, 1800, 3600, 7000].forEach(function(ms){ setTimeout(install, ms); });
+})();
+</script>
 </html>

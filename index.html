@@ -44436,8 +44436,6 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   }
   function currentRole(){ return String(parseStoredUser().role || '').toLowerCase(); }
   async function resolvedRole(){
-    var existing = currentRole();
-    if(existing) return existing;
     try {
       var data = await jsonFetch('/api/auth/me', {method:'GET'});
       var user = data.user || data || {};
@@ -44452,7 +44450,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
         return String(user.role || '').toLowerCase();
       }
     } catch(e){}
-    return '';
+    return currentRole();
   }
   function dashSlug(){
     var match = String(location.pathname || '').match(/\/dash\/([^/?#]+)/);
@@ -44629,8 +44627,74 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   var previousSaveSettingsBlock = window.saveSettingsBlock;
   window.saveSettingsBlock = function(section){
     if(section === 'profile') return saveProfileSettings();
+    if(section === 'availability') return saveAvailabilitySettings();
     if(typeof previousSaveSettingsBlock === 'function') return previousSaveSettingsBlock.apply(this, arguments);
   };
+
+  function collectAvailabilityPayload(){
+    var dayMap = {Mon:1, Tue:2, Wed:3, Thu:4, Fri:5, Sat:6, Sun:0};
+    var startTime = value('avail-start-time') || '09:00';
+    var endTime = value('avail-end-time') || '17:00';
+    var buttons = Array.prototype.slice.call(document.querySelectorAll('.avail-day-btn'));
+    var schedule = buttons.map(function(btn){
+      var name = btn.getAttribute('data-day') || String(btn.textContent || '').trim();
+      return {
+        day_of_week: dayMap[name] != null ? dayMap[name] : 0,
+        start_time: startTime,
+        end_time: endTime,
+        is_active: btn.classList.contains('active') ? 1 : 0
+      };
+    });
+    return {
+      schedule: schedule,
+      accept_offline: byId('avail-accept-offline') && byId('avail-accept-offline').checked ? 1 : 0,
+      auto_accept_bookings: byId('avail-auto-accept') && byId('avail-auto-accept').checked ? 1 : 0
+    };
+  }
+  function setAvailabilitySaveState(state){
+    var status = byId('save-status-availability');
+    var btn = Array.prototype.slice.call(document.querySelectorAll('button,[onclick]')).find(function(el){
+      return String(el.getAttribute('onclick') || '').indexOf("saveSettingsBlock('availability')") >= 0;
+    });
+    if(status){
+      status.textContent = state === 'saving' ? 'Saving...' : (state === 'saved' ? 'Saved' : (state === 'error' ? 'Error' : ''));
+      status.style.color = state === 'saved' ? 'var(--sage,#22c55e)' : (state === 'error' ? '#ef4444' : 'var(--gray-400)');
+    }
+    if(btn){
+      btn.disabled = state === 'saving';
+      if(!btn.dataset.obOriginalText) btn.dataset.obOriginalText = btn.textContent || 'Save Availability';
+      btn.textContent = state === 'saving' ? 'Saving...' : btn.dataset.obOriginalText;
+    }
+  }
+  async function saveAvailabilitySettings(){
+    var payload = collectAvailabilityPayload();
+    if(!payload.schedule.length){
+      notify('Availability days are missing. Refresh and try again.', 'err');
+      return false;
+    }
+    setAvailabilitySaveState('saving');
+    try {
+      var role = await resolvedRole();
+      if(role !== 'expert'){
+        throw new Error('Please log in as the expert to save availability.');
+      }
+      await jsonFetch('/api/experts/me/availability', {method:'PUT', body:{schedule:payload.schedule}});
+      await jsonFetch('/api/auth/me', {
+        method:'PUT',
+        body:{
+          accept_offline: payload.accept_offline,
+          auto_accept_bookings: payload.auto_accept_bookings
+        }
+      });
+      setAvailabilitySaveState('saved');
+      notify('Availability saved.', 'ok');
+      return true;
+    } catch(err) {
+      setAvailabilitySaveState('error');
+      notify(err.message || 'Availability save failed.', 'err');
+      return false;
+    }
+  }
 
   function stripeState(data, forced){
     if(forced === 'loading') return {key:'loading', label:'Checking Stripe...', color:'rgba(246,241,233,.62)', border:'rgba(246,241,233,.12)'};

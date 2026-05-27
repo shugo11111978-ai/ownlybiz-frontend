@@ -18,7 +18,7 @@
   var host = (location.hostname || '').toLowerCase();
   var path = (location.pathname || '').replace(/^\/+|\/+$/g,'');
   var first = (path.split('/').filter(Boolean)[0] || '').toLowerCase();
-  var reserved = {'':1,'index.html':1,'admin':1,'dash':1,'signup':1,'dashboard':1,'login':1,'expert':1,'session':1,'connectors':1,'settings':1,'messages':1,'analytics':1,'payments':1,'packages':1,'reviews':1,'clients':1,'sessions':1,'pricing':1,'how':1,'features':1,'experts':1,'blog':1,'contact':1,'terms':1,'legal':1};
+  var reserved = {'':1,'index.html':1,'admin':1,'dash':1,'signup':1,'dashboard':1,'login':1,'expert':1,'session':1,'group':1,'connectors':1,'settings':1,'messages':1,'analytics':1,'payments':1,'packages':1,'reviews':1,'clients':1,'sessions':1,'pricing':1,'how':1,'features':1,'experts':1,'blog':1,'contact':1,'terms':1,'legal':1};
   var stagingAdminHost = host === 'staging-admin.ownlybiz.com';
   if(stagingAdminHost){
     window.OWNLYBIZ_STAGING_ADMIN_HOST = true;
@@ -14886,7 +14886,7 @@ async function savePaymentConfig() {
 		    var routeSecond = routeParts[1] || '';
 		    var expertPageRoutes = ['home','about','services','reviews','book','contact'];
 		    var isLegalRoute = path === 'terms' || path.indexOf('legal/') === 0;
-		    var reserved = ['','index.html','admin','signup','dashboard','login','expert','session','connectors','settings','messages','analytics','payments','packages','reviews','clients','sessions','pricing','how','features','experts','blog','contact'];
+		    var reserved = ['','index.html','admin','signup','dashboard','login','expert','session','group','connectors','settings','messages','analytics','payments','packages','reviews','clients','sessions','pricing','how','features','experts','blog','contact'];
 		    var routeHost = (window.location.hostname || '').toLowerCase();
 		    var isStagingAdminHost = routeHost === 'staging-admin.ownlybiz.com';
 		    var isExpertHostRoute = !isStagingAdminHost && ((/^[^.]+\.ownlybiz\.com$/i.test(routeHost) && routeHost !== 'www.ownlybiz.com') ||
@@ -41341,7 +41341,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
 <script id="ownlybiz-content-pages-editor-20260522">
 (function(){
   var state = { pages: [], active: '', allowed: false, plan: 'starter', expertSlug: '' };
-  var reservedSlugs = {home:1,about:1,services:1,reviews:1,book:1,booking:1,contact:1,account:1,admin:1,api:1,app:1,auth:1,billing:1,checkout:1,connect:1,dash:1,dashboard:1,login:1,logout:1,payment:1,payments:1,pricing:1,session:1,sessions:1,signup:1,stripe:1,support:1,wallet:1};
+  var reservedSlugs = {home:1,about:1,services:1,reviews:1,book:1,booking:1,contact:1,account:1,admin:1,api:1,app:1,auth:1,billing:1,checkout:1,connect:1,dash:1,dashboard:1,login:1,logout:1,payment:1,payments:1,pricing:1,session:1,sessions:1,group:1,signup:1,stripe:1,support:1,wallet:1};
   var templateLabels = {
     content: 'Content page',
     article: 'Article',
@@ -43645,6 +43645,664 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   else boot();
   try { new MutationObserver(sync).observe(document.documentElement, { childList:true, subtree:true, attributes:true, attributeFilter:['class','style'] }); } catch(_) {}
   [300, 900, 1800, 3200, 5200].forEach(function(ms){ setTimeout(boot, ms); });
+})();
+</script>
+<script id="ownlybiz-group-session-stage">
+(function(){
+  if(window.__obGroupSessionsStage) return;
+  window.__obGroupSessionsStage = true;
+
+  var PROD_API = 'https://victorious-wisdom-production-a6b0.up.railway.app';
+  var state = { status:null, room:null, publicRoom:null };
+  var media = { ws:null, roomId:'', role:'client', participant:null, participants:[], localStream:null, peers:{}, ice:null, started:false };
+
+  function apiBase(){
+    return String(window.OWNLYBIZ_API_URL || window.OWNLY_API || window.API_BASE || PROD_API).replace(/\/+$/,'');
+  }
+  function wsBase(){
+    var explicit = window.OWNLYBIZ_WS_URL || '';
+    if(explicit) return String(explicit).replace(/\/+$/,'');
+    return apiBase().replace(/^https:/,'wss:').replace(/^http:/,'ws:');
+  }
+  function token(){
+    try {
+      return sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || localStorage.getItem('ob_client_token') || '';
+    } catch(e) {
+      return '';
+    }
+  }
+  function currentUser(){
+    try { return JSON.parse(sessionStorage.getItem('ob_u') || localStorage.getItem('ob_u') || 'null'); }
+    catch(e) { return null; }
+  }
+  function headers(){
+    var h = {'Content-Type':'application/json'};
+    var t = token();
+    if(t) h.Authorization = 'Bearer ' + t;
+    return h;
+  }
+  function api(path, opts){
+    opts = opts || {};
+    var body = opts.body;
+    return fetch(apiBase() + '/api/group-sessions' + path, {
+      method: opts.method || 'GET',
+      headers: headers(),
+      body: body ? JSON.stringify(body) : undefined,
+      cache: 'no-store'
+    }).then(function(r){
+      return r.json().catch(function(){ return {}; }).then(function(d){
+        if(!r.ok || d.success === false) throw new Error(d.error || ('HTTP ' + r.status));
+        return d;
+      });
+    });
+  }
+  function esc(value){
+    return String(value == null ? '' : value).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+  function attr(value){
+    return esc(value).replace(/'/g,'&#39;');
+  }
+  function ts(value){
+    if(!value) return '-';
+    try { return new Date(Number(value) * 1000).toLocaleString(); } catch(e) { return '-'; }
+  }
+  function toast(message, type){
+    if(typeof window.toast === 'function') return window.toast(message, type === 'err' ? 'err' : 'ok');
+    var el = document.createElement('div');
+    el.className = 'ob-group-toast ' + (type === 'err' ? 'err' : 'ok');
+    el.textContent = message;
+    document.body.appendChild(el);
+    setTimeout(function(){ el.remove(); }, 3600);
+  }
+  function groupLink(roomId){
+    return location.origin + '/group/' + encodeURIComponent(roomId);
+  }
+  function copyText(value){
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      return navigator.clipboard.writeText(value).then(function(){ toast('Link copied.'); });
+    }
+    var input = document.createElement('textarea');
+    input.value = value;
+    input.style.position = 'fixed';
+    input.style.opacity = '0';
+    document.body.appendChild(input);
+    input.select();
+    try { document.execCommand('copy'); toast('Link copied.'); } catch(e) {}
+    input.remove();
+    return Promise.resolve();
+  }
+
+  function ensureStyles(){
+    if(document.getElementById('ob-group-session-style')) return;
+    var style = document.createElement('style');
+    style.id = 'ob-group-session-style';
+    style.textContent =
+      '.ob-group-toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%);z-index:1000000;padding:12px 20px;border-radius:12px;font-size:13px;font-weight:800;color:#fff;box-shadow:0 16px 40px rgba(0,0,0,.28)}' +
+      '.ob-group-toast.ok{background:#166534}.ob-group-toast.err{background:#b91c1c}' +
+      '.ob-group-shell{display:grid;gap:18px;max-width:1180px;margin:0 auto;padding:4px 0 40px}' +
+      '.ob-group-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap}' +
+      '.ob-group-title{font-family:var(--font-head,Arial,sans-serif);font-size:clamp(32px,4vw,54px);font-weight:500;letter-spacing:0;color:var(--text,var(--brown,#241813));margin:0}' +
+      '.ob-group-sub{font-size:14px;color:var(--text-mid,var(--gray-400,#8a8178));line-height:1.55;margin:8px 0 0;max-width:660px}' +
+      '.ob-group-pill{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--line,rgba(255,255,255,.12));background:rgba(255,255,255,.06);border-radius:999px;padding:8px 12px;font-size:12px;font-weight:900;color:var(--text,var(--brown,#241813));white-space:nowrap}' +
+      '.ob-group-dot{width:8px;height:8px;border-radius:50%;background:#84cc16;box-shadow:0 0 12px rgba(132,204,22,.55)}' +
+      '.ob-group-band{border:1px solid var(--line,rgba(255,255,255,.12));background:rgba(255,255,255,.04);border-radius:8px;padding:18px}' +
+      '.ob-group-grid{display:grid;grid-template-columns:minmax(0,1fr) 330px;gap:16px;align-items:start}' +
+      '.ob-group-actions{display:flex;gap:10px;flex-wrap:wrap;align-items:center}' +
+      '.ob-group-btn{border:1px solid rgba(200,255,61,.35);background:#c8ff3d;color:#0b0908;border-radius:12px;padding:11px 16px;font-weight:950;font-size:13px;cursor:pointer;min-height:42px}' +
+      '.ob-group-btn.secondary{background:rgba(255,255,255,.05);border-color:var(--line,rgba(255,255,255,.14));color:var(--text,var(--brown,#241813))}' +
+      '.ob-group-btn.danger{background:rgba(239,68,68,.12);border-color:rgba(239,68,68,.34);color:#ef4444}' +
+      '.ob-group-input{width:100%;box-sizing:border-box;border:1px solid var(--line,rgba(255,255,255,.14));background:rgba(0,0,0,.28);color:var(--text,#f6f1e9);border-radius:12px;padding:12px 13px;font:800 14px var(--font-body,Arial,sans-serif);outline:none}' +
+      '.ob-group-muted{color:var(--text-mid,var(--gray-400,#8a8178));font-size:13px;line-height:1.55}' +
+      '.ob-group-room-list{display:grid;gap:10px}' +
+      '.ob-group-room-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center;border:1px solid var(--line,rgba(255,255,255,.12));background:rgba(0,0,0,.18);border-radius:8px;padding:14px}' +
+      '.ob-group-room-name{font-size:15px;font-weight:950;color:var(--text,#f6f1e9);margin-bottom:4px}' +
+      '.ob-group-room-meta{display:flex;gap:8px;flex-wrap:wrap;color:var(--text-mid,#aaa);font-size:12px;font-weight:700}' +
+      '.ob-group-stage{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:16px;align-items:start}' +
+      '.ob-group-video-main{position:relative;background:#050505;border:1px solid rgba(255,255,255,.12);border-radius:8px;overflow:hidden;min-height:360px;aspect-ratio:16/9}' +
+      '.ob-group-video-main video{width:100%;height:100%;object-fit:cover;background:#050505;display:block}' +
+      '.ob-group-video-empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;text-align:center;color:rgba(246,241,233,.7);font-size:13px;padding:24px}' +
+      '.ob-group-remote-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;margin-top:10px}' +
+      '.ob-group-remote-tile{background:#090909;border:1px solid rgba(255,255,255,.12);border-radius:8px;overflow:hidden;aspect-ratio:16/9;position:relative}' +
+      '.ob-group-remote-tile video{width:100%;height:100%;object-fit:cover;display:block}' +
+      '.ob-group-remote-label{position:absolute;left:8px;bottom:8px;background:rgba(0,0,0,.58);color:#fff;font-size:11px;font-weight:900;border-radius:999px;padding:4px 8px}' +
+      '.ob-group-side{border:1px solid var(--line,rgba(255,255,255,.12));background:rgba(255,255,255,.04);border-radius:8px;padding:14px;display:grid;gap:12px}' +
+      '.ob-group-side h3{margin:0;font-size:15px;color:var(--text,#f6f1e9);letter-spacing:0}' +
+      '.ob-group-participant{display:flex;align-items:center;justify-content:space-between;gap:10px;border-bottom:1px solid var(--line,rgba(255,255,255,.1));padding:9px 0;font-size:13px}' +
+      '.ob-group-participant:last-child{border-bottom:none}' +
+      '.ob-group-route{overflow:hidden}' +
+      '.ob-group-public{position:fixed;inset:0;z-index:999999;background:#090706;color:#f6f1e9;overflow:auto;padding:24px}' +
+      '.ob-group-public-inner{max-width:1180px;margin:0 auto;display:grid;gap:18px}' +
+      '.ob-group-public .ob-group-band,.ob-group-public .ob-group-side{background:rgba(255,255,255,.055);border-color:rgba(255,255,255,.13)}' +
+      '.ob-group-public .ob-group-title,.ob-group-public .ob-group-room-name,.ob-group-public .ob-group-side h3{color:#f6f1e9}' +
+      '.ob-group-public .ob-group-sub,.ob-group-public .ob-group-muted,.ob-group-public .ob-group-room-meta{color:rgba(246,241,233,.68)}' +
+      '#ob-group-public-remote .ob-group-remote-tile{width:100%;height:100%;aspect-ratio:auto;border:0;border-radius:0}' +
+      '@media(max-width:900px){.ob-group-grid,.ob-group-stage{grid-template-columns:1fr}.ob-group-room-row{grid-template-columns:1fr}.ob-group-video-main{min-height:240px}.ob-group-public{padding:14px}.ob-group-title{font-size:34px}.ob-group-actions .ob-group-btn{width:100%}}';
+    document.head.appendChild(style);
+  }
+
+  function ensurePanel(){
+    ensureStyles();
+    var panel = document.getElementById('db-panel-group-sessions');
+    if(!panel){
+      panel = document.createElement('div');
+      panel.className = 'db-tab-panel';
+      panel.id = 'db-panel-group-sessions';
+      panel.innerHTML = '<div class="db-content"><div id="ob-group-dashboard-root" class="ob-group-shell"></div></div>';
+      var overview = document.getElementById('db-panel-overview');
+      if(overview && overview.parentNode) overview.parentNode.insertBefore(panel, overview);
+      else {
+        var main = document.querySelector('#view-3 .db-main') || document.body;
+        main.appendChild(panel);
+      }
+    }
+    return panel;
+  }
+
+  function installExpertNav(){
+    ensurePanel();
+    var nav = document.getElementById('db-nav-group-sessions');
+    if(!nav){
+      nav = document.createElement('div');
+      nav.className = 'db-nav-item';
+      nav.id = 'db-nav-group-sessions';
+      nav.style.display = 'none';
+      nav.innerHTML = '<span class="icon" aria-hidden="true"></span> Group Sessions';
+      nav.onclick = function(){ window.dbNav(nav, 'group-sessions'); };
+      var after = document.querySelector('.db-nav-item[onclick*="sessions"]') || document.getElementById('db-nav-live');
+      if(after && after.parentNode) after.parentNode.insertBefore(nav, after.nextSibling);
+      else {
+        var navRoot = document.querySelector('#view-3 .db-nav');
+        if(navRoot) navRoot.appendChild(nav);
+      }
+    }
+    return nav;
+  }
+
+  function patchNav(){
+    if(window.__obGroupNavPatched) return;
+    window.__obGroupNavPatched = true;
+    var prior = window.dbNav;
+    window.dbNav = function(el, panel){
+      var out;
+      if(typeof prior === 'function') out = prior.apply(this, arguments);
+      if(panel === 'group-sessions'){
+        var title = document.getElementById('db-page-title');
+        if(title) title.textContent = 'Group Sessions';
+        setTimeout(function(){ loadStatus(true); }, 30);
+      }
+      return out;
+    };
+  }
+
+  function renderDisabled(root, entitlement){
+    root.innerHTML =
+      '<div class="ob-group-head">' +
+        '<div><h1 class="ob-group-title">Group Sessions</h1><p class="ob-group-sub">This add-on is managed by Ownlybiz admin.</p></div>' +
+        '<span class="ob-group-pill"><span class="ob-group-dot" style="background:#f59e0b"></span>Not enabled</span>' +
+      '</div>' +
+      '<section class="ob-group-band"><div class="ob-group-room-name">Access is off for this expert account.</div>' +
+      '<div class="ob-group-muted">When admin enables the add-on, group rooms and invite links will appear here.</div></section>';
+    var nav = installExpertNav();
+    if(nav) nav.style.display = 'none';
+  }
+
+  function renderDashboard(status){
+    ensurePanel();
+    var root = document.getElementById('ob-group-dashboard-root');
+    if(!root) return;
+    var entitlement = status && status.entitlement || {};
+    if(!Number(entitlement.enabled)) return renderDisabled(root, entitlement);
+    var nav = installExpertNav();
+    if(nav) nav.style.display = 'flex';
+    var rooms = status.rooms || [];
+    root.innerHTML =
+      '<div class="ob-group-head">' +
+        '<div><h1 class="ob-group-title">Group Sessions</h1><p class="ob-group-sub">Host live video rooms for multiple clients from your dashboard.</p></div>' +
+        '<span class="ob-group-pill"><span class="ob-group-dot"></span>' + esc(entitlement.capacity_limit || 0) + ' client capacity</span>' +
+      '</div>' +
+      '<section class="ob-group-band ob-group-grid">' +
+        '<div>' +
+          '<div class="ob-group-room-name">Create a room</div>' +
+          '<div class="ob-group-muted" style="margin-bottom:12px">Rooms use your enabled admin capacity tier.</div>' +
+          '<div class="ob-group-actions">' +
+            '<input id="ob-group-room-title" class="ob-group-input" style="max-width:360px" placeholder="Room title" value="Group session">' +
+            '<button type="button" class="ob-group-btn" onclick="obGroupCreateRoom()">Create Room</button>' +
+          '</div>' +
+        '</div>' +
+        '<div class="ob-group-side"><h3>Readiness</h3><div class="ob-group-muted">Tier: ' + esc(entitlement.capacity_tier || '') + '</div><div class="ob-group-muted">Status: enabled</div></div>' +
+      '</section>' +
+      '<section class="ob-group-band">' +
+        '<div class="ob-group-head" style="margin-bottom:12px"><div><div class="ob-group-room-name">Rooms</div><div class="ob-group-muted">Open a host room or copy the client invite link.</div></div><button class="ob-group-btn secondary" type="button" onclick="obGroupLoadStatus(true)">Refresh</button></div>' +
+        '<div class="ob-group-room-list">' + (rooms.length ? rooms.map(roomRow).join('') : '<div class="ob-group-muted">No group rooms yet.</div>') + '</div>' +
+      '</section>' +
+      '<section class="ob-group-band" id="ob-group-host-stage"><div class="ob-group-muted">Select a room to open the host stage.</div></section>';
+  }
+
+  function roomRow(room){
+    var status = String(room.status || 'scheduled');
+    return '<div class="ob-group-room-row">' +
+      '<div><div class="ob-group-room-name">' + esc(room.title || 'Group session') + '</div>' +
+      '<div class="ob-group-room-meta"><span>' + esc(status) + '</span><span>' + esc(room.capacity_limit || 0) + ' clients</span><span>' + ts(room.created_at) + '</span></div></div>' +
+      '<div class="ob-group-actions">' +
+        '<button type="button" class="ob-group-btn" onclick="obGroupOpenHostRoom(&quot;' + attr(room.id) + '&quot;)">Host</button>' +
+        '<button type="button" class="ob-group-btn secondary" onclick="obGroupCopyRoomLink(&quot;' + attr(room.id) + '&quot;)">Copy Link</button>' +
+        (status !== 'ended' ? '<button type="button" class="ob-group-btn danger" onclick="obGroupEndRoom(&quot;' + attr(room.id) + '&quot;)">End</button>' : '') +
+      '</div>' +
+    '</div>';
+  }
+
+  function loadStatus(force){
+    ensurePanel();
+    installExpertNav();
+    patchNav();
+    var user = currentUser();
+    if(!user || user.role !== 'expert') return Promise.resolve(null);
+    if(state.status && !force) {
+      renderDashboard(state.status);
+      return Promise.resolve(state.status);
+    }
+    return api('/me/status').then(function(d){
+      state.status = d;
+      renderDashboard(d);
+      return d;
+    }).catch(function(err){
+      var root = document.getElementById('ob-group-dashboard-root');
+      if(root) root.innerHTML = '<section class="ob-group-band"><div class="ob-group-room-name">Could not load group sessions.</div><div class="ob-group-muted">' + esc(err.message) + '</div></section>';
+    });
+  }
+
+  function renderHostStage(room){
+    state.room = room;
+    var mount = document.getElementById('ob-group-host-stage');
+    if(!mount) return;
+    var participants = room.participants || [];
+    mount.innerHTML =
+      '<div class="ob-group-head" style="margin-bottom:12px">' +
+        '<div><div class="ob-group-room-name">' + esc(room.title || 'Group session') + '</div><div class="ob-group-muted">' + esc(room.status || 'scheduled') + ' · ' + esc(room.capacity_limit || 0) + ' client capacity</div></div>' +
+        '<div class="ob-group-actions"><button class="ob-group-btn" type="button" onclick="obGroupStartHostMedia()">Start Camera</button><button class="ob-group-btn secondary" type="button" onclick="obGroupToggleAudio()">Mute</button><button class="ob-group-btn secondary" type="button" onclick="obGroupToggleVideo()">Camera</button><button class="ob-group-btn danger" type="button" onclick="obGroupEndRoom(&quot;' + attr(room.id) + '&quot;)">End Room</button></div>' +
+      '</div>' +
+      '<div class="ob-group-stage">' +
+        '<div>' +
+          '<div class="ob-group-video-main"><video id="ob-group-local-video" autoplay playsinline muted></video><div id="ob-group-local-empty" class="ob-group-video-empty">Camera is off.</div></div>' +
+          '<div id="ob-group-remote-grid" class="ob-group-remote-grid"></div>' +
+        '</div>' +
+        '<aside class="ob-group-side"><h3>Participants</h3><div id="ob-group-participants">' + participantList(participants) + '</div><div class="ob-group-muted" id="ob-group-media-status">Host stage ready.</div><button class="ob-group-btn secondary" type="button" onclick="obGroupCopyRoomLink(&quot;' + attr(room.id) + '&quot;)">Copy Client Link</button></aside>' +
+      '</div>';
+  }
+
+  function participantList(participants){
+    participants = participants || [];
+    if(!participants.length) return '<div class="ob-group-muted">No clients connected yet.</div>';
+    return participants.map(function(p){
+      return '<div class="ob-group-participant"><span>' + esc(p.display_name || (p.role === 'expert' ? 'Expert' : 'Client')) + '</span><strong>' + esc(p.role || 'client') + '</strong></div>';
+    }).join('');
+  }
+
+  function updateParticipantList(participants){
+    media.participants = participants || media.participants || [];
+    var list = document.getElementById('ob-group-participants');
+    if(list) list.innerHTML = participantList(media.participants);
+  }
+  function mediaStatus(text){
+    var el = document.getElementById('ob-group-media-status') || document.getElementById('ob-group-public-status');
+    if(el) el.textContent = text;
+  }
+
+  function rtcConfig(){
+    if(media.ice) return Promise.resolve(media.ice);
+    var fallback = { iceServers:[{urls:'stun:stun.l.google.com:19302'},{urls:'stun:stun1.l.google.com:19302'}], iceCandidatePoolSize:10, bundlePolicy:'max-bundle', rtcpMuxPolicy:'require' };
+    return fetch(apiBase() + '/api/config', {cache:'no-store'}).then(function(r){ return r.json(); }).then(function(config){
+      var rtc = config && config.rtc || {};
+      var servers = Array.isArray(rtc.ice_servers) ? rtc.ice_servers.filter(function(s){ return s && s.urls; }) : [];
+      media.ice = servers.length ? { iceServers:servers, iceCandidatePoolSize:10, bundlePolicy:'max-bundle', rtcpMuxPolicy:'require' } : fallback;
+      return media.ice;
+    }).catch(function(){
+      media.ice = fallback;
+      return media.ice;
+    });
+  }
+
+  function resetMedia(){
+    Object.keys(media.peers || {}).forEach(function(id){
+      try { media.peers[id].close(); } catch(e) {}
+    });
+    media.peers = {};
+    if(media.ws) {
+      try { media.ws.close(); } catch(e) {}
+    }
+    media.ws = null;
+    if(media.localStream) {
+      media.localStream.getTracks().forEach(function(t){ try { t.stop(); } catch(e) {} });
+    }
+    media.localStream = null;
+    media.started = false;
+  }
+
+  function connectWs(roomId, role){
+    return new Promise(function(resolve, reject){
+      if(!token()) return reject(new Error('Please sign in first.'));
+      var ws = new WebSocket(wsBase() + '/ws');
+      var authed = false;
+      media.ws = ws;
+      ws.onopen = function(){ ws.send(JSON.stringify({type:'auth', token:token()})); };
+      ws.onerror = function(){ reject(new Error('Could not connect to realtime service.')); };
+      ws.onclose = function(){ mediaStatus('Realtime connection closed.'); };
+      ws.onmessage = function(event){
+        var data;
+        try { data = JSON.parse(event.data); } catch(e) { return; }
+        if(data.type === 'authed' && !authed){
+          authed = true;
+          ws.send(JSON.stringify({type:'group_join', room_id:roomId, role:role}));
+          return;
+        }
+        if(data.type === 'group_joined'){
+          media.roomId = roomId;
+          media.role = role;
+          media.participant = data.participant;
+          media.participants = data.participants || [];
+          updateParticipantList(media.participants);
+          mediaStatus('Connected to group room.');
+          resolve(data);
+          if(role !== 'expert') sendWs({type:'group_ready', room_id:roomId});
+          if(role === 'expert') offerToClients(media.participants);
+          return;
+        }
+        handleGroupMessage(data);
+      };
+    });
+  }
+
+  function sendWs(payload){
+    if(media.ws && media.ws.readyState === 1) media.ws.send(JSON.stringify(payload));
+  }
+
+  function handleGroupMessage(data){
+    if(data.type === 'group_participant_joined'){
+      updateParticipantList(data.participants || []);
+      if(media.role === 'expert' && data.participant && data.participant.role !== 'expert') createOffer(data.participant);
+      return;
+    }
+    if(data.type === 'group_participant_left'){
+      media.participants = (media.participants || []).filter(function(p){ return p.id !== data.participant_id; });
+      updateParticipantList(media.participants);
+      if(data.participant_id && media.peers[data.participant_id]){
+        try { media.peers[data.participant_id].close(); } catch(e) {}
+        delete media.peers[data.participant_id];
+      }
+      var tile = document.getElementById('ob-group-remote-' + data.participant_id);
+      if(tile) tile.remove();
+      return;
+    }
+    if(data.type === 'group_ready' && media.role === 'expert'){
+      var p = participantById(data.from_participant_id);
+      if(p) createOffer(p);
+      return;
+    }
+    if(data.type === 'group_offer') return handleOffer(data);
+    if(data.type === 'group_answer') return handleAnswer(data);
+    if(data.type === 'group_ice') return handleIce(data);
+    if(data.type === 'group_end') {
+      mediaStatus('The host ended this room.');
+      resetMedia();
+    }
+  }
+
+  function participantById(id){
+    return (media.participants || []).filter(function(p){ return p.id === id; })[0] || null;
+  }
+  function offerToClients(participants){
+    if(media.role !== 'expert' || !media.localStream) return;
+    (participants || []).filter(function(p){ return p.role !== 'expert'; }).forEach(createOffer);
+  }
+
+  function peerFor(participantId){
+    if(media.peers[participantId]) return media.peers[participantId];
+    var pc = new RTCPeerConnection(media.ice || {iceServers:[]});
+    media.peers[participantId] = pc;
+    if(media.role === 'expert' && media.localStream) {
+      media.localStream.getTracks().forEach(function(track){ pc.addTrack(track, media.localStream); });
+    }
+    pc.onicecandidate = function(ev){
+      if(ev.candidate) sendWs({type:'group_ice', room_id:media.roomId, to_participant_id:participantId, candidate:ev.candidate});
+    };
+    pc.ontrack = function(ev){
+      attachRemote(participantId, ev.streams && ev.streams[0]);
+    };
+    pc.onconnectionstatechange = function(){
+      var s = pc.connectionState || pc.iceConnectionState;
+      if(s === 'connected') mediaStatus('Media connected.');
+      if(s === 'failed' || s === 'disconnected') mediaStatus('Media connection is recovering.');
+    };
+    return pc;
+  }
+
+  function attachRemote(participantId, stream){
+    if(!stream) return;
+    var grid = document.getElementById('ob-group-remote-grid') || document.getElementById('ob-group-public-remote');
+    if(!grid) return;
+    var tile = document.getElementById('ob-group-remote-' + participantId);
+    if(!tile){
+      tile = document.createElement('div');
+      tile.className = 'ob-group-remote-tile';
+      tile.id = 'ob-group-remote-' + participantId;
+      tile.innerHTML = '<video autoplay playsinline></video><div class="ob-group-remote-label">Live</div>';
+      grid.appendChild(tile);
+    }
+    var video = tile.querySelector('video');
+    if(video && video.srcObject !== stream) video.srcObject = stream;
+    var empty = document.getElementById('ob-group-public-video-empty');
+    if(empty) empty.style.display = 'none';
+  }
+
+  function createOffer(participant){
+    if(!participant || participant.role === 'expert' || !media.localStream) return;
+    return rtcConfig().then(function(){
+      var pc = peerFor(participant.id);
+      return pc.createOffer().then(function(offer){
+        return pc.setLocalDescription(offer);
+      }).then(function(){
+        sendWs({type:'group_offer', room_id:media.roomId, to_participant_id:participant.id, sdp:pc.localDescription});
+      }).catch(function(err){
+        mediaStatus(err.message || 'Could not create media offer.');
+      });
+    });
+  }
+
+  function handleOffer(data){
+    return rtcConfig().then(function(){
+      var from = data.from_participant_id;
+      var pc = peerFor(from);
+      return pc.setRemoteDescription(new RTCSessionDescription(data.sdp)).then(function(){
+        return pc.createAnswer();
+      }).then(function(answer){
+        return pc.setLocalDescription(answer);
+      }).then(function(){
+        sendWs({type:'group_answer', room_id:media.roomId, to_participant_id:from, sdp:pc.localDescription});
+      });
+    }).catch(function(err){
+      mediaStatus(err.message || 'Could not answer media offer.');
+    });
+  }
+
+  function handleAnswer(data){
+    var pc = media.peers[data.from_participant_id];
+    if(!pc || !data.sdp) return;
+    pc.setRemoteDescription(new RTCSessionDescription(data.sdp)).catch(function(err){
+      mediaStatus(err.message || 'Could not apply media answer.');
+    });
+  }
+
+  function handleIce(data){
+    var pc = media.peers[data.from_participant_id];
+    if(!pc || !data.candidate) return;
+    pc.addIceCandidate(new RTCIceCandidate(data.candidate)).catch(function(){});
+  }
+
+  function startHostMedia(roomId){
+    resetMedia();
+    mediaStatus('Starting camera...');
+    return rtcConfig().then(function(){
+      return navigator.mediaDevices.getUserMedia({
+        audio:{ echoCancellation:true, noiseSuppression:true, autoGainControl:true },
+        video:{ width:{ideal:1280}, height:{ideal:720}, frameRate:{ideal:30,max:30} }
+      });
+    }).then(function(stream){
+      media.localStream = stream;
+      var local = document.getElementById('ob-group-local-video');
+      if(local) local.srcObject = stream;
+      var empty = document.getElementById('ob-group-local-empty');
+      if(empty) empty.style.display = 'none';
+      media.started = true;
+      return api('/rooms/' + encodeURIComponent(roomId) + '/start', {method:'POST'});
+    }).then(function(){
+      return connectWs(roomId, 'expert');
+    }).then(function(){
+      mediaStatus('Camera live. Waiting for clients.');
+    }).catch(function(err){
+      mediaStatus(err.message || 'Could not start group room.');
+      toast(err.message || 'Could not start group room.', 'err');
+    });
+  }
+
+  function startClientMedia(roomId){
+    resetMedia();
+    mediaStatus('Joining...');
+    return rtcConfig().then(function(){
+      return api('/rooms/' + encodeURIComponent(roomId) + '/join', {method:'POST', body:{role:'client'}});
+    }).then(function(joined){
+      media.participant = joined.participant;
+      media.participants = joined.participants || [];
+      updateParticipantList(media.participants);
+      return connectWs(roomId, joined.participant && joined.participant.role === 'expert' ? 'expert' : 'client');
+    }).then(function(){
+      mediaStatus('Connected. Waiting for host video.');
+    }).catch(function(err){
+      mediaStatus(err.message || 'Could not join group room.');
+      toast(err.message || 'Could not join group room.', 'err');
+    });
+  }
+
+  window.obGroupLoadStatus = function(force){ return loadStatus(!!force); };
+  window.obGroupCreateRoom = function(){
+    var input = document.getElementById('ob-group-room-title');
+    var title = input && input.value || 'Group session';
+    return api('/rooms', {method:'POST', body:{title:title}}).then(function(){
+      toast('Group room created.');
+      state.status = null;
+      return loadStatus(true);
+    }).catch(function(err){ toast(err.message, 'err'); });
+  };
+  window.obGroupOpenHostRoom = function(roomId){
+    return api('/rooms/' + encodeURIComponent(roomId)).then(function(d){
+      renderHostStage(d.room);
+      var mount = document.getElementById('ob-group-host-stage');
+      if(mount) mount.scrollIntoView({behavior:'smooth', block:'start'});
+    }).catch(function(err){ toast(err.message, 'err'); });
+  };
+  window.obGroupStartHostMedia = function(){
+    var room = state.room;
+    if(!room || !room.id) return toast('Open a room first.', 'err');
+    startHostMedia(room.id);
+  };
+  window.obGroupCopyRoomLink = function(roomId){
+    return copyText(groupLink(roomId));
+  };
+  window.obGroupEndRoom = function(roomId){
+    if(!roomId) return;
+    return api('/rooms/' + encodeURIComponent(roomId) + '/end', {method:'POST'}).then(function(){
+      sendWs({type:'group_end', room_id:roomId});
+      resetMedia();
+      toast('Group room ended.');
+      state.status = null;
+      loadStatus(true);
+    }).catch(function(err){ toast(err.message, 'err'); });
+  };
+  window.obGroupToggleAudio = function(){
+    if(!media.localStream) return;
+    media.localStream.getAudioTracks().forEach(function(t){ t.enabled = !t.enabled; });
+    mediaStatus(media.localStream.getAudioTracks().some(function(t){ return t.enabled; }) ? 'Microphone on.' : 'Microphone muted.');
+  };
+  window.obGroupToggleVideo = function(){
+    if(!media.localStream) return;
+    media.localStream.getVideoTracks().forEach(function(t){ t.enabled = !t.enabled; });
+    mediaStatus(media.localStream.getVideoTracks().some(function(t){ return t.enabled; }) ? 'Camera on.' : 'Camera off.');
+  };
+
+  function renderPublicLoading(){
+    ensureStyles();
+    document.body.classList.add('ob-group-route');
+    var page = document.getElementById('ob-group-public-page');
+    if(!page){
+      page = document.createElement('div');
+      page.id = 'ob-group-public-page';
+      page.className = 'ob-group-public';
+      document.body.appendChild(page);
+    }
+    page.innerHTML = '<div class="ob-group-public-inner"><section class="ob-group-band"><div class="ob-group-room-name">Loading group session...</div></section></div>';
+    return page;
+  }
+
+  function renderPublicRoom(room){
+    var page = renderPublicLoading();
+    var expert = room.expert || {};
+    var authed = !!token();
+    page.innerHTML =
+      '<div class="ob-group-public-inner">' +
+        '<div class="ob-group-head">' +
+          '<div><h1 class="ob-group-title">' + esc(room.title || 'Group session') + '</h1><p class="ob-group-sub">' + esc(expert.name || 'Expert') + (expert.title ? ' · ' + esc(expert.title) : '') + '</p></div>' +
+          '<span class="ob-group-pill"><span class="ob-group-dot"></span>' + esc(room.status || 'scheduled') + '</span>' +
+        '</div>' +
+        '<section class="ob-group-band">' +
+          '<div class="ob-group-stage">' +
+            '<div>' +
+              '<div class="ob-group-video-main"><div id="ob-group-public-video-empty" class="ob-group-video-empty">Host video will appear here.</div><div id="ob-group-public-remote" class="ob-group-remote-grid" style="position:absolute;inset:0;margin:0;display:block"></div></div>' +
+            '</div>' +
+            '<aside class="ob-group-side"><h3>Room</h3><div class="ob-group-muted">' + esc(room.participant_count || 0) + ' of ' + esc(room.capacity_limit || 0) + ' clients connected</div><div id="ob-group-participants">' + participantList(room.participants || []) + '</div><div id="ob-group-public-status" class="ob-group-muted">' + (authed ? 'Ready to join.' : 'Sign in to join this room.') + '</div>' +
+            (authed ? '<button class="ob-group-btn" type="button" onclick="obGroupJoinPublicRoom(&quot;' + attr(room.id) + '&quot;)">Join Room</button>' : '<button class="ob-group-btn" type="button" onclick="obGroupGoLogin()">Sign In</button>') +
+            '</aside>' +
+          '</div>' +
+        '</section>' +
+      '</div>';
+  }
+
+  window.obGroupJoinPublicRoom = function(roomId){
+    return startClientMedia(roomId);
+  };
+  window.obGroupGoLogin = function(){
+    try { sessionStorage.setItem('ob_next', location.pathname + location.search); } catch(e) {}
+    location.href = '/login';
+  };
+
+  function bootPublicRoute(){
+    var match = (location.pathname || '').match(/^\/group\/([^\/?#]+)/);
+    if(!match) return false;
+    var roomId = decodeURIComponent(match[1]);
+    renderPublicLoading();
+    api('/public/rooms/' + encodeURIComponent(roomId)).then(function(d){
+      state.publicRoom = d.room;
+      renderPublicRoom(d.room);
+    }).catch(function(err){
+      var page = renderPublicLoading();
+      page.innerHTML = '<div class="ob-group-public-inner"><section class="ob-group-band"><div class="ob-group-room-name">Group room unavailable.</div><div class="ob-group-muted">' + esc(err.message) + '</div></section></div>';
+    });
+    return true;
+  }
+
+  function boot(){
+    ensureStyles();
+    patchNav();
+    installExpertNav();
+    if(bootPublicRoute()) return;
+    setTimeout(function(){ loadStatus(false); }, 600);
+    setTimeout(function(){ loadStatus(false); }, 2200);
+  }
+
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
+  else boot();
+  window.addEventListener('beforeunload', function(){
+    if(media.ws && media.roomId) sendWs({type:'group_leave', room_id:media.roomId});
+    resetMedia();
+  });
 })();
 </script>
 <script id="ownlybiz-expert-live-client-receipt-guard">

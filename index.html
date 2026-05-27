@@ -42826,9 +42826,38 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     var profile = data.profile || {};
     var rates = data.rates || {};
     var ai = data.ai_chat || {};
+    var group = data.group_sessions || {};
+    var groupEnt = group.entitlement || {};
+    var groupReqs = group.payment_requests || [];
     var slug = profile.slug || '';
     var name = user.name || 'Expert';
     var enabled = Number(ai.enabled || 0) === 1;
+    var groupEnabled = Number(groupEnt.enabled || 0) === 1;
+    var groupTier = groupEnt.capacity_tier || 'group_10';
+    function groupTierOptions(selected){
+      var tiers = [
+        {id:'group_10',label:'Up to 10 clients',limit:10},
+        {id:'group_50',label:'Up to 50 clients',limit:50},
+        {id:'group_100',label:'Up to 100 clients',limit:100}
+      ];
+      return tiers.map(function(t){ return '<option value="' + t.id + '" ' + (selected === t.id ? 'selected' : '') + '>' + t.label + '</option>'; }).join('');
+    }
+    function groupStatusBadge(status){
+      status = String(status || 'draft').toLowerCase();
+      var color = status === 'paid' ? '#22c55e' : (status === 'cancelled' ? '#f87171' : (status === 'sent' ? '#38bdf8' : '#f59e0b'));
+      return '<span style="font-size:11px;font-weight:800;color:' + color + ';">' + safe(status.toUpperCase()) + '</span>';
+    }
+    function groupRequestRows(){
+      if(!groupReqs.length) return '<div style="font-size:12px;color:rgba(246,241,233,.5);margin-top:10px;">No group-session payment requests yet.</div>';
+      return '<div style="overflow:auto;margin-top:12px;"><table style="width:100%;border-collapse:collapse;font-size:12px;color:rgba(246,241,233,.7);"><thead><tr style="text-align:left;color:rgba(246,241,233,.45);"><th style="padding:8px;border-bottom:1px solid rgba(246,241,233,.1);">Tier</th><th style="padding:8px;border-bottom:1px solid rgba(246,241,233,.1);">Amount</th><th style="padding:8px;border-bottom:1px solid rgba(246,241,233,.1);">Status</th><th style="padding:8px;border-bottom:1px solid rgba(246,241,233,.1);">Checkout</th><th style="padding:8px;border-bottom:1px solid rgba(246,241,233,.1);">Actions</th></tr></thead><tbody>' +
+        groupReqs.slice(0,8).map(function(r){
+          var checkout = r.checkout_url ? '<a href="' + attr(r.checkout_url) + '" target="_blank" rel="noopener" style="color:#c8ff3d;">Open</a> <button class="admin-action-btn" style="padding:6px 9px;font-size:11px;" type="button" onclick="obAdminCopyText(\'' + attr(r.checkout_url) + '\')">Copy</button>' : '-';
+          var actions = String(r.status || '').toLowerCase() === 'paid'
+            ? '<button class="admin-action-btn" style="padding:6px 9px;font-size:11px;" type="button" onclick="obAdminApplyPaidGroupTier(\'' + attr(id) + '\',\'' + attr(r.capacity_tier || 'group_10') + '\',\'' + attr(r.id) + '\')">Enable this tier</button>'
+            : '<button class="admin-action-btn" style="padding:6px 9px;font-size:11px;" type="button" onclick="obAdminMarkGroupRequestPaid(\'' + attr(id) + '\',\'' + attr(r.id) + '\')">Mark paid</button> <button class="admin-action-btn danger" style="padding:6px 9px;font-size:11px;" type="button" onclick="obAdminCancelGroupRequest(\'' + attr(id) + '\',\'' + attr(r.id) + '\')">Cancel</button>';
+          return '<tr><td style="padding:8px;border-bottom:1px solid rgba(246,241,233,.08);">' + safe((r.capacity_limit || '') + ' clients') + '</td><td style="padding:8px;border-bottom:1px solid rgba(246,241,233,.08);">' + usd(r.amount || 0) + ' ' + safe(String(r.currency || 'usd').toUpperCase()) + '</td><td style="padding:8px;border-bottom:1px solid rgba(246,241,233,.08);">' + groupStatusBadge(r.status) + '</td><td style="padding:8px;border-bottom:1px solid rgba(246,241,233,.08);">' + checkout + '</td><td style="padding:8px;border-bottom:1px solid rgba(246,241,233,.08);">' + actions + '</td></tr>';
+        }).join('') + '</tbody></table></div>';
+    }
     return '' +
       '<div class="admin-card" style="padding:18px;margin-bottom:18px;">' +
         '<div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap;">' +
@@ -42859,6 +42888,27 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
           '<div><strong style="color:rgba(246,241,233,.78);">Stripe Connect</strong><br>' + (profile.stripe_account_id ? 'Connected' : 'Not connected') + '</div>' +
         '</div>' +
         '<div style="margin-top:14px;font-size:12px;color:rgba(246,241,233,.5);line-height:1.6;"><strong style="color:rgba(246,241,233,.78);">Bio</strong><br>' + safe(profile.bio || 'No bio saved.') + '</div>' +
+      '</div>' +
+      '<div class="admin-card" style="padding:22px;margin-bottom:18px;">' +
+        '<div class="admin-card-title">Group Video Sessions <span class="admin-card-title-sub">Admin-only paid capacity feature</span></div>' +
+        '<div style="display:grid;grid-template-columns:minmax(180px,220px) minmax(190px,240px) 1fr;gap:14px;align-items:end;">' +
+          '<label style="font-size:13px;color:rgba(246,241,233,.75);"><input id="ob-group-enabled" type="checkbox" ' + (groupEnabled ? 'checked' : '') + '> Enable for this expert</label>' +
+          '<label style="font-size:12px;color:rgba(246,241,233,.55);">Capacity<select id="ob-group-tier" class="admin-input" style="margin-top:6px;width:100%;">' + groupTierOptions(groupTier) + '</select></label>' +
+          '<div style="font-size:12px;color:rgba(246,241,233,.55);line-height:1.5;">This is separate from private chat, voice, and video. Admin controls who gets access and the maximum client capacity. Payment can be requested through Stripe Checkout or approved manually.</div>' +
+        '</div>' +
+        '<label style="display:block;font-size:12px;color:rgba(246,241,233,.55);margin-top:14px;">Admin note<textarea id="ob-group-admin-note" class="admin-input" style="width:100%;min-height:88px;margin-top:7px;resize:vertical;">' + safe(groupEnt.admin_note || '') + '</textarea></label>' +
+        '<div style="display:flex;gap:10px;align-items:center;margin-top:12px;flex-wrap:wrap;"><button class="admin-action-btn" type="button" onclick="obAdminSaveGroupSessions(\'' + attr(id) + '\')">Save group access</button><span id="ob-group-save-status" style="font-size:12px;color:rgba(246,241,233,.55);">' + (groupEnabled ? 'Enabled: up to ' + safe(groupEnt.capacity_limit || 10) + ' clients' : 'Disabled') + '</span></div>' +
+        '<div style="margin-top:18px;padding-top:16px;border-top:1px solid rgba(246,241,233,.1);">' +
+          '<div style="font-size:13px;font-weight:800;color:rgba(246,241,233,.88);margin-bottom:10px;">Payment request</div>' +
+          '<div style="display:grid;grid-template-columns:160px 110px minmax(180px,1fr) auto;gap:10px;align-items:end;">' +
+            '<label style="font-size:12px;color:rgba(246,241,233,.55);">Amount<input id="ob-group-request-amount" class="admin-input" type="number" min="1" step="1" placeholder="199" style="width:100%;margin-top:6px;"></label>' +
+            '<label style="font-size:12px;color:rgba(246,241,233,.55);">Currency<input id="ob-group-request-currency" class="admin-input" value="usd" style="width:100%;margin-top:6px;"></label>' +
+            '<label style="font-size:12px;color:rgba(246,241,233,.55);">Note<input id="ob-group-request-note" class="admin-input" placeholder="Optional internal note" style="width:100%;margin-top:6px;"></label>' +
+            '<button class="admin-action-btn" type="button" onclick="obAdminCreateGroupRequest(\'' + attr(id) + '\')">Create request</button>' +
+          '</div>' +
+          '<div id="ob-group-request-status" style="font-size:12px;color:rgba(246,241,233,.55);margin-top:8px;"></div>' +
+          groupRequestRows() +
+        '</div>' +
       '</div>' +
       '<div class="admin-card" style="padding:22px;margin-bottom:18px;">' +
         '<div class="admin-card-title">Chat AI Mode <span class="admin-card-title-sub">Admin-only per-expert control</span></div>' +
@@ -42905,6 +42955,75 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       if(status) status.textContent = 'Saved.';
       notify('Expert AI chat mode saved.', 'ok');
     }).catch(function(err){ if(status) status.textContent = err.message; notify(err.message, 'err'); });
+  };
+  window.obAdminCopyText = function(text){
+    text = String(text || '');
+    if(navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function(){ notify('Copied checkout link.', 'ok'); }).catch(function(){ notify(text, 'ok'); });
+    } else {
+      notify(text, 'ok');
+    }
+  };
+  window.obAdminSaveGroupSessions = function(id){
+    var status = document.getElementById('ob-group-save-status');
+    if(status) status.textContent = 'Saving...';
+    api('/admin/experts/' + encodeURIComponent(id) + '/group-sessions', {
+      method:'PUT',
+      body:{
+        enabled: !!((document.getElementById('ob-group-enabled') || {}).checked),
+        capacity_tier: (document.getElementById('ob-group-tier') || {}).value || 'group_10',
+        admin_note: (document.getElementById('ob-group-admin-note') || {}).value || ''
+      }
+    }).then(function(d){
+      var ent = d.entitlement || {};
+      if(status) status.textContent = ent.enabled ? ('Enabled: up to ' + (ent.capacity_limit || 10) + ' clients') : 'Disabled';
+      notify('Group session access saved.', 'ok');
+      setTimeout(function(){ window.obAdminOpenExpertDetail(id); }, 450);
+    }).catch(function(err){ if(status) status.textContent = err.message; notify(err.message, 'err'); });
+  };
+  window.obAdminApplyPaidGroupTier = function(id, tier, requestId){
+    var status = document.getElementById('ob-group-save-status');
+    if(status) status.textContent = 'Enabling paid tier...';
+    api('/admin/experts/' + encodeURIComponent(id) + '/group-sessions', {
+      method:'PUT',
+      body:{
+        enabled: true,
+        capacity_tier: tier || 'group_10',
+        current_request_id: requestId || '',
+        admin_note: (document.getElementById('ob-group-admin-note') || {}).value || 'Enabled from paid group-session request.'
+      }
+    }).then(function(){ notify('Paid group tier enabled.', 'ok'); window.obAdminOpenExpertDetail(id); })
+      .catch(function(err){ if(status) status.textContent = err.message; notify(err.message, 'err'); });
+  };
+  window.obAdminCreateGroupRequest = function(id){
+    var status = document.getElementById('ob-group-request-status');
+    if(status) status.textContent = 'Creating Stripe Checkout request...';
+    api('/admin/experts/' + encodeURIComponent(id) + '/group-sessions/payment-request', {
+      method:'POST',
+      body:{
+        capacity_tier: (document.getElementById('ob-group-tier') || {}).value || 'group_10',
+        amount: (document.getElementById('ob-group-request-amount') || {}).value || '',
+        currency: (document.getElementById('ob-group-request-currency') || {}).value || 'usd',
+        note: (document.getElementById('ob-group-request-note') || {}).value || ''
+      }
+    }).then(function(d){
+      var url = d.checkout_url || (d.request && d.request.checkout_url) || '';
+      if(status) status.innerHTML = url ? 'Checkout link created: <a href="' + attr(url) + '" target="_blank" rel="noopener" style="color:#c8ff3d;">open</a>' : 'Manual payment request created.';
+      notify('Group-session payment request created.', 'ok');
+      setTimeout(function(){ window.obAdminOpenExpertDetail(id); }, 700);
+    }).catch(function(err){ if(status) status.textContent = err.message; notify(err.message, 'err'); });
+  };
+  window.obAdminMarkGroupRequestPaid = function(expertId, requestId){
+    api('/admin/group-session-payment-requests/' + encodeURIComponent(requestId) + '/mark-paid', {method:'POST'}).then(function(){
+      notify('Payment request marked paid. Enable the paid tier when ready.', 'ok');
+      window.obAdminOpenExpertDetail(expertId);
+    }).catch(function(err){ notify(err.message, 'err'); });
+  };
+  window.obAdminCancelGroupRequest = function(expertId, requestId){
+    api('/admin/group-session-payment-requests/' + encodeURIComponent(requestId) + '/cancel', {method:'POST'}).then(function(){
+      notify('Payment request cancelled.', 'ok');
+      window.obAdminOpenExpertDetail(expertId);
+    }).catch(function(err){ notify(err.message, 'err'); });
   };
   document.addEventListener('click', function(e){
     var btn = e.target && e.target.closest ? e.target.closest('.ob-admin-view-expert') : null;

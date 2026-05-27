@@ -44345,4 +44345,169 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   [300, 900, 1800, 3500, 7000].forEach(function(ms){ setTimeout(install, ms); });
 })();
 </script>
+<script id="ownlybiz-admin-expert-view-detail-guard-20260527">
+(function(){
+  'use strict';
+  if(window.__obAdminExpertViewDetailGuard20260527) return;
+  window.__obAdminExpertViewDetailGuard20260527 = true;
+
+  var API_BASE = (window.OWNLYBIZ_API_URL || 'https://victorious-wisdom-production-a6b0.up.railway.app').replace(/\/+$/,'');
+  function token(){
+    try { return sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || ''; }
+    catch(e) { return ''; }
+  }
+  function notify(msg, kind){
+    try {
+      if(typeof toastMsg === 'function') return toastMsg(msg, kind);
+      if(typeof toast === 'function') return toast(msg, kind);
+    } catch(e) {}
+  }
+  function esc(v){
+    return String(v == null ? '' : v).replace(/[&<>"']/g,function(c){
+      return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+    });
+  }
+  function adminFetch(path){
+    return fetch(API_BASE + '/api' + path, {
+      headers: token() ? {Authorization:'Bearer ' + token()} : {}
+    }).then(function(r){
+      return r.json().catch(function(){ return {}; }).then(function(d){
+        if(!r.ok) throw new Error(d.error || d.message || ('Request failed: ' + r.status));
+        return d;
+      });
+    });
+  }
+  function showExpertsPanel(){
+    var panel = document.getElementById('admin-panel-experts');
+    if(!panel) return null;
+    document.querySelectorAll('.admin-tab-panel').forEach(function(p){ p.classList.remove('active'); });
+    panel.classList.add('active');
+    var title = document.getElementById('admin-page-title');
+    if(title) title.textContent = 'Expert Management';
+    return panel;
+  }
+  function contentNode(){
+    var panel = showExpertsPanel();
+    if(!panel) return null;
+    var content = panel.querySelector('.admin-content');
+    if(!content){
+      content = document.createElement('div');
+      content.className = 'admin-content';
+      panel.appendChild(content);
+    }
+    return content;
+  }
+  function resolveBySlug(slug){
+    if(!slug) return Promise.reject(new Error('Expert id missing.'));
+    return adminFetch('/admin/experts?limit=300').then(function(d){
+      var list = d.experts || [];
+      var found = list.find(function(e){ return String(e.slug || '') === String(slug || ''); });
+      if(!found) throw new Error('Expert not found for slug ' + slug + '.');
+      return found;
+    });
+  }
+  function openExpertInfo(id, slug, name){
+    id = id || '';
+    slug = slug || '';
+    name = name || '';
+    var content = contentNode();
+    if(!content){
+      notify('Could not open admin expert detail.', 'err');
+      return false;
+    }
+    if(!id && slug){
+      content.innerHTML = '<div class="admin-card" style="padding:28px;color:rgba(246,241,233,.65);">Finding expert details...</div>';
+      resolveBySlug(slug).then(function(expert){
+        openExpertInfo(expert.id || '', expert.slug || slug, expert.name || name);
+      }).catch(function(err){
+        content.innerHTML = '<div class="admin-card" style="padding:28px;color:#fecaca;">Expert detail failed: ' + esc(err.message) + '</div>';
+        notify(err.message || 'Could not open expert detail.', 'err');
+      });
+      return false;
+    }
+    if(!id){
+      content.innerHTML = '<div class="admin-card" style="padding:28px;color:#fecaca;">Expert detail failed: missing expert id.</div>';
+      notify('Expert id missing.', 'err');
+      return false;
+    }
+    window._obAdminExpertDetailOpen = {id:id, slug:slug, name:name, at:Date.now()};
+    if(typeof window.obAdminOpenExpertDetail === 'function'){
+      return window.obAdminOpenExpertDetail(id, slug, name);
+    }
+    content.innerHTML = '<div class="admin-card" style="padding:28px;color:rgba(246,241,233,.65);">Loading expert details...</div>';
+    adminFetch('/admin/experts/' + encodeURIComponent(id) + '/profile').then(function(data){
+      var user = data.user || {};
+      var profile = data.profile || {};
+      content.innerHTML = '<div class="admin-card" style="padding:18px;margin-bottom:18px;"><button class="admin-action-btn" type="button" onclick="window.loadAdminExperts&&window.loadAdminExperts()">Back to experts</button></div>' +
+        '<div class="admin-card" style="padding:22px;"><div style="font-size:28px;font-weight:900;color:rgba(246,241,233,.95);">' + esc(user.name || name || 'Expert') + '</div>' +
+        '<div style="font-size:13px;color:rgba(246,241,233,.55);margin-top:6px;">' + esc(user.email || '-') + '</div>' +
+        '<div style="font-size:12px;color:rgba(246,241,233,.45);margin-top:6px;">' + esc(profile.slug || slug || '') + '</div>' +
+        '<div style="margin-top:18px;color:#fecaca;font-size:13px;">Full admin detail renderer was unavailable in this build.</div></div>';
+    }).catch(function(err){
+      content.innerHTML = '<div class="admin-card" style="padding:28px;color:#fecaca;">Expert detail failed: ' + esc(err.message) + '</div>';
+    });
+    return false;
+  }
+  function parseArgsFromOnclick(source){
+    var match = String(source || '').match(/adminViewExpertDashboard\s*\(([\s\S]*?)\)/);
+    if(!match) return [];
+    var body = match[1], args = [], cur = '', quote = '', escaped = false;
+    for(var i = 0; i < body.length; i++){
+      var ch = body.charAt(i);
+      if(quote){
+        if(escaped){ cur += ch; escaped = false; continue; }
+        if(ch === '\\'){ escaped = true; continue; }
+        if(ch === quote){ args.push(cur); cur = ''; quote = ''; continue; }
+        cur += ch;
+      } else if(ch === '\'' || ch === '"') {
+        quote = ch;
+      }
+    }
+    return args;
+  }
+  function findExpertViewButton(target){
+    if(!target || !target.closest) return null;
+    var direct = target.closest('.ob-admin-view-expert,[data-ob-admin-view-expert]');
+    if(direct) return direct;
+    var control = target.closest('button,a');
+    if(!control || !control.closest('#admin-panel-experts')) return null;
+    var onclick = control.getAttribute('onclick') || '';
+    var href = control.getAttribute('href') || '';
+    var text = String(control.textContent || '').trim().toLowerCase();
+    if(onclick.indexOf('adminViewExpertDashboard') >= 0) return control;
+    if(text === 'view' && href.indexOf('/dash/') >= 0) return control;
+    return null;
+  }
+  function attrsFromButton(btn){
+    var args = parseArgsFromOnclick(btn && btn.getAttribute && btn.getAttribute('onclick'));
+    var href = btn && btn.getAttribute && btn.getAttribute('href') || '';
+    var slugFromHref = '';
+    try {
+      var m = href.match(/\/dash\/([^/?#]+)/);
+      slugFromHref = m ? decodeURIComponent(m[1]) : '';
+    } catch(e) {}
+    return {
+      id: (btn && (btn.getAttribute('data-id') || btn.getAttribute('data-expert-id'))) || args[0] || '',
+      slug: (btn && btn.getAttribute('data-slug')) || args[1] || slugFromHref || '',
+      name: (btn && btn.getAttribute('data-name')) || args[2] || ''
+    };
+  }
+  function install(){
+    window.obAdminOpenExpertInfo = openExpertInfo;
+    window.adminViewExpertDashboard = openExpertInfo;
+    if(window.OwnlyAPI) window.OwnlyAPI.adminViewExpertDashboard = openExpertInfo;
+  }
+  document.addEventListener('click', function(e){
+    var btn = findExpertViewButton(e.target);
+    if(!btn) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.stopImmediatePropagation();
+    var a = attrsFromButton(btn);
+    openExpertInfo(a.id, a.slug, a.name);
+  }, true);
+  install();
+  [40,250,750,1600,3300,6500,12500,16500].forEach(function(ms){ setTimeout(install, ms); });
+})();
+</script>
 </html>

@@ -44513,4 +44513,154 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   [40,250,750,1600,3300,6500,12500,16500].forEach(function(ms){ setTimeout(install, ms); });
 })();
 </script>
+<script id="ownlybiz-staging-one-to-one-sfu-admin-20260527">
+(function(){
+  if(window.__obOneToOneSfuAdminV1) return;
+  window.__obOneToOneSfuAdminV1 = true;
+  function apiBase(){
+    var b = '';
+    try { b = window.BASE || BASE || window.OWNLYBIZ_API_URL || ''; } catch(e) {}
+    return (b || 'https://victorious-wisdom-production-a6b0.up.railway.app').replace(/\/+$/,'');
+  }
+  function token(){ return sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || ''; }
+  function esc(v){ return String(v == null ? '' : v).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
+  function enabled(v){ return ['1','true','yes','on'].indexOf(String(v || '').toLowerCase()) >= 0; }
+  async function adminApi(path, opts){
+    opts = opts || {};
+    var res = await fetch(apiBase() + '/api' + path, {
+      method: opts.method || 'GET',
+      headers: {'Content-Type':'application/json','Authorization':'Bearer ' + token()},
+      body: opts.body ? JSON.stringify(opts.body) : undefined
+    });
+    var data = await res.json().catch(function(){ return {}; });
+    if(!res.ok || data.success === false) throw new Error(data.error || 'Admin request failed');
+    return data;
+  }
+  function renderRtcCard(settings){
+    settings = settings || {};
+    var mode = String(settings.rtc_one_to_one_transport_mode || (enabled(settings.rtc_one_to_one_sfu_enabled) ? 'sfu' : 'peer')).toLowerCase() === 'sfu' ? 'sfu' : 'peer';
+    var url = String(settings.rtc_sfu_url || settings.group_sessions_sfu_url || '').replace(/\/+$/,'');
+    return '<div class="admin-card" id="ob-one-to-one-sfu-card" style="margin-bottom:16px;">'
+      + '<div class="admin-card-title">1:1 Voice/Video Transport <span class="admin-card-title-sub">Staging rollout control</span></div>'
+      + '<div style="font-size:12px;color:rgba(246,241,233,.58);line-height:1.6;margin-bottom:16px;">Choose whether normal private voice/video sessions use the current peer-to-peer path or the Ownlybiz SFU media server. Peer-to-peer is the safe fallback.</div>'
+      + '<div class="platform-settings-grid">'
+      + '<div class="platform-setting-block"><div class="ps-block-title">Private session media mode</div>'
+      + '<div class="ps-row"><div><div class="ps-label">Use Ownlybiz SFU for 1:1 calls</div><div style="font-size:11px;color:rgba(246,241,233,.45);line-height:1.45;">Routes media through the staging media service, while billing/session logic stays in the main backend.</div></div><label class="toggle-sm"><input type="checkbox" id="rtc_one_to_one_sfu_enabled" '+(mode === 'sfu' ? 'checked' : '')+'><div class="toggle-sm-track"></div><div class="toggle-sm-thumb"></div></label></div>'
+      + '<div class="ps-row"><div><div class="ps-label">Fallback to peer-to-peer if SFU fails</div><div style="font-size:11px;color:rgba(246,241,233,.45);line-height:1.45;">Keeps calls available during media-service outages.</div></div><label class="toggle-sm"><input type="checkbox" id="rtc_one_to_one_sfu_fallback_enabled" '+(settings.rtc_one_to_one_sfu_fallback_enabled === undefined || enabled(settings.rtc_one_to_one_sfu_fallback_enabled) ? 'checked' : '')+'><div class="toggle-sm-track"></div><div class="toggle-sm-thumb"></div></label></div>'
+      + '</div>'
+      + '<div class="platform-setting-block"><div class="ps-block-title">Media service</div>'
+      + '<label class="ps-label" for="rtc_sfu_url" style="display:block;margin-bottom:6px;">SFU URL</label>'
+      + '<input class="admin-input" id="rtc_sfu_url" name="rtc_sfu_url" value="'+esc(url)+'" placeholder="https://ownlybiz-media-staging-production.up.railway.app" style="width:100%;margin-bottom:10px;">'
+      + '<div style="font-size:11px;color:rgba(246,241,233,.48);line-height:1.55;">This URL is shared by group sessions and private SFU calls. Keep it pointed at staging until production media QA is explicitly approved.</div>'
+      + '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:12px;"><button type="button" class="admin-action-btn" onclick="window.obSaveOneToOneSfuSettings()">Save media mode</button><span id="ob-one-to-one-sfu-status" style="font-size:12px;color:rgba(246,241,233,.55);"></span></div>'
+      + '</div></div></div>';
+  }
+  async function ensureRtcSettingsCard(){
+    var panel = document.getElementById('admin-panel-platform-settings');
+    if(!panel) return;
+    var content = panel.querySelector('.admin-content') || panel;
+    var old = document.getElementById('ob-one-to-one-sfu-card');
+    var data = {};
+    try { data = await adminApi('/admin/settings'); } catch(e) {}
+    var holder = document.createElement('div');
+    holder.innerHTML = renderRtcCard((data && data.settings) || {});
+    var card = holder.firstChild;
+    if(old) old.replaceWith(card);
+    else content.insertBefore(card, content.firstChild);
+  }
+  window.obSaveOneToOneSfuSettings = async function(){
+    var status = document.getElementById('ob-one-to-one-sfu-status');
+    try {
+      if(status) status.textContent = 'Saving media mode...';
+      var useSfu = !!(document.getElementById('rtc_one_to_one_sfu_enabled') || {}).checked;
+      var fallback = !!(document.getElementById('rtc_one_to_one_sfu_fallback_enabled') || {}).checked;
+      var url = ((document.getElementById('rtc_sfu_url') || {}).value || '').trim().replace(/\/+$/,'');
+      await adminApi('/admin/settings', {
+        method:'PUT',
+        body:{
+          rtc_one_to_one_transport_mode: useSfu ? 'sfu' : 'peer',
+          rtc_one_to_one_sfu_enabled: useSfu ? '1' : '0',
+          rtc_one_to_one_sfu_fallback_enabled: fallback ? '1' : '0',
+          rtc_sfu_url: url,
+          group_sessions_sfu_url: url
+        }
+      });
+      try { window.OWNLY_CONFIG = null; } catch(e) {}
+      try { if(window.OwnlybizSfuClient && window.OwnlybizSfuClient.refreshConfig) window.OwnlybizSfuClient.refreshConfig(); } catch(e) {}
+      if(status) status.textContent = useSfu ? '1:1 SFU mode saved.' : 'Peer-to-peer mode saved.';
+    } catch(err) {
+      if(status) status.textContent = err && err.message || 'Save failed.';
+    }
+  };
+  var oldLoad = window.loadAdminSettings;
+  window.loadAdminSettings = async function(){
+    var ret;
+    if(oldLoad) ret = await oldLoad.apply(this, arguments);
+    await ensureRtcSettingsCard();
+    return ret;
+  };
+  if(window.OwnlyAPI) window.OwnlyAPI.loadAdminSettings = window.loadAdminSettings;
+  [500,1800,3600].forEach(function(ms){ setTimeout(ensureRtcSettingsCard, ms); });
+
+  function role(){ try { return (JSON.parse(sessionStorage.getItem('ob_u') || localStorage.getItem('ob_u') || '{}').role || '').toLowerCase(); } catch(e){ return ''; } }
+  function fmt(n){ n = Number(n || 0); return (Math.round(n * 1000) / 1000).toLocaleString(); }
+  function pill(status){ status = status || 'unknown'; return '<span class="ob-pill '+esc(status)+'">'+esc(String(status).toUpperCase())+'</span>'; }
+  function mediaOpsHtml(m){
+    m = m || {};
+    var est = m.estimated || {};
+    var health = m.health || {};
+    var counters = health.counters || {};
+    var assumptions = m.assumptions || {};
+    return '<div class="ob-ops-section" id="ob-ops-sfu-panel"><h3>Ownlybiz SFU media usage and cost</h3>'
+      + '<div class="ob-ops-grid">'
+      + '<div class="ob-ops-card"><div class="ob-ops-label">1:1 mode</div><div class="ob-ops-value">'+esc(m.one_to_one_mode || 'peer')+'</div><div class="ob-ops-note">Fallback '+(m.one_to_one_fallback_enabled ? 'on' : 'off')+'</div></div>'
+      + '<div class="ob-ops-card"><div class="ob-ops-label">SFU health</div><div class="ob-ops-value">'+esc(m.status || 'unknown')+'</div><div class="ob-ops-note">'+esc(m.error || (m.url_configured ? 'Media URL configured' : 'No media URL'))+'</div></div>'
+      + '<div class="ob-ops-card"><div class="ob-ops-label">Rooms / peers</div><div class="ob-ops-value">'+fmt(m.rooms)+' / '+fmt(m.peers)+'</div><div class="ob-ops-note">1:1 '+fmt(m.session_rooms)+' · group '+fmt(m.group_rooms)+'</div></div>'
+      + '<div class="ob-ops-card"><div class="ob-ops-label">Consumers</div><div class="ob-ops-value">'+fmt(m.consumers)+'</div><div class="ob-ops-note">Audio '+fmt(m.audio_consumers)+' · video '+fmt(m.video_consumers)+'</div></div>'
+      + '<div class="ob-ops-card"><div class="ob-ops-label">Outbound estimate</div><div class="ob-ops-value">'+fmt(est.outbound_mbps)+' Mbps</div><div class="ob-ops-note">'+fmt(est.egress_gb_per_hour)+' GB/hour</div></div>'
+      + '<div class="ob-ops-card"><div class="ob-ops-label">Media egress cost</div><div class="ob-ops-value">$'+fmt(est.egress_usd_per_hour)+'/hr</div><div class="ob-ops-note">Estimate from active consumers</div></div>'
+      + '</div>'
+      + '<table class="ob-ops-table"><tbody>'
+      + '<tr><td>Media service URL configured</td><td>'+esc(m.url_configured ? 'yes' : 'no')+'</td></tr>'
+      + '<tr><td>Transports / producers / consumers</td><td>'+fmt(m.transports)+' / '+fmt(m.producers)+' / '+fmt(m.consumers)+'</td></tr>'
+      + '<tr><td>Audio/video producers</td><td>'+fmt(m.audio_producers)+' / '+fmt(m.video_producers)+'</td></tr>'
+      + '<tr><td>Audio/video consumers</td><td>'+fmt(m.audio_consumers)+' / '+fmt(m.video_consumers)+'</td></tr>'
+      + '<tr><td>Rooms created total</td><td>'+fmt(counters.rooms_created_total)+' total · '+fmt(counters.session_rooms_created_total)+' private · '+fmt(counters.group_rooms_created_total)+' group</td></tr>'
+      + '<tr><td>Peers/transports/producers/consumers total</td><td>'+fmt(counters.peers_joined_total)+' / '+fmt(counters.transports_created_total)+' / '+fmt(counters.producers_created_total)+' / '+fmt(counters.consumers_created_total)+'</td></tr>'
+      + '<tr><td>Cost assumptions</td><td>'+fmt(assumptions.video_mbps_per_consumer)+' Mbps/video consumer, '+fmt(assumptions.audio_mbps_per_consumer)+' Mbps/audio consumer, $'+fmt(assumptions.egress_usd_per_gb)+'/GB egress</td></tr>'
+      + '</tbody></table></div>';
+  }
+  async function injectSfuOpsPanel(){
+    if(role() !== 'admin') return;
+    var body = document.getElementById('ob-ops-body');
+    if(!body) return;
+    var panel = document.getElementById('ob-ops-panel');
+    if(panel && !panel.classList.contains('show') && !document.getElementById('ob-ops-sfu-panel')) return;
+    try {
+      var data = await adminApi('/admin/observability/overview?_=' + Date.now());
+      var html = mediaOpsHtml(data.media_sfu || {});
+      var existing = document.getElementById('ob-ops-sfu-panel');
+      if(existing) existing.outerHTML = html;
+      else {
+        var after = body.querySelector('.ob-ops-grid');
+        if(after) after.insertAdjacentHTML('afterend', html);
+        else body.insertAdjacentHTML('afterbegin', html);
+      }
+    } catch(e) {}
+  }
+  var oldOpenOps = window.obOpenOpsDashboard;
+  window.obOpenOpsDashboard = function(){
+    var ret = oldOpenOps ? oldOpenOps.apply(this, arguments) : null;
+    setTimeout(injectSfuOpsPanel, 900);
+    return ret;
+  };
+  var oldRefreshOps = window.obRefreshOpsDashboard;
+  window.obRefreshOpsDashboard = function(){
+    var ret = oldRefreshOps ? oldRefreshOps.apply(this, arguments) : Promise.resolve();
+    Promise.resolve(ret).then(function(){ setTimeout(injectSfuOpsPanel, 250); });
+    return ret;
+  };
+  setInterval(injectSfuOpsPanel, 15000);
+})();
+</script>
 </html>

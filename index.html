@@ -10982,7 +10982,8 @@ function openBookingOverlay(channelId) {
         var BASE2 = 'https://ownlybiz-backend-production.up.railway.app';
         var t2 = sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || '';
         if (!t2) return;
-        fetch(BASE2 + '/api/payments/config')
+        var _payExpertId = (window._currentExpert && (window._currentExpert.user_id || window._currentExpert.id)) || window._currentExpertId || '';
+        fetch(BASE2 + '/api/payments/config' + (_payExpertId ? '?expert_id=' + encodeURIComponent(_payExpertId) : ''))
           .then(function(r){ return r.json(); })
           .then(function(cfg){
             if (!cfg.publishable_key) return;
@@ -11157,7 +11158,8 @@ async function bovAuthorize() {
   if (!t) { showErr('Please log in first.'); return; }
 
 	  // Get Stripe publishable key from backend, then confirm card setup
-  fetch(BASE + '/api/payments/config')
+  var _payExpertId = (window._currentExpert && (window._currentExpert.user_id || window._currentExpert.id)) || window._currentExpertId || '';
+  fetch(BASE + '/api/payments/config' + (_payExpertId ? '?expert_id=' + encodeURIComponent(_payExpertId) : ''))
     .then(function(r){ return r.json(); })
     .then(function(cfg){
       if (!cfg.publishable_key) { showErr('Payment not configured — contact support.'); return; }
@@ -11185,7 +11187,8 @@ async function bovAuthorize() {
       // Create SetupIntent
       fetch(BASE + '/api/payments/methods/setup', {
         method: 'POST',
-        headers: { Authorization: 'Bearer ' + t, 'Content-Type': 'application/json' }
+        headers: { Authorization: 'Bearer ' + t, 'Content-Type': 'application/json' },
+        body: JSON.stringify({expert_id:_payExpertId})
       })
       .then(function(r){ return r.json(); })
       .then(function(d){
@@ -11200,7 +11203,7 @@ async function bovAuthorize() {
             // Card saved — store payment method id and proceed
             window._bovPaymentMethodId = result.setupIntent.payment_method;
             var saveDefault = window._obSaveDefaultPaymentMethod && result.setupIntent.payment_method
-              ? window._obSaveDefaultPaymentMethod(result.setupIntent.payment_method, t)
+              ? window._obSaveDefaultPaymentMethod(result.setupIntent.payment_method, t, {expert_id:_payExpertId, stripe_mode:d.mode})
               : Promise.resolve();
             saveDefault.then(function(){
               if (btn) { btn.textContent = 'Card authorized ✓'; }
@@ -14298,7 +14301,8 @@ async function savePaymentConfig() {
             var _BASE='https://ownlybiz-backend-production.up.railway.app';
             var _tok=sessionStorage.getItem('ob_t')||localStorage.getItem('ob_t')||'';
             if(!_tok||typeof Stripe==='undefined') return;
-            var _cfg=await fetch(_BASE+'/api/payments/config').then(function(r){return r.json();});
+            var _payExpertId=(window._currentExpert&&(window._currentExpert.user_id||window._currentExpert.id))||window._currentExpertId||'';
+            var _cfg=await fetch(_BASE+'/api/payments/config'+(_payExpertId?'?expert_id='+encodeURIComponent(_payExpertId):'')).then(function(r){return r.json();});
             if(!_cfg||!_cfg.publishable_key) return;
             var _stripe=Stripe(_cfg.publishable_key);
             var _elements=_stripe.elements();
@@ -19726,7 +19730,8 @@ function mountBflCardElement() {
   try {
     var pk = window._stripePk || '';
     if (!pk) {
-      fetch('https://ownlybiz-backend-production.up.railway.app/api/payments/config')
+      var _bflExpertId = (window._currentExpert && (window._currentExpert.user_id || window._currentExpert.id)) || window._currentExpertId || '';
+      fetch('https://ownlybiz-backend-production.up.railway.app/api/payments/config' + (_bflExpertId ? '?expert_id=' + encodeURIComponent(_bflExpertId) : ''))
         .then(function(r) { return r.json(); })
         .then(function(d) {
           if (d.publishable_key) {
@@ -19830,13 +19835,14 @@ window.submitBookForLater = function() {
       }
     }
     if (!_bflStripe || !_bflCardElement) { return { auth: auth, cardSaved: false, creditMode: 'minute' }; }
-    return fetch(BASE + '/api/payments/methods/setup', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + auth.token } })
+    var _bflExpertId = (window._currentExpert && (window._currentExpert.user_id || window._currentExpert.id)) || window._currentExpertId || '';
+    return fetch(BASE + '/api/payments/methods/setup', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + auth.token }, body: JSON.stringify({expert_id:_bflExpertId}) })
       .then(function(r) { return r.json(); }).then(function(d) {
         if (!d.client_secret) { return { auth: auth, cardSaved: false, creditMode: 'minute' }; }
         return _bflStripe.confirmCardSetup(d.client_secret, { payment_method: { card: _bflCardElement } }).then(function(result) {
           if (result.error) { var ce = document.getElementById('bfl-card-error'); if (ce) { ce.textContent = result.error.message; ce.style.display = 'block'; } throw new Error('card_error'); }
           var saveDefault = window._obSaveDefaultPaymentMethod && result.setupIntent && result.setupIntent.payment_method
-            ? window._obSaveDefaultPaymentMethod(result.setupIntent.payment_method, auth.token)
+            ? window._obSaveDefaultPaymentMethod(result.setupIntent.payment_method, auth.token, {expert_id:_bflExpertId, stripe_mode:d.mode})
             : Promise.resolve();
           return saveDefault.then(function(){
             var sv = document.getElementById('bfl-card-saved'); if (sv) sv.style.display = 'block';
@@ -29706,6 +29712,9 @@ window._handleRTCMessage=function(d){
   function token(explicit){
     return explicit || sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || localStorage.getItem('ob_client_token') || '';
   }
+  function currentExpertId(){
+    return (window._currentExpert && (window._currentExpert.user_id || window._currentExpert.id)) || window._currentExpertId || '';
+  }
   function toastLocal(msg, type){
     if(typeof window.toastMsg === 'function') return window.toastMsg(msg, type || 'ok');
     if(typeof window.toast === 'function') return window.toast(msg, type === 'err' ? 'err' : 'ok');
@@ -29729,7 +29738,8 @@ window._handleRTCMessage=function(d){
     if(typeof window.checkClientAuth === 'function') setTimeout(window.checkClientAuth, 250);
     if(typeof window._linkClientToCurrentExpert === 'function') window._linkClientToCurrentExpert();
   }
-  window._obSaveDefaultPaymentMethod = async function(paymentMethodId, explicitToken){
+  window._obSaveDefaultPaymentMethod = async function(paymentMethodId, explicitToken, options){
+    options = options || {};
     if(paymentMethodId && typeof paymentMethodId === 'object') paymentMethodId = paymentMethodId.id;
     if(!paymentMethodId) return null;
     var t = token(explicitToken);
@@ -29737,7 +29747,7 @@ window._handleRTCMessage=function(d){
     var r = await fetch(apiBase() + '/api/payments/methods/default', {
       method:'POST',
       headers:{'Content-Type':'application/json','Authorization':'Bearer ' + t},
-      body:JSON.stringify({payment_method:paymentMethodId})
+      body:JSON.stringify({payment_method:paymentMethodId, expert_id:options.expert_id || currentExpertId(), stripe_mode:options.stripe_mode || options.mode || ''})
     });
     var d = await r.json().catch(function(){ return {}; });
     if(!r.ok) throw new Error(d.error || 'Could not save payment method');
@@ -29747,11 +29757,12 @@ window._handleRTCMessage=function(d){
   async function createSetupIntent(explicitToken){
     var r = await fetch(apiBase() + '/api/payments/methods/setup', {
       method:'POST',
-      headers:{'Content-Type':'application/json','Authorization':'Bearer ' + token(explicitToken)}
+      headers:{'Content-Type':'application/json','Authorization':'Bearer ' + token(explicitToken)},
+      body:JSON.stringify({expert_id:currentExpertId()})
     });
     var d = await r.json().catch(function(){ return {}; });
     if(!r.ok || !d.client_secret) throw new Error(d.error || 'Could not initialize wallet payment');
-    return d.client_secret;
+    return d;
   }
 
   var clientPaymentConfigPromise = null;
@@ -29836,10 +29847,10 @@ window._handleRTCMessage=function(d){
           try {
             var submit = await elements.submit();
             if(submit && submit.error) throw new Error(submit.error.message || 'Wallet authorization failed');
-            var clientSecret = await createSetupIntent(opts.token && opts.token());
+            var setupIntent = await createSetupIntent(opts.token && opts.token());
             var result = await stripe.confirmSetup({
               elements:elements,
-              clientSecret:clientSecret,
+              clientSecret:setupIntent.client_secret,
               confirmParams:{return_url:window.location.href},
               redirect:'if_required'
             });
@@ -29850,7 +29861,7 @@ window._handleRTCMessage=function(d){
             var pm = result.setupIntent && result.setupIntent.payment_method;
             if(pm && typeof pm === 'object') pm = pm.id;
             if(!pm) throw new Error('Wallet did not return a payment method');
-            await window._obSaveDefaultPaymentMethod(pm, opts.token && opts.token());
+            await window._obSaveDefaultPaymentMethod(pm, opts.token && opts.token(), {expert_id:currentExpertId(), stripe_mode:setupIntent.mode});
             if(typeof opts.onSuccess === 'function') opts.onSuccess(pm);
           } catch(err) {
             try { if(ev && typeof ev.paymentFailed === 'function') ev.paymentFailed({reason:'fail'}); } catch(e) {}
@@ -44103,6 +44114,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     return '<div class="admin-kpi" style="min-height:88px;"><div class="admin-kpi-label">' + esc(label) + '</div><div class="admin-kpi-val">' + esc(value) + '</div>' + (sub ? '<div style="font-size:11px;color:rgba(246,241,233,.45);margin-top:4px;">' + esc(sub) + '</div>' : '') + '</div>';
   }
   function infoGrid(user, profile){
+    var sm = profile.__stripe_mode || {};
     var rows = [
       ['Email', user.email || '-'],
       ['Slug', profile.slug ? 'ownlybiz.com/' + profile.slug : '-'],
@@ -44111,7 +44123,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       ['Plan', profile.subscription_plan || 'starter'],
       ['Subscription', profile.subscription_status || '-'],
       ['Website', Number(profile.website_published || 0) ? 'Published' : 'Not published'],
-      ['Stripe Connect', profile.stripe_account_id ? 'Connected' : 'Not connected'],
+      ['Stripe Connect', sm.active_account_masked ? ('Connected · ' + (sm.mode || '').toUpperCase()) : 'Not connected'],
       ['Online', Number(profile.is_online || 0) ? 'Online' : 'Offline'],
       ['Created', when(user.created_at)],
       ['Approved', when(profile.approved_at)],
@@ -44120,6 +44132,30 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     return '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin-top:18px;">' + rows.map(function(row){
       return '<div style="border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.035);border-radius:10px;padding:12px;"><div style="font-size:10px;font-weight:900;text-transform:uppercase;letter-spacing:.06em;color:rgba(246,241,233,.42);">' + esc(row[0]) + '</div><div style="font-size:13px;color:rgba(246,241,233,.82);margin-top:6px;word-break:break-word;">' + esc(row[1]) + '</div></div>';
     }).join('') + '</div>';
+  }
+  function stripeModeCard(id, stripeMode){
+    stripeMode = stripeMode || {};
+    var useTest = stripeMode.mode === 'test';
+    var modeLabel = useTest ? 'TEST' : 'LIVE';
+    var live = stripeMode.live_connected ? ('Saved ' + (stripeMode.live_account_masked || '')) : 'No live Connect account saved';
+    var test = stripeMode.test_connected ? ('Saved ' + (stripeMode.test_account_masked || '')) : 'No test Connect account saved';
+    var note = useTest
+      ? 'This expert is isolated to Stripe test mode for Connect, client cards, prepaid credit, session charges, and refunds.'
+      : 'This expert follows the production default Stripe mode. In production that should be live mode.';
+    return '<div class="admin-card" style="padding:18px;margin-top:18px;border-color:' + (useTest ? 'rgba(245,158,11,.28)' : 'rgba(34,197,94,.26)') + ';">'
+      + '<div class="admin-card-title">Stripe mode <span class="admin-card-title-sub">' + esc(modeLabel) + '</span></div>'
+      + '<div style="display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;">'
+      +   '<div style="font-size:12px;color:rgba(246,241,233,.58);line-height:1.6;max-width:780px;">'
+      +     '<div>' + esc(note) + '</div>'
+      +     '<div style="margin-top:8px;">Live: ' + esc(live) + ' · Test: ' + esc(test) + '</div>'
+      +     '<div style="margin-top:8px;color:rgba(246,241,233,.46);">Existing refunds stay tied to the original payment mode. Turning test mode off returns this expert to the platform default.</div>'
+      +   '</div>'
+      +   '<label style="display:flex;align-items:center;gap:10px;font-size:13px;font-weight:900;color:rgba(246,241,233,.82);">'
+      +     '<input id="ob-admin-use-test-stripe" type="checkbox" ' + (useTest ? 'checked' : '') + ' onchange="obAdminExpertStripeMode(&quot;' + attr(id) + '&quot;, this.checked)">'
+      +     'Use Stripe test mode'
+      +   '</label>'
+      + '</div>'
+      + '</div>';
   }
   function sessionsTable(sessions){
     var rows = (sessions || []).slice(0,10).map(function(s){
@@ -44150,6 +44186,8 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     var stats = dashboardData.dashboard && dashboardData.dashboard.stats || {};
     var dashboard = dashboardData.dashboard || {};
     var ai = profileData.ai_chat || {};
+    var stripeMode = profileData.stripe_mode || {};
+    profile.__stripe_mode = stripeMode;
     var slug = profile.slug || '';
     var name = user.name || 'Expert';
     var enabled = Number(ai.enabled || 0) === 1;
@@ -44191,6 +44229,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       +   kpi('Video rate', money(rates.video_pm || profile.rate_video || 0), int(rates.video_free_min || profile.free_minutes_video || 0) + ' free min')
       +   kpi('AI chat', enabled ? 'Enabled' : 'Off', ai.mode || 'semi_ai')
       + '</div>'
+      + stripeModeCard(id, stripeMode)
       + '<div class="admin-card" style="padding:18px;margin-top:18px;border-color:' + (pauseAllowed ? 'rgba(34,197,94,.26)' : 'rgba(255,255,255,.08)') + ';">'
       +   '<div class="admin-card-title">Service pause access <span class="admin-card-title-sub">' + (pausePaused ? 'Global pause is on' : 'Global pause is off') + '</span></div>'
       +   '<div style="display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;">'
@@ -44251,6 +44290,17 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       notify(allowed ? 'Expert can operate during service pause.' : 'Expert now follows service pause.', 'ok');
       openExpertDetail(id, activeExpertDetail && activeExpertDetail.slug, activeExpertDetail && activeExpertDetail.name);
     }).catch(function(err){ notify(err.message || 'Service pause access update failed.', 'err'); });
+  };
+  window.obAdminExpertStripeMode = function(id, useTest){
+    var cb = document.getElementById('ob-admin-use-test-stripe');
+    if(cb) cb.disabled = true;
+    api('/admin/experts/' + encodeURIComponent(id) + '/stripe-mode', {method:'PUT', body:{use_test_stripe:!!useTest}}).then(function(){
+      notify(useTest ? 'Expert switched to Stripe test mode.' : 'Expert returned to platform Stripe default.', 'ok');
+      openExpertDetail(id, activeExpertDetail && activeExpertDetail.slug, activeExpertDetail && activeExpertDetail.name);
+    }).catch(function(err){
+      if(cb) { cb.disabled = false; cb.checked = !useTest; }
+      notify(err.message || 'Stripe mode update failed.', 'err');
+    });
   };
   window.obAdminSaveExpertAiChat = function(id){
     var status = document.getElementById('ob-ai-chat-save-status');

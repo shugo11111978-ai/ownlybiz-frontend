@@ -10446,7 +10446,10 @@ function showExpertPage(page){
 	    if(cb) cb.textContent='Choose a session type →';
 	  }
 	  var onlineSlug = window._browseExpert || window._currentExpertSlug || (window._currentExpert && window._currentExpert.slug) || '';
-	  if(!onlineSlug && !window._isSubdomain) onlineSlug = window.location.pathname.replace(/^\//, '').split('/')[0];
+	  if(!onlineSlug && !window._isSubdomain) {
+	    var onlineFirst = window.location.pathname.replace(/^\//, '').split('/')[0];
+	    if(!({admin:1,dash:1,login:1,signup:1,group:1,session:1,settings:1,pricing:1,terms:1,legal:1}[onlineFirst])) onlineSlug = onlineFirst;
+	  }
 	  if(onlineSlug) loadExpertOnlineStatus(onlineSlug);
   window.scrollTo(0,0);
 }
@@ -10618,6 +10621,7 @@ function setExpertOnlineStatus(isOnline) {
 }
 function loadExpertOnlineStatus(slug) {
   if (!slug || slug === '') return;
+  if ({admin:1,dash:1,login:1,signup:1,group:1,session:1,settings:1,pricing:1,terms:1,legal:1}[String(slug || '').toLowerCase()]) return;
   fetch('https://ownlybiz-backend-production.up.railway.app/api/experts/' + slug)
     .then(function(r){ return r.json(); })
     .then(function(d){ setExpertOnlineStatus(!!(d.is_online || (d.expert && d.expert.is_online))); })
@@ -43650,7 +43654,16 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   };
 
   function hasExpertAuth(){
-    return !!token();
+    if(!token()) return false;
+    try {
+      var stored = JSON.parse(sessionStorage.getItem('ob_u') || localStorage.getItem('ob_u') || '{}');
+      if(String((stored && stored.role) || '').toLowerCase() === 'expert') return true;
+    } catch(e) {}
+    try {
+      var payload = JSON.parse(atob((token().split('.')[1] || '').replace(/-/g,'+').replace(/_/g,'/')));
+      return String(payload.role || '').toLowerCase() === 'expert';
+    } catch(e2) {}
+    return false;
   }
   function expertAiChatPanel(){
     if(!hasExpertAuth()){

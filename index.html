@@ -20871,6 +20871,48 @@ window.OB_RTC = (function(){
     if(channel==='video')return {audio:audio,video:{width:{ideal:640,max:1280},height:{ideal:480,max:720},frameRate:{ideal:24,max:30}}};
     return {audio:audio,video:false};
   }
+  function _showRemotePlaybackUnlock(){
+    if(document.getElementById('ob-rtc-playback-unlock'))return;
+    var host=document.getElementById('expert-rtc-video-box')||document.getElementById('rtc-video-container')||document.getElementById('screen-VID')||document.body;
+    var btn=document.createElement('button');
+    btn.id='ob-rtc-playback-unlock';
+    btn.type='button';
+    btn.textContent='Tap to play call audio';
+    btn.style.cssText='position:absolute;left:50%;bottom:18px;transform:translateX(-50%);z-index:20;border:1px solid rgba(255,255,255,.22);border-radius:999px;background:#C8FF3D;color:#15110f;font-weight:800;font-size:13px;padding:10px 16px;box-shadow:0 10px 28px rgba(0,0,0,.28);cursor:pointer';
+    btn.onclick=function(){
+      ['rtc-remote-audio','rtc-remote-video','expert-rtc-remote-video'].forEach(function(id){
+        var el=document.getElementById(id);
+        if(el&&el.play)el.play().catch(function(){});
+      });
+      if(btn.parentNode)btn.parentNode.removeChild(btn);
+    };
+    try{if(getComputedStyle(host).position==='static')host.style.position='relative';}catch(e){}
+    host.appendChild(btn);
+  }
+  function _prepareRemoteMedia(el, muted){
+    if(!el)return null;
+    el.autoplay=true;
+    el.playsInline=true;
+    el.setAttribute('playsinline','');
+    el.setAttribute('webkit-playsinline','');
+    el.controls=false;
+    if(typeof muted==='boolean'){
+      el.muted=muted;
+      if(muted)el.setAttribute('muted','');else el.removeAttribute('muted');
+    }
+    return el;
+  }
+  function _playRemoteMedia(el, muted){
+    el=_prepareRemoteMedia(el, muted);
+    if(!el||!el.play)return;
+    try{
+      var p=el.play();
+      if(p&&p.catch)p.catch(function(err){
+        var name=err&&err.name||'';
+        if(name==='NotAllowedError'||name==='AbortError')_showRemotePlaybackUnlock();
+      });
+    }catch(e){}
+  }
   var VIDEO_STANDARD_CONSTRAINTS={width:{ideal:640,max:1280},height:{ideal:480,max:720},frameRate:{ideal:24,max:30}};
   var VIDEO_LOW_CONSTRAINTS={width:{ideal:320,max:640},height:{ideal:240,max:360},frameRate:{ideal:12,max:15}};
 
@@ -21340,14 +21382,19 @@ window.OB_RTC = (function(){
       if(e.track.kind==='audio'){
         var ra=document.getElementById('rtc-remote-audio');
         if(!ra){ra=document.createElement('audio');ra.id='rtc-remote-audio';ra.autoplay=true;ra.playsInline=true;document.body.appendChild(ra);}
+        _prepareRemoteMedia(ra, false);
         if(e.streams[0])ra.srcObject=e.streams[0];
-        ra.play().catch(function(err){console.log('[RTC] Audio play blocked:',err);});
+        _playRemoteMedia(ra, false);
       }
       if(e.track.kind==='video'){
         var rv=document.getElementById('rtc-remote-video');
         var erv=document.getElementById('expert-rtc-remote-video');
         var target=(_role==='expert'&&erv)?erv:rv;
-        if(target&&e.streams[0]){target.srcObject=e.streams[0];target.play().catch(function(){});}
+        if(target&&e.streams[0]){
+          _prepareRemoteMedia(target, true);
+          target.srcObject=e.streams[0];
+          _playRemoteMedia(target, true);
+        }
         var ph=document.getElementById('vid-placeholder');if(ph)ph.style.display='none';
       }
       if(ch==='video'&&localStream){

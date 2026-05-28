@@ -45680,6 +45680,167 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   else boot();
 })();
 </script>
+<script id="ownlybiz-staging-settings-profile-dirty-guard-20260528">
+(function(){
+  if(window.__obSettingsProfileDirtyGuardV1) return;
+  window.__obSettingsProfileDirtyGuardV1 = true;
+  var FIELD_IDS = ['sfield-name','sfield-title','sfield-bio','sfield-location','sfield-phone','sfield-tagline','sfield-timezone'];
+  var dirty = {};
+  var dirtyValues = {};
+  var saving = false;
+  function byId(id){ return document.getElementById(id); }
+  function token(){ try { return sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || ''; } catch(e){ return ''; } }
+  function apiBase(){
+    var b = '';
+    try { b = window.BASE || BASE || window.OWNLYBIZ_API_URL || ''; } catch(e) {}
+    return (b || 'https://victorious-wisdom-production-a6b0.up.railway.app').replace(/\/+$/,'');
+  }
+  function userRole(){
+    try { return String((JSON.parse(sessionStorage.getItem('ob_u') || localStorage.getItem('ob_u') || '{}') || {}).role || '').toLowerCase(); }
+    catch(e){ return ''; }
+  }
+  function isProfileField(el){
+    return !!(el && el.id && FIELD_IDS.indexOf(el.id) >= 0);
+  }
+  function profileVisible(){
+    var block = byId('sblock-profile');
+    return !!(block && block.offsetParent !== null);
+  }
+  function markDirty(el){
+    if(!isProfileField(el)) return;
+    dirty[el.id] = true;
+    dirtyValues[el.id] = el.value;
+    el.dataset.obUserEdited = '1';
+  }
+  document.addEventListener('input', function(ev){ markDirty(ev.target); }, true);
+  document.addEventListener('change', function(ev){ markDirty(ev.target); }, true);
+  document.addEventListener('beforeinput', function(ev){ markDirty(ev.target); }, true);
+  function protectedSnapshot(){
+    var snap = {};
+    FIELD_IDS.forEach(function(id){
+      var el = byId(id);
+      if(!el) return;
+      if(dirty[id] || el.dataset.obUserEdited === '1' || document.activeElement === el || saving) {
+        snap[id] = dirty[id] ? dirtyValues[id] : el.value;
+      }
+    });
+    return snap;
+  }
+  function restoreSnapshot(snap){
+    Object.keys(snap || {}).forEach(function(id){
+      var el = byId(id);
+      if(el && el.value !== snap[id]) el.value = snap[id];
+    });
+  }
+  var previousApplyProfile = window._applyProfile;
+  window._applyProfile = function(data){
+    var snap = profileVisible() ? protectedSnapshot() : {};
+    var ret = previousApplyProfile ? previousApplyProfile.apply(this, arguments) : undefined;
+    restoreSnapshot(snap);
+    return ret;
+  };
+  setInterval(function(){
+    if(!profileVisible()) return;
+    FIELD_IDS.forEach(function(id){
+      var el = byId(id);
+      if(el && dirty[id] && el.value !== dirtyValues[id]) el.value = dirtyValues[id];
+    });
+  }, 120);
+  function setStatus(state, message){
+    var status = byId('save-status-profile');
+    var btn = Array.prototype.slice.call(document.querySelectorAll('button,[onclick]')).find(function(el){
+      return String(el.getAttribute('onclick') || '').indexOf("saveSettingsBlock('profile')") >= 0;
+    });
+    if(status){
+      status.textContent = message || (state === 'saving' ? 'Saving...' : (state === 'saved' ? 'Saved' : (state === 'error' ? 'Error' : '')));
+      status.style.color = state === 'saved' ? 'var(--sage,#22c55e)' : (state === 'error' ? '#ef4444' : 'var(--gray-400)');
+    }
+    if(btn){
+      if(!btn.dataset.obOriginalText) btn.dataset.obOriginalText = btn.textContent || 'Save Profile';
+      btn.disabled = state === 'saving';
+      btn.textContent = state === 'saving' ? 'Saving...' : btn.dataset.obOriginalText;
+    }
+  }
+  function toast(message, kind){
+    if(typeof window._showToast === 'function') window._showToast(message, kind === 'err' ? 'red' : 'green');
+    else if(typeof window.toast === 'function') window.toast(message, kind);
+  }
+  function collectPayload(){
+    function value(id){ var el = byId(id); return el ? String(el.value || '').trim() : ''; }
+    return {
+      name: value('sfield-name'),
+      title: value('sfield-title'),
+      bio: value('sfield-bio'),
+      location: value('sfield-location'),
+      phone: value('sfield-phone'),
+      tagline: value('sfield-tagline'),
+      timezone: value('sfield-timezone')
+    };
+  }
+  function syncStoredUserName(name){
+    ['sessionStorage','localStorage'].forEach(function(storeName){
+      try {
+        var store = window[storeName];
+        var raw = store.getItem('ob_u');
+        if(!raw) return;
+        var user = JSON.parse(raw);
+        if(user && typeof user === 'object'){
+          user.name = name;
+          store.setItem('ob_u', JSON.stringify(user));
+        }
+      } catch(e) {}
+    });
+  }
+  function clearDirty(){
+    dirty = {};
+    dirtyValues = {};
+    FIELD_IDS.forEach(function(id){
+      var el = byId(id);
+      if(el) delete el.dataset.obUserEdited;
+    });
+  }
+  async function saveExpertProfile(){
+    var payload = collectPayload();
+    if(!payload.name){
+      setStatus('error', 'Display name is required.');
+      toast('Display name is required.', 'err');
+      return false;
+    }
+    saving = true;
+    setStatus('saving');
+    try {
+      var res = await fetch(apiBase() + '/api/experts/me/profile', {
+        method: 'PUT',
+        headers: {'Content-Type':'application/json', 'Authorization':'Bearer ' + token()},
+        body: JSON.stringify(payload)
+      });
+      var data = await res.json().catch(function(){ return {}; });
+      if(!res.ok || data.success === false) throw new Error(data.error || 'Profile save failed.');
+      syncStoredUserName(payload.name);
+      window._currentExpert = Object.assign(window._currentExpert || {}, payload);
+      var nameTargets = document.querySelectorAll('.db-expert-name,.expert-name-display,[data-bind="expert-name"]');
+      nameTargets.forEach(function(el){ el.textContent = payload.name; });
+      var titleTargets = document.querySelectorAll('.db-expert-role,.expert-title-display,[data-bind="expert-title"]');
+      titleTargets.forEach(function(el){ el.textContent = payload.title || ''; });
+      clearDirty();
+      setStatus('saved');
+      toast('Profile saved.', 'ok');
+      return true;
+    } catch(err) {
+      setStatus('error');
+      toast(err.message || 'Profile save failed.', 'err');
+      return false;
+    } finally {
+      saving = false;
+    }
+  }
+  var previousSaveSettingsBlock = window.saveSettingsBlock;
+  window.saveSettingsBlock = function(section){
+    if(section === 'profile' && userRole() !== 'admin') return saveExpertProfile();
+    if(typeof previousSaveSettingsBlock === 'function') return previousSaveSettingsBlock.apply(this, arguments);
+  };
+})();
+</script>
 <script id="ownlybiz-staging-one-to-one-sfu-admin-20260527">
 (function(){
   if(window.__obOneToOneSfuAdminV1) return;

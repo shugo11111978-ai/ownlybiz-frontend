@@ -54,6 +54,18 @@ function isPlatformHost(host) {
     || host.endsWith('.vercel.app');
 }
 
+function normalizeDomain(value, stripWww = false) {
+  let domain = String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, '')
+    .replace(/\/.*$/, '')
+    .replace(/:\d+$/, '')
+    .replace(/\.+$/, '');
+  if (stripWww) domain = domain.replace(/^www\./, '');
+  return domain;
+}
+
 function slugFromHost(host) {
   const match = host.match(/^([a-z0-9-]+)\.ownlybiz\.com$/i);
   return match && match[1] !== 'www' ? match[1] : '';
@@ -66,6 +78,49 @@ function firstPathSegment(req) {
 
 function pathOnly(req) {
   return String((req.url || '/').split('?')[0] || '/') || '/';
+}
+
+function queryOnly(req) {
+  const url = String(req.url || '');
+  const index = url.indexOf('?');
+  return index >= 0 ? url.slice(index) : '';
+}
+
+function routeFromRequest(req, host) {
+  const subdomainSlug = slugFromHost(host);
+  if (subdomainSlug) return { kind: 'subdomain', slug: subdomainSlug };
+
+  const platform = isPlatformHost(host);
+  const first = firstPathSegment(req).toLowerCase();
+  if (platform && first && !RESERVED.has(first)) return { kind: 'platform-path', slug: first };
+  if (!platform) return { kind: 'custom-domain', slug: '' };
+  return { kind: 'platform', slug: '' };
+}
+
+function primaryDomainFromExpert(expert) {
+  const primary = expert && expert.primary_domain || {};
+  const raw = primary.custom_domain || primary.domain || primary.url || (expert && expert.domain_custom) || '';
+  const domain = normalizeDomain(raw, true);
+  return /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/.test(domain)
+    ? domain
+    : '';
+}
+
+function pathForPrimaryDomain(req, route) {
+  let pathname = pathOnly(req) || '/';
+  if (route && route.kind === 'platform-path') {
+    const segments = pathname.split('/').filter(Boolean);
+    segments.shift();
+    pathname = '/' + segments.join('/');
+  }
+  return pathname === '' ? '/' : pathname;
+}
+
+function shouldRedirectToPrimary(host, route, primaryDomain) {
+  if (!primaryDomain || !route) return false;
+  if (route.kind === 'subdomain' || route.kind === 'platform-path') return true;
+  if (route.kind === 'custom-domain') return normalizeDomain(host) !== primaryDomain;
+  return false;
 }
 
 async function fetchJson(url, timeoutMs = 1800) {
@@ -86,12 +141,10 @@ async function fetchJson(url, timeoutMs = 1800) {
 }
 
 async function resolveExpert(req, host) {
-  let slug = slugFromHost(host);
-  const platform = isPlatformHost(host);
-  const first = firstPathSegment(req).toLowerCase();
+  const route = routeFromRequest(req, host);
+  let slug = route.slug;
 
-  if (!slug && platform && first && !RESERVED.has(first)) slug = first;
-  if (!slug && !platform) {
+  if (!slug && route.kind === 'custom-domain') {
     const lookup = await fetchJson(`${BACKEND}/api/domains/lookup?domain=${encodeURIComponent(host)}`);
     slug = clean(lookup && lookup.slug);
   }
@@ -99,8 +152,8 @@ async function resolveExpert(req, host) {
 
   const profile = await fetchJson(`${BACKEND}/api/experts/${encodeURIComponent(slug)}`);
   const expert = profile && (profile.expert || profile);
-  if (!expert || !(expert.name || expert.slug)) return { slug };
-  return { slug, expert };
+  if (!expert || !(expert.name || expert.slug)) return { slug, route: { ...route, slug } };
+  return { slug, route: { ...route, slug }, expert };
 }
 
 function expertTitle(expert) {
@@ -198,21 +251,41 @@ module.exports = async function handler(req, res) {
   const host = hostFromReq(req);
   const expertResult = await resolveExpert(req, host);
   const expert = expertResult && expertResult.expert;
+  const route = expertResult && expertResult.route;
   const isExpert = !!expertResult;
   const origin = `https://${host || 'ownlybiz.com'}`;
   const canonical = origin + pathOnly(req);
 
+  if (isExpert && expert) {
+    const primaryDomain = primaryDomainFromExpert(expert);
+    if (shouldRedirectToPrimary(host, route, primaryDomain)) {
+      const location = `https://${primaryDomain}${pathForPrimaryDomain(req, route)}${queryOnly(req)}`;
+      res.setHeader('Location', location);
+      res.setHeader('Cache-Control', 'public, s-maxage=300, stale-while-revalidate=3600');
+      res.status(308).end();
+      return;
+    }
+  }
+
   let html = readIndex();
   if (isExpert) {
     html = whiteLabelExpertShell(html);
-    const robotsValue = expert && expert.allow_indexing !== undefined && expert.allow_indexing !== null
-      && ['0', 'false', 'no', 'off'].includes(String(expert.allow_indexing).toLowerCase())
+    const primaryDomain = primaryDomainFromExpert(expert);
+    const hostedOwnlybizCopy = route && (route.kind === 'subdomain' || route.kind === 'platform-path');
+    const expertCanonical = primaryDomain
+      ? `https://${primaryDomain}${pathForPrimaryDomain(req, route)}`
+      : canonical;
+    const explicitNoindex = expert && expert.allow_indexing !== undefined && expert.allow_indexing !== null
+      && ['0', 'false', 'no', 'off'].includes(String(expert.allow_indexing).toLowerCase());
+    const robotsValue = explicitNoindex
       ? 'noindex,nofollow'
-      : 'index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1';
+      : hostedOwnlybizCopy && !primaryDomain
+        ? 'noindex,follow,max-image-preview:large'
+        : 'index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1';
     html = injectSeo(html, {
       title: expertTitle(expert),
       description: expertDescription(expert),
-      canonical,
+      canonical: expertCanonical,
       robots: robotsValue,
       image: clean(expert && (expert.og_image_url || expert.logo_url || expert.avatar_url)),
     });

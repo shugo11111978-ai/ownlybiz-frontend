@@ -18783,6 +18783,11 @@ function openClientChat(sid){
     // Start WebRTC voice
     if(typeof ensureClientWS==='function')ensureClientWS();
     setTimeout(function(){var ws=window._obClientWs||window._obWs;if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'join',session_id:sid}));},500);
+    try {
+      if(window.OwnlybizSfuClient && typeof window.OwnlybizSfuClient.prepareCall === 'function') {
+        window.OwnlybizSfuClient.prepareCall(sid,'voice','client').catch(function(){});
+      }
+    } catch(e) {}
     if(window.OB_RTC) window.OB_RTC.start(sid,'voice','client');
     // Send join_session to start billing timer
     setTimeout(function(){var ws=window._obClientWs||window._obWs;if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'join_session',sessionId:sid}));},1000);
@@ -18795,6 +18800,11 @@ function openClientChat(sid){
     // Start WebRTC video
     if(typeof ensureClientWS==='function')ensureClientWS();
     setTimeout(function(){var ws=window._obClientWs||window._obWs;if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'join',session_id:sid}));},500);
+    try {
+      if(window.OwnlybizSfuClient && typeof window.OwnlybizSfuClient.prepareCall === 'function') {
+        window.OwnlybizSfuClient.prepareCall(sid,'video','client').catch(function(){});
+      }
+    } catch(e) {}
     if(window.OB_RTC) window.OB_RTC.start(sid,'video','client');
     // Send join_session to start billing timer
     setTimeout(function(){var ws=window._obClientWs||window._obWs;if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'join_session',sessionId:sid}));},1000);
@@ -19225,6 +19235,11 @@ window._obOpenClientChat = openClientChat;
               if(_camBtn)_camBtn.style.display=_rtcCh==='video'?'':'none';
               // Create expert WS and start RTC only after connected+joined
               var _rtcSid=sid,_rtcCh2=_rtcCh;
+              try {
+                if(window.OwnlybizSfuClient && typeof window.OwnlybizSfuClient.prepareCall === 'function') {
+                  window.OwnlybizSfuClient.prepareCall(_rtcSid,_rtcCh2,'expert').catch(function(){});
+                }
+              } catch(e) {}
               var _wsUrl=BASE.replace('https://','wss://').replace('http://','ws://')+'/ws';
               var _rtcWs=new WebSocket(_wsUrl);
               var _dEl=document.getElementById('rtc-debug');
@@ -29205,6 +29220,12 @@ window._handleRTCMessage=function(d){
       if(btn) { btn.disabled = true; btn.textContent = 'Checking...'; }
       var stream = await navigator.mediaDevices.getUserMedia({audio:true, video:true});
       window._obExpertMediaReadyStream = stream;
+      window._obRtcPrewarmedStream = stream;
+      try {
+        if(window.OwnlybizSfuClient && typeof window.OwnlybizSfuClient.setPrewarmedStream === 'function') {
+          window.OwnlybizSfuClient.setPrewarmedStream('expert', stream, 'video');
+        }
+      } catch(e) {}
       if(status) { status.textContent = 'Camera and microphone enabled'; status.style.color = 'var(--sage)'; status.style.fontWeight = '800'; }
       if(btn) { btn.textContent = 'Enabled'; btn.style.opacity = '.75'; }
     } catch(e) {
@@ -29237,6 +29258,12 @@ window._handleRTCMessage=function(d){
       var constraints = channel === 'voice' ? {audio:true, video:false} : {audio:true, video:true};
       var stream = await navigator.mediaDevices.getUserMedia(constraints);
       window._obClientMediaReadyStream = stream;
+      window._obRtcPrewarmedStream = stream;
+      try {
+        if(window.OwnlybizSfuClient && typeof window.OwnlybizSfuClient.setPrewarmedStream === 'function') {
+          window.OwnlybizSfuClient.setPrewarmedStream('client', stream, channel || 'video');
+        }
+      } catch(e) {}
       if(status) { status.textContent = 'Camera and microphone enabled'; status.style.color = 'var(--sage)'; status.style.fontWeight = '800'; }
       var btn = card && card.querySelector('button');
       if(btn) { btn.textContent = 'Enabled'; btn.disabled = true; btn.style.opacity = '.75'; }
@@ -44656,14 +44683,22 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     m = m || {};
     var est = m.estimated || {};
     var health = m.health || {};
+    var media = health.media || {};
     var counters = health.counters || {};
     var assumptions = m.assumptions || {};
+    var latestTiming = health.client_timings && health.client_timings.latest || {};
+    var actionTimings = health.timings || {};
+    var joinTiming = actionTimings.join || {};
+    var produceTiming = actionTimings.produce || {};
+    var consumeTiming = actionTimings.consume || {};
     return '<div class="ob-ops-section" id="ob-ops-sfu-panel"><h3>Ownlybiz SFU media usage and cost</h3>'
       + '<div class="ob-ops-grid">'
       + '<div class="ob-ops-card"><div class="ob-ops-label">1:1 mode</div><div class="ob-ops-value">'+esc(m.one_to_one_mode || 'peer')+'</div><div class="ob-ops-note">Fallback '+(m.one_to_one_fallback_enabled ? 'on' : 'off')+'</div></div>'
       + '<div class="ob-ops-card"><div class="ob-ops-label">SFU health</div><div class="ob-ops-value">'+esc(m.status || 'unknown')+'</div><div class="ob-ops-note">'+esc(m.error || (m.url_configured ? 'Media URL configured' : 'No media URL'))+'</div></div>'
       + '<div class="ob-ops-card"><div class="ob-ops-label">Rooms / peers</div><div class="ob-ops-value">'+fmt(m.rooms)+' / '+fmt(m.peers)+'</div><div class="ob-ops-note">1:1 '+fmt(m.session_rooms)+' · group '+fmt(m.group_rooms)+'</div></div>'
       + '<div class="ob-ops-card"><div class="ob-ops-label">Consumers</div><div class="ob-ops-value">'+fmt(m.consumers)+'</div><div class="ob-ops-note">Audio '+fmt(m.audio_consumers)+' · video '+fmt(m.video_consumers)+'</div></div>'
+      + '<div class="ob-ops-card"><div class="ob-ops-label">ICE mode</div><div class="ob-ops-value">'+esc(media.candidate_policy || 'unknown')+'</div><div class="ob-ops-note">'+esc(media.deployment_mode || 'unknown')+' · UDP '+(media.udp_ready ? 'ready' : 'not ready')+'</div></div>'
+      + '<div class="ob-ops-card"><div class="ob-ops-label">Latest browser connect</div><div class="ob-ops-value">'+fmt(latestTiming.total_ms)+' ms</div><div class="ob-ops-note">prewarm '+(latestTiming.prewarmed ? 'yes' : 'no')+' · prepare '+(latestTiming.prepared ? 'yes' : 'no')+'</div></div>'
       + '<div class="ob-ops-card"><div class="ob-ops-label">Outbound estimate</div><div class="ob-ops-value">'+fmt(est.outbound_mbps)+' Mbps</div><div class="ob-ops-note">'+fmt(est.egress_gb_per_hour)+' GB/hour</div></div>'
       + '<div class="ob-ops-card"><div class="ob-ops-label">Media egress cost</div><div class="ob-ops-value">$'+fmt(est.egress_usd_per_hour)+'/hr</div><div class="ob-ops-note">Estimate from active consumers</div></div>'
       + '</div>'
@@ -44672,6 +44707,9 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       + '<tr><td>Transports / producers / consumers</td><td>'+fmt(m.transports)+' / '+fmt(m.producers)+' / '+fmt(m.consumers)+'</td></tr>'
       + '<tr><td>Audio/video producers</td><td>'+fmt(m.audio_producers)+' / '+fmt(m.video_producers)+'</td></tr>'
       + '<tr><td>Audio/video consumers</td><td>'+fmt(m.audio_consumers)+' / '+fmt(m.video_consumers)+'</td></tr>'
+      + '<tr><td>Media ICE policy</td><td>'+esc(media.candidate_policy || 'unknown')+' · '+esc(media.deployment_mode || 'unknown')+' · UDP ready '+esc(media.udp_ready ? 'yes' : 'no')+'</td></tr>'
+      + '<tr><td>Server action p95</td><td>join '+fmt(joinTiming.p95_ms)+'ms · produce '+fmt(produceTiming.p95_ms)+'ms · consume '+fmt(consumeTiming.p95_ms)+'ms</td></tr>'
+      + '<tr><td>Latest browser startup phases</td><td>media '+fmt(latestTiming.media_ms)+'ms · join '+fmt(latestTiming.join_ms)+'ms · transports '+fmt(latestTiming.transport_ms)+'ms · consume '+fmt(latestTiming.consume_ms)+'ms</td></tr>'
       + '<tr><td>Rooms created total</td><td>'+fmt(counters.rooms_created_total)+' total · '+fmt(counters.session_rooms_created_total)+' private · '+fmt(counters.group_rooms_created_total)+' group</td></tr>'
       + '<tr><td>Peers/transports/producers/consumers total</td><td>'+fmt(counters.peers_joined_total)+' / '+fmt(counters.transports_created_total)+' / '+fmt(counters.producers_created_total)+' / '+fmt(counters.consumers_created_total)+'</td></tr>'
       + '<tr><td>Cost assumptions</td><td>'+fmt(assumptions.video_mbps_per_consumer)+' Mbps/video consumer, '+fmt(assumptions.audio_mbps_per_consumer)+' Mbps/audio consumer, $'+fmt(assumptions.egress_usd_per_gb)+'/GB egress</td></tr>'

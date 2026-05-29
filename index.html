@@ -44595,6 +44595,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       '.ob-group-remote-tile{background:#090909;border:1px solid rgba(255,255,255,.12);border-radius:8px;overflow:hidden;aspect-ratio:16/9;position:relative}' +
       '.ob-group-remote-tile video{width:100%;height:100%;object-fit:cover;display:block}' +
       '.ob-group-remote-label{position:absolute;left:8px;bottom:8px;background:rgba(0,0,0,.58);color:#fff;font-size:11px;font-weight:900;border-radius:999px;padding:4px 8px}' +
+      '.ob-group-playback-prompt{position:absolute;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.46);color:#fff;font-size:13px;font-weight:950;text-align:center;padding:18px;border:0;cursor:pointer}' +
       '.ob-group-side{border:1px solid var(--line,rgba(255,255,255,.12));background:rgba(255,255,255,.04);border-radius:8px;padding:14px;display:grid;gap:12px}' +
       '.ob-group-side h3{margin:0;font-size:15px;color:var(--text,#f6f1e9);letter-spacing:0}' +
       '.ob-group-participant{display:flex;align-items:center;justify-content:space-between;gap:10px;border-bottom:1px solid var(--line,rgba(255,255,255,.1));padding:9px 0;font-size:13px}' +
@@ -44700,7 +44701,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       '<section class="ob-group-band ob-group-grid">' +
         '<div>' +
           '<div class="ob-group-room-name">Create a live event</div>' +
-          '<div class="ob-group-muted" style="margin-bottom:12px">Rooms use your enabled admin capacity tier. Ticketed events use their own registration flow before clients can join.</div>' +
+          '<div class="ob-group-muted" style="margin-bottom:12px">Set a ticket price when clients should pay. Open paid events send clients to checkout immediately; approval paid events collect payment only after you approve the request. A 0 price is free.</div>' +
           '<div class="ob-group-actions">' +
           '</div>' +
           '<div class="ob-group-field"><label>Title</label><input id="ob-group-room-title" class="ob-group-input" placeholder="Room title" value="Group session"></div>' +
@@ -44717,6 +44718,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
         '</div>' +
         '<div class="ob-group-side"><h3>Readiness</h3><div class="ob-group-muted">Tier: ' + esc(entitlement.capacity_tier || '') + '</div><div class="ob-group-muted">Status: enabled</div></div>' +
       '</section>' +
+      approvalRequestPanel(rooms) +
       '<section class="ob-group-band">' +
         '<div class="ob-group-head" style="margin-bottom:12px"><div><div class="ob-group-room-name">Rooms</div><div class="ob-group-muted">Open a host room or copy the client invite link.</div></div><button class="ob-group-btn secondary" type="button" onclick="obGroupLoadStatus(true)">Refresh</button></div>' +
         '<div class="ob-group-room-list">' + (rooms.length ? rooms.map(roomRow).join('') : '<div class="ob-group-muted">No group rooms yet.</div>') + '</div>' +
@@ -44742,6 +44744,29 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     '</div>';
   }
 
+  function pendingApprovalRows(rooms){
+    var rows = [];
+    (rooms || []).forEach(function(room){
+      (room.registrations || []).forEach(function(reg){
+        if(String(reg.status || '') === 'requested') rows.push({room:room, registration:reg});
+      });
+    });
+    return rows;
+  }
+
+  function approvalRequestPanel(rooms){
+    var pending = pendingApprovalRows(rooms);
+    if(!pending.length) return '';
+    return '<section class="ob-group-band" style="background:rgba(200,255,61,.07);border-color:rgba(200,255,61,.24)">' +
+      '<div class="ob-group-head" style="margin-bottom:8px"><div><div class="ob-group-room-name">Seat Requests</div><div class="ob-group-muted">Approve a client before they can pay or join this approval-only event.</div></div><span class="ob-group-pill"><span class="ob-group-dot"></span>' + esc(pending.length) + ' waiting</span></div>' +
+      '<div style="display:grid;gap:8px">' + pending.map(function(item){
+        var room = item.room || {};
+        var reg = item.registration || {};
+        return '<div class="ob-group-registration"><strong>' + esc(reg.client_name || reg.client_email || reg.client_id || 'Client') + '</strong><span>' + esc(room.title || 'Group session') + ' · ' + esc(money(reg.amount || room.ticket_price || 0, reg.currency || room.currency || 'usd')) + '</span>' +
+          '<div class="ob-group-actions"><button class="ob-group-btn" type="button" onclick="obGroupApproveRegistration(&quot;' + attr(room.id) + '&quot;,&quot;' + attr(reg.id) + '&quot;)">Approve</button><button class="ob-group-btn danger" type="button" onclick="obGroupDeclineRegistration(&quot;' + attr(room.id) + '&quot;,&quot;' + attr(reg.id) + '&quot;)">Decline</button></div></div>';
+      }).join('') + '</div></section>';
+  }
+
   function loadStatus(force){
     ensurePanel();
     installExpertNav();
@@ -44760,6 +44785,22 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       var root = document.getElementById('ob-group-dashboard-root');
       if(root) root.innerHTML = '<section class="ob-group-band"><div class="ob-group-room-name">Could not load group sessions.</div><div class="ob-group-muted">' + esc(err.message) + '</div></section>';
     });
+  }
+
+  function groupPanelActive(){
+    var panel = document.getElementById('db-panel-group-sessions');
+    return !!(panel && (panel.classList.contains('active') || panel.style.display === 'block'));
+  }
+
+  function startExpertRequestRefresh(){
+    if(window.__obGroupRequestRefreshTimer) return;
+    window.__obGroupRequestRefreshTimer = setInterval(function(){
+      var user = currentUser();
+      if(!user || user.role !== 'expert' || document.hidden) return;
+      if(media.started) return;
+      if(!groupPanelActive()) return;
+      loadStatus(true);
+    }, 15000);
   }
 
   function renderHostStage(room){
@@ -44885,6 +44926,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     if(data.type === 'group_participant_joined'){
       updateParticipantList(data.participants || []);
       if(media.role === 'expert' && data.participant && data.participant.role !== 'expert') createOffer(data.participant);
+      if(media.role !== 'expert' && data.participant && data.participant.role === 'expert') resendGroupReady();
       return;
     }
     if(data.type === 'group_participant_left'){
@@ -44920,6 +44962,13 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     (participants || []).filter(function(p){ return p.role !== 'expert'; }).forEach(createOffer);
   }
 
+  function resendGroupReady(){
+    if(media.role === 'expert' || !media.roomId) return;
+    [0, 1200, 3500, 7000].forEach(function(delay){
+      setTimeout(function(){ sendWs({type:'group_ready', room_id:media.roomId}); }, delay);
+    });
+  }
+
   function peerFor(participantId){
     if(media.peers[participantId]) return media.peers[participantId];
     var pc = new RTCPeerConnection(media.ice || {iceServers:[]});
@@ -44950,13 +44999,63 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       tile = document.createElement('div');
       tile.className = 'ob-group-remote-tile';
       tile.id = 'ob-group-remote-' + participantId;
-      tile.innerHTML = '<video autoplay playsinline></video><div class="ob-group-remote-label">Live</div>';
+      tile.innerHTML = '<video autoplay playsinline></video><div class="ob-group-remote-label"></div><button class="ob-group-playback-prompt" type="button">Tap to play live video/audio</button>';
       grid.appendChild(tile);
     }
+    var label = tile.querySelector('.ob-group-remote-label');
+    if(label) label.textContent = participantLabel(participantId);
     var video = tile.querySelector('video');
-    if(video && video.srcObject !== stream) video.srcObject = stream;
+    if(video) {
+      video.autoplay = true;
+      video.playsInline = true;
+      video.setAttribute('playsinline', '');
+      if(video.srcObject !== stream) video.srcObject = stream;
+      wireRemotePlayback(tile, video, stream);
+    }
     var empty = document.getElementById('ob-group-public-video-empty');
     if(empty) empty.style.display = 'none';
+  }
+
+  function participantLabel(participantId){
+    var participant = participantById(participantId) || {};
+    return participant.display_name || (participant.role === 'expert' ? 'Expert' : 'Live');
+  }
+
+  function wireRemotePlayback(tile, video, stream){
+    var prompt = tile.querySelector('.ob-group-playback-prompt');
+    var hidePrompt = function(){ if(prompt) prompt.style.display = 'none'; };
+    var showPrompt = function(){ if(prompt) prompt.style.display = 'flex'; };
+    var tracks = stream && stream.getVideoTracks ? stream.getVideoTracks() : [];
+    if(!tracks.length) mediaStatus('Audio connected. Host camera is off.');
+    tracks.forEach(function(track){
+      track.onunmute = function(){ tryPlayRemoteVideo(video, showPrompt, hidePrompt); };
+      track.onended = function(){ mediaStatus('Host camera stopped.'); };
+    });
+    if(prompt && !prompt.__obGroupPlayBound){
+      prompt.__obGroupPlayBound = true;
+      prompt.onclick = function(){
+        tryPlayRemoteVideo(video, showPrompt, hidePrompt);
+      };
+    }
+    video.onloadedmetadata = function(){ tryPlayRemoteVideo(video, showPrompt, hidePrompt); };
+    video.oncanplay = function(){ tryPlayRemoteVideo(video, showPrompt, hidePrompt); };
+    video.onplaying = hidePrompt;
+    tryPlayRemoteVideo(video, showPrompt, hidePrompt);
+  }
+
+  function tryPlayRemoteVideo(video, showPrompt, hidePrompt){
+    if(!video || typeof video.play !== 'function') return;
+    var result;
+    try { result = video.play(); } catch(e) { if(showPrompt) showPrompt(); return; }
+    if(result && typeof result.then === 'function') {
+      result.then(function(){
+        if(hidePrompt) hidePrompt();
+        mediaStatus('Media connected.');
+      }).catch(function(){
+        if(showPrompt) showPrompt();
+        mediaStatus('Tap the video to start live playback.');
+      });
+    }
   }
 
   function createOffer(participant){
@@ -45041,6 +45140,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       return connectWs(roomId, joined.participant && joined.participant.role === 'expert' ? 'expert' : 'client');
     }).then(function(){
       mediaStatus('Connected. Waiting for host video.');
+      resendGroupReady();
     }).catch(function(err){
       mediaStatus(err.message || 'Could not join group room.');
       toast(err.message || 'Could not join group room.', 'err');
@@ -45331,6 +45431,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     patchClientAuthModalRefresh();
     patchNav();
     installExpertNav();
+    startExpertRequestRefresh();
     if(bootPublicRoute()) return;
     bootSiteEvents();
     [900, 2500, 5000].forEach(function(ms){ setTimeout(bootSiteEvents, ms); });

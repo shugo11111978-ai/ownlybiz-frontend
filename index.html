@@ -44836,6 +44836,11 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     media.participants = participants || media.participants || [];
     var list = document.getElementById('ob-group-participants');
     if(list) list.innerHTML = participantList(media.participants);
+    var count = document.getElementById('ob-group-public-count');
+    if(count) {
+      var clients = media.participants.filter(function(p){ return p && p.role !== 'expert'; }).length;
+      count.textContent = clients + ' client' + (clients === 1 ? '' : 's') + ' connected';
+    }
   }
   function registrationList(roomId, registrations){
     registrations = registrations || [];
@@ -45131,6 +45136,11 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   function startClientMedia(roomId){
     resetMedia();
     mediaStatus('Joining...');
+    var joinBtn = document.getElementById('ob-group-join-room-btn');
+    if(joinBtn) {
+      joinBtn.disabled = true;
+      joinBtn.textContent = 'Joining...';
+    }
     return rtcConfig().then(function(){
       return api('/rooms/' + encodeURIComponent(roomId) + '/join', {method:'POST', body:{role:'client'}});
     }).then(function(joined){
@@ -45140,8 +45150,13 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       return connectWs(roomId, joined.participant && joined.participant.role === 'expert' ? 'expert' : 'client');
     }).then(function(){
       mediaStatus('Connected. Waiting for host video.');
+      if(joinBtn) joinBtn.textContent = 'Joined';
       resendGroupReady();
     }).catch(function(err){
+      if(joinBtn) {
+        joinBtn.disabled = false;
+        joinBtn.textContent = 'Join Room';
+      }
       mediaStatus(err.message || 'Could not join group room.');
       toast(err.message || 'Could not join group room.', 'err');
     });
@@ -45250,7 +45265,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
             '<div>' +
               '<div class="ob-group-video-main"><div id="ob-group-public-video-empty" class="ob-group-video-empty">Host video will appear here.</div><div id="ob-group-public-remote" class="ob-group-remote-grid" style="position:absolute;inset:0;margin:0;display:block"></div></div>' +
             '</div>' +
-            '<aside class="ob-group-side"><h3>Room</h3><div class="ob-group-muted">' + esc(room.participant_count || 0) + ' clients connected</div><div id="ob-group-participants">' + participantList(room.participants || []) + '</div><div id="ob-group-public-status" class="ob-group-muted">' + action.status + '</div>' +
+            '<aside class="ob-group-side"><h3>Room</h3><div id="ob-group-public-count" class="ob-group-muted">' + esc(room.participant_count || 0) + ' clients connected</div><div id="ob-group-participants">' + participantList(room.participants || []) + '</div><div id="ob-group-public-status" class="ob-group-muted">' + action.status + '</div>' +
             action.html +
             '</aside>' +
           '</div>' +
@@ -45262,7 +45277,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     if(!authed) return {status:'Sign in or create a client account to register for this room.', html:'<div class="ob-group-actions"><button class="ob-group-btn" type="button" onclick="obGroupGoLogin(&quot;' + attr(room.id) + '&quot;)">Sign In</button><button class="ob-group-btn secondary" type="button" onclick="obGroupGoSignup(&quot;' + attr(room.id) + '&quot;)">Create Account</button></div>'};
     if(room.status === 'ended') return {status:'This group session has ended.', html:''};
     if(registration && registration.status === 'confirmed') {
-      return {status:'Your seat is confirmed.', html:'<button class="ob-group-btn" type="button" onclick="obGroupJoinPublicRoom(&quot;' + attr(room.id) + '&quot;)">Join Room</button>'};
+      return {status:'Your seat is confirmed.', html:'<button id="ob-group-join-room-btn" class="ob-group-btn" type="button" onclick="obGroupJoinPublicRoom(&quot;' + attr(room.id) + '&quot;)">Join Room</button>'};
     }
     if(registration && registration.status === 'requested') {
       return {status:'Your request is waiting for expert approval.', html:'<button class="ob-group-btn secondary" type="button" onclick="obGroupRefreshPublicRoom(&quot;' + attr(room.id) + '&quot;)">Refresh Status</button>'};

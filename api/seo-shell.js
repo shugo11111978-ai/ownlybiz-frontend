@@ -86,6 +86,10 @@ function queryOnly(req) {
   return index >= 0 ? url.slice(index) : '';
 }
 
+function isLegacyCpanelPath(req) {
+  return /^\/cgi-sys(?:\/|$)/i.test(pathOnly(req));
+}
+
 function routeFromRequest(req, host) {
   const subdomainSlug = slugFromHost(host);
   if (subdomainSlug) return { kind: 'subdomain', slug: subdomainSlug };
@@ -249,6 +253,13 @@ function whiteLabelExpertShell(html) {
 
 module.exports = async function handler(req, res) {
   const host = hostFromReq(req);
+  if (isLegacyCpanelPath(req)) {
+    res.setHeader('Location', `https://${host || 'ownlybiz.com'}/`);
+    res.setHeader('Cache-Control', 'public, s-maxage=3600, stale-while-revalidate=86400');
+    res.status(308).end();
+    return;
+  }
+
   const expertResult = await resolveExpert(req, host);
   const expert = expertResult && expertResult.expert;
   const route = expertResult && expertResult.route;

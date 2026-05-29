@@ -44256,10 +44256,13 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       return d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate()) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
     } catch(e) { return ''; }
   }
-  function query(name){
-    try { return new URLSearchParams(location.search || '').get(name) || ''; } catch(e) { return ''; }
-  }
-  function toast(message, type){
+	  function query(name){
+	    try { return new URLSearchParams(location.search || '').get(name) || ''; } catch(e) { return ''; }
+	  }
+	  function wait(ms){
+	    return new Promise(function(resolve){ setTimeout(resolve, ms); });
+	  }
+	  function toast(message, type){
     if(typeof window.toast === 'function') return window.toast(message, type === 'err' ? 'err' : 'ok');
     var el = document.createElement('div');
     el.className = 'ob-group-toast ' + (type === 'err' ? 'err' : 'ok');
@@ -44267,9 +44270,47 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     document.body.appendChild(el);
     setTimeout(function(){ el.remove(); }, 3600);
   }
-  function groupLink(roomId){
-    return location.origin + '/group/' + encodeURIComponent(roomId);
-  }
+	  function roomForId(roomOrId){
+	    if(roomOrId && typeof roomOrId === 'object') return roomOrId;
+	    var id = String(roomOrId || '');
+	    if(state.room && String(state.room.id || '') === id) return state.room;
+	    if(state.publicRoom && String(state.publicRoom.id || '') === id) return state.publicRoom;
+	    var rooms = state.status && state.status.rooms || [];
+	    for(var i=0;i<rooms.length;i++){
+	      if(String(rooms[i].id || '') === id) return rooms[i];
+	    }
+	    return null;
+	  }
+	  function groupPath(roomId){
+	    return '/group/' + encodeURIComponent(roomId || '');
+	  }
+	  function groupLink(roomOrId){
+	    var room = roomForId(roomOrId);
+	    if(room && room.group_url) return room.group_url;
+	    var id = room && room.id || roomOrId;
+	    return location.origin + groupPath(id);
+	  }
+	  function groupNextPath(roomId){
+	    var path = groupPath(roomId || (state.publicRoom && state.publicRoom.id) || '');
+	    if((location.pathname || '') === path) path += location.search || '';
+	    return path;
+	  }
+	  function shouldSkipGroupCanonicalRedirect(){
+	    var host = String(location.hostname || '').toLowerCase();
+	    return !host || host === 'localhost' || host === '127.0.0.1' || host === '::1' || /\.vercel\.app$/.test(host) || /\.netlify\.app$/.test(host);
+	  }
+	  function maybeRedirectToGroupUrl(room){
+	    if(!room || !room.group_url || shouldSkipGroupCanonicalRedirect()) return false;
+	    try {
+	      var target = new URL(room.group_url);
+	      if(target.origin === location.origin) return false;
+	      target.search = location.search || '';
+	      location.replace(target.href);
+	      return true;
+	    } catch(e) {
+	      return false;
+	    }
+	  }
   function copyText(value){
     if(navigator.clipboard && navigator.clipboard.writeText){
       return navigator.clipboard.writeText(value).then(function(){ toast('Link copied.'); });
@@ -44884,8 +44925,8 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       '</div>';
   }
 
-  function publicRoomAction(room, authed, registration){
-    if(!authed) return {status:'Sign in to register for this room.', html:'<button class="ob-group-btn" type="button" onclick="obGroupGoLogin()">Sign In</button>'};
+	  function publicRoomAction(room, authed, registration){
+	    if(!authed) return {status:'Sign in or create a client account to register for this room.', html:'<div class="ob-group-actions"><button class="ob-group-btn" type="button" onclick="obGroupGoLogin(&quot;' + attr(room.id) + '&quot;)">Sign In</button><button class="ob-group-btn secondary" type="button" onclick="obGroupGoSignup(&quot;' + attr(room.id) + '&quot;)">Create Account</button></div>'};
     if(room.status === 'ended') return {status:'This group session has ended.', html:''};
     if(registration && registration.status === 'confirmed') {
       return {status:'Your seat is confirmed.', html:'<button class="ob-group-btn" type="button" onclick="obGroupJoinPublicRoom(&quot;' + attr(room.id) + '&quot;)">Join Room</button>'};
@@ -44919,45 +44960,88 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       else toast('Registration updated.');
     }).catch(function(err){ toast(err.message, 'err'); });
   };
-  window.obGroupRefreshPublicRoom = function(roomId){
-    return api('/public/rooms/' + encodeURIComponent(roomId)).then(function(d){
-      state.publicRoom = d.room;
-      renderPublicRoom(d.room);
-    }).catch(function(err){ toast(err.message, 'err'); });
-  };
-  window.obGroupGoLogin = function(){
-    try { sessionStorage.setItem('ob_next', location.pathname + location.search); } catch(e) {}
-    location.href = '/login';
-  };
+	  window.obGroupRefreshPublicRoom = function(roomId){
+	    return api('/public/rooms/' + encodeURIComponent(roomId)).then(function(d){
+	      state.publicRoom = d.room;
+	      if(maybeRedirectToGroupUrl(d.room)) return d.room;
+	      renderPublicRoom(d.room);
+	      return d.room;
+	    }).catch(function(err){ toast(err.message, 'err'); });
+	  };
+	  function refreshGroupAfterAuth(roomId){
+	    var id = roomId || (state.publicRoom && state.publicRoom.id) || ((location.pathname || '').match(/^\/group\/([^\/?#]+)/) || [,''])[1];
+	    if(!id) return;
+	    [350, 1100, 2200].forEach(function(ms){
+	      setTimeout(function(){
+	        if(token()) window.obGroupRefreshPublicRoom(decodeURIComponent(id));
+	      }, ms);
+	    });
+	  }
+	  function openClientAuthModal(tab, roomId){
+	    try { sessionStorage.setItem('ob_next', groupNextPath(roomId)); } catch(e) {}
+	    if(typeof window.showClientLoginModal === 'function'){
+	      window.showClientLoginModal();
+	      if(typeof window.clmSwitchTab === 'function') window.clmSwitchTab(tab || 'login');
+	      refreshGroupAfterAuth(roomId);
+	      return true;
+	    }
+	    return false;
+	  }
+	  function patchClientAuthModalRefresh(){
+	    if(window.__obGroupAuthRefreshPatched) return;
+	    ['clientLoginFromModal','clientSignupFromModal'].forEach(function(name){
+	      if(typeof window[name] !== 'function') return;
+	      var original = window[name];
+	      window[name] = function(){
+	        var result = original.apply(this, arguments);
+	        refreshGroupAfterAuth();
+	        return result;
+	      };
+	    });
+	    window.__obGroupAuthRefreshPatched = true;
+	  }
+	  window.obGroupGoLogin = function(roomId){
+	    if(openClientAuthModal('login', roomId)) return;
+	    try { sessionStorage.setItem('ob_next', groupNextPath(roomId)); } catch(e) {}
+	    location.href = new URL('/login', groupLink(roomId || state.publicRoom && state.publicRoom.id)).href;
+	  };
+	  window.obGroupGoSignup = function(roomId){
+	    if(openClientAuthModal('signup', roomId)) return;
+	    try { sessionStorage.setItem('ob_next', groupNextPath(roomId)); } catch(e) {}
+	    location.href = new URL('/login', groupLink(roomId || state.publicRoom && state.publicRoom.id)).href;
+	  };
 
-  function confirmCheckoutFromQuery(){
-    var registrationId = query('registration_id');
-    var checkoutId = query('checkout_session_id');
-    if(query('group_ticket') !== 'success' || !registrationId || !checkoutId || !token()) return Promise.resolve(false);
-    return api('/registrations/' + encodeURIComponent(registrationId) + '/confirm-checkout', {
-      method:'POST',
-      body:{checkout_session_id:checkoutId}
-    }).then(function(){
-      try { history.replaceState({}, '', location.pathname); } catch(e) {}
-      toast('Ticket confirmed.');
-      return true;
-    }).catch(function(err){
-      toast(err.message || 'Ticket confirmation is still processing.', 'err');
-      return false;
-    });
-  }
+	  function confirmCheckoutFromQuery(attempt){
+	    attempt = Number(attempt || 0);
+	    var registrationId = query('registration_id');
+	    var checkoutId = query('checkout_session_id');
+	    if(query('group_ticket') !== 'success' || !registrationId || !checkoutId || !token()) return Promise.resolve(false);
+	    return api('/registrations/' + encodeURIComponent(registrationId) + '/confirm-checkout', {
+	      method:'POST',
+	      body:{checkout_session_id:checkoutId}
+	    }).then(function(){
+	      try { history.replaceState({}, '', location.pathname); } catch(e) {}
+	      toast('Ticket confirmed.');
+	      return true;
+	    }).catch(function(err){
+	      if(attempt < 7) return wait(Math.min(6000, 900 + attempt * 900)).then(function(){ return confirmCheckoutFromQuery(attempt + 1); });
+	      toast(err.message || 'Ticket confirmation is still processing.', 'err');
+	      return false;
+	    });
+	  }
 
   function bootPublicRoute(){
     var match = (location.pathname || '').match(/^\/group\/([^\/?#]+)/);
     if(!match) return false;
     var roomId = decodeURIComponent(match[1]);
     renderPublicLoading();
-    confirmCheckoutFromQuery().then(function(){
-      return api('/public/rooms/' + encodeURIComponent(roomId));
-    }).then(function(d){
-      state.publicRoom = d.room;
-      renderPublicRoom(d.room);
-    }).catch(function(err){
+	    confirmCheckoutFromQuery().then(function(){
+	      return api('/public/rooms/' + encodeURIComponent(roomId));
+	    }).then(function(d){
+	      state.publicRoom = d.room;
+	      if(maybeRedirectToGroupUrl(d.room)) return;
+	      renderPublicRoom(d.room);
+	    }).catch(function(err){
       var page = renderPublicLoading();
       page.innerHTML = '<div class="ob-group-public-inner"><section class="ob-group-band"><div class="ob-group-room-name">Group room unavailable.</div><div class="ob-group-muted">' + esc(err.message) + '</div></section></div>';
     });
@@ -44981,9 +45065,10 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     section.className = 'ob-group-site-events';
     section.innerHTML =
       '<div><h2 style="margin:0;font-size:28px;color:#241813;letter-spacing:0;">Live group events</h2><p style="margin:6px 0 0;color:#746a63;font-size:14px;line-height:1.5;">Join an upcoming class, workshop, course, or support group.</p></div>' +
-      '<div class="ob-group-site-list">' + rooms.map(function(room){
-        return '<article class="ob-group-site-card"><h3>' + esc(room.title || 'Group event') + '</h3><p>' + esc(room.description || 'Live group session') + '</p><p><strong>' + esc(money(room.ticket_price || 0, room.currency || 'usd')) + '</strong> · ' + esc(room.registration_mode === 'approval' ? 'approval required' : 'open registration') + ' · ' + esc(room.available_seats || 0) + ' seats left</p>' + (room.scheduled_start_at ? '<p>' + ts(room.scheduled_start_at) + '</p>' : '') + '<button class="ob-group-btn" type="button" onclick="location.href=&quot;/group/' + attr(room.id) + '&quot;">View event</button></article>';
-      }).join('') + '</div>';
+	      '<div class="ob-group-site-list">' + rooms.map(function(room){
+	        var href = room.group_url || groupPath(room.id);
+	        return '<article class="ob-group-site-card"><h3>' + esc(room.title || 'Group event') + '</h3><p>' + esc(room.description || 'Live group session') + '</p><p><strong>' + esc(money(room.ticket_price || 0, room.currency || 'usd')) + '</strong> · ' + esc(room.registration_mode === 'approval' ? 'approval required' : 'open registration') + ' · ' + esc(room.available_seats || 0) + ' seats left</p>' + (room.scheduled_start_at ? '<p>' + ts(room.scheduled_start_at) + '</p>' : '') + '<button class="ob-group-btn" type="button" onclick="location.href=&quot;' + attr(href) + '&quot;">View event</button></article>';
+	      }).join('') + '</div>';
     var footer = target.querySelector && target.querySelector('footer,.footer,#footer');
     if(footer && footer.parentNode) footer.parentNode.insertBefore(section, footer);
     else target.appendChild(section);
@@ -44997,9 +45082,10 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     }).catch(function(){});
   }
 
-  function boot(){
-    ensureStyles();
-    patchNav();
+	  function boot(){
+	    ensureStyles();
+	    patchClientAuthModalRefresh();
+	    patchNav();
     installExpertNav();
     if(bootPublicRoute()) return;
     bootSiteEvents();

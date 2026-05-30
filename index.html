@@ -29086,26 +29086,80 @@ window._handleRTCMessage=function(d){
     window.obSubmitPlanChange();
   }, true);
 
-  var previousOpenConnectorModal = window.openConnectorModal;
-	  window.openConnectorModal = function(type){
-	    if(String(type || '').toLowerCase() !== 'stripe'){
-	      if(previousOpenConnectorModal) return previousOpenConnectorModal.apply(this, arguments);
-	      toastErr((type || 'Provider') + ' is not supported yet');
-	      return;
-    }
-    if(!token()){ toastErr('Please log in first.'); return; }
-    showStripeRedirectNotice('Opening Stripe Connect', 'Stripe will collect the business and identity details needed to enable client payments and payouts.');
-    var returnUrl = window.location.origin + dashboardReturnPath(activeDashboardPanel() || 'payments');
-    return obJson('/api/experts/stripe/connect', {method:'POST', body:{return_url:returnUrl}})
-      .then(function(d){
-        if(d.url) return redirectToStripe(d.url, 'Opening Stripe Connect', 'Stripe will collect the business and identity details needed to enable client payments and payouts.');
-        throw new Error(d.error || 'Could not open Stripe Connect');
-      })
-      .catch(function(e){
-        hideStripeRedirectNotice();
-        toastErr(e.message || 'Could not open Stripe Connect');
-	      });
-	  };
+	  function closeStripeCountryModal(modal, value, resolve){
+	    if(modal && modal.parentNode) modal.parentNode.removeChild(modal);
+	    resolve(value);
+	  }
+	  function chooseStripeConnectCountry(options){
+	    var countries = (options && options.countries || []).filter(function(c){ return c && c.code; });
+	    if(countries.length <= 1) return Promise.resolve((countries[0] && countries[0].code) || (options && options.default_country) || 'US');
+	    return new Promise(function(resolve){
+	      var existing = document.getElementById('ob-stripe-country-modal');
+	      if(existing) existing.remove();
+	      var modal = document.createElement('div');
+	      modal.id = 'ob-stripe-country-modal';
+	      modal.className = 'ob-modal-backdrop';
+	      var fallbackCountry = countries.find(function(c){ return c.code === 'US'; }) || countries[0];
+	      var defaultCode = (options && options.default_country) || fallbackCountry.code;
+	      var defaultCountry = countries.find(function(c){ return c.code === defaultCode; }) || fallbackCountry;
+	      var otherCountries = countries.filter(function(c){ return c.code !== defaultCountry.code; });
+	      var opts = otherCountries.map(function(c){
+	        return '<option value="'+esc(c.code)+'">'+esc(c.label || c.code)+'</option>';
+	      }).join('');
+	      modal.innerHTML = '<div class="ob-modal" role="dialog" aria-modal="true" aria-labelledby="ob-stripe-country-title">'
+	        + '<h3 id="ob-stripe-country-title">Stripe payout country</h3>'
+	        + '<p>Stripe will collect the business and identity details needed for your payout account.</p>'
+	        + '<div style="background:var(--cream);border:1px solid var(--gray-200);border-radius:10px;padding:12px;margin-top:10px;font-size:13px;color:var(--brown);">Default payout country: <strong>'+esc(defaultCountry.label || defaultCountry.code)+'</strong></div>'
+	        + (otherCountries.length ? '<button type="button" id="ob-stripe-country-alt-toggle" class="btn btn-sm" style="margin-top:12px;background:transparent;border:1px solid var(--gray-200);color:var(--brown);">Use a non-US payout account</button>' : '')
+	        + '<div id="ob-stripe-country-alt" style="display:none;margin-top:14px;"><div class="modal-field"><label class="modal-label" for="ob-stripe-country-select">Payout country</label><select id="ob-stripe-country-select" class="modal-input">'+opts+'</select></div></div>'
+	        + '<div class="ob-modal-actions"><button type="button" class="btn btn-sm" id="ob-stripe-country-cancel" style="background:var(--cream);border:1px solid var(--gray-200);color:var(--brown);">Cancel</button><button type="button" class="btn btn-primary btn-sm" id="ob-stripe-country-continue">Continue with '+esc(defaultCountry.label || defaultCountry.code)+'</button></div>'
+	        + '</div>';
+	      document.body.appendChild(modal);
+	      var select = modal.querySelector('#ob-stripe-country-select');
+	      var altBox = modal.querySelector('#ob-stripe-country-alt');
+	      var altToggle = modal.querySelector('#ob-stripe-country-alt-toggle');
+	      var continueBtn = modal.querySelector('#ob-stripe-country-continue');
+	      var useAlt = false;
+	      if(altToggle){
+	        altToggle.onclick = function(){
+	          useAlt = true;
+	          if(altBox) altBox.style.display = 'block';
+	          altToggle.style.display = 'none';
+	          if(continueBtn) continueBtn.textContent = 'Continue to Stripe';
+	        };
+	      }
+	      modal.querySelector('#ob-stripe-country-cancel').onclick = function(){ closeStripeCountryModal(modal, null, resolve); };
+	      continueBtn.onclick = function(){ closeStripeCountryModal(modal, useAlt && select ? select.value : defaultCountry.code, resolve); };
+	      modal.onclick = function(e){ if(e.target === modal) closeStripeCountryModal(modal, null, resolve); };
+	    });
+	  }
+	  var previousOpenConnectorModal = window.openConnectorModal;
+		  window.openConnectorModal = function(type){
+		    if(String(type || '').toLowerCase() !== 'stripe'){
+		      if(previousOpenConnectorModal) return previousOpenConnectorModal.apply(this, arguments);
+		      toastErr((type || 'Provider') + ' is not supported yet');
+		      return;
+	    }
+	    if(!token()){ toastErr('Please log in first.'); return; }
+	    return obJson('/api/experts/stripe/connect/options', {method:'GET'})
+	      .then(function(options){
+	        return chooseStripeConnectCountry(options).then(function(country){
+	          if(!country) return null;
+	          showStripeRedirectNotice('Opening Stripe Connect', 'Stripe will collect the business and identity details needed to enable client payments and payouts.');
+	          var returnUrl = window.location.origin + dashboardReturnPath(activeDashboardPanel() || 'payments');
+	          return obJson('/api/experts/stripe/connect', {method:'POST', body:{return_url:returnUrl,country:country}});
+	        });
+	      })
+	      .then(function(d){
+	        if(!d) return;
+	        if(d.url) return redirectToStripe(d.url, 'Opening Stripe Connect', 'Stripe will collect the business and identity details needed to enable client payments and payouts.');
+	        throw new Error(d.error || 'Could not open Stripe Connect');
+	      })
+	      .catch(function(e){
+	        hideStripeRedirectNotice();
+	        toastErr(e.message || 'Could not open Stripe Connect');
+		      });
+		  };
 
 	  function installBillingFirstPaintWrappers(){
 	    var stripeUpdater = window.updateStripeUI;

@@ -27827,6 +27827,13 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
     if(RESERVED_ROOTS[value]) return '';
     return value;
   }
+  function expertPageFromSegment(segment){
+    segment = clean(segment);
+    if(!segment) return 'home';
+    if(EXPERT_SEGMENTS[segment]) return EXPERT_SEGMENTS[segment];
+    var customSlug = cleanSlug(segment);
+    return customSlug ? 'ai-' + customSlug : 'home';
+  }
   function routeIsPublicExpert(){
     var q = new URLSearchParams(location.search || '');
     if(q.get('expert')) return true;
@@ -27937,17 +27944,23 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
     if(first === 'admin') return {type:'admin', panel:ADMIN_PANELS[parts[1]] ? parts[1] : 'dashboard'};
     if(first === 'dash') return {type:'dash', slug:clean(parts[1]), panel:DASH_PANELS[parts[2]] ? parts[2] : 'overview', settings:SEG_TO_SETTINGS[parts[3]] || ''};
     if(expertHost()){
-      return {type:'expert', slug:currentExpertSlug(), page:EXPERT_SEGMENTS[first] || 'home'};
+      return {type:'expert', slug:currentExpertSlug(), page:expertPageFromSegment(first)};
     }
     var qExpert = new URLSearchParams(location.search || '').get('expert');
-    if(cleanSlug(qExpert)) return {type:'expert', slug:cleanSlug(qExpert), page:EXPERT_SEGMENTS[first] || 'home'};
+    if(cleanSlug(qExpert)) return {type:'expert', slug:cleanSlug(qExpert), page:expertPageFromSegment(first)};
     if(cleanSlug(first)){
-      return {type:'expert', slug:cleanSlug(first), page:EXPERT_SEGMENTS[parts[1]] || 'home'};
+      return {type:'expert', slug:cleanSlug(first), page:expertPageFromSegment(parts[1])};
     }
     if(platformHost()) return {type:'marketing', page:PATH_TO_MKT[first] || 'home'};
     return {type:'unknown'};
   }
   function safeShowExpertPage(page){
+    page = clean(page);
+    if(page.indexOf('ai-') === 0){
+      window._pendingExpertPage = page;
+      if(typeof window.showExpertPage === 'function' && document.getElementById('ep-' + page)) window.showExpertPage(page);
+      return;
+    }
     page = EXPERT_PAGES.hasOwnProperty(page) ? page : 'home';
     window._pendingExpertPage = page;
     if(typeof window.showExpertPage === 'function') window.showExpertPage(page);
@@ -28088,8 +28101,8 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
     if(first === 'admin') return {type:'admin', panel:ADMIN_PANELS[parts[1]] ? parts[1] : 'dashboard'};
     if(first === 'dash') return {type:'dash', slug:clean(parts[1]), panel:DASH_PANELS[parts[2]] ? parts[2] : 'overview', settings:SEG_TO_SETTINGS[parts[3]] || ''};
     if(platformHost() && (PATH_TO_MKT[first] || first === '')) return {type:'marketing', page:PATH_TO_MKT[first] || 'home'};
-    if(expertHost()) return {type:'expert', slug:currentExpertSlug(), page:EXPERT_SEGMENTS[first] || 'home'};
-    if(cleanSlug(first)) return {type:'expert', slug:cleanSlug(first), page:EXPERT_SEGMENTS[parts[1]] || 'home'};
+    if(expertHost()) return {type:'expert', slug:currentExpertSlug(), page:expertPageFromSegment(first)};
+    if(cleanSlug(first)) return {type:'expert', slug:cleanSlug(first), page:expertPageFromSegment(parts[1])};
     return null;
   }
   function pushAndApply(path){
@@ -32599,10 +32612,21 @@ body:has(#view-2.active) .privacy-consent.active{
     var expertPages = ['home','about','services','reviews','book','contact','account'];
     var hostName = (location.hostname || '').toLowerCase();
     var expertHostSlug = '';
+    var isExpertHostName = false;
     var sub = hostName.match(/^([^.]+)\.ownlybiz\.com$/i);
-    if(sub && sub[1] && sub[1] !== 'www') expertHostSlug = sub[1];
+    if(sub && sub[1] && sub[1] !== 'www') {
+      expertHostSlug = sub[1];
+      isExpertHostName = true;
+    }
     else if(hostName && ['ownlybiz.com','www.ownlybiz.com','localhost','127.0.0.1'].indexOf(hostName) === -1 && hostName.indexOf('vercel.app') < 0) {
       expertHostSlug = window._browseExpert || window._currentExpertSlug || (window._currentExpert && window._currentExpert.slug) || '';
+      isExpertHostName = true;
+    }
+    if(isExpertHostName){
+      expertHostSlug = String(expertHostSlug || '').trim();
+      if(!expertHostSlug || expertHostSlug === 'expert-slug' || expertPages.indexOf(expertHostSlug) >= 0) return '';
+      if(['signup','login','admin','dash','dashboard','pricing','features','how','blog','group'].indexOf(expertHostSlug) >= 0) return '';
+      return /^[a-z0-9][a-z0-9-]{1,62}$/i.test(expertHostSlug) ? expertHostSlug : '';
     }
     var slug = String(value || '').trim().replace(/^\/+|\/+$/g,'').split('/')[0] || '';
     if(!slug || slug === 'expert-slug' || expertPages.indexOf(slug) >= 0) {
@@ -43055,7 +43079,8 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     });
     var parent = document.getElementById('view-4') || document.body;
     var before = document.getElementById('ep-book');
-    var requestedSlug = requestedAiPageSlug();
+    var pendingSlug = String(window._pendingExpertPage || '').replace(/^ai-/, '');
+    var requestedSlug = requestedAiPageSlug() || safeSlug(pendingSlug);
     var hasRequestedPage = false;
     pages.forEach(function(page){
       var slug = safeSlug(page.slug);
@@ -43090,7 +43115,10 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
         else links.appendChild(li);
       }
     });
-    if(hasRequestedPage) setTimeout(function(){ showExpertPage('ai-' + requestedSlug); }, 30);
+    if(hasRequestedPage) {
+      window._pendingExpertPage = 'ai-' + requestedSlug;
+      showExpertPage('ai-' + requestedSlug);
+    }
   }
 
   function wireAdmin(){

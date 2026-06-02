@@ -14856,7 +14856,8 @@ async function savePaymentConfig() {
 		    var routeFirst = routeParts[0] || '';
 		    var routeSecond = routeParts[1] || '';
 		    var expertPageRoutes = ['home','about','services','reviews','book','contact'];
-		    var isLegalRoute = path === 'terms' || path.indexOf('legal/') === 0;
+		    var legacyLegalRoutes = ['privacy','privacy-policy','privacy-policy-2','privacy-notice','cookie-policy'];
+		    var isLegalRoute = path === 'terms' || path.indexOf('legal/') === 0 || legacyLegalRoutes.indexOf(path) >= 0;
 		    var reserved = ['','index.html','admin','signup','dashboard','login','expert','session','group','connectors','settings','messages','analytics','payments','packages','reviews','clients','sessions','pricing','how','features','experts','blog','contact'];
 		    var routeHost = (window.location.hostname || '').toLowerCase();
 		    var isExpertHostRoute = (/^[^.]+\.ownlybiz\.com$/i.test(routeHost) && routeHost !== 'www.ownlybiz.com') ||
@@ -26428,9 +26429,14 @@ window._handleRTCMessage=function(d){
     try { return new Date(Number(ts) * 1000).toLocaleDateString('en-US', {month:'short', day:'numeric', year:'numeric'}); }
     catch(e){ return '-'; }
   }
+  function legacyLegalKey(path){
+    path = String(path || '').replace(/^\/+|\/+$/g, '').toLowerCase();
+    if(path === 'privacy' || path === 'privacy-policy' || path === 'privacy-policy-2' || path === 'privacy-notice' || path === 'cookie-policy') return 'privacy';
+    return '';
+  }
   function pathIsLegal(path){
     path = String(path || '').replace(/^\/+|\/+$/g, '');
-    return path === 'terms' || path.indexOf('legal/') === 0;
+    return path === 'terms' || path.indexOf('legal/') === 0 || !!legacyLegalKey(path);
   }
   function expertSiteContext(){
     var path = (location.pathname || '').replace(/^\/+|\/+$/g, '');
@@ -26578,6 +26584,8 @@ window._handleRTCMessage=function(d){
 
   function legalKeyFromPath(){
     var path = (location.pathname || '').replace(/\/+$/, '');
+    var legacy = legacyLegalKey(path);
+    if(legacy) return legacy;
     if(path === '/legal/privacy') return 'privacy';
     if(path === '/legal/independent-professional-terms') return 'independent';
     if(path === '/legal/platform-policy') return 'platform';
@@ -27827,6 +27835,11 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
     if(RESERVED_ROOTS[value]) return '';
     return value;
   }
+  function legacyLegalKey(segment){
+    segment = clean(segment).toLowerCase();
+    if(segment === 'privacy' || segment === 'privacy-policy' || segment === 'privacy-policy-2' || segment === 'privacy-notice' || segment === 'cookie-policy') return 'privacy';
+    return '';
+  }
   function expertPageFromSegment(segment){
     segment = clean(segment);
     if(!segment) return 'home';
@@ -27940,7 +27953,7 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
   function parseRoute(){
     var parts = pathParts();
     var first = clean(parts[0]);
-    if(first === 'legal' || first === 'terms') return {type:'legal'};
+    if(first === 'legal' || first === 'terms' || legacyLegalKey(first)) return {type:'legal'};
     if(first === 'admin') return {type:'admin', panel:ADMIN_PANELS[parts[1]] ? parts[1] : 'dashboard'};
     if(first === 'dash') return {type:'dash', slug:clean(parts[1]), panel:DASH_PANELS[parts[2]] ? parts[2] : 'overview', settings:SEG_TO_SETTINGS[parts[3]] || ''};
     if(expertHost()){
@@ -28060,7 +28073,12 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
   }
   function applyRoute(){
     var route = parseRoute();
-    if(!route || route.type === 'legal') return;
+    if(!route) return;
+    if(route.type === 'legal') {
+      if(typeof window.switchView === 'function') window.switchView(1);
+      if(typeof window.obRenderLegalPage === 'function') window.obRenderLegalPage();
+      return;
+    }
     applyingRoute = true;
     try {
       if(route.type === 'admin') applyAdminRoute(route);
@@ -28098,6 +28116,7 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
     var fake = new URL(path, location.origin);
     var parts = fake.pathname.replace(/^\/+|\/+$/g, '').split('/').filter(Boolean).map(function(part){ return decodeURIComponent(part); });
     var first = clean(parts[0]);
+    if(first === 'legal' || first === 'terms' || legacyLegalKey(first)) return {type:'legal'};
     if(first === 'admin') return {type:'admin', panel:ADMIN_PANELS[parts[1]] ? parts[1] : 'dashboard'};
     if(first === 'dash') return {type:'dash', slug:clean(parts[1]), panel:DASH_PANELS[parts[2]] ? parts[2] : 'overview', settings:SEG_TO_SETTINGS[parts[3]] || ''};
     if(platformHost() && (PATH_TO_MKT[first] || first === '')) return {type:'marketing', page:PATH_TO_MKT[first] || 'home'};
@@ -43115,6 +43134,20 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
         else links.appendChild(li);
       }
     });
+    if(requestedSlug && !hasRequestedPage){
+      var missingEl = document.createElement('div');
+      missingEl.className = 'expert-page ob-ai-custom-page';
+      missingEl.id = 'ep-ai-' + requestedSlug;
+      missingEl.setAttribute('data-ob-ai-public-extra','missing-page');
+      missingEl.innerHTML =
+        '<div class="expert-page-hero">' +
+          '<div class="ob-cp-hero-copy"><h1>Page not found</h1><p>This page is not published on this expert site.</p>' +
+          '<div class="ob-cp-hero-actions"><button class="btn btn-primary btn-sm" onclick="showExpertPage(\'home\')">Back to home</button></div></div>' +
+        '</div>';
+      if(before && before.parentNode) before.parentNode.insertBefore(missingEl, before);
+      else parent.appendChild(missingEl);
+      hasRequestedPage = true;
+    }
     if(hasRequestedPage) {
       window._pendingExpertPage = 'ai-' + requestedSlug;
       showExpertPage('ai-' + requestedSlug);

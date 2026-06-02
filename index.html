@@ -50,7 +50,15 @@
       var first = (path.split('/').filter(Boolean)[0] || '').toLowerCase();
       slug = reserved[first] ? '' : first;
     }
-    var marketingOptIn = !!document.querySelector('[data-ob-client-email-optin]:checked');
+    var marketingOptIn = Array.prototype.slice.call(document.querySelectorAll('[data-ob-client-email-optin]')).some(function(input){
+      if(!input || !input.checked) return false;
+      var box = input.closest('#booking-overlay,#client-login-modal,#bfl-overlay,.ob-group-registration,.ob-group-auth');
+      if(box) {
+        var style = window.getComputedStyle(box);
+        if(style.display === 'none' || style.visibility === 'hidden') return false;
+      }
+      return !!(input.offsetWidth || input.offsetHeight || input.getClientRects().length);
+    });
     return {
       expert_id: expert.user_id || expert.id || window._currentExpertId || window._obPendingExpertId || '',
       expert_slug: slug || '',
@@ -7703,6 +7711,10 @@ if (!window.toast) {
           <input type="text" class="form-input" placeholder="Your name" style="margin-bottom:10px;" id="bov-name" autocomplete="name" required>
           <input type="email" class="form-input" placeholder="Email address" style="margin-bottom:10px;" id="bov-email" autocomplete="email" required>
           <input type="password" class="form-input" placeholder="Password (min 8 characters)" style="margin-bottom:16px;" id="bov-pass" autocomplete="new-password" minlength="8" required>
+          <label id="bov-email-optin-row" style="display:flex;gap:9px;align-items:flex-start;margin:-4px 0 14px;color:#5F554D;font-size:12px;line-height:1.45;">
+            <input type="checkbox" data-ob-client-email-optin style="width:16px;height:16px;margin-top:1px;accent-color:var(--terra);flex:0 0 auto;">
+            <span style="color:#5F554D;">Email me updates from this expert. Receipts and account, security, booking, and session emails are always sent when required.</span>
+          </label>
           <div id="bov-auth-error" style="display:none;background:rgba(239,68,68,.08);border-radius:8px;padding:8px 12px;margin:-6px 0 12px;font-size:12px;color:#dc2626;font-weight:600;"></div>
           <button class="btn btn-primary" style="width:100%;padding:14px;" id="bov-signup-btn" onclick="bovSignup()">Continue →</button>
           <p style="font-size:11px;color:var(--gray-400);text-align:center;margin-top:10px;line-height:1.5;">By continuing you agree to our Terms. You won't be charged without confirmation.</p>
@@ -13520,6 +13532,8 @@ async function savePaymentConfig() {
       'sfield-meta-desc':p?.meta_description
     };
     Object.entries(fm).forEach(([id,v])=>inp(id,v));
+    var emailField=document.getElementById('sfield-email');
+    if(emailField && u.email) emailField.dataset.obOriginalEmail=String(u.email).trim().toLowerCase();
     // Payment banner controlled by updateStripeUI only
     // SEO fields
     if(p?.ga4_id) inp('sfield-ga4', p.ga4_id);
@@ -14169,6 +14183,7 @@ async function savePaymentConfig() {
     window._bovLoginMode = !window._bovLoginMode;
     var nameRow = document.getElementById('bov-name');
     var passRow = document.getElementById('bov-pass');
+    var optinRow = document.getElementById('bov-email-optin-row');
     var errRow = document.getElementById('bov-auth-error');
     var title = document.querySelector('#bov-step1 h2');
     var btn = document.getElementById('bov-signup-btn');
@@ -14177,12 +14192,14 @@ async function savePaymentConfig() {
     if(window._bovLoginMode){
       if(nameRow) nameRow.style.display='none';
       if(passRow){ passRow.placeholder='Password'; passRow.autocomplete='current-password'; }
+      if(optinRow) optinRow.style.display='none';
       if(title) title.textContent='Sign in';
       if(btn) btn.textContent='Sign In →';
       if(toggle) toggle.innerHTML='New here? <span style="color:var(--terra);font-weight:600;cursor:pointer;" onclick="bovToggleMode()">Create account →</span>';
     } else {
       if(nameRow) nameRow.style.display='';
       if(passRow){ passRow.placeholder='Password (min 8 characters)'; passRow.autocomplete='new-password'; }
+      if(optinRow) optinRow.style.display='flex';
       if(title) title.textContent='Create your account';
       if(btn) btn.textContent='Continue →';
       if(toggle) toggle.innerHTML='Already have an account? <span style="color:var(--terra);font-weight:600;cursor:pointer;" onclick="bovToggleMode()">Sign in →</span>';
@@ -15376,6 +15393,9 @@ function _applyProfile(e) {
   var set = function(id, val) { var el=document.getElementById(id); if(el&&val!=null) el.value=val; };
   var setTxt = function(id, val) { var el=document.getElementById(id); if(el&&val!=null) el.textContent=val; };
   set('sfield-name', e.name);
+  set('sfield-email', e.email);
+  var emailField = document.getElementById('sfield-email');
+  if(emailField && e.email) emailField.dataset.obOriginalEmail = String(e.email).trim().toLowerCase();
   set('sfield-title', e.title);
   set('sfield-bio', e.bio);
   set('sfield-location', e.location);
@@ -18127,10 +18147,14 @@ setInterval(function() {
   var BASE = window._OB_BACKEND || 'https://ownlybiz-backend-production.up.railway.app';
   var overlay = document.getElementById('ob-popup-overlay');
   var shown = false;
+  function popupEnabled(value){
+    if(value === undefined || value === null || value === '') return true;
+    return ['0','false','off','no','disabled'].indexOf(String(value).trim().toLowerCase()) < 0;
+  }
 
   function obLoadSettings(){
     fetch(BASE+'/api/admin/settings/popup-settings').then(function(r){return r.json();}).then(function(s){
-      if(s.popup_enabled==='0'||s.popup_enabled===0){return;}
+      if(!popupEnabled(s.popup_enabled)){return;}
       if(s.popup_headline) document.getElementById('ob-headline-txt').textContent=s.popup_headline;
       if(s.popup_body) document.getElementById('ob-body-txt').textContent=s.popup_body;
       var _b0=document.getElementById('ob-btn0'); if(_b0 && s.popup_btn_visitor) _b0.textContent=s.popup_btn_visitor;
@@ -18296,6 +18320,10 @@ setInterval(function() {
   }
 
   var _wlPage=1, _wlSettings={};
+  function obSettingEnabled(value){
+    if(value === undefined || value === null || value === '') return true;
+    return ['0','false','off','no','disabled'].indexOf(String(value).trim().toLowerCase()) < 0;
+  }
 
   window.obAdminOpen=function(){
     buildAdminPanel();
@@ -18381,7 +18409,7 @@ setInterval(function() {
       set('obs-btn-v',s.popup_btn_visitor);
       set('obs-btn-e',s.popup_btn_expert);
       var tog=document.getElementById('ob-popup-toggle');
-      if(tog){if(s.popup_enabled==='1'||s.popup_enabled===1){tog.classList.add('on');}else{tog.classList.remove('on');}}
+      if(tog){if(obSettingEnabled(s.popup_enabled)){tog.classList.add('on');}else{tog.classList.remove('on');}}
       set('obs-delay',s.popup_delay||'5');
     }).catch(function(){});
   };
@@ -18390,11 +18418,19 @@ setInterval(function() {
     var tog=document.getElementById('ob-popup-toggle');
     if(!tog) return;
     var isOn=tog.classList.contains('on');
-    tog.classList.toggle('on');
+    tog.disabled = true;
     var BASE=window._OB_BACKEND||'https://ownlybiz-backend-production.up.railway.app';
     var tok=sessionStorage.getItem('ob_t')||localStorage.getItem('ob_t')||'';
     fetch(BASE+'/api/admin/settings/popup-settings',{method:'PUT',headers:{'Authorization':'Bearer '+tok,'Content-Type':'application/json'},
-      body:JSON.stringify({popup_enabled:isOn?'0':'1'})}).catch(function(){});
+      body:JSON.stringify({popup_enabled:isOn?'0':'1'})}).then(function(r){return r.json();}).then(function(d){
+      if(d && d.success === false) throw new Error(d.error || 'Save failed');
+      _wlSettings.popup_enabled = isOn ? '0' : '1';
+      tog.classList.toggle('on', !isOn);
+      var saved=document.getElementById('obs-saved');
+      if(saved){saved.textContent='Saved!';saved.style.display='inline';setTimeout(function(){saved.style.display='none';},1800);}
+    }).catch(function(e){
+      if(typeof _showToast === 'function') _showToast(e.message || 'Popup setting failed to save','red');
+    }).finally(function(){ tog.disabled = false; });
   };
 
   window.obSaveSettings=function(){
@@ -20623,6 +20659,34 @@ function loadClientCredit() {
   </div>
 </div>
 
+<style id="ownlybiz-book-later-contrast-20260602">
+  #bfl-overlay #bfl-step-3 > div:first-child,
+  #bfl-overlay #bfl-step-4 > div:first-child{
+    background:#fffaf2!important;
+    border-color:#ded4c8!important;
+    color:#2f251f!important;
+  }
+  #bfl-overlay #bfl-step-3 > div:first-child div,
+  #bfl-overlay #bfl-step-4 > div:first-child div{
+    color:#2f251f!important;
+  }
+  #bfl-overlay #bfl-step-3 > div:first-child span:first-child,
+  #bfl-overlay #bfl-step-4 > div:first-child span:first-child{
+    color:#6f6257!important;
+  }
+  #bfl-overlay #bfl-sum-date,
+  #bfl-overlay #bfl-sum-time,
+  #bfl-overlay #bfl-sum-type,
+  #bfl-overlay #bfl-pay-sum-date,
+  #bfl-overlay #bfl-pay-sum-time,
+  #bfl-overlay #bfl-pay-sum-type{
+    color:#2f251f!important;
+  }
+  #bfl-overlay #bfl-sum-free,
+  #bfl-overlay #bfl-pay-sum-free{
+    color:#4f6f3f!important;
+  }
+</style>
 <!-- ═══ BOOK FOR LATER MODAL ═══ -->
 <div id="bfl-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:99999;align-items:center;justify-content:center;padding:20px;" onclick="if(event.target===this)closeBookLaterModal()">
   <div style="background:var(--cream,#f6f1e9);border-radius:20px;max-width:480px;width:100%;max-height:90vh;overflow-y:auto;box-shadow:0 24px 80px rgba(0,0,0,.3);">
@@ -26936,6 +27000,110 @@ window._handleRTCMessage=function(d){
 	    }
 	  }
   setInterval(function(){ if(liveSessionActive()) closeConsent(); }, 1500);
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
+})();
+</script>
+<style id="ownlybiz-expert-consent-disable-style-20260602">
+html.ob-expert-consent-disabled .privacy-consent,
+html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
+</style>
+<script id="ownlybiz-expert-consent-disable-guard-20260602">
+(function(){
+  if(window.__obExpertConsentDisableGuard20260602) return;
+  window.__obExpertConsentDisableGuard20260602 = true;
+  var API = (window.OWNLYBIZ_API_URL || window._OB_BACKEND || 'https://ownlybiz-backend-production.up.railway.app').replace(/\/+$/,'');
+  var reserved = {'':1,'index.html':1,'admin':1,'dash':1,'signup':1,'dashboard':1,'login':1,'expert':1,'session':1,'group':1,'connectors':1,'settings':1,'messages':1,'analytics':1,'payments':1,'packages':1,'reviews':1,'clients':1,'sessions':1,'pricing':1,'how':1,'features':1,'experts':1,'blog':1,'contact':1,'terms':1,'legal':1};
+  function disabled(value){
+    return value !== undefined && value !== null && ['0','false','off','no','disabled'].indexOf(String(value).trim().toLowerCase()) >= 0;
+  }
+  function platformHost(){
+    var host = String(location.hostname || '').toLowerCase();
+    return !host || host === 'ownlybiz.com' || host === 'www.ownlybiz.com' || host === 'localhost' || host === '127.0.0.1' || host.indexOf('vercel.app') >= 0;
+  }
+  function expertContext(){
+    var path = String(location.pathname || '').replace(/^\/+|\/+$/g, '');
+    if(path === 'admin' || path.indexOf('dash/') === 0 || path.indexOf('legal/') === 0) return false;
+    return !platformHost() || new URLSearchParams(location.search || '').has('expert') || !!window._browseExpert || !!window._currentExpertSlug;
+  }
+  function closeAndHide(){
+    document.documentElement.classList.add('ob-expert-consent-disabled');
+    var el = document.getElementById('privacy-consent');
+    if(el) el.classList.remove('active');
+  }
+  function allowConsent(){
+    document.documentElement.classList.remove('ob-expert-consent-disabled');
+  }
+  function slugFromLocation(){
+    var expert = window._currentExpert || {};
+    if(expert.slug) return String(expert.slug);
+    if(window._currentExpertSlug) return String(window._currentExpertSlug);
+    if(window._browseExpert) return String(window._browseExpert);
+    var q = new URLSearchParams(location.search || '').get('expert');
+    if(q) return String(q);
+    var host = String(location.hostname || '').toLowerCase();
+    var sub = host.match(/^([^.]+)\.ownlybiz\.com$/);
+    if(sub && sub[1] !== 'www') return sub[1];
+    if(platformHost()){
+      var first = String(location.pathname || '').replace(/^\/+|\/+$/g, '').split('/').filter(Boolean)[0] || '';
+      if(first && !reserved[first]) return first;
+    }
+    return '';
+  }
+  function lookupSlug(){
+    var slug = slugFromLocation();
+    if(slug) return Promise.resolve(slug);
+    if(platformHost()) return Promise.resolve('');
+    return fetch(API + '/api/domains/lookup?domain=' + encodeURIComponent(location.hostname), {cache:'no-store'})
+      .then(function(r){ return r.json(); })
+      .then(function(d){ return d && d.slug ? String(d.slug) : ''; })
+      .catch(function(){ return ''; });
+  }
+  function refreshExpertConsentFlag(){
+    if(!expertContext()) return Promise.resolve(false);
+    var current = window._currentExpert || {};
+    if(disabled(current.privacy_cookie_banner_enabled)){
+      closeAndHide();
+      return Promise.resolve(true);
+    }
+    return lookupSlug().then(function(slug){
+      if(!slug) return false;
+      return fetch(API + '/api/experts/' + encodeURIComponent(slug) + '?_=' + Date.now(), {cache:'no-store'})
+        .then(function(r){ return r.json(); })
+        .then(function(d){
+          var expert = d && (d.expert || d) || {};
+          if(expert && expert.slug) {
+            window._currentExpert = Object.assign(window._currentExpert || {}, expert);
+            window._currentExpertSlug = expert.slug;
+          }
+          if(disabled(expert.privacy_cookie_banner_enabled)){
+            closeAndHide();
+            return true;
+          }
+          allowConsent();
+          return false;
+        }).catch(function(){ return false; });
+    });
+  }
+  var previousOpen = window.obOpenConsentManager;
+  if(typeof previousOpen === 'function'){
+    window.obOpenConsentManager = function(){
+      if(!expertContext()) return previousOpen.apply(this, arguments);
+      return refreshExpertConsentFlag().then(function(isDisabled){
+        if(!isDisabled) return previousOpen();
+      });
+    };
+  }
+  var observer = new MutationObserver(function(){
+    if(!expertContext()) return;
+    var el = document.getElementById('privacy-consent');
+    if(el && el.classList.contains('active')) refreshExpertConsentFlag();
+  });
+  function boot(){
+    refreshExpertConsentFlag();
+    var target = document.getElementById('privacy-consent') || document.body || document.documentElement;
+    if(target) observer.observe(target, {attributes:true, childList:true, subtree:true, attributeFilter:['class']});
+    [600, 1600, 3500].forEach(function(ms){ setTimeout(refreshExpertConsentFlag, ms); });
+  }
   if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
 </script>
@@ -46454,6 +46622,54 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       } catch(e){}
     });
   }
+  function storedUserEmail(){
+    var found = '';
+    ['sessionStorage','localStorage'].some(function(storeName){
+      try {
+        var raw = window[storeName].getItem('ob_u');
+        var user = raw ? JSON.parse(raw) : null;
+        if(user && user.email){ found = String(user.email).trim().toLowerCase(); return true; }
+      } catch(e){}
+      return false;
+    });
+    return found;
+  }
+  function updateStoredUserEmail(email, data){
+    ['sessionStorage','localStorage'].forEach(function(storeName){
+      try {
+        var store = window[storeName];
+        var raw = store.getItem('ob_u');
+        var user = raw ? JSON.parse(raw) : {};
+        if(user && typeof user === 'object'){
+          user.email = email;
+          if(data && data.user) user = Object.assign(user, data.user, { email: email });
+          store.setItem('ob_u', JSON.stringify(user));
+        }
+        if(data && data.token) store.setItem('ob_t', data.token);
+      } catch(e){}
+    });
+    try { localStorage.setItem('ob_client_token', (data && data.token) || localStorage.getItem('ob_client_token') || ''); } catch(e){}
+    var emailField = byId('sfield-email');
+    if(emailField) emailField.dataset.obOriginalEmail = email;
+  }
+  async function saveProfileEmailIfChanged(role){
+    if(role === 'admin') return false;
+    var emailField = byId('sfield-email');
+    if(!emailField) return false;
+    var nextEmail = String(emailField.value || '').trim().toLowerCase();
+    if(!nextEmail) return false;
+    if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(nextEmail)) throw new Error('Enter a valid email address.');
+    var currentEmail = String(emailField.dataset.obOriginalEmail || storedUserEmail() || '').trim().toLowerCase();
+    if(currentEmail && currentEmail === nextEmail) return false;
+    var currentPassword = window.prompt('Enter your current password to change your login email.');
+    if(!currentPassword) throw new Error('Email was not changed. Current password is required.');
+    var data = await jsonFetch('/api/auth/change-email', {
+      method:'POST',
+      body:{ email: nextEmail, current_password: currentPassword }
+    });
+    updateStoredUserEmail(nextEmail, data);
+    return true;
+  }
   function syncProfileUi(payload){
     payload = payload || {};
     if(payload.name){
@@ -46466,6 +46682,13 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     var slug = value('sfield-slug') || (window._currentExpert && window._currentExpert.slug) || window._adminViewingExpertSlug || '';
     if(subtitle){
       subtitle.textContent = (payload.title || value('sfield-title') || 'Expert') + (slug ? ' - ' + slug + '.ownlybiz.com' : '');
+    }
+    if(payload.email){
+      var emailField = byId('sfield-email');
+      if(emailField){
+        emailField.value = payload.email;
+        emailField.dataset.obOriginalEmail = String(payload.email || '').trim().toLowerCase();
+      }
     }
     window._currentExpert = Object.assign(window._currentExpert || {}, payload);
   }
@@ -46510,11 +46733,16 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       } else {
         path = '/api/experts/me/profile';
       }
+      var emailChanged = await saveProfileEmailIfChanged(role);
       await jsonFetch(path, {method:'PUT', body:payload});
+      if(!payload.email){
+        var emailField = byId('sfield-email');
+        if(emailField) payload.email = emailField.value || '';
+      }
       syncProfileUi(payload);
       refreshProfileUi();
       setSaveState('saved');
-      notify('Profile saved.', 'ok');
+      notify(emailChanged ? 'Profile saved. Check the new email for verification.' : 'Profile saved.', 'ok');
       return true;
     } catch(err) {
       setSaveState('error');
@@ -46807,6 +47035,56 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       } catch(e) {}
     });
   }
+  function storedUserEmail(){
+    var found = '';
+    ['sessionStorage','localStorage'].some(function(storeName){
+      try {
+        var raw = window[storeName].getItem('ob_u');
+        var user = raw ? JSON.parse(raw) : null;
+        if(user && user.email){ found = String(user.email).trim().toLowerCase(); return true; }
+      } catch(e) {}
+      return false;
+    });
+    return found;
+  }
+  function syncStoredUserEmail(email, data){
+    ['sessionStorage','localStorage'].forEach(function(storeName){
+      try {
+        var store = window[storeName];
+        var raw = store.getItem('ob_u');
+        var user = raw ? JSON.parse(raw) : {};
+        if(user && typeof user === 'object'){
+          user.email = email;
+          if(data && data.user) user = Object.assign(user, data.user, { email: email });
+          store.setItem('ob_u', JSON.stringify(user));
+        }
+        if(data && data.token) store.setItem('ob_t', data.token);
+      } catch(e) {}
+    });
+    try { if(data && data.token) localStorage.setItem('ob_client_token', data.token); } catch(e) {}
+    var emailField = byId('sfield-email');
+    if(emailField) emailField.dataset.obOriginalEmail = email;
+  }
+  async function saveEmailIfChanged(){
+    var emailField = byId('sfield-email');
+    if(!emailField) return false;
+    var nextEmail = String(emailField.value || '').trim().toLowerCase();
+    if(!nextEmail) return false;
+    if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(nextEmail)) throw new Error('Enter a valid email address.');
+    var currentEmail = String(emailField.dataset.obOriginalEmail || storedUserEmail() || '').trim().toLowerCase();
+    if(currentEmail && currentEmail === nextEmail) return false;
+    var currentPassword = window.prompt('Enter your current password to change your login email.');
+    if(!currentPassword) throw new Error('Email was not changed. Current password is required.');
+    var res = await fetch(apiBase() + '/api/auth/change-email', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json', 'Authorization':'Bearer ' + token()},
+      body: JSON.stringify({ email: nextEmail, current_password: currentPassword })
+    });
+    var data = await res.json().catch(function(){ return {}; });
+    if(!res.ok || data.success === false) throw new Error(data.error || 'Email change failed.');
+    syncStoredUserEmail(nextEmail, data);
+    return true;
+  }
   function clearDirty(){
     dirty = {};
     dirtyValues = {};
@@ -46825,6 +47103,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     saving = true;
     setStatus('saving');
     try {
+      var emailChanged = await saveEmailIfChanged();
       var res = await fetch(apiBase() + '/api/experts/me/profile', {
         method: 'PUT',
         headers: {'Content-Type':'application/json', 'Authorization':'Bearer ' + token()},
@@ -46840,7 +47119,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       titleTargets.forEach(function(el){ el.textContent = payload.title || ''; });
       clearDirty();
       setStatus('saved');
-      toast('Profile saved.', 'ok');
+      toast(emailChanged ? 'Profile saved. Check the new email for verification.' : 'Profile saved.', 'ok');
       return true;
     } catch(err) {
       setStatus('error');

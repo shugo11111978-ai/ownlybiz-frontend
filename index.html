@@ -38,6 +38,33 @@
 </script>
 <script>
 (function(){
+  window.obClientSignupExpertContext = function(){
+    var expert = window._currentExpert || {};
+    var host = String(location.hostname || '').toLowerCase();
+    var path = String(location.pathname || '');
+    var slug = expert.slug || window._currentExpertSlug || window._browseExpert || '';
+    var sub = host.match(/^([^.]+)\.ownlybiz\.com$/);
+    if(!slug && sub && sub[1] !== 'www') slug = sub[1];
+    if(!slug && (host === 'ownlybiz.com' || host === 'www.ownlybiz.com')) {
+      var reserved = {admin:1,api:1,app:1,auth:1,billing:1,checkout:1,connect:1,dash:1,dashboard:1,login:1,logout:1,payment:1,payments:1,pricing:1,reset:1,'reset-password':1,session:1,sessions:1,signup:1,stripe:1,support:1,terms:1,verify:1,'verify-email':1,wallet:1};
+      var first = (path.split('/').filter(Boolean)[0] || '').toLowerCase();
+      slug = reserved[first] ? '' : first;
+    }
+    var marketingOptIn = !!document.querySelector('[data-ob-client-email-optin]:checked');
+    return {
+      expert_id: expert.user_id || expert.id || window._currentExpertId || window._obPendingExpertId || '',
+      expert_slug: slug || '',
+      expert_domain: host || '',
+      marketing_opt_in: marketingOptIn,
+      email_marketing_opt_in: marketingOptIn,
+      marketing_consent: marketingOptIn,
+      consent_source: marketingOptIn ? 'client_signup' : ''
+    };
+  };
+})();
+</script>
+<script>
+(function(){
   if(/[?&](booking|session|session_id)=/.test(location.search)){
     document.documentElement.classList.add('ob-session-boot');
     setTimeout(function(){ document.documentElement.classList.remove('ob-session-boot'); }, 4500);
@@ -4993,6 +5020,12 @@ if (!window.toast) {
 	            I agree to the <a href="/legal/independent-professional-terms" target="_blank" rel="noopener">Independent Professional Terms</a> and <a href="/legal/platform-policy" target="_blank" rel="noopener">Platform Policy</a>. I understand that I am an independent professional, not an Ownlybiz employee, agent, partner, or representative. I am solely responsible for my services, client outcomes, credentials, compliance, taxes, disputes, refunds, chargebacks, and any regulated advice I provide. I will not offer prohibited, illegal, deceptive, adult sexual, gambling, high-risk financial, unlicensed medical/legal, hate, violence, or other restricted services through Ownlybiz.
 	          </div>
 	        </div>
+	        <div class="tos-row">
+	          <input type="checkbox" id="signup-email-optin">
+	          <div class="tos-text">
+	            Send me Ownlybiz product updates, launch tips, and growth emails. Account, security, billing, and receipt emails are always sent when required.
+	          </div>
+	        </div>
         <div class="signup-nav">
           <div class="signup-step-indicator">Step 1 of 3</div>
           <button class="btn btn-primary" id="signup-step1-btn" onclick="realExpertSignup()">Continue →</button>
@@ -6334,6 +6367,10 @@ if (!window.toast) {
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M22 7l-10 7L2 7"/></svg>
                 Email
               </div>
+              <div class="settings-nav-item" onclick="settingsNav(this,'sblock-ai');setTimeout(function(){ if(window.obExpertAiPreferenceCard) window.obExpertAiPreferenceCard(); },80);">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3z"/><path d="M19 16l.8 2.2L22 19l-2.2.8L19 22l-.8-2.2L16 19l2.2-.8L19 16z"/></svg>
+                AI
+              </div>
               <div class="settings-nav-item" onclick="settingsNav(this,'sblock-security')">
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
                 Security
@@ -6844,9 +6881,16 @@ if (!window.toast) {
                   Example: <code>smtp.gmail.com:587:user@gmail.com:app-password</code>
                 </div>
 
-                <div class="settings-save-row" style="margin-top:20px;">
-                  <button class="btn btn-primary" onclick="saveEmailSettings()">Save Email Settings</button>
-                </div>
+	                <div class="settings-save-row" style="margin-top:20px;">
+	                  <button class="btn btn-primary" onclick="saveEmailSettings()">Save Email Settings</button>
+	                </div>
+	              </div>
+
+              <!-- ══════════════════ AI ══════════════════ -->
+              <div class="settings-block" id="sblock-ai" style="display:none;">
+                <div class="settings-block-title">AI</div>
+                <div class="settings-block-desc">Control the live chat assistant and private training for this expert account.</div>
+                <div id="ob-expert-ai-settings-host" style="margin-top:18px;"></div>
               </div>
 
               <!-- ══════════════════ SECURITY ══════════════════ -->
@@ -11002,7 +11046,7 @@ function bovSignup() {
 
   fetch(BASE+'/api/auth/signup',{
     method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({name:name, email:email, password:pass, role:'client'})
+    body: JSON.stringify(Object.assign({name:name, email:email, password:pass, role:'client'}, window.obClientSignupExpertContext ? window.obClientSignupExpertContext() : {}))
   }).then(function(r){ return r.json().then(function(d){ return {ok:r.ok, data:d}; }); })
   .then(function(res){
     if(!res.ok){
@@ -12439,6 +12483,7 @@ function settingsNav(el, blockId) {
   var block = document.getElementById(blockId);
   if (block) { block.style.display='block'; block.scrollIntoView({behavior:'smooth',block:'start'}); }
   if(blockId==='sblock-website' && typeof loadDomainSettings==='function') loadDomainSettings();
+  if(blockId==='sblock-ai' && typeof window.obExpertAiPreferenceCard==='function') setTimeout(window.obExpertAiPreferenceCard, 80);
 }
 
 // ══════════════════════════════════════════
@@ -12962,7 +13007,7 @@ async function savePaymentConfig() {
 	            }, 800);
 	          } else if (d.user.role === 'expert') {
 	            fetch(BASE + '/api/experts/me/dashboard', { headers: { 'Authorization': 'Bearer ' + d.token } })
-	              .then(function(r){ return r.json(); })
+	              .then(function(r){ return r.json().then(function(ed){ if(!r.ok){ var err = new Error(ed.error || 'Dashboard unavailable'); err.data = ed; throw err; } return ed; }); })
 	              .then(function(ed){
 	                if (typeof window.obRenderServicePauseBanner === 'function') window.obRenderServicePauseBanner(ed && (ed.service_pause || (ed.profile && ed.profile.service_pause)));
 	                var slug = ed && ed.profile && ed.profile.slug ? ed.profile.slug : '';
@@ -12974,7 +13019,11 @@ async function savePaymentConfig() {
 	                }
 	                if (typeof switchView === 'function') switchView(3);
 	                if (window.OwnlyAPI && window.OwnlyAPI.loadExpertDashboard) window.OwnlyAPI.loadExpertDashboard();
-	              }).catch(function(){
+	              }).catch(function(err){
+	                if(err && err.data && err.data.code === 'signup_incomplete' && typeof window.obShowSignupCheckoutReturn === 'function') {
+	                  window.obShowSignupCheckoutReturn('', err.data.error || 'Finish Stripe Checkout before opening the expert dashboard.');
+	                  return;
+	                }
 	                if (typeof switchView === 'function') switchView(3);
 	                if (window.OwnlyAPI && window.OwnlyAPI.loadExpertDashboard) window.OwnlyAPI.loadExpertDashboard();
 	              });
@@ -14178,7 +14227,7 @@ async function savePaymentConfig() {
         d=await api('POST','/auth/login',{email,password:pass});
       } else {
         try{
-          d=await api('POST','/auth/signup',{name,email,password:pass,role:'client'});
+          d=await api('POST','/auth/signup',Object.assign({name,email,password:pass,role:'client'}, window.obClientSignupExpertContext ? window.obClientSignupExpertContext() : {}));
         } catch(signupErr){
           var msg = String(signupErr && signupErr.message || '').toLowerCase();
           if(msg.indexOf('exist') >= 0 || msg.indexOf('already') >= 0) d=await api('POST','/auth/login',{email,password:pass});
@@ -14237,7 +14286,7 @@ async function savePaymentConfig() {
       try{
         d=await api('POST','/auth/login',{email,password:pass});
       } catch{
-        d=await api('POST','/auth/signup',{name:email.split('@')[0],email,password:pass,role:'client'});
+        d=await api('POST','/auth/signup',Object.assign({name:email.split('@')[0],email,password:pass,role:'client'}, window.obClientSignupExpertContext ? window.obClientSignupExpertContext() : {}));
       }
       Auth.save(d.token,d.user);
       clientLoggedIn = true;
@@ -14969,7 +15018,9 @@ async function savePaymentConfig() {
 	          password:pass,
 	          role:'expert',
 	          terms_accepted:!!(tos && tos.checked),
-	          terms_version:'expert-independent-2026-04-26'
+	          terms_version:'expert-independent-2026-04-26',
+	          marketing_opt_in:!!(document.getElementById('signup-email-optin') && document.getElementById('signup-email-optin').checked),
+	          email_marketing_opt_in:!!(document.getElementById('signup-email-optin') && document.getElementById('signup-email-optin').checked)
 	        })
 	      });
       var d = await r.json();
@@ -19004,11 +19055,19 @@ window._obOpenClientChat = openClientChat;
       else if(sessions.length===0&&!window._sid&&!window._pendingSid&&!window._obIncomingSessId&&!window._obRequestVisibleSid){var sro=document.getElementById('session-request-overlay');if(sro&&sro.style.display==='flex'){sro.style.display='none';var srs=document.getElementById('session-request-sheet');if(srs)srs.style.display='none';}}
     }).catch(function(){});
   }
+  function obMessageDate(ts){
+    if(ts == null || ts === '') return null;
+    var n = Number(ts);
+    var d = Number.isFinite(n)
+      ? new Date(n < 1000000000000 ? n * 1000 : n)
+      : new Date(ts);
+    return isNaN(d.getTime()) ? null : d;
+  }
   function loadHistory(sid,panelId){
     var me=myId();
     fetch(BASE+'/api/sessions/'+sid,{headers:hdr()}).then(function(r){return r.json();}).then(function(d){
       var msgs=d.messages||[];var box=document.getElementById(panelId);if(!box)return;
-      box.innerHTML='';msgs.forEach(function(m){appendMsg(panelId,m.content,m.sender_id===me,m.created_at);});
+      box.innerHTML='';msgs.forEach(function(m){appendMsg(panelId,m.content,m.sender_id===me,m.sent_at||m.ts||m.created_at);});
     }).catch(function(){});
   }
   function appendMsg(panelId,content,isMine,ts){
@@ -19017,7 +19076,8 @@ window._obOpenClientChat = openClientChat;
     var bub=document.createElement('div');
     bub.style.cssText='max-width:75%;padding:8px 12px;border-radius:12px;font-size:13px;line-height:1.4;word-break:break-word;background:'+(isMine?'#c2622d':'#e8e0d5')+';color:'+(isMine?'#fff':'#251810');
     bub.textContent=content;
-    if(ts){var tEl=document.createElement('div');tEl.style.cssText='font-size:10px;opacity:.5;margin-top:2px';tEl.textContent=new Date(typeof ts==='number'?ts:ts).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});bub.appendChild(tEl);}
+    var msgDate=obMessageDate(ts);
+    if(msgDate){var tEl=document.createElement('div');tEl.style.cssText='font-size:10px;opacity:.5;margin-top:2px';tEl.textContent=msgDate.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});bub.appendChild(tEl);}
     row.appendChild(bub);box.appendChild(row);box.scrollTop=box.scrollHeight;
   }
   window._obAppendMsg = appendMsg;
@@ -19507,7 +19567,7 @@ function bflAuthenticateAccount() {
     if (!nm || !nm.value.trim()) throw new Error('Please enter your name.');
     if (!em || !em.value.trim()) throw new Error('Please enter your email.');
     if (!pw || pw.value.length < 8) throw new Error('Password must be at least 8 characters.');
-    return fetch(_BFL_BASE + '/api/auth/signup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: nm.value.trim(), email: em.value.trim(), password: pw.value, role: 'client' }) })
+    return fetch(_BFL_BASE + '/api/auth/signup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.assign({ name: nm.value.trim(), email: em.value.trim(), password: pw.value, role: 'client' }, window.obClientSignupExpertContext ? window.obClientSignupExpertContext() : {})) })
       .then(function(r) { return r.json(); })
       .then(function(d) {
         if (!d.token) {
@@ -20359,7 +20419,7 @@ function clientSignupFromModal() {
   var err = document.getElementById('clm-error');
   if (!name || !email || !pass) { if (err) { err.textContent = 'Fill in all fields.'; err.style.display = 'block'; } return; }
   if (pass.length < 8) { if (err) { err.textContent = 'Password must be at least 8 characters.'; err.style.display = 'block'; } return; }
-  fetch(_BASE + '/api/auth/signup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: name, email: email, password: pass, role: 'client' }) })
+  fetch(_BASE + '/api/auth/signup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.assign({ name: name, email: email, password: pass, role: 'client' }, window.obClientSignupExpertContext ? window.obClientSignupExpertContext() : {})) })
     .then(function(r) { return r.json(); })
     .then(function(d) {
       if (d.token) {
@@ -20553,6 +20613,10 @@ function loadClientCredit() {
       <input type="text" id="clm-signup-name" style="width:100%;padding:12px 14px;border:1.5px solid var(--gray-200);border-radius:10px;font-size:14px;font-family:var(--font-body);background:var(--white);margin-bottom:10px;" placeholder="Your Name">
       <input type="email" id="clm-signup-email" style="width:100%;padding:12px 14px;border:1.5px solid var(--gray-200);border-radius:10px;font-size:14px;font-family:var(--font-body);background:var(--white);margin-bottom:10px;" placeholder="Email">
       <input type="password" id="clm-signup-pass" style="width:100%;padding:12px 14px;border:1.5px solid var(--gray-200);border-radius:10px;font-size:14px;font-family:var(--font-body);background:var(--white);margin-bottom:16px;" placeholder="Password (min 8 chars)">
+	      <label style="display:flex;gap:9px;align-items:flex-start;margin:-4px 0 14px;color:#5F554D;font-size:12px;line-height:1.45;">
+	        <input type="checkbox" data-ob-client-email-optin style="width:16px;height:16px;margin-top:1px;accent-color:var(--terra);flex:0 0 auto;">
+	        <span style="color:#5F554D;">Email me updates from this expert. Receipts and account, security, booking, and session emails are always sent when required.</span>
+	      </label>
       <button class="btn btn-primary" style="width:100%;padding:14px;" onclick="clientSignupFromModal()">Create Account →</button>
     </div>
     <div id="clm-error" style="display:none;background:rgba(239,68,68,.08);border-radius:8px;padding:10px;margin-top:12px;font-size:12px;color:#dc2626;font-weight:600;text-align:center;"></div>
@@ -20653,6 +20717,10 @@ function loadClientCredit() {
           <label style="font-size:12px;font-weight:700;color:var(--brown);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:8px;">Create Password</label>
           <input type="password" id="bfl-password" style="width:100%;padding:12px 14px;border:1.5px solid var(--gray-200);border-radius:10px;font-size:14px;font-family:var(--font-body);background:var(--white);" placeholder="Min 8 characters" autocomplete="new-password" minlength="8" required>
         </div>
+        <label style="display:flex;gap:9px;align-items:flex-start;margin:-4px 0 16px;color:#5F554D;font-size:12px;line-height:1.45;">
+          <input type="checkbox" data-ob-client-email-optin style="width:16px;height:16px;margin-top:1px;accent-color:var(--terra);flex:0 0 auto;">
+          <span style="color:#5F554D;">Email me updates from this expert. Receipts and account, security, booking, and session emails are always sent when required.</span>
+        </label>
       </div>
       <!-- Login fields -->
       <div id="bfl-login-fields" style="display:none;">
@@ -27547,10 +27615,11 @@ window._handleRTCMessage=function(d){
     'sblock-notifications':'notifications',
     'sblock-seo':'seo',
     'sblock-privacy':'privacy',
-    'sblock-billing':'billing',
-    'sblock-email':'email',
-    'sblock-security':'security'
-  };
+	    'sblock-billing':'billing',
+	    'sblock-email':'email',
+	    'sblock-ai':'ai',
+	    'sblock-security':'security'
+	  };
   var SEG_TO_SETTINGS = {};
   Object.keys(SETTINGS_TO_SEG).forEach(function(key){ SEG_TO_SETTINGS[SETTINGS_TO_SEG[key]] = key; });
   var ADMIN_PANELS = {
@@ -27637,6 +27706,14 @@ window._handleRTCMessage=function(d){
     syncNavHrefs();
   }
   function expertUrl(page){
+    if(String(page || '').indexOf('ai-') === 0){
+      var customSlug = cleanSlug(String(page || '').replace(/^ai-/, ''));
+      if(!customSlug) return '';
+      if(expertHost()) return '/' + enc(customSlug);
+      var expertSlugForPage = currentExpertSlug();
+      if(!expertSlugForPage) return '';
+      return '/' + enc(expertSlugForPage) + '/' + enc(customSlug);
+    }
     if(!EXPERT_PAGES.hasOwnProperty(page)) return '';
     var seg = EXPERT_PAGES[page];
     if(expertHost()) return seg ? '/' + seg : '/';
@@ -28495,6 +28572,65 @@ window._handleRTCMessage=function(d){
     await openSubscriptionCheckout(p.id, planState.interval, 'signup');
   }
 
+  function signupCheckoutPlanName(plan){
+    var p = planById(normalizePlanId(plan || planState.selected || 'pro'));
+    return (p && p.name) || String(plan || 'Paid plan').replace(/^\w/, function(ch){ return ch.toUpperCase(); });
+  }
+
+  function renderSignupCheckoutNotice(plan, message){
+    var step = document.getElementById('step-7');
+    if(!step) return;
+    var old = document.getElementById('ob-signup-checkout-return');
+    if(old) old.remove();
+    var card = document.createElement('div');
+    card.id = 'ob-signup-checkout-return';
+    card.style.cssText = 'background:rgba(245,158,11,.10);border:1px solid rgba(245,158,11,.34);border-radius:14px;padding:16px 18px;margin:0 auto 18px;max-width:620px;text-align:left;color:var(--brown);';
+    card.innerHTML =
+      '<div style="font-weight:900;font-size:15px;margin-bottom:5px;">Stripe checkout was not completed</div>' +
+      '<div style="font-size:13px;line-height:1.55;color:var(--gray-500);">' +
+      esc(message || ('No payment was submitted, so ' + signupCheckoutPlanName(plan) + ' is not active yet. Continue to secure checkout again, or choose Starter to submit the account for admin approval.')) +
+      '</div>';
+    var launch = step.querySelector('.launch-screen');
+    if(launch) launch.insertBefore(card, launch.firstChild);
+    else step.insertBefore(card, step.firstChild);
+  }
+
+  function showSignupCheckoutReturn(plan, message){
+    plan = normalizePlanId(plan || sessionStorage.getItem('ob_signup_plan') || planState.selected || 'pro');
+    if(plan === 'starter') plan = 'pro';
+    try {
+      sessionStorage.setItem('ob_signup_plan', plan);
+      window._obSignupSelectedPlan = plan;
+    } catch(e) {}
+    if(typeof switchView === 'function') switchView(2);
+    if(typeof goStep === 'function') goStep(7);
+    renderSignupPlans();
+    patchSignupLaunch();
+    setSignupPlan(plan, sessionStorage.getItem('ob_signup_interval') || planState.interval || 'monthly');
+    renderSignupCheckoutNotice(plan, message);
+    updateSignupCta();
+    setTimeout(function(){ try { window.scrollTo(0, 0); } catch(e) {} }, 40);
+  }
+  window.obShowSignupCheckoutReturn = showSignupCheckoutReturn;
+
+  function handleSignupCheckoutReturnNotice(){
+    var q;
+    try { q = new URLSearchParams(location.search || ''); } catch(e) { return false; }
+    var status = q.get('billing');
+    var source = String(q.get('checkout_source') || '').toLowerCase();
+    var onSignup = String(location.pathname || '').replace(/\/+$/, '') === '/signup';
+    if(status !== 'cancelled' || (!onSignup && source !== 'signup')) return false;
+    showSignupCheckoutReturn(q.get('checkout_plan') || q.get('plan'), 'No payment was submitted, so the paid plan is not active. Continue to secure checkout again, or choose Starter to submit the account for admin approval.');
+    try {
+      var clean = new URL(location.href);
+      clean.searchParams.delete('billing');
+      clean.searchParams.delete('checkout_plan');
+      clean.searchParams.delete('checkout_source');
+      history.replaceState(history.state || {}, '', clean.pathname + clean.search + clean.hash);
+    } catch(e) {}
+    return true;
+  }
+
   function renderStarterPendingApproval(message){
     try {
       if(window.obClearLoginSession) window.obClearLoginSession();
@@ -28993,7 +29129,14 @@ window._handleRTCMessage=function(d){
     var p = planById(plan);
     showStripeRedirectNotice('Preparing Stripe Checkout', 'Ownlybiz is creating a secure checkout for ' + (p.name || plan) + '. Your plan activates only after Stripe confirms the subscription.');
     try {
-      var d = await obJson('/api/billing/checkout', {method:'POST', body:{plan:plan, interval:interval || planState.interval || 'monthly', return_path:dashboardReturnPath(source === 'signup' ? 'payments' : activeDashboardPanel() || 'payments')}});
+      var body = {
+        plan: plan,
+        interval: interval || planState.interval || 'monthly',
+        source: source || '',
+        return_path: dashboardReturnPath(source === 'signup' ? 'payments' : activeDashboardPanel() || 'payments')
+      };
+      if(source === 'signup') body.cancel_return_path = '/signup';
+      var d = await obJson('/api/billing/checkout', {method:'POST', body:body});
       if(d.url) {
         redirectToStripe(d.url, 'Opening Stripe Checkout', 'Stripe will securely collect your subscription payment. Your paid plan activates after Stripe confirms the subscription.');
         return d;
@@ -29421,6 +29564,7 @@ window._handleRTCMessage=function(d){
     try { q = new URLSearchParams(location.search || ''); } catch(e) { return; }
     var status = q.get('billing');
     if(!status) return;
+    if(status === 'cancelled' && (q.get('checkout_source') === 'signup' || String(location.pathname || '').replace(/\/+$/, '') === '/signup')) return;
     window._obBillingReturnHandled = true;
     if(status === 'success') toastOk('Stripe checkout complete. Finalizing your plan with Stripe...');
     else if(status === 'cancelled') toastErr('Checkout cancelled. Your current plan is unchanged.');
@@ -29443,11 +29587,50 @@ window._handleRTCMessage=function(d){
     }, 2200);
   }
 
+  function dashboardRouteActive(){
+    return /^\/dash\//.test(String(location.pathname || ''));
+  }
+  function incompleteSignupProfile(profile){
+    var approval = String(profile && profile.approval_status || '').toLowerCase();
+    var subscription = String(profile && profile.subscription_status || '').toLowerCase();
+    if(approval === 'draft' || approval === 'signup_incomplete') return true;
+    return approval !== 'approved' && (subscription === 'signup_draft' || subscription === 'checkout_pending' || subscription === 'checkout_expired');
+  }
+  var incompleteGuardBusy = false;
+  function guardIncompleteDashboardRoute(){
+    if(incompleteGuardBusy || !dashboardRouteActive() || !token() || currentBillingRole() !== 'expert') return false;
+    try {
+      var q = new URLSearchParams(location.search || '');
+      if(q.get('billing') === 'success') return false;
+    } catch(e) {}
+    incompleteGuardBusy = true;
+    obJson('/api/auth/me', {method:'GET'}).then(function(data){
+      var profile = data && data.profile || {};
+      if(!incompleteSignupProfile(profile)) return;
+      var plan = profile.subscription_pending_plan || profile.approval_plan || profile.subscription_plan || sessionStorage.getItem('ob_signup_plan') || 'pro';
+      try { history.replaceState(history.state || {}, '', '/signup'); } catch(e) {}
+      showSignupCheckoutReturn(plan, 'No paid subscription has been confirmed yet. Continue to secure checkout to activate Pro or Scale, or choose Starter to submit the account for admin approval.');
+    }).catch(function(){}).finally(function(){ incompleteGuardBusy = false; });
+    return true;
+  }
+  function installIncompleteDashboardGuard(){
+    if(!window.switchView || window.switchView._obIncompleteSignupGuardWrapped) return;
+    var previousSwitchView = window.switchView;
+    window.switchView = function(n){
+      var ret = previousSwitchView.apply(this, arguments);
+      if(Number(n) === 3) setTimeout(guardIncompleteDashboardRoute, 80);
+      return ret;
+    };
+    window.switchView._obIncompleteSignupGuardWrapped = true;
+  }
+
 	  function boot(){
 	    installBillingFirstPaintWrappers();
+	    installIncompleteDashboardGuard();
 	    renderDashboardBillingShell();
+	    var signupReturnHandled = handleSignupCheckoutReturnNotice();
 	    handleBillingReturnNotice();
-	    loadPlans().then(function(){ renderSignupPlans(); patchSignupLaunch(); updateSignupCta(); });
+	    loadPlans().then(function(){ renderSignupPlans(); patchSignupLaunch(); updateSignupCta(); if(signupReturnHandled) handleSignupCheckoutReturnNotice(); });
 	    setTimeout(function(){ var free = document.getElementById('free-min-val'); if(free && free.textContent === '1') free.textContent = '0'; }, 400);
 	    refreshBillingUi();
 	    renderAdminPlanConfig();
@@ -29461,6 +29644,7 @@ window._handleRTCMessage=function(d){
 	    }
 	    renderPresessionMedia();
     renderBookingOverlayMedia();
+    guardIncompleteDashboardRoute();
   }
   document.addEventListener('DOMContentLoaded', boot);
   setTimeout(boot, 600);
@@ -37559,7 +37743,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   }
   window.obRequestPasswordReset=function(){
     var emailEl=document.getElementById('mkt-login-email'); var email=(emailEl&&emailEl.value||'').trim(); if(!email) email=(prompt('Enter your Ownlybiz account email')||'').trim(); if(!email)return false;
-    nativeFetch(api('/api/auth/forgot-password'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:email})}).then(function(){var note=document.getElementById('mkt-login-status-note'); if(note){note.textContent='If that email exists, we sent a password reset link. Check Inbox, Spam, or Promotions.'; note.style.display='block';} else toast('If that email exists, we sent a password reset link.');}).catch(function(){toast('If that email exists, we sent a password reset link.');});
+    nativeFetch(api('/api/auth/forgot-password'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(Object.assign({email:email}, window.obClientSignupExpertContext ? window.obClientSignupExpertContext() : {}))}).then(function(){var note=document.getElementById('mkt-login-status-note'); if(note){note.textContent='If that email exists, we sent a password reset link. Check Inbox, Spam, or Promotions.'; note.style.display='block';} else toast('If that email exists, we sent a password reset link.');}).catch(function(){toast('If that email exists, we sent a password reset link.');});
     return false;
   };
 
@@ -38886,7 +39070,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
         '<div class="ob-email-center-hero">' +
           '<div class="ob-email-pill" id="ob-email-status-pill">Not configured</div>' +
           '<h2 style="margin:12px 0 8px;font-size:clamp(26px,4vw,38px);line-height:1.05;color:var(--text,#fffaf2);">Email Center</h2>' +
-          '<p style="margin:0;color:var(--text-mid,#b7aaa0);max-width:760px;line-height:1.6;">Client booking and session emails are sent only from your own email provider and your own verified domain. Ownlybiz account emails are separate and stay between Ownlybiz and experts. Start with Email Center Off, verify your sending domain in the provider, then enable the experiences you want.</p>' +
+          '<p style="margin:0;color:var(--text-mid,#b7aaa0);max-width:760px;line-height:1.6;">Client account, booking, and session emails are sent only from your own email provider and your own verified domain. Ownlybiz account emails stay between Ownlybiz and experts. Start with Email Center Off, verify your sending domain in the provider, then enable the experiences you want.</p>' +
         '</div>' +
         '<div class="ob-email-grid">' +
           '<section class="ob-email-card">' +
@@ -38908,6 +39092,8 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
             '<h3 style="margin:0 0 6px;color:var(--text,#fffaf2);">Enabled experiences</h3>' +
             '<p style="margin:0 0 16px;color:var(--text-mid,#b7aaa0);line-height:1.55;">Choose which client and expert emails should send once your provider is configured.</p>' +
             '<div class="ob-email-preferences">' +
+              toggleHtml('client_account_welcome','Client account welcome','Client gets your branded welcome email after creating an account on your site.') +
+              toggleHtml('client_email_verification','Client email verification','Client gets your branded verification link on your expert domain.') +
               toggleHtml('client_booking_requested','Client booking request received','Client gets the booking details right after requesting a session.') +
               toggleHtml('client_booking_confirmed','Client booking approved','Client gets the confirmed details, join link, and calendar link.') +
               toggleHtml('client_booking_declined','Client booking declined','Client gets a clear update when a booking is declined.') +
@@ -38923,7 +39109,8 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     return panel;
   }
   function toggleHtml(id,title,body){
-    return '<label class="ob-email-toggle"><input id="ob-email-pref-'+id+'" type="checkbox" checked><span><strong style="display:block;color:var(--text,#fffaf2);">'+esc(title)+'</strong><span style="display:block;color:var(--text-mid,#b7aaa0);font-size:13px;line-height:1.45;margin-top:3px;">'+esc(body)+'</span></span></label>';
+    var checked = (id === 'client_account_welcome' || id === 'client_email_verification') ? '' : ' checked';
+    return '<label class="ob-email-toggle"><input id="ob-email-pref-'+id+'" type="checkbox"'+checked+'><span><strong style="display:block;color:var(--text,#fffaf2);">'+esc(title)+'</strong><span style="display:block;color:var(--text-mid,#b7aaa0);font-size:13px;line-height:1.45;margin-top:3px;">'+esc(body)+'</span></span></label>';
   }
   function updateProviderUi(){
     ensureEmailCenterPanel();
@@ -38962,13 +39149,14 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     updateProviderUi();
   }
   function payload(){
-    return {
+    var data = {
       provider: provider(),
-      api_key: (byId('ob-email-api-key')||{}).value || '',
       from_name: (byId('ob-email-from-name')||{}).value || '',
       from_address: (byId('ob-email-from-address')||{}).value || '',
       mailgun_domain: (byId('ob-email-mailgun-domain')||{}).value || '',
       preferences: {
+        client_account_welcome: pref('client_account_welcome'),
+        client_email_verification: pref('client_email_verification'),
         client_booking_requested: pref('client_booking_requested'),
         client_booking_confirmed: pref('client_booking_confirmed'),
         client_booking_declined: pref('client_booking_declined'),
@@ -38978,6 +39166,9 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
         reviews: pref('reviews')
       }
     };
+    var apiKey = ((byId('ob-email-api-key')||{}).value || '').trim();
+    if(apiKey) data.api_key = apiKey;
+    return data;
   }
   window.loadExpertEmailCenter = function(){
     ensureEmailCenterPanel();
@@ -38994,16 +39185,16 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     if(!tok){ toastSafe('Please log in first','err'); return; }
     var status = byId('ob-email-center-status');
     var data = payload();
+    var domainWarning = false;
     if(data.provider !== 'off') {
       var fromDomain = emailDomainFromValue(data.from_address);
       var mailgunDomain = String(data.mailgun_domain || '').trim().toLowerCase().replace(/\.$/,'');
       if(isOwnlybizDomain(fromDomain) || (data.provider === 'mailgun' && isOwnlybizDomain(mailgunDomain))) {
-        if(status) status.textContent = ownDomainError();
-        toastSafe(ownDomainError(),'err');
-        return;
+        domainWarning = true;
+        if(status) status.textContent = ownDomainError() + ' Settings can still be saved, but provider tests and client sends will stay unavailable until this is fixed.';
       }
     }
-    if(status) status.textContent = 'Saving...';
+    if(status && !domainWarning) status.textContent = 'Saving...';
     fetch(BASE+'/api/experts/me/email-center',{
       method:'PUT',
       headers:{'Content-Type':'application/json',Authorization:'Bearer '+tok},
@@ -40751,6 +40942,29 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   body.ob-ui-dark .ob-help-ai-chip,
   body.ob-ui-dark .ob-help-ai-input { background:rgba(255,250,240,.08); border-color:rgba(255,250,240,.16); color:#faf7f2; }
   body.ob-ui-dark .ob-ai-help-panel { background:#fffdf8; color:#241813; }
+  #ob-prod-help-center-modal .ob-help-ai {
+    background:#fffdf8;
+    border-color:rgba(36,24,19,.10);
+    color:#241813;
+  }
+  #ob-prod-help-center-modal .ob-help-ai-kicker { color:#9b451d; }
+  #ob-prod-help-center-modal .ob-help-ai-title { color:#241813; }
+  #ob-prod-help-center-modal .ob-help-ai-copy,
+  #ob-prod-help-center-modal .ob-help-ai-empty { color:rgba(36,24,19,.66); }
+  #ob-prod-help-center-modal .ob-help-ai-msg.assistant {
+    background:rgba(122,140,110,.12);
+    color:#2e2119;
+  }
+  #ob-prod-help-center-modal .ob-help-ai-msg.user {
+    background:#241813;
+    color:#fffaf2;
+  }
+  #ob-prod-help-center-modal .ob-help-ai-chip,
+  #ob-prod-help-center-modal .ob-help-ai-input {
+    background:#fff;
+    border-color:rgba(36,24,19,.14);
+    color:#241813;
+  }
   @media(max-width:860px){
     .ob-ai-admin-grid,
     .ob-ai-admin-two,
@@ -41012,11 +41226,6 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     }
   }
 
-  function aiStatusBadge(statusData){
-    if(!statusData || !statusData.enabled) return '<span class="ob-help-ai-badge warn">AI unavailable</span>';
-    if(!statusData.configured) return '<span class="ob-help-ai-badge warn">AI unavailable</span>';
-    return '<span class="ob-help-ai-badge">AI ready</span>';
-  }
   function renderAiLog(){
     var log = document.getElementById('ob-help-ai-log');
     if(!log) return;
@@ -41029,7 +41238,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   }
   function helpAiHtml(statusData){
     return '<section class="ob-help-ai" id="ob-help-ai">' +
-      '<div class="ob-help-ai-head"><div><div class="ob-help-ai-kicker">AI assistant</div><div class="ob-help-ai-title">Ask anything about running your Ownlybiz practice.</div><p class="ob-help-ai-copy">The assistant reads your own dashboard context and explains the best next click or admin request. It cannot change settings or reveal private admin information.</p></div>'+aiStatusBadge(statusData)+'</div>' +
+      '<div class="ob-help-ai-head"><div><div class="ob-help-ai-kicker">AI assistant</div><div class="ob-help-ai-title">Ask anything about running your Ownlybiz practice.</div><p class="ob-help-ai-copy">The assistant reads your own dashboard context and explains the best next click or admin request. It cannot change settings or reveal private admin information.</p></div></div>' +
       '<div class="ob-help-ai-log" id="ob-help-ai-log"></div>' +
       '<div class="ob-help-ai-chips"><button class="ob-help-ai-chip" type="button" data-ob-ai-chip="What should I improve on my dashboard today?">Improve my dashboard</button><button class="ob-help-ai-chip" type="button" data-ob-ai-chip="Help me understand my bookings">Bookings</button><button class="ob-help-ai-chip" type="button" data-ob-ai-chip="How do charges and payouts work for me?">Charges and payouts</button><button class="ob-help-ai-chip" type="button" data-ob-ai-chip="Help me improve my website">Website help</button><button class="ob-help-ai-chip" type="button" data-ob-ai-chip="Help me set up Email Center">Email Center</button><button class="ob-help-ai-chip" type="button" data-ob-ai-ticket="1">Ask admin</button></div>' +
       '<form class="ob-help-ai-form" id="ob-help-ai-form"><input class="ob-help-ai-input" id="ob-help-ai-input" autocomplete="off" placeholder="Ask the Ownlybiz assistant..."><button class="ob-help-ai-send" type="submit">'+(aiBusy?'Thinking...':'Send')+'</button></form>' +
@@ -42615,9 +42824,14 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     var parts = path.split('/').filter(Boolean);
     var host = String(location.hostname || '').toLowerCase();
     var sub = host.match(/^([^.]+)\.ownlybiz\.com$/i);
+    var platformish = host === 'ownlybiz.com' || host === 'www.ownlybiz.com' || host === 'localhost' || host === '127.0.0.1' || host.indexOf('vercel.app') >= 0;
     var reserved = {home:1,about:1,services:1,reviews:1,book:1,booking:1,contact:1,account:1,login:1,signup:1,admin:1,dash:1};
     var candidate = '';
     if(sub && sub[1] && sub[1] !== 'www' && parts[0]) candidate = parts[0];
+    else if(!platformish && parts[0]) {
+      var expertSlug = safeSlug((window._currentExpert && (window._currentExpert.slug || window._currentExpert.user_slug)) || window._browseExpert || '');
+      candidate = (expertSlug && parts[0] === expertSlug && parts[1]) ? parts[1] : parts[0];
+    }
     else if(parts.length > 1) candidate = parts[1];
     candidate = safeSlug(candidate);
     return candidate && !reserved[candidate] ? candidate : '';
@@ -42627,7 +42841,8 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     if(!slug) return '#';
     var host = String(location.hostname || '').toLowerCase();
     var sub = host.match(/^([^.]+)\.ownlybiz\.com$/i);
-    if(sub && sub[1] && sub[1] !== 'www') return '/' + slug;
+    var platformish = host === 'ownlybiz.com' || host === 'www.ownlybiz.com' || host === 'localhost' || host === '127.0.0.1' || host.indexOf('vercel.app') >= 0;
+    if((sub && sub[1] && sub[1] !== 'www') || !platformish) return '/' + slug;
     var expertSlug = (window._currentExpert && (window._currentExpert.slug || window._currentExpert.user_slug)) || window._browseExpert || '';
     expertSlug = safeSlug(expertSlug) || String(location.pathname || '').replace(/^\/+|\/+$/g,'').split('/')[0] || '';
     return '/' + expertSlug + '/' + slug;
@@ -43985,30 +44200,70 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       else area.insertAdjacentHTML('afterbegin', html);
     }).catch(function(){});
   }
-  function expertAiPreferenceCard(){
-    if(!hasExpertAuth()){
-      var stale = document.getElementById('ob-expert-ai-pref-card');
-      if(stale) stale.remove();
-      return;
-    }
-    var host = document.querySelector('#db-panel-overview .db-content') || document.querySelector('#db-panel-settings .db-content');
-    if(!host) return;
-    api('/ai/expert-chat/status').then(function(d){
-      var existing = document.getElementById('ob-expert-ai-pref-card');
-      if(!d.eligible && !d.admin_enabled){ if(existing) existing.remove(); return; }
-      var active = !!d.enabled;
-      var fullyAi = d.mode === 'fully_ai';
-      var autoOn = !!d.auto_accept_chat_requests;
-      var autoEffective = !!d.auto_accept_chat_effective;
-      var autoDisabled = active && fullyAi ? '' : 'disabled';
-      var autoSub = active && fullyAi
-        ? (autoEffective ? 'New chat requests start automatically. Voice and video still require accept.' : 'Let Fully AI start paid chat requests without the popup.')
-        : 'Available only when AI chat is enabled in Fully AI auto-reply mode.';
-      var html = '<div id="ob-expert-ai-pref-card" class="db-card" style="padding:16px;margin-bottom:16px;display:flex;flex-direction:column;gap:14px;"><div style="display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;"><div><div style="font-size:13px;font-weight:900;color:var(--brown);">AI chat replies</div><div style="font-size:12px;color:var(--gray-400);margin-top:3px;">' + (fullyAi ? 'Auto-reply mode' : 'Draft suggestion mode') + '</div></div><label style="display:flex;align-items:center;gap:8px;font-weight:800;color:var(--brown);"><input type="checkbox" '+(active?'checked':'')+' onchange="obExpertAiToggle(this.checked)"> Enabled</label></div><div style="border-top:1px solid var(--gray-200);padding-top:12px;display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;"><div><div style="font-size:13px;font-weight:900;color:var(--brown);">Auto-accept chat requests</div><div style="font-size:12px;color:var(--gray-400);margin-top:3px;">'+autoSub+'</div></div><label style="display:flex;align-items:center;gap:8px;font-weight:800;color:var(--brown);opacity:'+(autoDisabled?'.55':'1')+';"><input type="checkbox" '+(autoOn?'checked':'')+' '+autoDisabled+' onchange="obExpertAiAutoAcceptToggle(this.checked)"> Enabled</label></div></div>';
-      if(existing) existing.outerHTML = html;
-      else host.insertAdjacentHTML('afterbegin', html);
-    }).catch(function(){});
-  }
+	  function expertAiPreferenceCard(){
+	    if(!hasExpertAuth()){
+	      var stale = document.getElementById('ob-expert-ai-pref-card');
+	      if(stale) stale.remove();
+	      return;
+	    }
+		    var host = document.getElementById('ob-expert-ai-settings-host') || document.querySelector('#sblock-ai') || document.querySelector('#db-panel-settings .db-content') || document.querySelector('#db-panel-overview .db-content');
+		    if(!host) return;
+		    api('/ai/expert-chat/status').then(function(d){
+		      var existing = document.getElementById('ob-expert-ai-pref-card');
+		      if(!d.eligible && !d.admin_enabled){ if(existing) existing.remove(); return; }
+		      if(existing && existing.parentNode !== host){ existing.remove(); existing = null; }
+		      if(existing && (existing.getAttribute('data-dirty') === '1' || existing.contains(document.activeElement))) return;
+	      var active = !!d.enabled;
+	      var fullyAi = d.mode === 'fully_ai';
+	      var autoOn = !!d.auto_accept_chat_requests;
+	      var autoEffective = !!d.auto_accept_chat_effective;
+	      var autoDisabled = active && fullyAi ? '' : 'disabled';
+	      var autoSub = active && fullyAi
+	        ? (autoEffective ? 'New chat requests start automatically. Voice and video still require accept.' : 'Let Fully AI start paid chat requests without the popup.')
+	        : 'Available only when AI chat is enabled in Fully AI auto-reply mode.';
+	      var learnedUpdated = d.learned_guidance_updated_at ? when(d.learned_guidance_updated_at) : 'Not yet';
+	      var learnedMeta = d.learned_guidance
+	        ? ('Updated ' + learnedUpdated + (d.learned_guidance_events ? ' from ' + Number(d.learned_guidance_events) + ' learning pass' + (Number(d.learned_guidance_events) === 1 ? '' : 'es') : ''))
+	        : 'No learned notes yet.';
+	      var learnedBlock = d.learned_guidance
+	        ? '<div style="white-space:pre-wrap;font-size:12px;line-height:1.5;color:var(--gray-600);background:rgba(122,140,110,.08);border:1px solid var(--gray-200);border-radius:8px;padding:10px;max-height:170px;overflow:auto;">' + safe(d.learned_guidance) + '</div>'
+	        : '<div style="font-size:12px;color:var(--gray-400);background:rgba(0,0,0,.03);border:1px solid var(--gray-200);border-radius:8px;padding:10px;">The AI will add private notes from this expert account after useful expert-client chat replies.</div>';
+	      var clearLearned = d.learned_guidance ? '<button type="button" class="ob-credit-btn secondary" style="font-size:11px;padding:7px 10px;" onclick="obExpertAiClearLearnedGuidance()">Clear learned notes</button>' : '';
+		      var html = '<div id="ob-expert-ai-pref-card" class="db-card" style="padding:16px;margin-bottom:16px;display:flex;flex-direction:column;gap:14px;">'
+	        + '<div style="display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;"><div><div style="font-size:13px;font-weight:900;color:var(--brown);">AI chat replies</div><div style="font-size:12px;color:var(--gray-400);margin-top:3px;">' + (fullyAi ? 'Auto-reply mode' : 'Draft suggestion mode') + '</div></div><label style="display:flex;align-items:center;gap:8px;font-weight:800;color:var(--brown);"><input type="checkbox" '+(active?'checked':'')+' onchange="obExpertAiToggle(this.checked)"> Enabled</label></div>'
+	        + '<div style="border-top:1px solid var(--gray-200);padding-top:12px;display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;"><div><div style="font-size:13px;font-weight:900;color:var(--brown);">Auto-accept chat requests</div><div style="font-size:12px;color:var(--gray-400);margin-top:3px;">'+autoSub+'</div></div><label style="display:flex;align-items:center;gap:8px;font-weight:800;color:var(--brown);opacity:'+(autoDisabled?'.55':'1')+';"><input type="checkbox" '+(autoOn?'checked':'')+' '+autoDisabled+' onchange="obExpertAiAutoAcceptToggle(this.checked)"> Enabled</label></div>'
+	        + '<div style="border-top:1px solid var(--gray-200);padding-top:12px;display:flex;flex-direction:column;gap:8px;"><div><div style="font-size:13px;font-weight:900;color:var(--brown);">AI training</div><div style="font-size:12px;color:var(--gray-400);margin-top:3px;">Private guidance for this expert account only.</div></div><textarea id="ob-expert-ai-guidance" rows="5" oninput="obExpertAiMarkGuidanceDirty()" placeholder="Tone, boundaries, FAQs, preferred wording, services, or policies..." style="width:100%;box-sizing:border-box;border:1px solid var(--gray-200);border-radius:8px;padding:10px;font:inherit;font-size:13px;line-height:1.45;resize:vertical;color:var(--brown);background:#fff;">' + safe(d.expert_guidance || '') + '</textarea><div style="display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;"><button type="button" class="ob-credit-btn primary" style="font-size:12px;padding:8px 12px;" onclick="obExpertAiSaveGuidance()">Save guidance</button></div></div>'
+	        + '<div style="border-top:1px solid var(--gray-200);padding-top:12px;display:flex;flex-direction:column;gap:8px;"><div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-wrap:wrap;"><div><div style="font-size:13px;font-weight:900;color:var(--brown);">Learned notes</div><div style="font-size:12px;color:var(--gray-400);margin-top:3px;">' + safe(learnedMeta) + '</div></div>' + clearLearned + '</div>' + learnedBlock + '</div>'
+	        + '</div>';
+		      if(existing) existing.outerHTML = html;
+		      else host.insertAdjacentHTML('afterbegin', html);
+		    }).catch(function(){});
+		  }
+		  window.obExpertAiPreferenceCard = expertAiPreferenceCard;
+	  window.obExpertAiMarkGuidanceDirty = function(){
+	    var card = document.getElementById('ob-expert-ai-pref-card');
+	    if(card) card.setAttribute('data-dirty', '1');
+	  };
+	  window.obExpertAiSaveGuidance = function(){
+	    if(!hasExpertAuth()){ notify('Please sign in to update AI training.', 'err'); return; }
+	    var field = document.getElementById('ob-expert-ai-guidance');
+	    var value = field ? field.value : '';
+	    api('/ai/expert-chat/status', {method:'PUT', body:{expert_guidance:value}}).then(function(){
+	      var card = document.getElementById('ob-expert-ai-pref-card');
+	      if(card) card.setAttribute('data-dirty', '0');
+	      notify('AI guidance saved.', 'ok');
+	      setTimeout(function(){ expertAiChatPanel(); expertAiPreferenceCard(); }, 250);
+	    }).catch(function(err){ notify(err.message || 'Could not save AI guidance.', 'err'); });
+	  };
+	  window.obExpertAiClearLearnedGuidance = function(){
+	    if(!hasExpertAuth()){ notify('Please sign in to update AI training.', 'err'); return; }
+	    if(window.confirm && !window.confirm('Clear learned notes for this expert account?')) return;
+	    api('/ai/expert-chat/status', {method:'PUT', body:{clear_learned_guidance:true}}).then(function(){
+	      var card = document.getElementById('ob-expert-ai-pref-card'); if(card) card.remove();
+	      notify('Learned notes cleared.', 'ok');
+	      setTimeout(function(){ expertAiChatPanel(); expertAiPreferenceCard(); }, 250);
+	    }).catch(function(err){ notify(err.message || 'Could not clear learned notes.', 'err'); });
+	  };
   window.obExpertAiToggle = function(enabled){
     if(!hasExpertAuth()){ notify('Please sign in to update AI chat.', 'err'); return; }
     var body = {expert_enabled:!!enabled};
@@ -47116,6 +47371,8 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   var BASE = String(window.OWNLYBIZ_API_URL || window._OB_BACKEND || 'https://ownlybiz-backend-production.up.railway.app').replace(/\/+$/,'');
   var tabs = [
     ['overview','Overview'],
+    ['map','Flow Map'],
+    ['transactional','Transactional'],
     ['contacts','Contacts & Lists'],
     ['journeys','Journeys'],
     ['campaigns','Campaigns'],
@@ -47188,6 +47445,8 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     var lock = lockedHtml();
     if(lock) return lock;
     if(state.tab === 'contacts') return contactsHtml();
+    if(state.tab === 'map') return mapHtml();
+    if(state.tab === 'transactional') return transactionalHtml();
     if(state.tab === 'journeys') return journeysHtml();
     if(state.tab === 'campaigns') return campaignsHtml();
     if(state.tab === 'templates') return templatesHtml();
@@ -47222,10 +47481,62 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       + tr('Unsubscribe footer', consent.unsubscribe_required ? 'Required' : 'Missing')
       + tr('Suppression check', consent.suppressed_contacts_blocked ? 'Enabled' : 'Off')
       + tr('Platform fallback', consent.provider_only ? 'Blocked' : 'Allowed')
-      + '</tbody></table></div></div>';
+      + '</tbody></table></div></div>'
+      + '<div style="margin-top:14px">'+mapHtml(true)+'</div>';
   }
   function stat(label, value){ return '<div class="ob-ec-v1-stat"><span>'+esc(label)+'</span><b>'+esc(value == null ? 0 : value)+'</b></div>'; }
   function tr(a,b){ return '<tr><td>'+esc(a)+'</td><td>'+esc(b)+'</td></tr>'; }
+  function scenarioList(){
+    var o = state.overview || {};
+    return o.email_scenarios || o.scenarios || (o.scenario_map && o.scenario_map.scenarios) || [];
+  }
+  function scenarioMapRows(){
+    var o = state.overview || {};
+    return o.scenario_map && o.scenario_map.map || scenarioList();
+  }
+  function senderLabel(sender){
+    sender = String(sender || '');
+    if(sender === 'expert_provider') return 'Expert provider';
+    if(sender === 'ownlybiz_platform_cobranded') return 'Ownlybiz co-branded';
+    return 'Ownlybiz platform';
+  }
+  function mapHtml(compact){
+    var rows = scenarioMapRows();
+    if(!rows.length) return '<div class="ob-ec-v1-empty">No email flow map is available yet.</div>';
+    return '<div class="ob-ec-v1-box"><h3>'+ (compact ? 'Current Sending Map' : 'Email Flow Map') +'</h3><table class="ob-ec-v1-table"><thead><tr><th>Cycle</th><th>Audience</th><th>Sender</th><th>Type</th><th>Status</th></tr></thead><tbody>'
+      + rows.map(function(s){ return '<tr><td><strong>'+esc(s.name || s.key)+'</strong><div class="ob-ec-v1-small">'+esc(s.category || '')+(s.preference_key ? ' · setting: '+esc(s.preference_key) : '')+'</div></td><td>'+esc(s.audience || '')+'</td><td>'+esc(senderLabel(s.sender))+'</td><td>'+esc(s.marketing ? 'Marketing' : 'Transactional')+(s.unsubscribe_applicable ? '<div class="ob-ec-v1-small">unsubscribe required</div>' : '')+'</td><td>'+esc(s.enabled ? 'On' : 'Off')+'</td></tr>'; }).join('')
+      + '</tbody></table></div>';
+  }
+  function idSafe(key){ return String(key || '').replace(/[^a-z0-9_-]/gi,'_'); }
+  function fieldId(key, field){ return 'ob-ec-scenario-'+idSafe(key)+'-'+field; }
+  function scenarioField(key, field, label, value, textarea){
+    return '<label>'+esc(label)+(textarea ? '<textarea id="'+fieldId(key,field)+'">'+esc(value||'')+'</textarea>' : '<input id="'+fieldId(key,field)+'" value="'+esc(value||'')+'">')+'</label>';
+  }
+  function scenarioCard(s){
+    var key = s.key;
+    var f = s.fields || {};
+    var detail = s.marketing ? 'Marketing · unsubscribe required' : 'Transactional';
+    return '<details class="ob-ec-v1-box" style="margin-bottom:10px" '+(s.key==='live_session_accepted_to_client'?'open':'')+'><summary style="cursor:pointer;display:flex;gap:10px;align-items:center;justify-content:space-between;"><span><strong>'+esc(s.name || key)+'</strong><span class="ob-ec-v1-small" style="display:block">'+esc(s.category || '')+' · '+esc(senderLabel(s.sender))+' · '+esc(detail)+'</span></span><span class="ob-ec-v1-badge '+(s.enabled?'ready':'')+'">'+esc(s.enabled?'On':'Off')+'</span></summary>'
+      + '<div class="ob-ec-v1-form" style="margin-top:12px">'
+      + '<label style="display:flex;grid-template-columns:none;gap:9px;align-items:center;text-transform:none;letter-spacing:0;font-size:13px;font-weight:800;color:var(--text,#fffaf2)"><input id="'+fieldId(key,'enabled')+'" type="checkbox" '+(s.enabled?'checked':'')+' style="width:18px;min-height:18px"> Enabled for this cycle</label>'
+      + scenarioField(key,'subject','Subject',f.subject)
+      + scenarioField(key,'preheader','Preheader',f.preheader)
+      + scenarioField(key,'eyebrow','Eyebrow',f.eyebrow)
+      + scenarioField(key,'title','Title',f.title)
+      + scenarioField(key,'subtitle','Header subtitle',f.subtitle)
+      + scenarioField(key,'image_url','Email image URL',f.image_url)
+      + scenarioField(key,'body_html','Body HTML',f.body_html,true)
+      + scenarioField(key,'cta_label','CTA label',f.cta_label)
+      + scenarioField(key,'cta_url','CTA URL',f.cta_url)
+      + scenarioField(key,'footer_text','Footer text',f.footer_text,true)
+      + '<div class="ob-ec-v1-actions"><button class="ob-ec-v1-btn primary" type="button" onclick="window.OBEmailCenterV1.saveScenario(\''+esc(key)+'\')">Save email elements</button></div>'
+      + '</div></details>';
+  }
+  function transactionalHtml(){
+    var scenarios = scenarioList().filter(function(s){ return !s.marketing; });
+    if(!scenarios.length) return '<div class="ob-ec-v1-empty">No transactional cycles found.</div>';
+    return '<div class="ob-ec-v1-two"><div>'+scenarios.map(scenarioCard).join('')+'</div><div>'+mapHtml(true)+'<div class="ob-ec-v1-box" style="margin-top:12px"><h3>Editing rule</h3><div class="ob-ec-v1-small">If an image or text field is empty, Ownlybiz uses the default element for that email. Marketing journeys and newsletters still require explicit opt-in and unsubscribe handling.</div></div></div></div>';
+  }
   function contactsHtml(){
     var contacts = state.contacts || [];
     var lists = state.lists || [];
@@ -47292,17 +47603,19 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     var p = o.provider || {};
     var s = o.settings || {};
     var prefs = o.preferences || {};
-    return '<div class="ob-ec-v1-two"><div class="ob-ec-v1-box"><h3>Provider Setup</h3><div class="ob-ec-v1-form"><label>Provider<select id="ob-ec-provider"><option value="off">Off</option><option value="resend">Resend</option><option value="postmark">Postmark</option><option value="sendgrid">SendGrid</option><option value="mailgun">Mailgun</option><option value="smtp">SMTP</option></select></label><label>API key<input id="ob-ec-api-key" type="password" placeholder="'+esc(p.api_key_masked || '')+'"></label><label>From name<input id="ob-ec-from-name" value="'+esc(p.from_name || '')+'"></label><label>From email<input id="ob-ec-from-address" value="'+esc(p.from_address || '')+'"></label><label>Mailgun domain<input id="ob-ec-mailgun-domain" value="'+esc(p.mailgun_domain || '')+'"></label><label>Unsubscribe footer<textarea id="ob-ec-footer">'+esc(s.unsubscribe_footer || '')+'</textarea></label><h3>Transactional toggles</h3>'+settingToggle('client_booking_requested','Client booking requested',prefs)+settingToggle('client_booking_confirmed','Client booking confirmed',prefs)+settingToggle('client_booking_declined','Client booking declined',prefs)+settingToggle('expert_new_booking','Expert new booking alert',prefs)+settingToggle('expert_client_joined','Expert client joined alert',prefs)+settingToggle('session_requests','Live request emails',prefs)+settingToggle('reviews','Review emails',prefs)+'<div class="ob-ec-v1-actions"><button class="ob-ec-v1-btn primary" onclick="window.OBEmailCenterV1.saveSettings()">Save settings</button><button class="ob-ec-v1-btn" onclick="window.OBEmailCenterV1.testProvider()">Send provider test</button></div></div></div><div class="ob-ec-v1-box"><h3>Sending Caps</h3><div class="ob-ec-v1-grid">'+stat('Per minute',s.send_cap_minute||10)+stat('Per hour',s.send_cap_hour||100)+stat('Per day',s.send_cap_day||500)+'</div></div></div>';
+    return '<div class="ob-ec-v1-two"><div class="ob-ec-v1-box"><h3>Provider Setup</h3><div class="ob-ec-v1-form"><label>Provider<select id="ob-ec-provider"><option value="off">Off</option><option value="resend">Resend</option><option value="postmark">Postmark</option><option value="sendgrid">SendGrid</option><option value="mailgun">Mailgun</option><option value="smtp">SMTP</option></select></label><label>API key<input id="ob-ec-api-key" type="password" placeholder="'+esc(p.api_key_masked || '')+'"></label><label>From name<input id="ob-ec-from-name" value="'+esc(p.from_name || '')+'"></label><label>From email<input id="ob-ec-from-address" value="'+esc(p.from_address || '')+'"></label><label>Mailgun domain<input id="ob-ec-mailgun-domain" value="'+esc(p.mailgun_domain || '')+'"></label><label>Unsubscribe footer<textarea id="ob-ec-footer">'+esc(s.unsubscribe_footer || '')+'</textarea></label><h3>Transactional toggles</h3>'+settingToggle('client_account_welcome','Client account welcome',prefs)+settingToggle('client_email_verification','Client email verification',prefs)+settingToggle('client_booking_requested','Client booking requested',prefs)+settingToggle('client_booking_confirmed','Client booking confirmed',prefs)+settingToggle('client_booking_declined','Client booking declined',prefs)+settingToggle('expert_new_booking','Expert new booking alert',prefs)+settingToggle('expert_client_joined','Expert client joined alert',prefs)+settingToggle('session_requests','Live request emails',prefs)+settingToggle('reviews','Review emails',prefs)+'<div class="ob-ec-v1-actions"><button class="ob-ec-v1-btn primary" onclick="window.OBEmailCenterV1.saveSettings()">Save settings</button><button class="ob-ec-v1-btn" onclick="window.OBEmailCenterV1.testProvider()">Send provider test</button></div></div></div><div class="ob-ec-v1-box"><h3>Sending Caps</h3><div class="ob-ec-v1-grid">'+stat('Per minute',s.send_cap_minute||10)+stat('Per hour',s.send_cap_hour||100)+stat('Per day',s.send_cap_day||500)+'</div></div></div>';
   }
   function settingToggle(id,label,prefs){
-    var checked = prefs[id] !== false ? ' checked' : '';
+    var hasValue = prefs && Object.prototype.hasOwnProperty.call(prefs, id);
+    var defaultOn = id !== 'client_account_welcome' && id !== 'client_email_verification';
+    var checked = (hasValue ? prefs[id] !== false : defaultOn) ? ' checked' : '';
     return '<label style="display:flex;grid-template-columns:none;gap:9px;align-items:flex-start;text-transform:none;letter-spacing:0;font-size:13px;font-weight:800;color:var(--text,#fffaf2)"><input id="ob-ec-pref-'+esc(id)+'" type="checkbox"'+checked+' style="width:18px;min-height:18px;margin-top:1px"> '+esc(label)+'</label>';
   }
   function loadOverview(){
     return api('/overview').then(function(d){ state.overview = d.overview || {}; });
   }
   function loadTabData(){
-    if(state.tab === 'overview' || state.tab === 'settings') return loadOverview();
+    if(state.tab === 'overview' || state.tab === 'settings' || state.tab === 'map' || state.tab === 'transactional') return loadOverview();
     if(state.tab === 'contacts') return Promise.all([api('/contacts'),api('/lists')]).then(function(r){ state.contacts=r[0].contacts||[]; state.lists=r[1].lists||[]; });
     if(state.tab === 'templates') return api('/templates').then(function(d){ state.templates=d.templates||[]; });
     if(state.tab === 'campaigns') return Promise.all([api('/campaigns'),api('/templates'),api('/lists')]).then(function(r){ state.campaigns=r[0].campaigns||[]; state.templates=r[1].templates||[]; state.lists=r[2].lists||[]; });
@@ -47341,7 +47654,45 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     createLifecycle: function(key){ api('/lifecycles',{method:'POST',body:{preset_key:key}}).then(function(){ setStatus('Lifecycle draft created.','ok'); open('journeys'); }).catch(function(e){ setStatus(e.message,'err'); }); },
     lifecycle: function(id, action){ api('/lifecycles/'+encodeURIComponent(id)+'/'+action,{method:'POST',body:{}}).then(function(){ setStatus(action === 'activate' ? 'Lifecycle activated.' : 'Lifecycle paused.','ok'); open('journeys'); }).catch(function(e){ setStatus(e.message,'err'); }); },
     generateAi: function(){ api('/ai/generate',{method:'POST',body:{kind:val('ob-ec-ai-kind'),prompt:val('ob-ec-ai-prompt')}}).then(function(d){ state.ai=d; setStatus('AI draft generated.','ok'); render(); }).catch(function(e){ setStatus(e.message,'err'); }); },
-    saveSettings: function(){ api('/settings',{method:'PUT',body:{provider:val('ob-ec-provider'),api_key:val('ob-ec-api-key'),from_name:val('ob-ec-from-name'),from_address:val('ob-ec-from-address'),mailgun_domain:val('ob-ec-mailgun-domain'),unsubscribe_footer:val('ob-ec-footer'),preferences:{client_booking_requested:!!($('ob-ec-pref-client_booking_requested')&&$('ob-ec-pref-client_booking_requested').checked),client_booking_confirmed:!!($('ob-ec-pref-client_booking_confirmed')&&$('ob-ec-pref-client_booking_confirmed').checked),client_booking_declined:!!($('ob-ec-pref-client_booking_declined')&&$('ob-ec-pref-client_booking_declined').checked),expert_new_booking:!!($('ob-ec-pref-expert_new_booking')&&$('ob-ec-pref-expert_new_booking').checked),expert_client_joined:!!($('ob-ec-pref-expert_client_joined')&&$('ob-ec-pref-expert_client_joined').checked),session_requests:!!($('ob-ec-pref-session_requests')&&$('ob-ec-pref-session_requests').checked),reviews:!!($('ob-ec-pref-reviews')&&$('ob-ec-pref-reviews').checked)}}}).then(function(){ setStatus('Settings saved.','ok'); open('settings'); }).catch(function(e){ setStatus(e.message,'err'); }); },
+    saveScenario: function(key){
+      var body = {
+        enabled: !!($(fieldId(key,'enabled')) && $(fieldId(key,'enabled')).checked),
+        subject: val(fieldId(key,'subject')),
+        preheader: val(fieldId(key,'preheader')),
+        eyebrow: val(fieldId(key,'eyebrow')),
+        title: val(fieldId(key,'title')),
+        subtitle: val(fieldId(key,'subtitle')),
+        image_url: val(fieldId(key,'image_url')),
+        body_html: val(fieldId(key,'body_html')),
+        cta_label: val(fieldId(key,'cta_label')),
+        cta_url: val(fieldId(key,'cta_url')),
+        footer_text: val(fieldId(key,'footer_text'))
+      };
+      api('/scenarios/'+encodeURIComponent(key),{method:'PUT',body:body}).then(function(){ setStatus('Email elements saved.','ok'); open(state.tab); }).catch(function(e){ setStatus(e.message,'err'); });
+    },
+    saveSettings: function(){
+      var body = {
+        provider: val('ob-ec-provider'),
+        from_name: val('ob-ec-from-name'),
+        from_address: val('ob-ec-from-address'),
+        mailgun_domain: val('ob-ec-mailgun-domain'),
+        unsubscribe_footer: val('ob-ec-footer'),
+        preferences: {
+          client_account_welcome: !!($('ob-ec-pref-client_account_welcome') && $('ob-ec-pref-client_account_welcome').checked),
+          client_email_verification: !!($('ob-ec-pref-client_email_verification') && $('ob-ec-pref-client_email_verification').checked),
+          client_booking_requested: !!($('ob-ec-pref-client_booking_requested') && $('ob-ec-pref-client_booking_requested').checked),
+          client_booking_confirmed: !!($('ob-ec-pref-client_booking_confirmed') && $('ob-ec-pref-client_booking_confirmed').checked),
+          client_booking_declined: !!($('ob-ec-pref-client_booking_declined') && $('ob-ec-pref-client_booking_declined').checked),
+          expert_new_booking: !!($('ob-ec-pref-expert_new_booking') && $('ob-ec-pref-expert_new_booking').checked),
+          expert_client_joined: !!($('ob-ec-pref-expert_client_joined') && $('ob-ec-pref-expert_client_joined').checked),
+          session_requests: !!($('ob-ec-pref-session_requests') && $('ob-ec-pref-session_requests').checked),
+          reviews: !!($('ob-ec-pref-reviews') && $('ob-ec-pref-reviews').checked)
+        }
+      };
+      var apiKey = val('ob-ec-api-key').trim();
+      if(apiKey) body.api_key = apiKey;
+      api('/settings',{method:'PUT',body:body}).then(function(){ setStatus('Settings saved.','ok'); open('settings'); }).catch(function(e){ setStatus(e.message,'err'); });
+    },
     testProvider: function(){ api('/settings/test',{method:'POST',body:{}}).then(function(d){ setStatus('Test sent to '+(d.to||'your email')+'.','ok'); open('settings'); }).catch(function(e){ setStatus(e.message,'err'); }); }
   };
   window.OBEmailCenterV1 = apiObj;
@@ -47365,6 +47716,159 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     if(panel && panel.classList.contains('active')) open(state.tab || 'overview');
   }
   if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded',boot); else boot();
+})();
+</script>
+<style id="ownlybiz-admin-email-center-css">
+  .ob-admin-ec-shell{max-width:1180px;margin:0 auto;padding:0 0 36px;color:var(--admin-text,#f8fafc)}
+  .ob-admin-ec-head{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:16px;align-items:end;margin:0 0 16px}
+  .ob-admin-ec-head h2{margin:0;font-size:clamp(26px,4vw,40px);line-height:1;color:var(--admin-text,#f8fafc);letter-spacing:0}
+  .ob-admin-ec-head p{margin:9px 0 0;color:rgba(248,250,252,.68);line-height:1.55;max-width:780px}
+  .ob-admin-ec-tabs{display:flex;gap:8px;overflow:auto;padding:4px 0 12px;margin:0 0 12px}
+  .ob-admin-ec-tab{border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.05);color:rgba(248,250,252,.72);border-radius:999px;padding:9px 12px;font:inherit;font-size:13px;font-weight:850;cursor:pointer;white-space:nowrap}
+  .ob-admin-ec-tab.active{background:#d8ff5d;border-color:#d8ff5d;color:#111827}
+  .ob-admin-ec-panel,.ob-admin-ec-box{border:1px solid rgba(255,255,255,.10);background:rgba(15,23,42,.74);border-radius:8px;padding:16px;box-shadow:0 18px 50px rgba(0,0,0,.18)}
+  .ob-admin-ec-box{margin-bottom:12px;background:rgba(255,255,255,.04);box-shadow:none}
+  .ob-admin-ec-box h3{margin:0 0 12px;font-size:16px;color:#f8fafc}
+  .ob-admin-ec-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+  .ob-admin-ec-form{display:grid;gap:10px}
+  .ob-admin-ec-form label{display:grid;gap:6px;color:rgba(248,250,252,.72);font-size:12px;font-weight:900;text-transform:uppercase;letter-spacing:.06em}
+  .ob-admin-ec-form input,.ob-admin-ec-form select,.ob-admin-ec-form textarea{width:100%;min-height:42px;border:1px solid rgba(255,255,255,.14);border-radius:8px;background:rgba(255,255,255,.06);color:#f8fafc;padding:10px 11px;font:inherit;text-transform:none;letter-spacing:0}
+  .ob-admin-ec-form textarea{min-height:120px;resize:vertical;line-height:1.45}
+  .ob-admin-ec-btn{border:1px solid rgba(255,255,255,.14);background:rgba(255,255,255,.06);color:#f8fafc;border-radius:8px;min-height:40px;padding:9px 12px;font:inherit;font-weight:900;cursor:pointer}
+  .ob-admin-ec-btn.primary{background:#d8ff5d;border-color:#d8ff5d;color:#111827}
+  .ob-admin-ec-badge{display:inline-flex;align-items:center;border:1px solid rgba(255,255,255,.12);border-radius:999px;padding:7px 10px;color:rgba(248,250,252,.74);font-size:12px;font-weight:900;background:rgba(255,255,255,.05)}
+  .ob-admin-ec-badge.ready{border-color:rgba(216,255,93,.3);background:rgba(216,255,93,.12);color:#d8ff5d}
+  .ob-admin-ec-table{width:100%;border-collapse:collapse;font-size:13px}
+  .ob-admin-ec-table th{padding:9px 7px;text-align:left;color:rgba(248,250,252,.62);font-size:11px;text-transform:uppercase;letter-spacing:.08em;border-bottom:1px solid rgba(255,255,255,.10)}
+  .ob-admin-ec-table td{padding:10px 7px;border-bottom:1px solid rgba(255,255,255,.07);color:rgba(248,250,252,.9);vertical-align:top}
+  .ob-admin-ec-small{font-size:12px;color:rgba(248,250,252,.65);line-height:1.45}
+  .ob-admin-ec-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+  .ob-admin-ec-empty{border:1px dashed rgba(255,255,255,.16);border-radius:8px;padding:18px;text-align:center;color:rgba(248,250,252,.65)}
+</style>
+<script id="ownlybiz-admin-email-center-js">
+(function(){
+  'use strict';
+  if(window.__ownlybizAdminEmailCenter20260601) return;
+  window.__ownlybizAdminEmailCenter20260601 = true;
+  var BASE = String(window.OWNLYBIZ_API_URL || window._OB_BACKEND || 'https://ownlybiz-backend-production.up.railway.app').replace(/\/+$/,'');
+  var state = { tab:'map', loading:false, overview:null, status:'', draft:null };
+  var tabs = [['map','Flow Map'],['scenarios','Scenarios'],['newsletter','Newsletter & Bulk'],['ai','AI Generator']];
+  function tok(){ return sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || localStorage.getItem('ownlybiz_token') || sessionStorage.getItem('ownlybiz_token') || ''; }
+  function esc(v){ return String(v == null ? '' : v).replace(/[&<>"']/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  function $(id){ return document.getElementById(id); }
+  function safeId(v){ return String(v||'').replace(/[^a-z0-9_-]/gi,'_'); }
+  function api(path, opts){
+    opts=opts||{};
+    var headers={'Content-Type':'application/json'};
+    var t=tok(); if(t) headers.Authorization='Bearer '+t;
+    return fetch(BASE+'/api/admin/email-center'+path,{method:opts.method||'GET',headers:headers,cache:'no-store',body:opts.body?JSON.stringify(opts.body):undefined}).then(function(r){return r.json().catch(function(){return {};}).then(function(d){if(!r.ok||d.success===false) throw new Error(d.error||'Admin Email Center request failed'); return d;});});
+  }
+  function ensureNav(){
+    var side = document.querySelector('#view-6 .admin-sidebar') || document.querySelector('#view-6 .admin-nav') || document.querySelector('.admin-sidebar');
+    if(!side || $('ob-admin-email-center-nav')) return;
+    var item=document.createElement('div');
+    item.id='ob-admin-email-center-nav';
+    item.className='admin-nav-item';
+    item.onclick=function(){ if(window.adminNav) window.adminNav(item,'email-center'); else showPanel(item); };
+    item.innerHTML='<span aria-hidden="true"></span> Email Center';
+    var before=document.querySelector('.admin-nav-item[onclick*="platform-settings"]');
+    if(before && before.parentNode) before.parentNode.insertBefore(item,before); else side.appendChild(item);
+  }
+  function ensurePanel(){
+    var panel=$('admin-panel-email-center');
+    if(panel) return panel;
+    var main=document.querySelector('#view-6 .admin-main') || document.querySelector('#view-6 .admin-content') || document.querySelector('.admin-main');
+    if(!main) return null;
+    panel=document.createElement('div');
+    panel.id='admin-panel-email-center';
+    panel.className='admin-tab-panel';
+    main.appendChild(panel);
+    return panel;
+  }
+  function sender(sender){
+    if(sender==='expert_provider') return 'Expert provider';
+    if(sender==='ownlybiz_platform_cobranded') return 'Ownlybiz co-branded';
+    return 'Ownlybiz platform';
+  }
+  function scenarios(){ var o=state.overview||{}; return o.scenarios || []; }
+  function mapRows(){ var o=state.overview||{}; return o.map || scenarios(); }
+  function render(){
+    ensureNav();
+    var panel=ensurePanel();
+    if(!panel) return;
+    panel.innerHTML='<div class="admin-content ob-admin-ec-shell"><div class="ob-admin-ec-head"><div><h2>Admin Email Center</h2><p>Platform-owned account emails, receipts, expert notifications, newsletters, bulk uploads, AI drafts, and a clear map of who receives what. Existing email provider settings stay where they are.</p></div><span class="ob-admin-ec-badge ready">Platform controlled</span></div>'
+      +'<div class="ob-admin-ec-tabs">'+tabs.map(function(t){return '<button class="ob-admin-ec-tab '+(state.tab===t[0]?'active':'')+'" type="button" onclick="window.OBAdminEmailCenter.open(\''+t[0]+'\')">'+esc(t[1])+'</button>';}).join('')+'</div>'
+      +'<div class="ob-admin-ec-panel">'+content()+'<div class="ob-admin-ec-small" style="margin-top:10px">'+esc(state.status||'')+'</div></div></div>';
+  }
+  function content(){
+    if(state.loading) return '<div class="ob-admin-ec-empty">Loading Admin Email Center...</div>';
+    if(state.tab==='scenarios') return scenariosHtml();
+    if(state.tab==='newsletter') return newsletterHtml();
+    if(state.tab==='ai') return aiHtml();
+    return mapHtml();
+  }
+  function mapHtml(){
+    var rows=mapRows();
+    if(!rows.length) return '<div class="ob-admin-ec-empty">No platform email cycles found.</div>';
+    return '<div class="ob-admin-ec-box"><h3>What is sent right now</h3><table class="ob-admin-ec-table"><thead><tr><th>Cycle</th><th>Audience</th><th>Sender</th><th>Type</th><th>Status</th></tr></thead><tbody>'+rows.map(function(s){return '<tr><td><strong>'+esc(s.name||s.key)+'</strong><div class="ob-admin-ec-small">'+esc(s.category||'')+'</div></td><td>'+esc(s.audience||'')+'</td><td>'+esc(sender(s.sender))+'</td><td>'+esc(s.marketing?'Marketing':'Transactional')+(s.unsubscribe_applicable?'<div class="ob-admin-ec-small">unsubscribe required</div>':'')+'</td><td>'+esc(s.enabled?'On':'Off')+'</td></tr>';}).join('')+'</tbody></table></div>';
+  }
+  function fId(key,field){ return 'ob-admin-ec-'+safeId(key)+'-'+field; }
+  function val(id){ var el=$(id); return el ? el.value : ''; }
+  function field(key,field,label,value,area){ return '<label>'+esc(label)+(area?'<textarea id="'+fId(key,field)+'">'+esc(value||'')+'</textarea>':'<input id="'+fId(key,field)+'" value="'+esc(value||'')+'">')+'</label>'; }
+  function card(s){
+    var f=s.fields||{};
+    return '<details class="ob-admin-ec-box" '+(s.key==='client_session_receipt'?'open':'')+'><summary style="cursor:pointer;display:flex;justify-content:space-between;gap:12px;align-items:center"><span><strong>'+esc(s.name||s.key)+'</strong><span class="ob-admin-ec-small" style="display:block">'+esc(s.category||'')+' · '+esc(sender(s.sender))+' · '+esc(s.audience||'')+'</span></span><span class="ob-admin-ec-badge '+(s.enabled?'ready':'')+'">'+esc(s.enabled?'On':'Off')+'</span></summary><div class="ob-admin-ec-form" style="margin-top:12px">'
+      +'<label style="display:flex;grid-template-columns:none;gap:9px;align-items:center;text-transform:none;letter-spacing:0;font-size:13px"><input id="'+fId(s.key,'enabled')+'" type="checkbox" '+(s.enabled?'checked':'')+' style="width:18px;min-height:18px"> Enabled</label>'
+      +field(s.key,'subject','Subject',f.subject)+field(s.key,'preheader','Preheader',f.preheader)+field(s.key,'eyebrow','Eyebrow',f.eyebrow)+field(s.key,'title','Title',f.title)+field(s.key,'subtitle','Header subtitle',f.subtitle)+field(s.key,'image_url','Email image URL',f.image_url)+field(s.key,'body_html','Body HTML',f.body_html,true)+field(s.key,'cta_label','CTA label',f.cta_label)+field(s.key,'cta_url','CTA URL',f.cta_url)+field(s.key,'footer_text','Footer text',f.footer_text,true)
+      +'<div class="ob-admin-ec-actions"><button class="ob-admin-ec-btn primary" type="button" onclick="window.OBAdminEmailCenter.saveScenario(\''+esc(s.key)+'\')">Save cycle</button></div></div></details>';
+  }
+  function scenariosHtml(){
+    var list=scenarios();
+    return '<div class="ob-admin-ec-grid"><div>'+list.map(card).join('')+'</div><div><div class="ob-admin-ec-box"><h3>Create new cycle</h3><div class="ob-admin-ec-form"><label>Name<input id="ob-admin-new-name" placeholder="Partner announcement"></label><label>Audience<select id="ob-admin-new-audience"><option value="expert">Experts</option><option value="client">Clients</option></select></label><label>Type<select id="ob-admin-new-type"><option value="marketing">Marketing</option><option value="transactional">Transactional</option></select></label><button class="ob-admin-ec-btn primary" type="button" onclick="window.OBAdminEmailCenter.createScenario()">Create editable cycle</button></div></div>'+mapHtml()+'</div></div>';
+  }
+  function newsletterHtml(){
+    return '<div class="ob-admin-ec-grid"><div class="ob-admin-ec-box"><h3>Newsletter</h3><div class="ob-admin-ec-form"><label>Audience<select><option>Experts opted in to Ownlybiz updates</option><option>Uploaded opted-in list</option></select></label><label>Subject<input placeholder="Ownlybiz update"></label><label>Body<textarea placeholder="<p>Hi {{expert_name}},</p>"></textarea></label><div class="ob-admin-ec-small">Marketing sends require opt-in and unsubscribe. This panel prepares content and audience work without changing platform SMTP settings.</div><button class="ob-admin-ec-btn" type="button">Save draft</button></div></div><div class="ob-admin-ec-box"><h3>Bulk Upload</h3><div class="ob-admin-ec-form"><label>CSV<input type="file" accept=".csv,text/csv"></label><label>Consent source<input placeholder="Example: 2026 launch opt-in list"></label><div class="ob-admin-ec-small">Only opted-in marketing contacts should be uploaded. Critical receipts and account/security messages are not controlled by marketing opt-in.</div><button class="ob-admin-ec-btn">Preview upload</button></div></div></div>';
+  }
+  function aiHtml(){
+    return '<div class="ob-admin-ec-grid"><div class="ob-admin-ec-box"><h3>AI Generator</h3><div class="ob-admin-ec-form"><label>Scenario<select id="ob-admin-ai-scenario">'+scenarios().map(function(s){return '<option value="'+esc(s.key)+'">'+esc(s.name)+'</option>';}).join('')+'</select></label><label>Audience<select id="ob-admin-ai-audience"><option value="expert">Experts</option><option value="client">Clients</option></select></label><label>Prompt<textarea id="ob-admin-ai-prompt" placeholder="Draft a concise receipt explainer or newsletter intro"></textarea></label><button class="ob-admin-ec-btn primary" type="button" onclick="window.OBAdminEmailCenter.generateAi()">Generate</button></div></div><div class="ob-admin-ec-box"><h3>Draft</h3><pre style="white-space:pre-wrap;color:#f8fafc">'+esc(state.draft?JSON.stringify(state.draft,null,2):'No draft yet.')+'</pre></div></div>';
+  }
+  function load(){ state.loading=true; render(); return api('/overview').then(function(d){ state.overview=d.overview||{}; }).catch(function(e){ state.status=e.message; }).finally(function(){ state.loading=false; render(); }); }
+  function showPanel(el){
+    document.querySelectorAll('.admin-tab-panel').forEach(function(p){p.classList.remove('active');});
+    var panel=ensurePanel(); if(panel) panel.classList.add('active');
+    document.querySelectorAll('.admin-nav-item').forEach(function(i){i.classList.remove('active');});
+    if(el) el.classList.add('active');
+    var title=$('admin-page-title'); if(title) title.textContent='Email Center';
+    load();
+  }
+  window.OBAdminEmailCenter={
+    open:function(tab){ state.tab=tab||'map'; load(); },
+    saveScenario:function(key){
+      var body={enabled:!!($(fId(key,'enabled'))&&$(fId(key,'enabled')).checked),subject:val(fId(key,'subject')),preheader:val(fId(key,'preheader')),eyebrow:val(fId(key,'eyebrow')),title:val(fId(key,'title')),subtitle:val(fId(key,'subtitle')),image_url:val(fId(key,'image_url')),body_html:val(fId(key,'body_html')),cta_label:val(fId(key,'cta_label')),cta_url:val(fId(key,'cta_url')),footer_text:val(fId(key,'footer_text'))};
+      api('/scenarios/'+encodeURIComponent(key),{method:'PUT',body:body}).then(function(){state.status='Cycle saved.'; load();}).catch(function(e){state.status=e.message; render();});
+    },
+    createScenario:function(){
+      var type=val('ob-admin-new-type');
+      api('/scenarios',{method:'POST',body:{name:val('ob-admin-new-name')||'Custom email cycle',audience:val('ob-admin-new-audience')||'expert',marketing:type==='marketing',transactional:type!=='marketing',unsubscribe_applicable:type==='marketing',sender:'ownlybiz_platform',category:type==='marketing'?'Marketing':'Custom'}}).then(function(){state.status='Cycle created.'; state.tab='scenarios'; load();}).catch(function(e){state.status=e.message; render();});
+    },
+    generateAi:function(){
+      api('/ai/generate',{method:'POST',body:{scenario:val('ob-admin-ai-scenario'),audience:val('ob-admin-ai-audience'),prompt:val('ob-admin-ai-prompt')}}).then(function(d){state.draft=d.draft||d; state.status='Draft generated.'; render();}).catch(function(e){state.status=e.message; render();});
+    }
+  };
+  function boot(){
+    ensureNav(); ensurePanel();
+    if(window.adminNav && !window.adminNav.__obAdminEmailCenterWrapped){
+      var old=window.adminNav;
+      window.adminNav=function(el,panel){
+        ensureNav(); ensurePanel();
+        var result=old.apply(this, arguments);
+        if(panel==='email-center') showPanel(el);
+        return result;
+      };
+      window.adminNav.__obAdminEmailCenterWrapped=true;
+    }
+  }
+  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',boot); else boot();
 })();
 </script>
 </html>

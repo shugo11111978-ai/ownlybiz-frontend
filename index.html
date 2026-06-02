@@ -14861,12 +14861,14 @@ async function savePaymentConfig() {
 		    var routeHost = (window.location.hostname || '').toLowerCase();
 		    var isExpertHostRoute = (/^[^.]+\.ownlybiz\.com$/i.test(routeHost) && routeHost !== 'www.ownlybiz.com') ||
 		      (routeHost && routeHost !== 'ownlybiz.com' && routeHost !== 'www.ownlybiz.com' && routeHost !== 'localhost' && routeHost !== '127.0.0.1' && routeHost.indexOf('vercel.app') < 0);
-		    if(!isLegalRoute && isExpertHostRoute && expertPageRoutes.indexOf(routeFirst) >= 0) {
-		      window._pendingExpertPage = routeFirst;
-		    } else if(!isLegalRoute && routeFirst && routeFirst !== 'dash' && routeFirst !== 'admin' && reserved.indexOf(routeFirst) === -1) {
-		      window._browseExpert = routeFirst;
-		      if(expertPageRoutes.indexOf(routeSecond) >= 0) window._pendingExpertPage = routeSecond;
-		    }
+			    if(!isLegalRoute && isExpertHostRoute) {
+			      if(expertPageRoutes.indexOf(routeFirst) >= 0) window._pendingExpertPage = routeFirst;
+			      else if(routeFirst && reserved.indexOf(routeFirst) === -1) window._pendingExpertPage = 'ai-' + routeFirst;
+			      else window._pendingExpertPage = 'home';
+			    } else if(!isLegalRoute && routeFirst && routeFirst !== 'dash' && routeFirst !== 'admin' && reserved.indexOf(routeFirst) === -1) {
+			      window._browseExpert = routeFirst;
+			      if(expertPageRoutes.indexOf(routeSecond) >= 0) window._pendingExpertPage = routeSecond;
+			    }
 	    try {
     // --- Routing: immediate, no blocking ---
     _wireLoginForm();
@@ -21784,31 +21786,39 @@ window._handleRTCMessage=function(d){
     return fetch(BASE + path, opts).then(function(r){ return r.json().then(function(d){ if(!r.ok) throw new Error(d.error || 'Request failed'); return d; }); });
   }
 
-	  function resolveExpertSlug(){
-	    var reservedSlugs = ['','index.html','admin','signup','dashboard','login','expert','session','group','connectors','settings','messages','analytics','payments','packages','reviews','clients','sessions','pricing','how','features','experts','blog','contact'];
-	    function cleanSlug(s){
-	      s = (s == null ? '' : String(s)).trim();
-	      if(!s || s === 'expert-slug') return '';
-	      if(s === 'terms' || s.indexOf('legal/') === 0) return '';
-	      if(s.indexOf('/') >= 0) return '';
-      if(reservedSlugs.indexOf(s) >= 0) return '';
-      return s;
-    }
-    if(cleanSlug(window._currentExpertSlug)) return cleanSlug(window._currentExpertSlug);
-    if(window._currentExpert && cleanSlug(window._currentExpert.slug)) return cleanSlug(window._currentExpert.slug);
-    if(cleanSlug(window._browseExpert)) return cleanSlug(window._browseExpert);
-    var q = new URLSearchParams(location.search).get('expert');
-    if(cleanSlug(q)) return cleanSlug(q);
-    var host = location.hostname || '';
-    if(host.indexOf('.ownlybiz.com') > 0) {
-      var sub = host.split('.')[0];
-      if(cleanSlug(sub) && ['www','app','admin'].indexOf(sub) === -1) return cleanSlug(sub);
-    }
-	    var path = location.pathname.replace(/^\/+|\/+$/g,'');
-	    var firstPath = path.split('/').filter(Boolean)[0] || '';
-	    if(firstPath && firstPath !== 'dash' && firstPath !== 'admin' && cleanSlug(firstPath)) return cleanSlug(firstPath);
-    return '';
-  }
+		  function resolveExpertSlug(){
+		    var reservedSlugs = ['','index.html','admin','signup','dashboard','login','expert','session','group','connectors','settings','messages','analytics','payments','packages','reviews','clients','sessions','pricing','how','features','experts','blog','contact'];
+		    var hostName = location.hostname || '';
+		    var customHost = hostName && hostName !== 'ownlybiz.com' && hostName !== 'www.ownlybiz.com' && hostName !== 'localhost' && hostName !== '127.0.0.1' && hostName.indexOf('vercel.app') < 0 && !/^[^.]+\.ownlybiz\.com$/i.test(hostName);
+		    var firstPath = location.pathname.replace(/^\/+|\/+$/g,'').split('/').filter(Boolean)[0] || '';
+		    function cleanSlug(s){
+		      s = (s == null ? '' : String(s)).trim();
+		      if(!s || s === 'expert-slug') return '';
+		      if(s === 'terms' || s.indexOf('legal/') === 0) return '';
+		      if(s.indexOf('/') >= 0) return '';
+	      if(reservedSlugs.indexOf(s) >= 0) return '';
+	      return s;
+	    }
+	    function trustedSlug(s){
+	      var cleaned = cleanSlug(s);
+	      if(customHost && firstPath && cleaned === firstPath) return '';
+	      return cleaned;
+	    }
+	    if(trustedSlug(window._currentExpertSlug)) return trustedSlug(window._currentExpertSlug);
+	    if(window._currentExpert && trustedSlug(window._currentExpert.slug)) return trustedSlug(window._currentExpert.slug);
+	    if(trustedSlug(window._browseExpert)) return trustedSlug(window._browseExpert);
+	    var q = new URLSearchParams(location.search).get('expert');
+	    if(cleanSlug(q)) return cleanSlug(q);
+	    var host = hostName;
+	    if(host.indexOf('.ownlybiz.com') > 0) {
+	      var sub = host.split('.')[0];
+	      if(cleanSlug(sub) && ['www','app','admin'].indexOf(sub) === -1) return cleanSlug(sub);
+	    }
+		    var path = location.pathname.replace(/^\/+|\/+$/g,'');
+		    var firstPath = path.split('/').filter(Boolean)[0] || '';
+		    if(!customHost && firstPath && firstPath !== 'dash' && firstPath !== 'admin' && cleanSlug(firstPath)) return cleanSlug(firstPath);
+	    return '';
+	  }
   window._obResolveExpertSlug = resolveExpertSlug;
 
   var _origLEWStaging = window.loadExpertWebsite;
@@ -26656,21 +26666,28 @@ window._handleRTCMessage=function(d){
 	    if(!enabled) closeConsent();
 	    return enabled;
 	  }
-	  function expertSlugForConsent(){
-	    var data = window._currentExpert || {};
-	    if(data.slug) return String(data.slug);
-	    if(window._currentExpertSlug) return String(window._currentExpertSlug);
-	    if(window._browseExpert) return String(window._browseExpert);
-	    var q = new URLSearchParams(location.search || '').get('expert');
-	    if(q) return q;
-	    var host = (location.hostname || '').toLowerCase();
-	    var sub = host.match(/^([^.]+)\.ownlybiz\.com$/);
-	    if(sub && sub[1] !== 'www') return sub[1];
-	    var path = (location.pathname || '').replace(/^\/+|\/+$/g, '');
-	    var first = path.split('/').filter(Boolean)[0] || '';
-	    var reserved = {'':1,'index.html':1,'admin':1,'dash':1,'signup':1,'dashboard':1,'login':1,'expert':1,'session':1,'group':1,'connectors':1,'settings':1,'messages':1,'analytics':1,'payments':1,'packages':1,'reviews':1,'clients':1,'sessions':1,'pricing':1,'how':1,'features':1,'experts':1,'blog':1,'contact':1,'terms':1,'legal':1};
-	    return reserved[first] ? '' : first;
-	  }
+		  function expertSlugForConsent(){
+		    var data = window._currentExpert || {};
+		    var host = (location.hostname || '').toLowerCase();
+		    var customHost = host && host !== 'ownlybiz.com' && host !== 'www.ownlybiz.com' && host !== 'localhost' && host !== '127.0.0.1' && host.indexOf('vercel.app') < 0 && !/^[^.]+\.ownlybiz\.com$/i.test(host);
+		    var path = (location.pathname || '').replace(/^\/+|\/+$/g, '');
+		    var first = path.split('/').filter(Boolean)[0] || '';
+		    function trusted(value){
+		      value = String(value || '').trim();
+		      if(customHost && first && value === first) return '';
+		      return value;
+		    }
+		    if(trusted(data.slug)) return trusted(data.slug);
+		    if(trusted(window._currentExpertSlug)) return trusted(window._currentExpertSlug);
+		    if(trusted(window._browseExpert)) return trusted(window._browseExpert);
+		    var q = new URLSearchParams(location.search || '').get('expert');
+		    if(q) return q;
+		    var sub = host.match(/^([^.]+)\.ownlybiz\.com$/);
+		    if(sub && sub[1] !== 'www') return sub[1];
+		    var reserved = {'':1,'index.html':1,'admin':1,'dash':1,'signup':1,'dashboard':1,'login':1,'expert':1,'session':1,'group':1,'connectors':1,'settings':1,'messages':1,'analytics':1,'payments':1,'packages':1,'reviews':1,'clients':1,'sessions':1,'pricing':1,'how':1,'features':1,'experts':1,'blog':1,'contact':1,'terms':1,'legal':1};
+		    if(customHost) return '';
+		    return reserved[first] ? '' : first;
+		  }
 	  function fetchExpertConsentBanner(slug){
 	    if(!slug) return Promise.resolve(false);
 	    return fetch(API + '/experts/' + encodeURIComponent(slug)).then(function(r){ return r.json(); }).then(function(d){
@@ -27033,16 +27050,23 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
   function allowConsent(){
     document.documentElement.classList.remove('ob-expert-consent-disabled');
   }
-  function slugFromLocation(){
-    var expert = window._currentExpert || {};
-    if(expert.slug) return String(expert.slug);
-    if(window._currentExpertSlug) return String(window._currentExpertSlug);
-    if(window._browseExpert) return String(window._browseExpert);
-    var q = new URLSearchParams(location.search || '').get('expert');
-    if(q) return String(q);
-    var host = String(location.hostname || '').toLowerCase();
-    var sub = host.match(/^([^.]+)\.ownlybiz\.com$/);
-    if(sub && sub[1] !== 'www') return sub[1];
+	  function slugFromLocation(){
+	    var host = String(location.hostname || '').toLowerCase();
+	    var customHost = host && host !== 'ownlybiz.com' && host !== 'www.ownlybiz.com' && host !== 'localhost' && host !== '127.0.0.1' && host.indexOf('vercel.app') < 0 && !/^[^.]+\.ownlybiz\.com$/i.test(host);
+	    var firstPath = String(location.pathname || '').replace(/^\/+|\/+$/g, '').split('/').filter(Boolean)[0] || '';
+	    function trusted(value){
+	      value = String(value || '').trim();
+	      if(customHost && firstPath && value === firstPath) return '';
+	      return value;
+	    }
+	    var expert = window._currentExpert || {};
+	    if(trusted(expert.slug)) return trusted(expert.slug);
+	    if(trusted(window._currentExpertSlug)) return trusted(window._currentExpertSlug);
+	    if(trusted(window._browseExpert)) return trusted(window._browseExpert);
+	    var q = new URLSearchParams(location.search || '').get('expert');
+	    if(q) return String(q);
+	    var sub = host.match(/^([^.]+)\.ownlybiz\.com$/);
+	    if(sub && sub[1] !== 'www') return sub[1];
     if(platformHost()){
       var first = String(location.pathname || '').replace(/^\/+|\/+$/g, '').split('/').filter(Boolean)[0] || '';
       if(first && !reserved[first]) return first;
@@ -27842,14 +27866,17 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
     var first = clean(parts[0]);
     return !!cleanSlug(first);
   }
-  function currentExpertSlug(){
-    var q = new URLSearchParams(location.search || '').get('expert');
-    if(cleanSlug(q)) return cleanSlug(q);
-    if(expertHost()){
-      var sub = host().match(/^([^.]+)\.ownlybiz\.com$/);
-      if(sub && cleanSlug(sub[1])) return cleanSlug(sub[1]);
-      return cleanSlug(window._browseExpert || window._currentExpertSlug || (window._currentExpert && window._currentExpert.slug));
-    }
+	  function currentExpertSlug(){
+	    var q = new URLSearchParams(location.search || '').get('expert');
+	    if(cleanSlug(q)) return cleanSlug(q);
+	    if(expertHost()){
+	      var sub = host().match(/^([^.]+)\.ownlybiz\.com$/);
+	      if(sub && cleanSlug(sub[1])) return cleanSlug(sub[1]);
+	      var candidate = cleanSlug(window._browseExpert || window._currentExpertSlug || (window._currentExpert && window._currentExpert.slug));
+	      var first = clean(pathParts()[0]);
+	      if(candidate && first && candidate === first && !EXPERT_SEGMENTS[first]) return '';
+	      return candidate;
+	    }
     var parts = pathParts();
     if(cleanSlug(parts[0])) return cleanSlug(parts[0]);
     return cleanSlug(window._dashSlug || window._myExpertSlug || window._adminViewingExpertSlug || window._currentExpertSlug || (window._currentExpert && window._currentExpert.slug) || window._browseExpert);
@@ -32608,25 +32635,29 @@ body:has(#view-2.active) .privacy-consent.active{
       }
     });
   }
-  function publicExpertSlug(value){
-    var expertPages = ['home','about','services','reviews','book','contact','account'];
-    var hostName = (location.hostname || '').toLowerCase();
-    var expertHostSlug = '';
-    var isExpertHostName = false;
-    var sub = hostName.match(/^([^.]+)\.ownlybiz\.com$/i);
-    if(sub && sub[1] && sub[1] !== 'www') {
-      expertHostSlug = sub[1];
-      isExpertHostName = true;
-    }
-    else if(hostName && ['ownlybiz.com','www.ownlybiz.com','localhost','127.0.0.1'].indexOf(hostName) === -1 && hostName.indexOf('vercel.app') < 0) {
-      expertHostSlug = window._browseExpert || window._currentExpertSlug || (window._currentExpert && window._currentExpert.slug) || '';
-      isExpertHostName = true;
-    }
-    if(isExpertHostName){
-      expertHostSlug = String(expertHostSlug || '').trim();
-      if(!expertHostSlug || expertHostSlug === 'expert-slug' || expertPages.indexOf(expertHostSlug) >= 0) return '';
-      if(['signup','login','admin','dash','dashboard','pricing','features','how','blog','group'].indexOf(expertHostSlug) >= 0) return '';
-      return /^[a-z0-9][a-z0-9-]{1,62}$/i.test(expertHostSlug) ? expertHostSlug : '';
+	  function publicExpertSlug(value){
+	    var expertPages = ['home','about','services','reviews','book','contact','account'];
+	    var hostName = (location.hostname || '').toLowerCase();
+	    var expertHostSlug = '';
+	    var expertHostSlugTrusted = false;
+	    var isExpertHostName = false;
+	    var sub = hostName.match(/^([^.]+)\.ownlybiz\.com$/i);
+	    if(sub && sub[1] && sub[1] !== 'www') {
+	      expertHostSlug = sub[1];
+	      expertHostSlugTrusted = true;
+	      isExpertHostName = true;
+	    }
+	    else if(hostName && ['ownlybiz.com','www.ownlybiz.com','localhost','127.0.0.1'].indexOf(hostName) === -1 && hostName.indexOf('vercel.app') < 0) {
+	      expertHostSlug = window._browseExpert || window._currentExpertSlug || (window._currentExpert && window._currentExpert.slug) || '';
+	      isExpertHostName = true;
+	    }
+	    if(isExpertHostName){
+	      expertHostSlug = String(expertHostSlug || '').trim();
+	      var routeFirst = (location.pathname || '').replace(/^\/+|\/+$/g,'').split('/').filter(Boolean)[0] || '';
+	      if(!expertHostSlugTrusted && routeFirst && expertHostSlug === routeFirst && expertPages.indexOf(routeFirst) < 0) return '';
+	      if(!expertHostSlug || expertHostSlug === 'expert-slug' || expertPages.indexOf(expertHostSlug) >= 0) return '';
+	      if(['signup','login','admin','dash','dashboard','pricing','features','how','blog','group'].indexOf(expertHostSlug) >= 0) return '';
+	      return /^[a-z0-9][a-z0-9-]{1,62}$/i.test(expertHostSlug) ? expertHostSlug : '';
     }
     var slug = String(value || '').trim().replace(/^\/+|\/+$/g,'').split('/')[0] || '';
     if(!slug || slug === 'expert-slug' || expertPages.indexOf(slug) >= 0) {
@@ -45944,10 +45975,15 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     return true;
   }
 
-  function publicExpertSlug(){
-    var path = (location.pathname || '').replace(/^\/+|\/+$/g,'');
-    if(!path || path.indexOf('/') >= 0) return '';
-    if({admin:1,dash:1,login:1,signup:1,group:1,session:1,settings:1,pricing:1,terms:1,legal:1}[path]) return '';
+	  function publicExpertSlug(){
+	    if(typeof window._obResolvePublicExpertSlug === 'function'){
+	      var resolved = window._obResolvePublicExpertSlug();
+	      if(resolved) return resolved;
+	      if(typeof window._obIsPublicExpertHost === 'function' && window._obIsPublicExpertHost()) return '';
+	    }
+	    var path = (location.pathname || '').replace(/^\/+|\/+$/g,'');
+	    if(!path || path.indexOf('/') >= 0) return '';
+	    if({admin:1,dash:1,login:1,signup:1,group:1,session:1,settings:1,pricing:1,terms:1,legal:1}[path]) return '';
     return path;
   }
 
@@ -48175,7 +48211,195 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       window.adminNav.__obAdminEmailCenterWrapped=true;
     }
   }
-  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',boot); else boot();
-})();
-</script>
-</html>
+	  if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',boot); else boot();
+	})();
+	</script>
+	<script id="ownlybiz-expert-host-page-refresh-20260602">
+	(function(){
+	  if(window.__obExpertHostPageRefreshFix20260602) return;
+	  window.__obExpertHostPageRefreshFix20260602 = true;
+	  var BASE = (window.OWNLYBIZ_API_URL || window._OB_BACKEND || 'https://ownlybiz-backend-production.up.railway.app').replace(/\/+$/,'');
+	  var EXPERT_PAGES = {home:1, about:1, services:1, reviews:1, book:1, contact:1, account:1};
+	  var RESERVED = {'':1,'index.html':1,admin:1,dash:1,signup:1,dashboard:1,login:1,expert:1,session:1,group:1,connectors:1,settings:1,messages:1,analytics:1,payments:1,packages:1,reviews:1,clients:1,sessions:1,pricing:1,how:1,features:1,experts:1,blog:1,contact:1,terms:1,legal:1};
+	  var lookupPromise = null;
+
+	  function host(){ return String(location.hostname || '').toLowerCase(); }
+	  function platformHost(){
+	    var h = host();
+	    return !h || h === 'ownlybiz.com' || h === 'www.ownlybiz.com' || h === 'localhost' || h === '127.0.0.1' || h.indexOf('vercel.app') >= 0;
+	  }
+	  function validSlug(value){
+	    value = String(value || '').trim();
+	    if(!value || value === 'expert-slug' || value.indexOf('/') >= 0) return '';
+	    if(RESERVED[value] || EXPERT_PAGES[value]) return '';
+	    return /^[a-z0-9][a-z0-9-]{1,62}$/i.test(value) ? value : '';
+	  }
+	  function subdomainSlug(){
+	    var match = host().match(/^([^.]+)\.ownlybiz\.com$/i);
+	    return match && match[1] !== 'www' ? validSlug(match[1]) : '';
+	  }
+	  function expertHost(){
+	    return !!subdomainSlug() || (!!host() && !platformHost());
+	  }
+	  function customDomainHost(){
+	    return expertHost() && !subdomainSlug();
+	  }
+	  function firstSegment(){
+	    try { return decodeURIComponent(String(location.pathname || '').replace(/^\/+|\/+$/g, '').split('/').filter(Boolean)[0] || ''); }
+	    catch(e) { return String(location.pathname || '').replace(/^\/+|\/+$/g, '').split('/').filter(Boolean)[0] || ''; }
+	  }
+	  function requestedPage(){
+	    if(!expertHost()) return '';
+	    var first = firstSegment();
+	    if(!first) return 'home';
+	    if(EXPERT_PAGES[first]) return first;
+	    if(RESERVED[first]) return 'home';
+	    var pageSlug = validSlug(first);
+	    return pageSlug ? 'ai-' + pageSlug : 'home';
+	  }
+	  function trustedSlug(value){
+	    var slug = validSlug(value);
+	    var first = firstSegment();
+	    if(customDomainHost() && first && slug === first && !EXPERT_PAGES[first]) return '';
+	    return slug;
+	  }
+	  function resolvePublicExpertSlug(value){
+	    var direct = trustedSlug(value);
+	    if(direct) return direct;
+	    var query = new URLSearchParams(location.search || '').get('expert');
+	    if(validSlug(query)) return validSlug(query);
+	    var sub = subdomainSlug();
+	    if(sub) return sub;
+	    var current = window._currentExpert || {};
+	    return trustedSlug(current.slug) || trustedSlug(window._currentExpertSlug) || trustedSlug(window._browseExpert) || '';
+	  }
+	  function storeSlug(slug){
+	    slug = validSlug(slug);
+	    if(!slug) return '';
+	    window._browseExpert = slug;
+	    window._currentExpertSlug = slug;
+	    if(window._currentExpert && !window._currentExpert.slug) window._currentExpert.slug = slug;
+	    return slug;
+	  }
+	  function setPendingPage(){
+	    var page = requestedPage();
+	    if(page) window._pendingExpertPage = page;
+	    return page;
+	  }
+	  function scrubRoutePageSlug(){
+	    if(!expertHost()) return;
+	    setPendingPage();
+	    var first = firstSegment();
+	    if(!first || EXPERT_PAGES[first]) return;
+	    if(String(window._browseExpert || '') === first) window._browseExpert = '';
+	    if(String(window._currentExpertSlug || '') === first) window._currentExpertSlug = '';
+	    var current = window._currentExpert || {};
+	    if(String(current.slug || '') === first && !(current.name || current.id || current.user_id)) delete current.slug;
+	  }
+	  function lookupDomainSlug(){
+	    var existing = resolvePublicExpertSlug();
+	    if(existing) return Promise.resolve(existing);
+	    if(!customDomainHost()) return Promise.resolve('');
+	    if(lookupPromise) return lookupPromise;
+	    window._customDomainPending = true;
+	    lookupPromise = fetch(BASE + '/api/domains/lookup?domain=' + encodeURIComponent(host()), {cache:'no-store'})
+	      .then(function(r){ return r.json(); })
+	      .then(function(d){
+	        var slug = validSlug(d && (d.slug || d.expert_slug || (d.expert && d.expert.slug)));
+	        window._customDomainPending = false;
+	        return slug ? storeSlug(slug) : '';
+	      })
+	      .catch(function(){
+	        window._customDomainPending = false;
+	        return '';
+	      });
+	    return lookupPromise;
+	  }
+	  function showRequestedPage(){
+	    var page = setPendingPage();
+	    if(!page || typeof window.showExpertPage !== 'function') return;
+	    if(page.indexOf('ai-') === 0 && !document.getElementById('ep-' + page)) return;
+	    try { window.showExpertPage(page); } catch(e) {}
+	  }
+	  function scheduleRequestedPage(){
+	    [0,120,350,800,1600,3000].forEach(function(ms){ setTimeout(showRequestedPage, ms); });
+	  }
+
+	  window._obIsPublicExpertHost = expertHost;
+	  window._obResolvePublicExpertSlug = resolvePublicExpertSlug;
+	  window._obRequestedExpertHostPage = requestedPage;
+
+	  scrubRoutePageSlug();
+	  [60,220,700,1500].forEach(function(ms){ setTimeout(scrubRoutePageSlug, ms); });
+	  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', scrubRoutePageSlug);
+
+	  var previousResolve = window._obResolveExpertSlug;
+	  window._obResolveExpertSlug = function(){
+	    if(expertHost()) return resolvePublicExpertSlug();
+	    return typeof previousResolve === 'function' ? previousResolve.apply(this, arguments) : resolvePublicExpertSlug();
+	  };
+
+	  var previousLoad = window.loadExpertWebsite;
+	  if(typeof previousLoad === 'function'){
+	    window.loadExpertWebsite = function(slug){
+	      if(!expertHost()) return previousLoad.apply(this, arguments);
+	      scrubRoutePageSlug();
+	      var resolved = resolvePublicExpertSlug(slug);
+	      if(resolved){
+	        storeSlug(resolved);
+	        var result = previousLoad.call(this, resolved);
+	        scheduleRequestedPage();
+	        return result;
+	      }
+	      if(typeof window._markRouteLoading === 'function') window._markRouteLoading('public');
+	      lookupDomainSlug().then(function(found){
+	        if(found) {
+	          previousLoad.call(window, found);
+	          scheduleRequestedPage();
+	        } else if(typeof window._markRouteReady === 'function') {
+	          window._markRouteReady('public');
+	        }
+	      });
+	    };
+	  }
+
+	  var previousShow = window.showExpertPage;
+	  if(typeof previousShow === 'function'){
+	    window.showExpertPage = function(page){
+	      if(expertHost()){
+	        scrubRoutePageSlug();
+	        var requested = setPendingPage();
+	        if(!page || (firstSegment() && String(page) === firstSegment())) page = requested;
+	        if(String(page || '').indexOf('ai-') === 0 && !document.getElementById('ep-' + page)){
+	          window._pendingExpertPage = page;
+	          return;
+	        }
+	      }
+	      return previousShow.apply(this, arguments);
+	    };
+	  }
+
+	  var previousOnline = window.loadExpertOnlineStatus;
+	  if(typeof previousOnline === 'function'){
+	    window.loadExpertOnlineStatus = function(slug){
+	      if(expertHost()){
+	        var resolved = resolvePublicExpertSlug(slug);
+	        if(!resolved){
+	          lookupDomainSlug().then(function(found){ if(found) previousOnline.call(window, found); });
+	          return;
+	        }
+	        return previousOnline.call(this, resolved);
+	      }
+	      return previousOnline.apply(this, arguments);
+	    };
+	  }
+
+	  if(expertHost()){
+	    lookupDomainSlug().then(function(slug){
+	      if(slug && typeof window.loadExpertWebsite === 'function') window.loadExpertWebsite(slug);
+	      scheduleRequestedPage();
+	    });
+	  }
+	})();
+	</script>
+	</html>

@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const BACKEND = (process.env.OWNLYBIZ_API_URL || process.env.OWNLY_API || 'https://ownlybiz-backend-production.up.railway.app').replace(/\/+$/, '');
+const BACKEND = (process.env.OWNLYBIZ_API_URL || process.env.OWNLY_API || 'https://victorious-wisdom-production-a6b0.up.railway.app').replace(/\/+$/, '');
 const INDEX_PATH = path.join(process.cwd(), 'index.html');
 const RESERVED = new Set([
   '', 'index.html', 'admin', 'dash', 'signup', 'dashboard', 'login', 'expert',

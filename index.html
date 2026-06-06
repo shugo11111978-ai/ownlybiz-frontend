@@ -27990,7 +27990,7 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
   var EXPERT_SEGMENTS = {about:'about', services:'services', reviews:'reviews', book:'book', contact:'contact'};
   var MKT_TO_PATH = {home:'/', how:'/how', features:'/features', pricing:'/pricing', experts:'/experts', blog:'/blog', login:'/login', signup:'/signup', contact:'/contact'};
   var PATH_TO_MKT = {'':'home', how:'how', features:'features', pricing:'pricing', experts:'experts', blog:'blog', login:'login', signup:'signup', contact:'contact'};
-  var DASH_PANELS = {overview:1, messages:1, 'live-session':1, sessions:1, bookings:1, clients:1, reviews:1, 'contact-inbox':1, analytics:1, pricing:1, packages:1, payments:1, 'website-editor':1, settings:1};
+  var DASH_PANELS = {overview:1, messages:1, 'live-session':1, sessions:1, bookings:1, clients:1, reviews:1, 'contact-inbox':1, analytics:1, pricing:1, packages:1, payments:1, 'website-editor':1, 'email-center':1, settings:1};
   var SETTINGS_TO_SEG = {
     'sblock-profile':'profile',
     'sblock-website':'website',
@@ -42536,6 +42536,22 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   .ob-help-ai-msg { border-radius:14px; font-size:13px; line-height:1.5; padding:10px 12px; white-space:pre-wrap; }
   .ob-help-ai-msg.user { background:#241813; color:#fffaf2; justify-self:end; max-width:82%; }
   .ob-help-ai-msg.assistant { background:rgba(122,140,110,.12); color:#2e2119; justify-self:start; max-width:92%; }
+  .ob-ai-msg-text { white-space:pre-wrap; }
+  .ob-ai-inline-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:10px; white-space:normal; }
+  .ob-ai-inline-action {
+    align-items:center;
+    background:#fffaf2;
+    border:1px solid rgba(196,98,45,.35);
+    border-radius:999px;
+    color:#8f3f1a;
+    cursor:pointer;
+    display:inline-flex;
+    font-size:12px;
+    font-weight:950;
+    min-height:34px;
+    padding:7px 11px;
+  }
+  .ob-ai-inline-action:hover { background:rgba(196,98,45,.10); }
   .ob-help-ai-chips { display:flex; flex-wrap:wrap; gap:8px; margin:0 0 10px; }
   .ob-help-ai-chip { background:#fff; border:1px solid rgba(36,24,19,.14); border-radius:999px; color:#241813; cursor:pointer; font-size:12px; font-weight:900; padding:8px 10px; }
   .ob-help-ai-form { display:grid; gap:9px; grid-template-columns:minmax(0,1fr) auto; }
@@ -42725,6 +42741,145 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     el.className = 'ob-ai-admin-status' + (kind ? ' ' + kind : '');
     el.textContent = msg || '';
   }
+  function currentDashSlug(){
+    var path = String((window.location && window.location.pathname) || '');
+    var match = path.match(/^\/dash\/([^\/]+)/);
+    if(match && match[1]) return decodeURIComponent(match[1]);
+    try {
+      var raw = sessionStorage.getItem('ob_u') || localStorage.getItem('ob_u') || '{}';
+      var user = JSON.parse(raw) || {};
+      return String(user.slug || user.expert_slug || window._dashSlug || window._myExpertSlug || '').trim();
+    } catch(e) {
+      return String(window._dashSlug || window._myExpertSlug || '').trim();
+    }
+  }
+  function fallbackDashHref(panel, blockId){
+    var slug = currentDashSlug();
+    if(!slug) return '';
+    var path = '/dash/' + encodeURIComponent(slug) + '/' + encodeURIComponent(panel || 'overview');
+    if(panel === 'settings' && blockId === 'sblock-website') path += '/website';
+    if(panel === 'settings' && blockId === 'sblock-availability') path += '/availability';
+    if(panel === 'settings' && blockId === 'sblock-billing') path += '/billing';
+    return path;
+  }
+  function findDashboardNav(panel){
+    panel = String(panel || '');
+    return Array.prototype.slice.call(document.querySelectorAll('.db-nav-item,a,button,[role="button"]')).find(function(el){
+      var on = String(el.getAttribute('onclick') || '');
+      var txt = String(el.textContent || '').replace(/\s+/g,' ').trim().toLowerCase();
+      return on.indexOf("'" + panel + "'") >= 0
+        || on.indexOf('"' + panel + '"') >= 0
+        || txt === panel
+        || (panel === 'website-editor' && /edit website|website editor/.test(txt))
+        || (panel === 'pricing' && /pricing|packages/.test(txt))
+        || (panel === 'payments' && /payments|payment account|billing/.test(txt))
+        || (panel === 'settings' && /settings/.test(txt))
+        || (panel === 'email-center' && /email center/.test(txt))
+        || (panel === 'live-session' && /live session|go online/.test(txt));
+    });
+  }
+  function findSettingsNav(blockId){
+    blockId = String(blockId || '');
+    return Array.prototype.slice.call(document.querySelectorAll('.settings-nav-item,a,button,[role="button"]')).find(function(el){
+      var on = String(el.getAttribute('onclick') || '');
+      return on.indexOf("'" + blockId + "'") >= 0 || on.indexOf('"' + blockId + '"') >= 0;
+    });
+  }
+  function closeAiSurfaces(){
+    var panel = document.getElementById('ob-ai-help-panel');
+    if(panel) panel.classList.remove('open');
+    var help = document.getElementById('ob-prod-help-center-modal');
+    if(help) help.classList.remove('is-open');
+  }
+  function helperToast(msg, kind){
+    try {
+      if(typeof window.toast === 'function') { window.toast(msg, kind === 'err' ? 'err' : 'ok'); return; }
+      if(typeof window._showToast === 'function') { window._showToast(msg, kind === 'err' ? 'red' : 'green'); return; }
+    } catch(e) {}
+  }
+  function helperHighlight(target){
+    var el = null;
+    if(typeof target === 'string' && target) {
+      el = document.getElementById(target) || (target.charAt(0) === '#' || target.charAt(0) === '.' ? document.querySelector(target) : null);
+    } else {
+      el = target;
+    }
+    if(!el) return;
+    try { el.scrollIntoView({behavior:'smooth', block:'center'}); } catch(e) {}
+    try {
+      el.style.outline = '3px solid rgba(196,98,45,.72)';
+      el.style.outlineOffset = '5px';
+      el.style.boxShadow = '0 0 0 8px rgba(196,98,45,.12)';
+      setTimeout(function(){
+        el.style.outline = '';
+        el.style.outlineOffset = '';
+        el.style.boxShadow = '';
+      }, 2200);
+    } catch(e) {}
+  }
+  function openDashboardPanel(panel, focus, cb, href){
+    var nav = findDashboardNav(panel);
+    try {
+      if(nav && typeof window.dbNav === 'function') window.dbNav(nav, panel);
+      else if(nav) nav.click();
+      else {
+        var fallback = href || fallbackDashHref(panel);
+        if(fallback) window.location.href = fallback;
+        return;
+      }
+    } catch(e) {
+      var fallback = href || fallbackDashHref(panel);
+      if(fallback) window.location.href = fallback;
+      return;
+    }
+    setTimeout(function(){
+      if(panel === 'bookings' && typeof window.loadExpertBookings === 'function') window.loadExpertBookings();
+      if(panel === 'pricing' && typeof window.loadExpertPricing === 'function') window.loadExpertPricing();
+      if(panel === 'payments' && typeof window.loadPaymentPanel === 'function') window.loadPaymentPanel();
+      if(panel === 'website-editor' && typeof window.loadWebsiteEditor === 'function') window.loadWebsiteEditor();
+      if(panel === 'email-center' && window.OBEmailCenterV1 && typeof window.OBEmailCenterV1.open === 'function') window.OBEmailCenterV1.open('settings');
+      if(cb) cb();
+      if(focus) helperHighlight(document.getElementById(focus) || document.getElementById('db-panel-' + panel));
+    }, panel === 'email-center' ? 520 : 280);
+  }
+  function openSettingsBlock(blockId, domainTab, focus, href){
+    openDashboardPanel('settings', '', function(){
+      var nav = findSettingsNav(blockId);
+      try {
+        if(nav && typeof window.settingsNav === 'function') window.settingsNav(nav, blockId);
+        else if(nav) nav.click();
+      } catch(e) {
+        if(nav) nav.click();
+      }
+      setTimeout(function(){
+        if(blockId === 'sblock-website') {
+          try { if(typeof window.loadDomainSettings === 'function') window.loadDomainSettings(); } catch(e) {}
+          if(domainTab && typeof window.switchDomainTab === 'function') {
+            try { window.switchDomainTab(domainTab); } catch(e) {}
+          }
+        }
+        helperHighlight(focus || blockId);
+      }, blockId === 'sblock-website' ? 420 : 180);
+    }, href || fallbackDashHref('settings', blockId));
+  }
+  window.obAiRunAction = function(actionId, href){
+    actionId = String(actionId || '');
+    closeAiSurfaces();
+    if(actionId === 'open-domain-settings') {
+      openSettingsBlock('sblock-website', 'connect', 'custom-domain-input', href);
+      helperToast('Opened Connect Domain.');
+      return;
+    }
+    if(actionId === 'open-availability') { openSettingsBlock('sblock-availability', '', 'sblock-availability', href); helperToast('Opened Availability.'); return; }
+    if(actionId === 'open-payments') { openDashboardPanel('payments', 'payment-setup-banner', null, href); helperToast('Opened Payment Account.'); return; }
+    if(actionId === 'open-pricing') { openDashboardPanel('pricing', 'db-panel-payments', null, href); helperToast('Opened Pricing.'); return; }
+    if(actionId === 'open-email-center') { openDashboardPanel('email-center', 'db-panel-email-center', null, href); helperToast('Opened Email Center.'); return; }
+    if(actionId === 'open-bookings') { openDashboardPanel('bookings', 'bookings-list', null, href); helperToast('Opened Bookings.'); return; }
+    if(actionId === 'open-reviews') { openDashboardPanel('reviews', 'db-panel-reviews', null, href); helperToast('Opened Reviews.'); return; }
+    if(actionId === 'open-live-session') { openDashboardPanel('live-session', 'db-panel-live-session', null, href); helperToast('Opened Live Session.'); return; }
+    if(actionId === 'open-website-editor') { openDashboardPanel('website-editor', 'db-panel-website-editor', null, href); helperToast('Opened Website Editor.'); return; }
+    if(href) window.location.href = href;
+  };
 
   function ensureAdminAiPanel(){
     var sidebar = document.querySelector('.admin-sidebar');
@@ -42916,6 +43071,18 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     }
   }
 
+  function aiActionButtons(actions){
+    actions = Array.isArray(actions) ? actions : [];
+    actions = actions.filter(function(action){ return action && action.id && action.label; }).slice(0, 3);
+    if(!actions.length) return '';
+    return '<div class="ob-ai-inline-actions">' + actions.map(function(action){
+      return '<button class="ob-ai-inline-action" type="button" data-ob-ai-action="'+esc(action.id)+'" data-ob-ai-action-href="'+esc(action.href || '')+'">'+esc(action.label)+'</button>';
+    }).join('') + '</div>';
+  }
+  function renderAiMessage(msg, baseClass){
+    var role = msg && msg.role === 'assistant' ? 'assistant' : 'user';
+    return '<div class="'+baseClass+' '+role+'"><div class="ob-ai-msg-text">'+esc(msg && msg.content || '')+'</div>'+aiActionButtons(role === 'assistant' ? msg.actions : [])+'</div>';
+  }
   function renderAiLog(){
     var log = document.getElementById('ob-help-ai-log');
     if(!log) return;
@@ -42923,14 +43090,14 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       log.innerHTML = '<div class="ob-help-ai-empty">Ask about your dashboard, bookings, clients, pricing, payments, website, Email Center, live sessions, or what to improve next.</div>';
       return;
     }
-    log.innerHTML = aiMessages.map(function(msg){ return '<div class="ob-help-ai-msg '+(msg.role === 'assistant' ? 'assistant' : 'user')+'">'+esc(msg.content)+'</div>'; }).join('');
+    log.innerHTML = aiMessages.map(function(msg){ return renderAiMessage(msg, 'ob-help-ai-msg'); }).join('');
     log.scrollTop = log.scrollHeight;
   }
   function helpAiHtml(statusData){
     return '<section class="ob-help-ai" id="ob-help-ai">' +
       '<div class="ob-help-ai-head"><div><div class="ob-help-ai-kicker">AI assistant</div><div class="ob-help-ai-title">Ask anything about running your Ownlybiz practice.</div><p class="ob-help-ai-copy">The assistant reads your own dashboard context and explains the best next click or admin request. It cannot change settings or reveal private admin information.</p></div></div>' +
       '<div class="ob-help-ai-log" id="ob-help-ai-log"></div>' +
-      '<div class="ob-help-ai-chips"><button class="ob-help-ai-chip" type="button" data-ob-ai-chip="What should I improve on my dashboard today?">Improve my dashboard</button><button class="ob-help-ai-chip" type="button" data-ob-ai-chip="Help me understand my bookings">Bookings</button><button class="ob-help-ai-chip" type="button" data-ob-ai-chip="How do charges and payouts work for me?">Charges and payouts</button><button class="ob-help-ai-chip" type="button" data-ob-ai-chip="Help me improve my website">Website help</button><button class="ob-help-ai-chip" type="button" data-ob-ai-chip="Help me set up Email Center">Email Center</button><button class="ob-help-ai-chip" type="button" data-ob-ai-ticket="1">Ask admin</button></div>' +
+      '<div class="ob-help-ai-chips"><button class="ob-help-ai-chip" type="button" data-ob-ai-chip="What should I improve on my dashboard today?">Improve my dashboard</button><button class="ob-help-ai-chip" type="button" data-ob-ai-chip="Where do I connect my domain?">Connect domain</button><button class="ob-help-ai-chip" type="button" data-ob-ai-chip="Help me understand my bookings">Bookings</button><button class="ob-help-ai-chip" type="button" data-ob-ai-chip="How do charges and payouts work for me?">Charges and payouts</button><button class="ob-help-ai-chip" type="button" data-ob-ai-chip="Help me improve my website">Website help</button><button class="ob-help-ai-chip" type="button" data-ob-ai-chip="Help me set up Email Center">Email Center</button><button class="ob-help-ai-chip" type="button" data-ob-ai-ticket="1">Ask admin</button></div>' +
       '<form class="ob-help-ai-form" id="ob-help-ai-form"><input class="ob-help-ai-input" id="ob-help-ai-input" autocomplete="off" placeholder="Ask the Ownlybiz assistant..."><button class="ob-help-ai-send" type="submit">'+(aiBusy?'Thinking...':'Send')+'</button></form>' +
     '</section>';
   }
@@ -43001,7 +43168,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       helpMessages.push({role:'assistant',content:'Hi, I am your Ownlybiz assistant. Ask me about bookings, pricing, payments, clients, live sessions, your website, Email Center, or what to improve next. If you get stuck, I can help send an admin request.'});
     }
     log.innerHTML = helpMessages.map(function(msg){
-      return '<div class="ob-ai-help-msg '+(msg.role === 'assistant' ? 'assistant' : 'user')+'">'+esc(msg.content)+'</div>';
+      return renderAiMessage(msg, 'ob-ai-help-msg');
     }).join('');
     log.scrollTop = log.scrollHeight;
   }
@@ -43013,7 +43180,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     '<section class="ob-ai-help-panel" id="ob-ai-help-panel" aria-label="Ownlybiz AI assistant">' +
       '<div class="ob-ai-help-panel-head"><div><div class="ob-ai-help-panel-title">AI assistant</div><div class="ob-ai-help-panel-sub">Fast dashboard help, read-only.</div></div><button class="ob-ai-help-close" type="button" aria-label="Close AI assistant">x</button></div>' +
       '<div class="ob-ai-help-log" id="ob-ai-help-log"></div>' +
-      '<div class="ob-ai-help-panel-actions"><button type="button" data-ob-ai-float-chip="What should I improve on my dashboard today?">Improve dashboard</button><button type="button" data-ob-ai-float-chip="Help me understand my bookings">Bookings</button><button type="button" data-ob-ai-float-chip="How do charges and payouts work for me?">Payments</button><button type="button" data-ob-ai-float-ticket="1">Ask admin</button></div>' +
+      '<div class="ob-ai-help-panel-actions"><button type="button" data-ob-ai-float-chip="What should I improve on my dashboard today?">Improve dashboard</button><button type="button" data-ob-ai-float-chip="Where do I connect my domain?">Connect domain</button><button type="button" data-ob-ai-float-chip="Help me understand my bookings">Bookings</button><button type="button" data-ob-ai-float-chip="How do charges and payouts work for me?">Payments</button><button type="button" data-ob-ai-float-ticket="1">Ask admin</button></div>' +
       '<form class="ob-ai-ticket-form" id="ob-ai-ticket-form"><input id="ob-ai-ticket-subject" placeholder="Subject" value="Expert AI support request"><textarea id="ob-ai-ticket-message" placeholder="Tell admin what you need help with..."></textarea><div class="ob-ai-ticket-row"><button class="ob-ai-ticket-cancel" type="button">Cancel</button><button class="ob-ai-ticket-send" type="submit">Send to admin</button></div><div class="ob-ai-ticket-status" id="ob-ai-ticket-status"></div></form>' +
       '<form class="ob-ai-help-form" id="ob-ai-help-form"><input class="ob-ai-help-input" id="ob-ai-help-input" autocomplete="off" placeholder="Ask anything about your dashboard..."><button class="ob-ai-help-send" type="submit">'+(helpBusy?'Thinking...':'Send')+'</button></form>' +
     '</section>';
@@ -43104,7 +43271,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     setFloatingBusy(true);
     request('/api/ai/expert-assistant',{method:'POST',body:{messages:helpMessages.filter(function(m){ return m.content !== 'Thinking...'; }).slice(-8)}}).then(function(data){
       helpMessages.pop();
-      helpMessages.push({role:'assistant',content:data.answer || 'I could not answer that yet.'});
+      helpMessages.push({role:'assistant',content:data.answer || 'I could not answer that yet.',actions:Array.isArray(data.actions) ? data.actions : []});
     }).catch(function(err){
       helpMessages.pop();
       helpMessages.push({role:'assistant',content:(err.message || 'The AI assistant is not available right now.')});
@@ -43164,7 +43331,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     var input = document.getElementById('ob-help-ai-input');
     if(input) input.value = '';
     request('/api/ai/expert-assistant',{method:'POST',body:{messages:aiMessages.slice(-8)}}).then(function(data){
-      aiMessages.push({role:'assistant',content:data.answer || 'I could not answer that yet.'});
+      aiMessages.push({role:'assistant',content:data.answer || 'I could not answer that yet.',actions:Array.isArray(data.actions) ? data.actions : []});
     }).catch(function(err){
       aiMessages.push({role:'assistant',content:(err.message || 'The AI assistant is not available yet.')});
     }).finally(function(){
@@ -43181,6 +43348,8 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     if(hide){ ev.preventDefault(); window.obAiHideHelpBubble(); return; }
     var closePanel = ev.target && ev.target.closest && ev.target.closest('.ob-ai-help-close');
     if(closePanel){ ev.preventDefault(); var p = document.getElementById('ob-ai-help-panel'); if(p) p.classList.remove('open'); return; }
+    var actionBtn = ev.target && ev.target.closest && ev.target.closest('[data-ob-ai-action]');
+    if(actionBtn){ ev.preventDefault(); window.obAiRunAction(actionBtn.getAttribute('data-ob-ai-action'), actionBtn.getAttribute('data-ob-ai-action-href') || ''); return; }
     var floatChip = ev.target && ev.target.closest && ev.target.closest('[data-ob-ai-float-chip]');
     if(floatChip){ ev.preventDefault(); sendHelpQuestion(floatChip.getAttribute('data-ob-ai-float-chip')); return; }
     var floatTicket = ev.target && ev.target.closest && ev.target.closest('[data-ob-ai-float-ticket]');

@@ -39436,6 +39436,9 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   var state = {loading:false, loaded:false, loadedToken:'', me:null, dash:null, billing:null, error:''};
   var refreshTimer = null;
   var statusRefreshTimer = null;
+  var bootTimer = null;
+  var missingContentRetryAt = 0;
+  var missingContentRetryCount = 0;
   var returnRefreshAt = 0;
   var loadSeq = 0;
   var focusAction = '';
@@ -39495,6 +39498,13 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     statusRefreshTimer = setTimeout(function(){
       if(dash() && token()) load(true);
     }, typeof delay === 'number' ? delay : 700);
+  }
+  function scheduleBoot(reason, delay){
+    clearTimeout(bootTimer);
+    bootTimer = setTimeout(function(){
+      boot();
+      if(reason !== 'overview-content-missing' && dash() && token()) scheduleLaunchRefresh(reason || 'boot', 180);
+    }, typeof delay === 'number' ? delay : 120);
   }
   function load(force){
     var currentToken = token();
@@ -39750,7 +39760,16 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       return;
     }
     var content = document.querySelector('#db-panel-overview .db-content');
-    if(!content) return;
+    if(!content) {
+      var now = Date.now();
+      if(dash() && token() && missingContentRetryCount < 36 && now - missingContentRetryAt > 250) {
+        missingContentRetryAt = now;
+        missingContentRetryCount += 1;
+        scheduleBoot('overview-content-missing', missingContentRetryCount < 14 ? 260 : 900);
+      }
+      return;
+    }
+    missingContentRetryCount = 0;
     var model = derive();
     var approvalStatus = model.raw && model.raw.profile && model.raw.profile.approval_status;
     var root = document.getElementById('ob-launch-center-v1') || document.createElement('section');
@@ -39930,6 +39949,35 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     var currentToken = token();
     if(dash() && currentToken && (!state.loaded || state.loadedToken !== currentToken) && !state.loading) load(false);
   }
+  function afterDashboardLoad(reason){
+    [80,240,700,1500].forEach(function(ms){
+      setTimeout(function(){
+        boot();
+        if(dash() && token()) scheduleLaunchRefresh(reason || 'dashboard-load', 160);
+      }, ms);
+    });
+  }
+  function wrapDashboardLoaders(){
+    [
+      {owner:window, name:'loadDashboard'},
+      {owner:window, name:'loadExpertDashboard'},
+      {owner:window.OwnlyAPI, name:'loadExpertDashboard'}
+    ].forEach(function(target){
+      var owner = target.owner;
+      var name = target.name;
+      if(!owner || typeof owner[name] !== 'function' || owner[name].__obLaunchDashboardLoadV2) return;
+      var old = owner[name];
+      owner[name] = function(){
+        var result = old.apply(this, arguments);
+        afterDashboardLoad(name);
+        if(result && typeof result.then === 'function'){
+          result.then(function(){ afterDashboardLoad(name + ':resolved'); }).catch(function(){ afterDashboardLoad(name + ':error'); });
+        }
+        return result;
+      };
+      owner[name].__obLaunchDashboardLoadV2 = true;
+    });
+  }
   function refreshOnReturn(){
     var now = Date.now();
     if(now - returnRefreshAt < 1200) return;
@@ -39961,8 +40009,16 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   ready(function(){
     wrapFetch();
     wrapDbNav();
+    wrapDashboardLoaders();
     boot();
-    [150,500,1200,2600,5000].forEach(function(ms){ setTimeout(boot,ms); });
+    [150,500,1200,2600,5000,8000,12000].forEach(function(ms){
+      setTimeout(function(){
+        wrapDbNav();
+        wrapDashboardLoaders();
+        boot();
+      }, ms);
+    });
+    window.addEventListener('load', function(){ afterDashboardLoad('window-load'); });
     try {
       new MutationObserver(function(){
         clearTimeout(refreshTimer);

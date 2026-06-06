@@ -17674,6 +17674,9 @@ function saveWebsiteContent() {
       // Apply changes to the live template
       window._applyExpertWebsite(payload);
       try {
+        if (typeof window.ownlybizLaunchStatusPatch === 'function') {
+          window.ownlybizLaunchStatusPatch({ user: { name: profileName }, profile: payload });
+        }
         if (typeof window.ownlybizLaunchStatusRefresh === 'function') {
           setTimeout(function(){ window.ownlybizLaunchStatusRefresh(true); }, 350);
         }
@@ -26197,6 +26200,17 @@ window._handleRTCMessage=function(d){
       applyAvailability(body);
       if(typeof window.obSyncRateControls === 'function') try { window.obSyncRateControls(body); } catch(e) {}
       if(typeof window.obRefreshPublicFreeMinuteCopy === 'function') try { window.obRefreshPublicFreeMinuteCopy(window._currentExpert); } catch(e) {}
+      try {
+        if(typeof window.ownlybizLaunchStatusPatch === 'function') {
+          window.ownlybizLaunchStatusPatch({
+            rates:{ rates:body },
+            profile:{ rate_chat:body.chat_pm, rate_voice:body.voice_pm, rate_video:body.video_pm }
+          });
+        }
+        if(typeof window.ownlybizLaunchStatusRefresh === 'function') {
+          setTimeout(function(){ window.ownlybizLaunchStatusRefresh(true); }, 350);
+        }
+      } catch(e) {}
       if(btn){ btn.disabled = false; btn.textContent = 'Save All Changes'; }
       if(statusEl){ statusEl.textContent = 'Saved'; statusEl.style.color = 'var(--sage)'; }
       toastMsg('Pricing saved. Your website availability is updated.', 'ok');
@@ -39433,7 +39447,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   window.__ownlybizLaunchCenterV1 = true;
 
   var PROD_API = 'https://ownlybiz-backend-production.up.railway.app';
-  var state = {loading:false, loaded:false, loadedToken:'', me:null, dash:null, billing:null, error:''};
+  var state = {loading:false, loaded:false, loadedToken:'', me:null, dash:null, billing:null, rates:null, availability:null, stripe:null, error:''};
   var refreshTimer = null;
   var statusRefreshTimer = null;
   var bootTimer = null;
@@ -39523,12 +39537,18 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     Promise.all([
       readJson('/api/auth/me'),
       readJson('/api/experts/me/dashboard'),
-      readJson('/api/billing/me')
+      readJson('/api/billing/me'),
+      readJson('/api/experts/rates'),
+      readJson('/api/experts/me/availability'),
+      readJson('/api/experts/stripe/status')
     ]).then(function(results){
       if(seq !== loadSeq) return;
       state.me = results[0] || state.me;
       state.dash = results[1] || state.dash;
       state.billing = results[2] || state.billing;
+      state.rates = results[3] || state.rates;
+      state.availability = results[4] || state.availability;
+      state.stripe = results[5] || state.stripe;
       state.error = '';
       state.loaded = true;
     }).catch(function(err){
@@ -39588,7 +39608,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     var user = me.user || dashData.user || storedUser() || {};
     var profile = Object.assign({}, dashData.profile || {}, me.profile || {});
     var billing = state.billing || {};
-    return {user:user, profile:profile, dash:dashData, billing:billing};
+    return {user:user, profile:profile, dash:dashData, billing:billing, rates:state.rates || null, availability:state.availability || null, stripe:state.stripe || null};
   }
   function num(){
     for(var i=0;i<arguments.length;i++){
@@ -39620,6 +39640,22 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     }
     return [];
   }
+  function websiteContent(p){
+    var raw = p && p.website_content;
+    if(!raw) return {};
+    if(typeof raw === 'object') return raw;
+    try { return JSON.parse(raw || '{}') || {}; } catch(e) { return {}; }
+  }
+  function profileSpecialties(p){
+    var wc = websiteContent(p);
+    return profileTags(p).concat([
+      p && p.specialty,
+      p && p.primary_specialty,
+      p && p.category,
+      wc.specialty,
+      wc.primary_specialty
+    ].map(cleanText).filter(Boolean));
+  }
   function activePanel(){
     try {
       var active = document.querySelector('#view-3 .db-tab-panel.active[id^="db-panel-"]') || document.querySelector('.db-tab-panel.active[id^="db-panel-"]');
@@ -39631,7 +39667,8 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     return status === 'draft' || status === 'pending' || status === 'pending_approval' || status === 'signup_incomplete' || status === 'review' || status === 'rejected' || status === 'suspended';
   }
   function availabilityReady(d){
-    var sources = [d.me && d.me.availability, d.dash && d.dash.availability, d.profile && d.profile.availability];
+    var directAvailability = d.availability && (d.availability.availability || d.availability.schedule || d.availability);
+    var sources = [directAvailability, d.me && d.me.availability, d.dash && d.dash.availability, d.profile && d.profile.availability];
     function activeSlot(a){
       var value = a && a.is_active;
       return !(value === false || value === 0 || value === '0' || String(value).toLowerCase() === 'false');
@@ -39645,11 +39682,18 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   }
   function stripeInfo(d){
     var connect = d.billing && d.billing.stripe_connect || {};
+    var direct = d.stripe && (d.stripe.stripe_connect || d.stripe) || {};
     var u = d.user || {};
     var p = d.profile || {};
-    var connected = !!(connect.connected || connect.configured || u.stripe_connect_configured || p.stripe_connect_configured);
-    var pending = !!(connect.pending || connect.account_id || u.stripe_connect_pending || p.stripe_connect_pending);
+    var directConnected = !!(direct.connected || direct.configured || direct.details_submitted && direct.charges_enabled && direct.payouts_enabled);
+    var connected = !!(directConnected || connect.connected || connect.configured || u.stripe_connect_configured || p.stripe_connect_configured);
+    var pending = !!(direct.pending || direct.account_id || direct.stripe_account_id || connect.pending || connect.account_id || u.stripe_connect_pending || p.stripe_connect_pending);
     return {connected:connected, pending:pending};
+  }
+  function rateInfo(d){
+    var direct = d.rates && (d.rates.rates || d.rates) || {};
+    var p = d.profile || {};
+    return Object.assign({}, p, direct);
   }
   function derive(){
     var d = data();
@@ -39658,8 +39702,10 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     var u = d.user || {};
     var stripe = stripeInfo(d);
     var published = Number(p.website_published || 0) === 1 || p.website_published === true;
-    var profileReady = !!cleanText(u.name) && !!cleanText(p.title) && !!cleanText(p.bio) && profileTags(p).length > 0;
-    var rateReady = !!num(p.rate_chat, p.rate_voice, p.rate_video, p.chat_pm, p.voice_pm, p.video_pm);
+    var wc = websiteContent(p);
+    var profileReady = !!cleanText(u.name || p.name || wc.name || wc.profile_name) && !!cleanText(p.title || wc.title || wc.hero_tagline) && !!cleanText(p.bio || wc.bio || wc.short_intro) && profileSpecialties(p).length > 0;
+    var rates = rateInfo(d);
+    var rateReady = !!num(rates.rate_chat, rates.rate_voice, rates.rate_video, rates.chat_pm, rates.voice_pm, rates.video_pm);
     var availReady = availabilityReady(d);
     var emailReady = verifiedFrom(d);
     var required = [];
@@ -39888,6 +39934,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     }).then(function(r){
       return r.json().catch(function(){ return {}; }).then(function(d){
         if(!r.ok || d.success === false) throw new Error(d.error || 'Could not publish website');
+        patchLaunchState({profile:{website_published:1, website_published_at:Math.floor(Date.now()/1000)}});
         return d;
       });
     });
@@ -39949,6 +39996,24 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     var currentToken = token();
     if(dash() && currentToken && (!state.loaded || state.loadedToken !== currentToken) && !state.loading) load(false);
   }
+  function patchLaunchState(patch){
+    patch = patch || {};
+    if(patch.user){
+      state.me = Object.assign({}, state.me || {});
+      state.me.user = Object.assign({}, state.me.user || {}, patch.user);
+    }
+    if(patch.profile){
+      state.me = Object.assign({}, state.me || {});
+      state.me.profile = Object.assign({}, state.me.profile || {}, patch.profile);
+      state.dash = Object.assign({}, state.dash || {});
+      state.dash.profile = Object.assign({}, state.dash.profile || {}, patch.profile);
+    }
+    if(patch.rates) state.rates = Object.assign({}, state.rates || {}, patch.rates);
+    if(patch.availability) state.availability = patch.availability;
+    if(patch.stripe) state.stripe = Object.assign({}, state.stripe || {}, patch.stripe);
+    state.loaded = true;
+    render();
+  }
   function afterDashboardLoad(reason){
     [80,240,700,1500].forEach(function(ms){
       setTimeout(function(){
@@ -39996,6 +40061,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   window.ownlybizLaunchCenterOpen = openLaunchCenter;
   window.ownlybizLaunchStatusOpen = openLaunchCenter;
   window.ownlybizLaunchStatusRefresh = function(force){ if(force === false) scheduleLaunchRefresh('manual', 350); else load(true); };
+  window.ownlybizLaunchStatusPatch = function(patch){ patchLaunchState(patch); scheduleLaunchRefresh('local-patch', 450); };
   function wrapDbNav(){
     if(typeof window.dbNav !== 'function' || window.dbNav.__obLaunchCompanionV1) return;
     var old = window.dbNav;
@@ -48261,6 +48327,14 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
           auto_accept_bookings: payload.auto_accept_bookings
         }
       });
+      try {
+        if(typeof window.ownlybizLaunchStatusPatch === 'function') {
+          window.ownlybizLaunchStatusPatch({ availability:{ availability:payload.schedule } });
+        }
+        if(typeof window.ownlybizLaunchStatusRefresh === 'function') {
+          setTimeout(function(){ window.ownlybizLaunchStatusRefresh(true); }, 350);
+        }
+      } catch(e) {}
       setAvailabilitySaveState('saved');
       notify('Availability saved.', 'ok');
       return true;

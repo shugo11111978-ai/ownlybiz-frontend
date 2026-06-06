@@ -24777,17 +24777,45 @@ window._handleRTCMessage=function(d){
     if(/\/api\/experts\/me\/clients(?:$|\?)/.test(url)) return 2500;
     if(/\/api\/admin\/dashboard(?:$|\?)/.test(url)) return 1500;
     if(/\/api\/admin\/experts(?:$|\?)/.test(url)) return 1500;
-    if(/\/api\/experts\/[^/?#]+(?:$|\?)/.test(url) && url.indexOf('/api/experts/me/') === -1) return 5000;
+    if(isPublicExpertGet(url)) return 10000;
     return 0;
+  }
+  function isPublicExpertGet(url){
+    try {
+      var path = new URL(url, location.origin).pathname;
+      return /^\/api\/experts\/[^\/?#]+$/.test(path)
+        && path !== '/api/experts/me'
+        && path !== '/api/experts/rates'
+        && path !== '/api/experts/platform-fees'
+        && path !== '/api/experts/favicon'
+        && path.indexOf('/api/experts/stripe') !== 0;
+    } catch(e) {
+      return /\/api\/experts\/[^/?#]+(?:$|\?)/.test(url)
+        && url.indexOf('/api/experts/me') === -1
+        && url.indexOf('/api/experts/rates') === -1
+        && url.indexOf('/api/experts/platform-fees') === -1
+        && url.indexOf('/api/experts/favicon') === -1
+        && url.indexOf('/api/experts/stripe') === -1;
+    }
+  }
+  function normalizedHotGetUrl(url){
+    if(!isPublicExpertGet(url)) return url;
+    try {
+      var parsed = new URL(url, location.origin);
+      parsed.searchParams.delete('_');
+      return parsed.origin + parsed.pathname + (parsed.search ? parsed.search : '');
+    } catch(e) {
+      return safeText(url).replace(/([?&])_=[^&#]*&?/, '$1').replace(/[?&]$/, '');
+    }
   }
   function shouldDedupe(url, method, init){
     if(method !== 'GET') return false;
     if(!url || url.indexOf('/api/') === -1) return false;
-    if(init && init.cache === 'no-store') return false;
+    if(init && init.cache === 'no-store' && !isPublicExpertGet(url)) return false;
     return ttlFor(url) > 0;
   }
   function cacheKey(url, init){
-    return [url, authKey(init)].join('::');
+    return [normalizedHotGetUrl(url), authKey(init)].join('::');
   }
   function pruneHotGetCache(){
     var now = Date.now();

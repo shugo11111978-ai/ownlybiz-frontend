@@ -24741,6 +24741,7 @@ window._handleRTCMessage=function(d){
   var hotGetCache = new Map();
   var hotGetInflight = new Map();
   var loaderStates = {};
+  var pruneTimerStarted = false;
 
   function safeText(v){ return v == null ? '' : String(v); }
   function activeView(){
@@ -24828,10 +24829,12 @@ window._handleRTCMessage=function(d){
   }
   function installFetchGuard(){
     if(window.fetch && window.fetch._obScaleGuardWrapped) return;
+    var sourceFetch = window.fetch && window.fetch.bind(window);
+    if(!sourceFetch) return;
     window.fetch = function(input, init){
       var url = readUrl(input);
       var method = readMethod(input, init);
-      if(!shouldDedupe(url, method, init)) return nativeFetch(input, init);
+      if(!shouldDedupe(url, method, init)) return sourceFetch(input, init);
       var ttl = ttlFor(url);
       var key = cacheKey(url, init);
       var now = Date.now();
@@ -24846,7 +24849,7 @@ window._handleRTCMessage=function(d){
         return inflight.then(function(res){ return res.clone(); });
       }
       stats.fetch_misses++;
-      var req = nativeFetch(input, init).then(function(res){
+      var req = sourceFetch(input, init).then(function(res){
         if(res && res.ok && ttl > 0){
           hotGetCache.set(key, { response: res.clone(), expires: Date.now() + ttl });
         }
@@ -24858,7 +24861,11 @@ window._handleRTCMessage=function(d){
       return req.then(function(res){ return res.clone(); });
     };
     window.fetch._obScaleGuardWrapped = true;
-    setInterval(pruneHotGetCache, 20000);
+    window.fetch._obScaleGuardSource = sourceFetch;
+    if(!pruneTimerStarted){
+      pruneTimerStarted = true;
+      setInterval(pruneHotGetCache, 20000);
+    }
   }
 
   function wrapSwitchView(){
@@ -24960,7 +24967,9 @@ window._handleRTCMessage=function(d){
   }
 
   installGuards();
-  [250, 900, 1800, 3200, 5200].forEach(function(ms){ setTimeout(installGuards, ms); });
+  [250, 900, 1800, 3200, 5200, 8000, 12000].forEach(function(ms){ setTimeout(installGuards, ms); });
+  document.addEventListener('DOMContentLoaded', installGuards);
+  window.addEventListener('load', function(){ setTimeout(installGuards, 0); setTimeout(installGuards, 1500); });
 })();
 </script>
 <style>

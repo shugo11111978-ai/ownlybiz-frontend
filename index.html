@@ -39371,6 +39371,9 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   var PROD_API = 'https://victorious-wisdom-production-a6b0.up.railway.app';
   var state = {loading:false, loaded:false, loadedToken:'', me:null, dash:null, billing:null, error:''};
   var refreshTimer = null;
+  var statusRefreshTimer = null;
+  var returnRefreshAt = 0;
+  var loadSeq = 0;
   var focusAction = '';
 
   function ready(fn){
@@ -39422,6 +39425,13 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       });
     }).catch(function(){ return null; });
   }
+  function scheduleLaunchRefresh(reason, delay){
+    if(!token()) return;
+    clearTimeout(statusRefreshTimer);
+    statusRefreshTimer = setTimeout(function(){
+      if(dash() && token()) load(true);
+    }, typeof delay === 'number' ? delay : 700);
+  }
   function load(force){
     var currentToken = token();
     if(!currentToken){
@@ -39433,6 +39443,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     }
     if(state.loading && !force) return;
     state.loading = true;
+    var seq = ++loadSeq;
     state.loadedToken = currentToken;
     render();
     Promise.all([
@@ -39440,17 +39451,61 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       readJson('/api/experts/me/dashboard'),
       readJson('/api/billing/me')
     ]).then(function(results){
+      if(seq !== loadSeq) return;
       state.me = results[0] || state.me;
       state.dash = results[1] || state.dash;
       state.billing = results[2] || state.billing;
       state.error = '';
       state.loaded = true;
     }).catch(function(err){
+      if(seq !== loadSeq) return;
       state.error = err && err.message || 'Launch status could not refresh.';
     }).finally(function(){
+      if(seq !== loadSeq) return;
       state.loading = false;
       render();
     });
+  }
+  function fetchUrl(input){
+    try {
+      if(typeof input === 'string') return input;
+      if(input && input.url) return input.url;
+    } catch(e) {}
+    return '';
+  }
+  function fetchMethod(input, init){
+    return String(init && init.method || input && input.method || 'GET').toUpperCase();
+  }
+  function isLaunchMutation(url, method){
+    if(!/^(POST|PUT|PATCH|DELETE)$/.test(method || '')) return false;
+    url = String(url || '');
+    return [
+      '/api/auth/me',
+      '/api/experts/me/profile',
+      '/api/experts/me/availability',
+      '/api/experts/me/packages',
+      '/api/billing',
+      '/api/stripe',
+      '/api/connect',
+      '/api/payments'
+    ].some(function(marker){ return url.indexOf(marker) > -1; });
+  }
+  function wrapFetch(){
+    if(typeof window.fetch !== 'function' || window.fetch.__obLaunchRefreshV1) return;
+    var oldFetch = window.fetch;
+    window.fetch = function(input, init){
+      var url = fetchUrl(input);
+      var method = fetchMethod(input, init);
+      var shouldRefresh = isLaunchMutation(url, method);
+      var result = oldFetch.apply(this, arguments);
+      if(shouldRefresh && result && typeof result.then === 'function'){
+        result.then(function(response){
+          if(response && response.ok) scheduleLaunchRefresh('mutation:' + method, 900);
+        }).catch(function(){});
+      }
+      return result;
+    };
+    window.fetch.__obLaunchRefreshV1 = true;
   }
   function data(){
     var me = state.me || {};
@@ -39806,6 +39861,12 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     var currentToken = token();
     if(dash() && currentToken && (!state.loaded || state.loadedToken !== currentToken) && !state.loading) load(false);
   }
+  function refreshOnReturn(){
+    var now = Date.now();
+    if(now - returnRefreshAt < 1200) return;
+    returnRefreshAt = now;
+    scheduleLaunchRefresh('return', 120);
+  }
   document.addEventListener('click', function(e){
     var btn = e.target && e.target.closest && e.target.closest('[data-ob-launch-action]');
     if(!btn) return;
@@ -39817,18 +39878,19 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   }, true);
   window.ownlybizLaunchCenterOpen = openLaunchCenter;
   window.ownlybizLaunchStatusOpen = openLaunchCenter;
-  window.ownlybizLaunchStatusRefresh = function(force){ load(force !== false); };
+  window.ownlybizLaunchStatusRefresh = function(force){ if(force === false) scheduleLaunchRefresh('manual', 350); else load(true); };
   function wrapDbNav(){
     if(typeof window.dbNav !== 'function' || window.dbNav.__obLaunchCompanionV1) return;
     var old = window.dbNav;
     window.dbNav = function(){
       var result = old.apply(this, arguments);
-      setTimeout(boot, 90);
+      setTimeout(function(){ boot(); scheduleLaunchRefresh('nav', 160); }, 90);
       return result;
     };
     window.dbNav.__obLaunchCompanionV1 = true;
   }
   ready(function(){
+    wrapFetch();
     wrapDbNav();
     boot();
     [150,500,1200,2600,5000].forEach(function(ms){ setTimeout(boot,ms); });
@@ -39841,6 +39903,9 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   });
   window.addEventListener('popstate', boot);
   window.addEventListener('hashchange', boot);
+  window.addEventListener('focus', refreshOnReturn);
+  window.addEventListener('pageshow', refreshOnReturn);
+  document.addEventListener('visibilitychange', function(){ if(document.visibilityState === 'visible') refreshOnReturn(); });
 })();
 </script>
 

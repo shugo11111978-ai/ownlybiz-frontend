@@ -50073,6 +50073,8 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   function base(){ return String(window.OWNLYBIZ_API_URL || window._OB_BACKEND || window.OWNLY_API || DEFAULT_API).replace(/\/+$/,''); }
   function token(){ return sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || localStorage.getItem('ob_client_token') || ''; }
   function user(){ try { return JSON.parse(sessionStorage.getItem('ob_u') || localStorage.getItem('ob_u') || 'null'); } catch(e){ return null; } }
+  function userRole(){ var u = user() || {}; return String(u.role || '').toLowerCase(); }
+  function clientSignedIn(){ return !!token() && userRole() === 'client'; }
   function saveAuth(d, fallback){
     if(!d || !d.token) return;
     var u = d.user || fallback || {};
@@ -50100,6 +50102,14 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     if(typeof window.toast === 'function') window.toast(msg, kind || 'ok');
     else if(typeof window.toastMsg === 'function') window.toastMsg(msg, kind || 'ok');
     else console.log(msg);
+  }
+  function setPublicStatus(kind, msg){
+    var status = document.getElementById('ob-od-public-status');
+    if(!status) return;
+    status.className = 'ob-od-alert ' + (kind === 'error' ? 'error' : kind === 'ok' ? 'ok' : 'info');
+    status.textContent = msg || '';
+    status.style.display = msg ? 'block' : 'none';
+    if(msg && kind === 'error') setTimeout(function(){ try { status.scrollIntoView({block:'nearest', behavior:'smooth'}); } catch(e) {} }, 30);
   }
   function api(path, opts){
     opts = opts || {};
@@ -50147,6 +50157,8 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       '.ob-od-input,.ob-od-textarea,.ob-od-select{width:100%;box-sizing:border-box;border:1px solid rgba(36,24,19,.18);background:#fffdf9;color:#241813;border-radius:8px;padding:11px 12px;font:inherit;min-height:42px}.ob-od-textarea{min-height:96px;resize:vertical;line-height:1.5}' +
       '.ob-od-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}.ob-od-modal{position:fixed;inset:0;z-index:100001;background:rgba(17,10,7,.72);display:none;align-items:center;justify-content:center;padding:16px}.ob-od-modal.show{display:flex}.ob-od-sheet{width:min(720px,100%);max-height:92vh;overflow:auto;background:#fffaf5;color:#241813;border-radius:10px;border:1px solid rgba(36,24,19,.14);padding:22px;box-shadow:0 28px 90px rgba(0,0,0,.36);box-sizing:border-box}.ob-od-close{float:right;border:1px solid rgba(36,24,19,.16);background:#fff;border-radius:8px;width:38px;height:38px;font-weight:900;cursor:pointer}' +
       '.ob-od-bucket{border:1px solid rgba(36,24,19,.14);background:#fffdf9;border-radius:8px;padding:12px;cursor:pointer}.ob-od-bucket.active{border-color:#c4622d;box-shadow:inset 0 0 0 1px rgba(196,98,45,.22);background:#fff4eb}.ob-od-pill{display:inline-flex;align-items:center;border-radius:999px;padding:5px 9px;background:rgba(196,98,45,.12);color:#9a4b22;font-size:11px;font-weight:900}.ob-od-status{font-size:12px;color:#6d5b50;line-height:1.5;margin-top:8px}' +
+      '.ob-od-alert{display:none;width:100%;box-sizing:border-box;border-radius:8px;padding:11px 12px;margin-top:12px;font-size:13px;line-height:1.45}.ob-od-alert.error{display:block;background:#fff1f2;border:1px solid rgba(220,38,38,.24);color:#9f1239}.ob-od-alert.info{display:block;background:#fff7ed;border:1px solid rgba(196,98,45,.22);color:#7c2d12}.ob-od-alert.ok{display:block;background:#ecfdf5;border:1px solid rgba(16,185,129,.24);color:#065f46}' +
+      '.ob-od-service-card{border-color:rgba(196,98,45,.32)!important;background:#fffaf5!important}.ob-od-service-card .service-big-icon{width:52px;height:52px;border-radius:14px;background:rgba(196,98,45,.14);display:flex;align-items:center;justify-content:center}.ob-od-mini-card{cursor:pointer;border-color:rgba(196,98,45,.32)!important;background:#fffaf5!important}.ob-od-builder-row{border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:10px;margin-bottom:8px;background:rgba(255,255,255,.035)}' +
       '#db-panel-on-demand .ob-od-dash-grid{display:grid;grid-template-columns:minmax(280px,.8fr) minmax(360px,1.2fr);gap:16px}@media(max-width:900px){#db-panel-on-demand .ob-od-dash-grid{grid-template-columns:1fr}}' +
       '#db-panel-on-demand .ob-od-dark-card{border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.04);border-radius:8px;padding:16px;color:rgba(246,241,233,.9)}#db-panel-on-demand .ob-od-dark-card h3{color:#fff;font-size:18px;margin:0 0 6px}.ob-od-request{border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.035);border-radius:8px;padding:14px;margin-bottom:12px}.ob-od-request textarea{background:rgba(0,0,0,.18);color:#fff;border-color:rgba(255,255,255,.14)}' +
       '.ob-admin-od-card .admin-input{min-height:40px}';
@@ -50318,6 +50330,36 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       '</div>' +
     '</div>';
   }
+  function placementControls(s){
+    var p = s.placement || {};
+    return '<h3 style="margin-top:18px;">Website placement</h3><p class="ob-od-sub" style="color:rgba(246,241,233,.56);">Choose exactly where this paid written option appears on your public website.</p>' +
+      '<div style="display:grid;gap:9px;margin-top:10px;">' +
+        '<label style="display:flex;gap:8px;align-items:center;font-size:13px;"><input id="ob-od-place-home" type="checkbox" ' + (p.home !== false ? 'checked' : '') + '> Homepage services section</label>' +
+        '<label style="display:flex;gap:8px;align-items:center;font-size:13px;"><input id="ob-od-place-services" type="checkbox" ' + (p.services !== false ? 'checked' : '') + '> Services & Rates page</label>' +
+        '<label style="display:flex;gap:8px;align-items:center;font-size:13px;"><input id="ob-od-place-book" type="checkbox" ' + (p.book ? 'checked' : '') + '> Booking page</label>' +
+        '<label style="font-size:12px;color:rgba(246,241,233,.55);">Display style<select id="ob-od-place-style" class="ob-od-select"><option value="service" ' + (p.card_style !== 'banner' && p.card_style !== 'both' ? 'selected' : '') + '>Service card</option><option value="banner" ' + (p.card_style === 'banner' ? 'selected' : '') + '>Focused banner</option></select></label>' +
+        '<label style="font-size:12px;color:rgba(246,241,233,.55);">Position<select id="ob-od-place-position" class="ob-od-select"><option value="after_live_services" ' + (p.position !== 'top' && p.position !== 'bottom' ? 'selected' : '') + '>After live services</option><option value="top" ' + (p.position === 'top' ? 'selected' : '') + '>Top of section</option><option value="bottom" ' + (p.position === 'bottom' ? 'selected' : '') + '>Bottom of section</option></select></label>' +
+      '</div>';
+  }
+  function formFieldRows(fields){
+    fields = fields && fields.length ? fields : defaultFormFields();
+    return fields.map(function(field, idx){
+      var options = Array.isArray(field.options) ? field.options.join(', ') : '';
+      return '<div class="ob-od-builder-row" data-field-id="' + attr(field.id || '') + '">' +
+        '<div class="ob-od-row" style="grid-template-columns:minmax(130px,1fr) 120px 1.4fr;align-items:end;">' +
+          '<label style="font-size:12px;color:rgba(246,241,233,.55);">Label<input class="ob-od-input ob-od-field-label" value="' + attr(field.label || '') + '"></label>' +
+          '<label style="font-size:12px;color:rgba(246,241,233,.55);">Type<select class="ob-od-select ob-od-field-type"><option value="text" ' + (field.type === 'text' ? 'selected' : '') + '>Text</option><option value="textarea" ' + (field.type === 'textarea' ? 'selected' : '') + '>Long text</option><option value="select" ' + (field.type === 'select' ? 'selected' : '') + '>Options</option></select></label>' +
+          '<label style="font-size:12px;color:rgba(246,241,233,.55);">Placeholder<input class="ob-od-input ob-od-field-placeholder" value="' + attr(field.placeholder || '') + '"></label>' +
+        '</div>' +
+        '<div class="ob-od-row" style="grid-template-columns:1fr 110px 110px 80px;align-items:end;margin-top:8px;">' +
+          '<label style="font-size:12px;color:rgba(246,241,233,.55);">Options, comma separated<input class="ob-od-input ob-od-field-options" value="' + attr(options) + '"></label>' +
+          '<label style="display:flex;gap:7px;align-items:center;font-size:12px;color:rgba(246,241,233,.72);padding-bottom:12px;"><input class="ob-od-field-required" type="checkbox" ' + (field.required ? 'checked' : '') + '> Required</label>' +
+          '<label style="display:flex;gap:7px;align-items:center;font-size:12px;color:rgba(246,241,233,.72);padding-bottom:12px;"><input class="ob-od-field-enabled" type="checkbox" ' + (field.enabled !== false ? 'checked' : '') + '> Show</label>' +
+          '<button type="button" class="ob-od-btn danger" onclick="obOdRemoveField(this)">Remove</button>' +
+        '</div>' +
+      '</div>';
+    }).join('');
+  }
   function renderExpertOnDemand(){
     var panel = ensureExpertPanel();
     if(!panel) return;
@@ -50339,6 +50381,8 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
             '<label style="font-size:12px;color:rgba(246,241,233,.55);">AI/expert instructions<textarea id="ob-od-instructions" class="ob-od-textarea">' + esc(s.intake_instructions || '') + '</textarea></label>' +
             '<label style="display:flex;align-items:flex-start;gap:8px;font-size:12px;color:rgba(246,241,233,.72);"><input id="ob-od-safety" type="checkbox" ' + (s.safety_ack ? 'checked' : '') + '> I understand written readings must stay within safe, appropriate, non-guaranteed guidance.</label>' +
           '</div>' +
+          placementControls(s) +
+          '<h3 style="margin-top:18px;">Request form</h3><p class="ob-od-sub" style="color:rgba(246,241,233,.56);">Add, edit, hide, or remove the fields clients complete before payment.</p><div id="ob-od-form-fields" style="margin-top:10px;">' + formFieldRows(s.form_fields || []) + '</div><button type="button" class="ob-od-btn secondary" onclick="obOdAddField()">Add form field</button>' +
           '<h3 style="margin-top:18px;">Response windows</h3><div id="ob-od-buckets">' + bucketRows(buckets) + '</div><button class="ob-od-btn secondary" onclick="obOdAddBucket()">Add window</button>' +
           '<div style="margin-top:14px;"><button class="ob-od-btn" onclick="obOdSaveSettings()">Save On Demand</button><span id="ob-od-save-status" style="font-size:12px;color:rgba(246,241,233,.56);margin-left:10px;"></span></div>' +
         '</div>' +
@@ -50365,6 +50409,45 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     if(!wrap) return;
     wrap.insertAdjacentHTML('beforeend', bucketRows([{label:'72 hours', turnaround_hours:72, price_cents:1900, currency:'usd', enabled:true}]));
   };
+  window.obOdAddField = function(){
+    var wrap = document.getElementById('ob-od-form-fields');
+    if(!wrap) return;
+    wrap.insertAdjacentHTML('beforeend', formFieldRows([{id:'custom_' + Date.now(), label:'Additional detail', type:'textarea', placeholder:'Share anything else that would help.', required:false, enabled:true, options:[], sort_order:wrap.querySelectorAll('.ob-od-builder-row').length}]));
+  };
+  window.obOdRemoveField = function(btn){
+    var row = btn && btn.closest ? btn.closest('.ob-od-builder-row') : null;
+    if(row && row.parentNode) row.parentNode.removeChild(row);
+  };
+  function readFormFields(){
+    return Array.prototype.slice.call(document.querySelectorAll('#ob-od-form-fields .ob-od-builder-row')).map(function(row, idx){
+      var existing = row.getAttribute('data-field-id') || '';
+      var label = (row.querySelector('.ob-od-field-label') || {}).value || '';
+      var id = existing || ('custom_' + (idx + 1));
+      return {
+        id: id,
+        label: label,
+        type: (row.querySelector('.ob-od-field-type') || {}).value || 'text',
+        placeholder: (row.querySelector('.ob-od-field-placeholder') || {}).value || '',
+        options: String((row.querySelector('.ob-od-field-options') || {}).value || '').split(',').map(function(x){ return x.trim(); }).filter(Boolean),
+        required: !!((row.querySelector('.ob-od-field-required') || {}).checked),
+        enabled: !!((row.querySelector('.ob-od-field-enabled') || {}).checked),
+        sort_order: idx
+      };
+    }).filter(function(field){ return field.label.trim(); });
+  }
+  function readPlacement(){
+    var home = !!((document.getElementById('ob-od-place-home') || {}).checked);
+    var services = !!((document.getElementById('ob-od-place-services') || {}).checked);
+    var book = !!((document.getElementById('ob-od-place-book') || {}).checked);
+    if(!home && !services && !book) services = true;
+    return {
+      home: home,
+      services: services,
+      book: book,
+      card_style: (document.getElementById('ob-od-place-style') || {}).value || 'service',
+      position: (document.getElementById('ob-od-place-position') || {}).value || 'after_live_services'
+    };
+  }
   function readBuckets(){
     return Array.prototype.slice.call(document.querySelectorAll('.ob-od-bucket-row')).map(function(row, idx){
       return {
@@ -50389,6 +50472,8 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       intro_text: (document.getElementById('ob-od-intro') || {}).value || '',
       intake_instructions: (document.getElementById('ob-od-instructions') || {}).value || '',
       safety_ack: !!((document.getElementById('ob-od-safety') || {}).checked),
+      placement: readPlacement(),
+      form_fields: readFormFields(),
       buckets: readBuckets()
     }}).then(function(){
       if(status) status.textContent = 'Saved.';
@@ -50419,7 +50504,34 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   function publicCard(config){
     var s = config.settings || {};
     var buckets = config.buckets || [];
-    return '<div class="ob-od-card" id="ob-public-on-demand-card"><div style="display:flex;justify-content:space-between;gap:16px;align-items:flex-start;flex-wrap:wrap;"><div><h3>' + esc(s.public_label || 'Written Reading') + '</h3><p class="ob-od-sub">' + esc(s.intro_text || '') + '</p></div><button class="ob-od-btn" onclick="obOdOpenPublic()">Ask a Question</button></div><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;">' + buckets.map(function(b){ return '<span class="ob-od-pill">' + esc(b.label) + ' / ' + esc(money(b.price_cents, b.currency)) + '</span>'; }).join('') + '</div></div>';
+    var price = buckets.length ? money(buckets[0].price_cents, buckets[0].currency) : '';
+    return '<div class="ob-od-card ob-public-on-demand-entry" id="ob-public-on-demand-card"><div style="display:flex;justify-content:space-between;gap:16px;align-items:flex-start;flex-wrap:wrap;"><div><h3>' + esc(s.public_label || 'Written Reading') + '</h3><p class="ob-od-sub">' + esc(s.intro_text || '') + '</p></div><button type="button" class="ob-od-btn" onclick="obOdOpenPublic()">Ask a Question</button></div><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;">' + buckets.map(function(b){ return '<span class="ob-od-pill">' + esc(b.label) + ' / ' + esc(money(b.price_cents, b.currency)) + '</span>'; }).join('') + '</div></div>';
+  }
+  function publicServiceCard(config, compact){
+    var s = config.settings || {};
+    var buckets = config.buckets || [];
+    var price = buckets.length ? money(buckets[0].price_cents, buckets[0].currency) : '';
+    var label = esc(s.public_label || 'Written Reading');
+    var intro = esc(s.intro_text || 'Send a focused question and receive a private written answer.');
+    if(compact) {
+      return '<div class="service-mini ob-od-mini-card ob-public-on-demand-entry" id="ob-public-on-demand-card" onclick="obOdOpenPublic()"><div class="service-mini-icon">WR</div><div class="service-mini-name">' + label + '</div><div class="service-mini-price">' + esc(price ? 'from ' + price : 'Written answer') + '</div></div>';
+    }
+    return '<div class="service-big-card ob-od-service-card ob-public-on-demand-entry" id="ob-public-on-demand-card">' +
+      '<div class="service-big-icon">✍️</div><div class="service-big-info"><div class="service-big-name">' + label + '</div><div class="service-big-desc">' + intro + '</div><div style="display:flex;gap:7px;flex-wrap:wrap;margin-top:10px;">' + buckets.map(function(b){ return '<span class="ob-od-pill">' + esc(b.label) + ' / ' + esc(money(b.price_cents, b.currency)) + '</span>'; }).join('') + '</div></div>' +
+      '<div style="text-align:right;flex-shrink:0;"><div class="service-big-price">' + esc(price ? 'from ' + price : '') + '</div><button type="button" class="btn btn-primary btn-sm mt-8" onclick="obOdOpenPublic()">Ask a Question</button></div></div>';
+  }
+  function activePublicPage(){
+    var active = document.querySelector('#view-4 .expert-page.active');
+    if(active && active.id) return active.id.replace(/^ep-/, '') || 'home';
+    if(document.querySelector('#view-4.active')) return 'home';
+    return 'home';
+  }
+  function placementAllows(config){
+    var p = config && config.settings && config.settings.placement || {};
+    var page = activePublicPage();
+    if(page === 'services') return p.services !== false;
+    if(page === 'book') return !!p.book;
+    return p.home !== false;
   }
   function visibleHost(candidates){
     for(var i=0;i<candidates.length;i++){
@@ -50432,27 +50544,22 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     return null;
   }
   function injectPublicCard(config){
-    if(!config || !config.available) return;
+    document.querySelectorAll('.ob-public-on-demand-entry').forEach(function(el){ if(el && el.parentNode) el.parentNode.removeChild(el); });
+    if(!config || !config.available || !placementAllows(config)) return;
     addStyle();
-    var existing = document.getElementById('ob-public-on-demand-card');
-    if(existing) {
-      var exRect = existing.getBoundingClientRect ? existing.getBoundingClientRect() : { width:0, height:0 };
-      if(exRect.width > 0 && exRect.height > 0) return;
-      if(existing.parentNode) existing.parentNode.removeChild(existing);
-    }
+    var p = config.settings && config.settings.placement || {};
+    var page = activePublicPage();
+    var compact = page === 'home';
     var firstService = document.querySelector('#view-4 .service-big-card');
-    var host = visibleHost([
-      document.querySelector('#view-4 .services-preview'),
-      firstService && firstService.parentElement,
-      document.querySelector('#view-4 .expert-page.active'),
-      document.querySelector('#ep-services .ob-packages'),
-      document.getElementById('ep-services'),
-      document.getElementById('ep-book'),
-      document.querySelector('#view-4 .expert-public-content'),
-      document.getElementById('view-4')
-    ]);
+    var host = null;
+    if(page === 'services') host = visibleHost([document.querySelector('#ep-services .service-cards-col'), firstService && firstService.parentElement]);
+    else if(page === 'book') host = visibleHost([document.querySelector('#ep-book .book-inner'), document.getElementById('ep-book')]);
+    else host = visibleHost([document.querySelector('#view-4 .services-grid-4'), document.querySelector('#view-4 .services-preview-inner'), document.querySelector('#view-4 .services-preview')]);
     if(!host) return;
-    host.insertAdjacentHTML('afterbegin', publicCard(config));
+    var html = (p.card_style === 'banner' || page === 'book') ? publicCard(config) : publicServiceCard(config, compact);
+    if(page === 'services' && p.position === 'after_live_services' && host.children && host.children.length > 3) host.children[3].insertAdjacentHTML('beforebegin', html);
+    else if(p.position === 'bottom') host.insertAdjacentHTML('beforeend', html);
+    else host.insertAdjacentHTML('afterbegin', html);
   }
   function ensurePublicModal(){
     addStyle();
@@ -50465,25 +50572,66 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     document.body.appendChild(modal);
     return modal;
   }
+  function defaultFormFields(){
+    return [
+      {id:'topic', type:'select', label:'Topic', placeholder:'', required:true, enabled:true, options:['Love and relationships','Career and money','Family','Life direction','Business','Other'], sort_order:0},
+      {id:'birth_details', type:'text', label:'Birth/date details', placeholder:'DOB, birth time, zodiac, or relevant date', required:false, enabled:true, options:[], sort_order:1},
+      {id:'question', type:'textarea', label:'Main question', placeholder:'What do you want answered?', required:true, enabled:true, options:[], sort_order:2},
+      {id:'context', type:'textarea', label:'Background and context', placeholder:'Share the details the expert should know.', required:true, enabled:true, options:[], sort_order:3},
+      {id:'involved_people', type:'textarea', label:'People involved', placeholder:'Names, relationship, ages, or other context if relevant.', required:false, enabled:true, options:[], sort_order:4}
+    ];
+  }
+  function activeFormFields(config){
+    var fields = (config && config.settings && Array.isArray(config.settings.form_fields) && config.settings.form_fields.length) ? config.settings.form_fields : defaultFormFields();
+    return fields.filter(function(field){ return field && field.enabled !== false; }).sort(function(a,b){ return Number(a.sort_order || 0) - Number(b.sort_order || 0); });
+  }
+  function fieldInputHtml(field){
+    var req = field.required ? ' required' : '';
+    var id = 'ob-od-field-' + attr(field.id);
+    var label = esc(field.label || 'Question') + (field.required ? ' *' : '');
+    var placeholder = attr(field.placeholder || '');
+    if(field.type === 'select') {
+      var options = (field.options || []).map(function(option){ return '<option value="' + attr(option) + '">' + esc(option) + '</option>'; }).join('');
+      return '<label style="display:block;margin-top:12px;">' + label + '<select id="' + id + '" data-field-id="' + attr(field.id) + '" data-field-type="select" data-required="' + (field.required ? '1' : '0') + '" class="ob-od-select">' + options + '</select></label>';
+    }
+    if(field.type === 'textarea') {
+      return '<label style="display:block;margin-top:12px;">' + label + '<textarea id="' + id + '" data-field-id="' + attr(field.id) + '" data-field-type="textarea" data-required="' + (field.required ? '1' : '0') + '" class="ob-od-textarea" placeholder="' + placeholder + '"' + req + '></textarea></label>';
+    }
+    return '<label style="display:block;margin-top:12px;">' + label + '<input id="' + id + '" data-field-id="' + attr(field.id) + '" data-field-type="text" data-required="' + (field.required ? '1' : '0') + '" class="ob-od-input" placeholder="' + placeholder + '"' + req + '></label>';
+  }
+  function collectPublicFields(){
+    var values = {};
+    var missing = [];
+    Array.prototype.slice.call(document.querySelectorAll('#ob-od-public-body [data-field-id]')).forEach(function(el){
+      var id = el.getAttribute('data-field-id') || '';
+      var label = '';
+      var parent = el.closest ? el.closest('label') : null;
+      if(parent) label = (parent.childNodes[0] && parent.childNodes[0].textContent || '').replace('*','').trim();
+      var value = (el.value || '').trim();
+      values[id] = value;
+      if(el.getAttribute('data-required') === '1' && !value) missing.push(label || id);
+    });
+    return { values:values, missing:missing };
+  }
   function renderPublicForm(){
     var body = document.getElementById('ob-od-public-body');
     var config = state.publicConfig || {};
     var s = config.settings || {};
     var buckets = config.buckets || [];
-    var logged = !!token();
+    var logged = clientSignedIn();
+    var nonClient = !!token() && !logged;
+    var fields = activeFormFields(config);
     body.innerHTML = '<h2 style="margin:0 0 6px;font-size:28px;letter-spacing:0;">' + esc(s.public_label || 'Written Reading') + '</h2><p class="ob-od-sub">' + esc(s.delivery_policy || 'Your answer is delivered securely after login.') + '</p>' +
       '<div style="margin-top:16px;"><div style="font-weight:900;margin-bottom:8px;">Choose response time</div><div class="ob-od-row" id="ob-od-public-buckets">' + buckets.map(function(b, i){ return '<div class="ob-od-bucket ' + (i===0?'active':'') + '" data-id="' + attr(b.id) + '" onclick="obOdSelectBucket(this)"><strong>' + esc(b.label) + '</strong><div style="font-size:13px;color:#6d5b50;margin-top:4px;">' + esc(money(b.price_cents, b.currency)) + '</div></div>'; }).join('') + '</div></div>' +
-      '<div class="ob-od-row" style="margin-top:14px;"><label>Topic<select id="ob-od-topic" class="ob-od-select"><option>Love and relationships</option><option>Career and money</option><option>Family</option><option>Life direction</option><option>Business</option><option>Other</option></select></label><label>Birth/date details (optional)<input id="ob-od-birth" class="ob-od-input" placeholder="DOB, birth time, zodiac, or relevant date"></label></div>' +
-      '<label style="display:block;margin-top:12px;">Main question<textarea id="ob-od-question" class="ob-od-textarea" placeholder="What do you want answered?"></textarea></label>' +
-      '<label style="display:block;margin-top:12px;">Background and context<textarea id="ob-od-context" class="ob-od-textarea" placeholder="Share the details the expert should know. Include what happened, what you are unsure about, and what kind of guidance you want."></textarea></label>' +
-      '<label style="display:block;margin-top:12px;">People involved (optional)<textarea id="ob-od-people" class="ob-od-textarea" placeholder="Names, relationship, ages, or other context if relevant."></textarea></label>' +
+      fields.map(fieldInputHtml).join('') +
       '<div id="ob-od-auth-box" style="margin-top:14px;' + (logged ? 'display:none;' : '') + '">' +
-        '<div style="font-weight:900;margin-bottom:8px;">Client account</div><div style="display:flex;gap:8px;margin-bottom:10px;"><button class="ob-od-btn secondary" id="ob-od-auth-signup" onclick="obOdAuthMode(&quot;signup&quot;)">New client</button><button class="ob-od-btn secondary" id="ob-od-auth-login" onclick="obOdAuthMode(&quot;login&quot;)">Returning client</button></div>' +
+        (nonClient ? '<div class="ob-od-alert info" style="display:block;margin-bottom:10px;">You are signed in as ' + esc(userRole() || 'another account') + '. Paid requests must be submitted from a client account.</div>' : '') +
+        '<div style="font-weight:900;margin-bottom:8px;">Client account</div><div style="display:flex;gap:8px;margin-bottom:10px;"><button type="button" class="ob-od-btn secondary" id="ob-od-auth-signup" onclick="obOdAuthMode(&quot;signup&quot;)">New client</button><button type="button" class="ob-od-btn secondary" id="ob-od-auth-login" onclick="obOdAuthMode(&quot;login&quot;)">Returning client</button></div>' +
         '<div id="ob-od-auth-name-wrap"><input id="ob-od-auth-name" class="ob-od-input" placeholder="Your name" style="margin-bottom:8px;"></div><input id="ob-od-auth-email" class="ob-od-input" placeholder="Email" style="margin-bottom:8px;"><input id="ob-od-auth-pass" class="ob-od-input" type="password" placeholder="Password" style="margin-bottom:8px;">' +
       '</div>' +
       (logged ? '<div class="ob-od-status">Signed in. The final answer will be available in your client account.</div>' : '') +
       '<label style="display:flex;gap:8px;align-items:flex-start;margin-top:12px;font-size:13px;line-height:1.45;"><input id="ob-od-consent" type="checkbox"> I understand this is a private written response. Status emails come from the expert provider, and the answer is read securely after login.</label>' +
-      '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:16px;"><button class="ob-od-btn" id="ob-od-submit" onclick="obOdSubmitPublic()">Continue to payment</button><span id="ob-od-public-status" class="ob-od-status"></span></div>';
+      '<div id="ob-od-public-status" class="ob-od-alert" role="alert"></div><div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:16px;"><button type="button" class="ob-od-btn" id="ob-od-submit" onclick="obOdSubmitPublic()">Continue to payment</button></div>';
     obOdAuthMode(state.clientMode || 'signup');
   }
   window.obOdSelectBucket = function(el){ document.querySelectorAll('#ob-od-public-buckets .ob-od-bucket').forEach(function(x){ x.classList.remove('active'); }); if(el) el.classList.add('active'); };
@@ -50498,10 +50646,12 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     if(li) li.style.color = mode === 'login' ? '#fff' : '#241813';
   };
   function ensureClientAuth(){
-    if(token()) return Promise.resolve();
+    if(clientSignedIn()) return Promise.resolve();
     var email = (document.getElementById('ob-od-auth-email') || {}).value || '';
     var pass = (document.getElementById('ob-od-auth-pass') || {}).value || '';
     var name = (document.getElementById('ob-od-auth-name') || {}).value || '';
+    if(!email.trim() || !pass) return Promise.reject(new Error('Sign in or create a client account before payment.'));
+    if(state.clientMode !== 'login' && !name.trim()) return Promise.reject(new Error('Add your name for the client account.'));
     if(state.clientMode === 'login') {
       return authApi('/api/auth/login', {email:email.trim(), password:pass}).then(function(d){ saveAuth(d); });
     }
@@ -50510,27 +50660,31 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   window.obOdOpenPublic = function(){ ensurePublicModal().classList.add('show'); renderPublicForm(); };
   window.obOdClosePublic = function(){ var m = document.getElementById('ob-od-public-modal'); if(m) m.classList.remove('show'); };
   window.obOdSubmitPublic = function(){
-    var status = document.getElementById('ob-od-public-status');
     var btn = document.getElementById('ob-od-submit');
-    if(status) status.textContent = '';
+    setPublicStatus('', '');
     var bucket = document.querySelector('#ob-od-public-buckets .ob-od-bucket.active');
-    if(!bucket) { if(status) status.textContent = 'Choose a response time.'; return; }
-    if(!((document.getElementById('ob-od-consent') || {}).checked)) { if(status) status.textContent = 'Confirm the delivery note first.'; return; }
+    var collected = collectPublicFields();
+    if(!bucket) { setPublicStatus('error', 'Choose a response time.'); return; }
+    if(collected.missing.length) { setPublicStatus('error', 'Please complete: ' + collected.missing.join(', ') + '.'); return; }
+    if(!((document.getElementById('ob-od-consent') || {}).checked)) { setPublicStatus('error', 'Confirm the delivery note first.'); return; }
     if(btn) { btn.disabled = true; btn.textContent = 'Opening payment...'; }
+    setPublicStatus('info', 'Checking your request and opening secure payment...');
     ensureClientAuth().then(function(){
       return api('/api/on-demand/public/' + encodeURIComponent(state.publicSlug) + '/checkout', {method:'POST', body:{
         bucket_id: bucket.getAttribute('data-id'),
-        topic: (document.getElementById('ob-od-topic') || {}).value || '',
-        birth_details: (document.getElementById('ob-od-birth') || {}).value || '',
-        question: (document.getElementById('ob-od-question') || {}).value || '',
-        context: (document.getElementById('ob-od-context') || {}).value || '',
-        involved_people: (document.getElementById('ob-od-people') || {}).value || ''
+        topic: collected.values.topic || '',
+        birth_details: collected.values.birth_details || '',
+        question: collected.values.question || '',
+        context: collected.values.context || '',
+        involved_people: collected.values.involved_people || '',
+        custom_fields: collected.values
       }});
     }).then(function(d){
       if(d.checkout_url) location.href = d.checkout_url;
       else throw new Error('Checkout URL missing.');
     }).catch(function(err){
-      if(status) status.textContent = err.message || 'Could not start payment.';
+      setPublicStatus('error', err.message || 'Could not start payment.');
+      toastMsg(err.message || 'Could not start payment.', 'err');
       if(btn) { btn.disabled = false; btn.textContent = 'Continue to payment'; }
     });
   };
@@ -50589,6 +50743,16 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
         return ret;
       };
       window.__obOnDemandPublicWrapped = true;
+    }
+    if(!window.__obOnDemandShowPageWrapped && typeof window.showExpertPage === 'function'){
+      var prevShow = window.showExpertPage;
+      window.showExpertPage = function(page){
+        var ret = prevShow.apply(this, arguments);
+        setTimeout(loadPublicOnDemand, 250);
+        setTimeout(loadPublicOnDemand, 900);
+        return ret;
+      };
+      window.__obOnDemandShowPageWrapped = true;
     }
     setTimeout(loadPublicOnDemand, 900);
     setTimeout(loadPublicOnDemand, 2200);

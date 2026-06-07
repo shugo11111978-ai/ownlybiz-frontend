@@ -50184,13 +50184,16 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   function injectAdminCard(id){
     if(!id) return;
     addStyle();
-    var content = document.querySelector('#admin-panel-experts .admin-content');
+    var content = document.querySelector('#admin-panel-experts .admin-content') || document.querySelector('#admin-panel-experts');
     if(!content) return;
     api('/api/on-demand/admin/experts/' + encodeURIComponent(id)).then(function(data){
       var existing = document.getElementById('ob-admin-on-demand-card');
       if(existing) existing.outerHTML = adminCardHtml(id, data);
       else {
-        var ref = document.getElementById('ob-admin-group-sessions-card') || Array.prototype.slice.call(content.querySelectorAll('.admin-card')).find(function(card){ return (card.textContent || '').indexOf('Expert AI chat mode') >= 0; });
+        var ref = document.getElementById('ob-admin-ai-chat-visible-card') || document.getElementById('ob-admin-group-sessions-card') || Array.prototype.slice.call(content.querySelectorAll('.admin-card')).find(function(card){
+          var text = card.textContent || '';
+          return text.indexOf('Expert AI chat mode') >= 0 || text.indexOf('Chat AI Mode') >= 0;
+        });
         if(ref && ref.parentNode) ref.insertAdjacentHTML('afterend', adminCardHtml(id, data));
         else content.insertAdjacentHTML('beforeend', adminCardHtml(id, data));
       }
@@ -50198,6 +50201,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       console.warn('[OnDemand/admin]', err && err.message ? err.message : err);
     });
   }
+  window.obAdminInjectOnDemand = injectAdminCard;
   function scheduleAdminCard(id){
     [250,700,1300,2200].forEach(function(ms){ setTimeout(function(){ injectAdminCard(id); }, ms); });
   }
@@ -50778,6 +50782,138 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
   else boot();
   [800,1800,3600,6500].forEach(function(ms){ setTimeout(boot, ms); });
+})();
+</script>
+<script id="ownlybiz-admin-expert-controls-hotfix-20260607">
+(function(){
+  var API_ROOT = (window.OWNLYBIZ_API_URL || 'https://ownlybiz-backend-production.up.railway.app').replace(/\/+$/,'') + '/api';
+  function token(){ try { return sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || ''; } catch(e) { return ''; } }
+  function esc(value){ return String(value == null ? '' : value).replace(/[&<>"']/g,function(ch){ return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[ch]; }); }
+  function attr(value){ return esc(value).replace(/"/g,'&quot;'); }
+  function notify(message, tone){ if(typeof window.toastMsg === 'function') window.toastMsg(message, tone); else if(typeof window.toast === 'function') window.toast(message, tone); }
+  function api(path, opts){
+    opts = opts || {};
+    var headers = {'Content-Type':'application/json'};
+    var t = token();
+    if(t) headers.Authorization = 'Bearer ' + t;
+    return fetch(API_ROOT + path, {method:opts.method || 'GET', headers:headers, body:opts.body ? JSON.stringify(opts.body) : undefined})
+      .then(function(res){ return res.json().catch(function(){ return {}; }).then(function(data){ if(!res.ok) throw new Error(data.error || data.message || ('Request failed: ' + res.status)); return data; }); });
+  }
+  function content(){
+    var panel = document.getElementById('admin-panel-experts');
+    return panel && (panel.querySelector('.admin-content') || panel);
+  }
+  function findRateRow(root){
+    var rows = Array.prototype.slice.call(root.querySelectorAll('.ob-admin-live-grid'));
+    var aiRow = rows.find(function(row){ return (row.textContent || '').toLowerCase().indexOf('ai chat') >= 0; });
+    if(aiRow) return aiRow;
+    var cards = Array.prototype.slice.call(root.querySelectorAll('.admin-card'));
+    return cards.find(function(card){ return (card.textContent || '').indexOf('Bio') >= 0; }) || null;
+  }
+  function chatAiCardHtml(id, ai){
+    ai = ai || {};
+    var enabled = Number(ai.enabled || 0) === 1;
+    var mode = ai.mode || 'semi_ai';
+    return '<div class="admin-card" id="ob-admin-ai-chat-visible-card" style="padding:18px;margin-top:18px;border-color:' + (enabled ? 'rgba(34,197,94,.26)' : 'rgba(255,255,255,.08)') + ';">' +
+      '<div class="admin-card-title">Chat AI Mode <span class="admin-card-title-sub">Admin-only per-expert control</span></div>' +
+      '<div style="font-size:12px;color:rgba(246,241,233,.56);line-height:1.55;margin-bottom:12px;">Enable or disable the client-facing expert AI chat and choose whether it drafts only or replies automatically during active chat sessions.</div>' +
+      '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px;align-items:end;">' +
+        '<label style="font-size:13px;color:rgba(246,241,233,.78);display:flex;gap:8px;align-items:center;"><input id="ob-ai-chat-enabled" type="checkbox" ' + (enabled ? 'checked' : '') + '> Enable Chat AI</label>' +
+        '<label style="font-size:12px;color:rgba(246,241,233,.55);">Mode<select id="ob-ai-chat-mode" class="admin-input" style="margin-top:6px;width:100%;"><option value="semi_ai" ' + (mode !== 'fully_ai' ? 'selected' : '') + '>Semi AI</option><option value="fully_ai" ' + (mode === 'fully_ai' ? 'selected' : '') + '>Fully AI</option></select></label>' +
+        '<div style="font-size:12px;color:rgba(246,241,233,.55);line-height:1.5;">Semi AI prepares expert-side drafts. Fully AI can reply as the expert during active chat sessions.</div>' +
+      '</div>' +
+      '<label style="display:block;font-size:12px;color:rgba(246,241,233,.55);margin-top:14px;">Extra expert training/context<textarea id="ob-ai-chat-context" class="admin-input" style="width:100%;min-height:120px;margin-top:7px;resize:vertical;">' + esc(ai.admin_context || '') + '</textarea></label>' +
+      '<div style="display:flex;gap:10px;align-items:center;margin-top:12px;flex-wrap:wrap;"><button class="admin-action-btn" type="button" onclick="obAdminSaveExpertAiChat(&quot;' + attr(id) + '&quot;)">Save AI mode</button><span id="ob-ai-chat-save-status" style="font-size:12px;color:rgba(246,241,233,.55);"></span></div>' +
+    '</div>';
+  }
+  function installAiSaveFallback(){
+    if(typeof window.obAdminSaveExpertAiChat === 'function') return;
+    window.obAdminSaveExpertAiChat = function(id){
+      var status = document.getElementById('ob-ai-chat-save-status');
+      if(status) status.textContent = 'Saving...';
+      api('/admin/experts/' + encodeURIComponent(id) + '/ai-chat', {method:'PUT', body:{
+        enabled: !!((document.getElementById('ob-ai-chat-enabled') || {}).checked),
+        mode: (document.getElementById('ob-ai-chat-mode') || {}).value || 'semi_ai',
+        admin_context: (document.getElementById('ob-ai-chat-context') || {}).value || ''
+      }}).then(function(){
+        if(status) status.textContent = 'Saved.';
+        notify('Expert AI chat mode saved.', 'ok');
+      }).catch(function(err){
+        if(status) status.textContent = err.message || 'Save failed.';
+        notify(err.message || 'Expert AI save failed.', 'err');
+      });
+    };
+  }
+  function renderAiControls(id, ai){
+    var root = content();
+    if(!root) return;
+    var existingVisible = document.getElementById('ob-admin-ai-chat-visible-card');
+    Array.prototype.slice.call(root.querySelectorAll('#ob-ai-chat-enabled')).forEach(function(input){
+      var card = input.closest && input.closest('.admin-card');
+      if(card && card.id !== 'ob-admin-ai-chat-visible-card') card.remove();
+    });
+    var html = chatAiCardHtml(id, ai || {});
+    if(existingVisible) {
+      existingVisible.outerHTML = html;
+    } else {
+      var anchor = findRateRow(root);
+      if(anchor && anchor.parentNode) anchor.insertAdjacentHTML('afterend', html);
+      else root.insertAdjacentHTML('afterbegin', html);
+    }
+    installAiSaveFallback();
+  }
+  function placeOnDemandCard(){
+    var root = content();
+    var od = document.getElementById('ob-admin-on-demand-card');
+    var ai = document.getElementById('ob-admin-ai-chat-visible-card');
+    if(root && od && ai && od.previousElementSibling !== ai) ai.insertAdjacentElement('afterend', od);
+  }
+  function ensure(id){
+    if(!id || String(location.pathname || '').indexOf('/admin') !== 0) return;
+    var root = content();
+    if(!root) return;
+    var text = root.textContent || '';
+    if(text.indexOf('AI chat') < 0 && text.indexOf('Chat AI') < 0 && text.indexOf('Total sessions') < 0) return;
+    api('/admin/experts/' + encodeURIComponent(id) + '/profile').then(function(data){
+      renderAiControls(id, data.ai_chat || {});
+      if(typeof window.obAdminInjectOnDemand === 'function') window.obAdminInjectOnDemand(id);
+      [250,900,1700].forEach(function(ms){ setTimeout(placeOnDemandCard, ms); });
+    }).catch(function(err){
+      console.warn('[AdminExpertControls]', err && err.message ? err.message : err);
+      placeOnDemandCard();
+    });
+  }
+  function schedule(id){ [150,650,1400,2600].forEach(function(ms){ setTimeout(function(){ ensure(id); }, ms); }); }
+  function wrapOpeners(){
+    var current = window.obAdminOpenExpertDetail || window.adminViewExpertDashboard;
+    if(typeof current !== 'function' || current.__obAdminControlsVisibleWrapped) return false;
+    var wrapped = function(id, slug, name){
+      var result = current.apply(this, arguments);
+      schedule(id);
+      return result;
+    };
+    wrapped.__obAdminControlsVisibleWrapped = true;
+    window.obAdminOpenExpertDetail = wrapped;
+    window.adminViewExpertDashboard = wrapped;
+    if(window.OwnlyAPI) window.OwnlyAPI.adminViewExpertDashboard = wrapped;
+    return true;
+  }
+  function idFromOpenDetail(){
+    var root = content();
+    if(!root) return '';
+    var node = root.querySelector('[onclick*="obAdminSaveExpertAiChat"],[onclick*="obAdminExpertAction"],[onclick*="obAdminOpenExpertDashboard"]');
+    var text = node ? String(node.getAttribute('onclick') || '') : '';
+    var match = text.match(/['"]([^'"]{6,})['"]/);
+    return match ? match[1] : '';
+  }
+  function boot(){
+    wrapOpeners();
+    var id = idFromOpenDetail();
+    if(id) schedule(id);
+  }
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
+  else boot();
+  [600,1600,3200,6000].forEach(function(ms){ setTimeout(boot, ms); });
 })();
 </script>
 	</html>

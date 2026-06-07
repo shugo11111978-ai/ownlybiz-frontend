@@ -50061,4 +50061,501 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
 	  }
 	})();
 	</script>
+<script id="ownlybiz-on-demand-readings-20260607">
+(function(){
+  if(window.__obOnDemandReadings20260607) return;
+  window.__obOnDemandReadings20260607 = true;
+
+  var DEFAULT_API = 'https://victorious-wisdom-production-a6b0.up.railway.app';
+  var state = { publicConfig:null, publicSlug:'', publicModal:false, clientMode:'signup', expertSettings:null, expertRequests:[] };
+
+  function base(){ return String(window.OWNLYBIZ_API_URL || window._OB_BACKEND || window.OWNLY_API || DEFAULT_API).replace(/\/+$/,''); }
+  function token(){ return sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || localStorage.getItem('ob_client_token') || ''; }
+  function user(){ try { return JSON.parse(sessionStorage.getItem('ob_u') || localStorage.getItem('ob_u') || 'null'); } catch(e){ return null; } }
+  function saveAuth(d, fallback){
+    if(!d || !d.token) return;
+    var u = d.user || fallback || {};
+    try {
+      sessionStorage.setItem('ob_t', d.token);
+      localStorage.setItem('ob_t', d.token);
+      localStorage.setItem('ob_client_token', d.token);
+      sessionStorage.setItem('ob_u', JSON.stringify(u));
+      localStorage.setItem('ob_u', JSON.stringify(u));
+    } catch(e) {}
+    if(typeof window.checkClientAuth === 'function') setTimeout(window.checkClientAuth, 200);
+  }
+  function esc(v){ return String(v == null ? '' : v).replace(/[&<>"']/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+  function attr(v){ return esc(v).replace(/"/g,'&quot;'); }
+  function money(cents, currency){
+    var amount = (Number(cents || 0) / 100);
+    try { return new Intl.NumberFormat('en-US', {style:'currency', currency:String(currency || 'usd').toUpperCase()}).format(amount); }
+    catch(e){ return '$' + amount.toFixed(2); }
+  }
+  function when(ts){
+    if(!ts) return '-';
+    try { return new Date(Number(ts) * 1000).toLocaleString('en-US', {dateStyle:'medium', timeStyle:'short'}); } catch(e){ return '-'; }
+  }
+  function toastMsg(msg, kind){
+    if(typeof window.toast === 'function') window.toast(msg, kind || 'ok');
+    else if(typeof window.toastMsg === 'function') window.toastMsg(msg, kind || 'ok');
+    else console.log(msg);
+  }
+  function api(path, opts){
+    opts = opts || {};
+    var h = {'Content-Type':'application/json'};
+    if(token()) h.Authorization = 'Bearer ' + token();
+    return fetch(base() + path, {method:opts.method || 'GET', headers:h, body:opts.body ? JSON.stringify(opts.body) : undefined})
+      .then(function(r){ return r.json().catch(function(){ return {}; }).then(function(d){ if(!r.ok) throw new Error(d.error || d.message || ('HTTP ' + r.status)); return d; }); });
+  }
+  function authApi(path, body){
+    return fetch(base() + path, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body || {})})
+      .then(function(r){ return r.json().catch(function(){ return {}; }).then(function(d){ if(!r.ok || !d.token) throw new Error(d.error || d.message || 'Account request failed'); return d; }); });
+  }
+  function expertSlug(){
+    var e = window._currentExpert || {};
+    var slug = e.slug || window._currentExpertSlug || window._browseExpert || '';
+    var host = String(location.hostname || '').toLowerCase();
+    var sub = host.match(/^([^.]+)\.ownlybiz\.com$/);
+    if(!slug && sub && sub[1] !== 'www') slug = sub[1];
+    if(!slug){
+      var first = String(location.pathname || '').split('/').filter(Boolean)[0] || '';
+      var reserved = {dash:1,admin:1,signup:1,login:1,session:1,sessions:1,pricing:1,terms:1,legal:1};
+      if(first && !reserved[first]) slug = first;
+    }
+    return slug;
+  }
+  function dashboardSlug(){
+    var path = String(location.pathname || '');
+    var m = path.match(/\/dash\/([^\/?#]+)/);
+    if(m) return decodeURIComponent(m[1]);
+    var e = window._currentExpert || {};
+    return e.slug || window._currentExpertSlug || '';
+  }
+  function clientContext(){
+    return window.obClientSignupExpertContext ? window.obClientSignupExpertContext() : { expert_slug: expertSlug() };
+  }
+
+  function addStyle(){
+    if(document.getElementById('ob-on-demand-style')) return;
+    var css = document.createElement('style');
+    css.id = 'ob-on-demand-style';
+    css.textContent =
+      '.ob-od-card{border:1px solid rgba(196,98,45,.24);background:#fffaf5;color:#241813;border-radius:8px;padding:18px;margin:16px 0;box-shadow:0 16px 42px rgba(36,24,19,.08);box-sizing:border-box}' +
+      '.ob-od-card h3{margin:0 0 6px;font-size:22px;letter-spacing:0;color:#241813}.ob-od-sub{font-size:13px;line-height:1.55;color:#6d5b50;margin:0}' +
+      '.ob-od-btn{border:none;background:#c4622d;color:#fff;border-radius:8px;padding:11px 14px;min-height:42px;font-weight:900;cursor:pointer}.ob-od-btn.secondary{background:#fff7f0;color:#241813;border:1px solid rgba(36,24,19,.16)}.ob-od-btn.danger{background:rgba(220,38,38,.1);color:#dc2626;border:1px solid rgba(220,38,38,.24)}.ob-od-btn:disabled{opacity:.55;cursor:not-allowed}' +
+      '.ob-od-input,.ob-od-textarea,.ob-od-select{width:100%;box-sizing:border-box;border:1px solid rgba(36,24,19,.18);background:#fffdf9;color:#241813;border-radius:8px;padding:11px 12px;font:inherit;min-height:42px}.ob-od-textarea{min-height:96px;resize:vertical;line-height:1.5}' +
+      '.ob-od-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}.ob-od-modal{position:fixed;inset:0;z-index:100001;background:rgba(17,10,7,.72);display:none;align-items:center;justify-content:center;padding:16px}.ob-od-modal.show{display:flex}.ob-od-sheet{width:min(720px,100%);max-height:92vh;overflow:auto;background:#fffaf5;color:#241813;border-radius:10px;border:1px solid rgba(36,24,19,.14);padding:22px;box-shadow:0 28px 90px rgba(0,0,0,.36);box-sizing:border-box}.ob-od-close{float:right;border:1px solid rgba(36,24,19,.16);background:#fff;border-radius:8px;width:38px;height:38px;font-weight:900;cursor:pointer}' +
+      '.ob-od-bucket{border:1px solid rgba(36,24,19,.14);background:#fffdf9;border-radius:8px;padding:12px;cursor:pointer}.ob-od-bucket.active{border-color:#c4622d;box-shadow:inset 0 0 0 1px rgba(196,98,45,.22);background:#fff4eb}.ob-od-pill{display:inline-flex;align-items:center;border-radius:999px;padding:5px 9px;background:rgba(196,98,45,.12);color:#9a4b22;font-size:11px;font-weight:900}.ob-od-status{font-size:12px;color:#6d5b50;line-height:1.5;margin-top:8px}' +
+      '#db-panel-on-demand .ob-od-dash-grid{display:grid;grid-template-columns:minmax(280px,.8fr) minmax(360px,1.2fr);gap:16px}@media(max-width:900px){#db-panel-on-demand .ob-od-dash-grid{grid-template-columns:1fr}}' +
+      '#db-panel-on-demand .ob-od-dark-card{border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.04);border-radius:8px;padding:16px;color:rgba(246,241,233,.9)}#db-panel-on-demand .ob-od-dark-card h3{color:#fff;font-size:18px;margin:0 0 6px}.ob-od-request{border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.035);border-radius:8px;padding:14px;margin-bottom:12px}.ob-od-request textarea{background:rgba(0,0,0,.18);color:#fff;border-color:rgba(255,255,255,.14)}' +
+      '.ob-admin-od-card .admin-input{min-height:40px}';
+    document.head.appendChild(css);
+  }
+
+  function adminCardHtml(id, data){
+    var s = data.settings || {};
+    var emailReady = !!s.email_ready;
+    var disabled = !emailReady ? 'disabled' : '';
+    return '<div class="admin-card ob-admin-od-card" id="ob-admin-on-demand-card" style="padding:18px;margin-top:18px;border-color:' + (s.admin_enabled ? 'rgba(34,197,94,.26)' : 'rgba(255,255,255,.08)') + ';">' +
+      '<div class="admin-card-title">On Demand <span class="admin-card-title-sub">Paid written readings and AI autopilot</span></div>' +
+      '<div style="font-size:12px;color:rgba(246,241,233,.56);line-height:1.55;margin-bottom:12px;">Experts can use this only after Email Center has a configured and tested expert provider. Client notifications are sent only through that provider.</div>' +
+      (!emailReady ? '<div style="border:1px solid rgba(248,113,113,.28);background:rgba(248,113,113,.12);color:#fecaca;border-radius:8px;padding:10px 12px;font-size:12px;margin-bottom:12px;">Email provider is not ready. Test the expert provider in Email Center before enabling On Demand.</div>' : '<div style="border:1px solid rgba(34,197,94,.22);background:rgba(34,197,94,.1);color:#bbf7d0;border-radius:8px;padding:10px 12px;font-size:12px;margin-bottom:12px;">Email ready: ' + esc(s.email_from_address || s.email_provider || 'tested provider') + '</div>') +
+      '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px;align-items:start;">' +
+        '<label style="font-size:13px;color:rgba(246,241,233,.78);display:flex;gap:8px;align-items:center;"><input id="ob-admin-od-enabled" type="checkbox" ' + (s.admin_enabled ? 'checked' : '') + ' ' + disabled + '> Enable On Demand</label>' +
+        '<label style="font-size:13px;color:rgba(246,241,233,.78);display:flex;gap:8px;align-items:center;"><input id="ob-admin-od-ai" type="checkbox" ' + (s.ai_autopilot_allowed ? 'checked' : '') + ' ' + disabled + '> Allow AI autopilot</label>' +
+        '<label style="font-size:13px;color:rgba(246,241,233,.78);display:flex;gap:8px;align-items:center;"><input id="ob-admin-od-auto" type="checkbox" ' + (s.auto_accept_paid ? 'checked' : '') + ' ' + disabled + '> Auto-accept paid requests</label>' +
+      '</div>' +
+      '<div style="display:flex;gap:10px;align-items:center;margin-top:12px;flex-wrap:wrap;"><button class="admin-action-btn" type="button" onclick="obAdminSaveOnDemand(&quot;' + attr(id) + '&quot;)" ' + disabled + '>Save On Demand</button><span id="ob-admin-od-status" style="font-size:12px;color:rgba(246,241,233,.55);"></span></div>' +
+    '</div>';
+  }
+  function injectAdminCard(id){
+    if(!id) return;
+    addStyle();
+    var content = document.querySelector('#admin-panel-experts .admin-content');
+    if(!content) return;
+    api('/api/on-demand/admin/experts/' + encodeURIComponent(id)).then(function(data){
+      var existing = document.getElementById('ob-admin-on-demand-card');
+      if(existing) existing.outerHTML = adminCardHtml(id, data);
+      else {
+        var ref = document.getElementById('ob-admin-group-sessions-card') || Array.prototype.slice.call(content.querySelectorAll('.admin-card')).find(function(card){ return (card.textContent || '').indexOf('Expert AI chat mode') >= 0; });
+        if(ref && ref.parentNode) ref.insertAdjacentHTML('afterend', adminCardHtml(id, data));
+        else content.insertAdjacentHTML('beforeend', adminCardHtml(id, data));
+      }
+    }).catch(function(err){
+      console.warn('[OnDemand/admin]', err && err.message ? err.message : err);
+    });
+  }
+  function scheduleAdminCard(id){
+    [250,700,1300,2200].forEach(function(ms){ setTimeout(function(){ injectAdminCard(id); }, ms); });
+  }
+  function installAdmin(){
+    if(window.__obOnDemandAdminWrapped) return;
+    var prev = window.obAdminOpenExpertDetail || window.adminViewExpertDashboard;
+    if(typeof prev !== 'function') return;
+    window.__obOnDemandAdminWrapped = true;
+    window.obAdminOpenExpertDetail = function(id, slug, name){
+      var ret = prev.apply(this, arguments);
+      scheduleAdminCard(id);
+      return ret;
+    };
+    window.adminViewExpertDashboard = window.obAdminOpenExpertDetail;
+    if(window.OwnlyAPI) window.OwnlyAPI.adminViewExpertDashboard = window.obAdminOpenExpertDetail;
+  }
+  window.obAdminSaveOnDemand = function(id){
+    var status = document.getElementById('ob-admin-od-status');
+    if(status) status.textContent = 'Saving...';
+    api('/api/on-demand/admin/experts/' + encodeURIComponent(id), {
+      method:'PUT',
+      body:{
+        admin_enabled: !!((document.getElementById('ob-admin-od-enabled') || {}).checked),
+        ai_autopilot_enabled: !!((document.getElementById('ob-admin-od-ai') || {}).checked),
+        auto_accept_paid: !!((document.getElementById('ob-admin-od-auto') || {}).checked)
+      }
+    }).then(function(){
+      if(status) status.textContent = 'Saved.';
+      toastMsg('On Demand settings saved.', 'ok');
+      injectAdminCard(id);
+    }).catch(function(err){
+      if(status) status.textContent = err.message || 'Save failed.';
+      toastMsg(err.message || 'On Demand save failed.', 'err');
+    });
+  };
+
+  function ensureExpertPanel(){
+    addStyle();
+    var main = document.querySelector('#view-3 .db-main');
+    if(!main) return null;
+    var panel = document.getElementById('db-panel-on-demand');
+    if(panel) return panel;
+    panel = document.createElement('div');
+    panel.className = 'db-tab-panel';
+    panel.id = 'db-panel-on-demand';
+    panel.innerHTML = '<div class="db-content"><div style="padding:28px;color:var(--gray-400);">Loading On Demand...</div></div>';
+    main.appendChild(panel);
+    return panel;
+  }
+  function installExpertNav(){
+    addStyle();
+    var nav = document.querySelector('#view-3 .db-nav');
+    if(nav && !document.getElementById('db-nav-on-demand')){
+      var item = document.createElement('div');
+      item.className = 'db-nav-item';
+      item.id = 'db-nav-on-demand';
+      item.setAttribute('onclick', "dbNav(this,'on-demand')");
+      item.innerHTML = '<span class="icon" aria-hidden="true"></span> On Demand';
+      var bookings = Array.prototype.slice.call(nav.querySelectorAll('.db-nav-item')).find(function(x){ return (x.textContent || '').indexOf('Bookings') >= 0; });
+      if(bookings && bookings.parentNode) bookings.parentNode.insertBefore(item, bookings.nextSibling);
+      else nav.appendChild(item);
+    }
+    ensureExpertPanel();
+    if(!window.__obOnDemandDbNavWrapped && typeof window.dbNav === 'function'){
+      var old = window.dbNav;
+      window.dbNav = function(el, panel){
+        var ret = old.apply(this, arguments);
+        if(panel === 'on-demand') {
+          var title = document.getElementById('db-page-title'); if(title) title.textContent = 'On Demand';
+          loadExpertOnDemand();
+        }
+        return ret;
+      };
+      window.__obOnDemandDbNavWrapped = true;
+    }
+  }
+  function bucketRows(buckets){
+    buckets = buckets && buckets.length ? buckets : [
+      {label:'12 hours', turnaround_hours:12, price_cents:4900, currency:'usd', enabled:true},
+      {label:'24 hours', turnaround_hours:24, price_cents:3500, currency:'usd', enabled:true},
+      {label:'48 hours', turnaround_hours:48, price_cents:2500, currency:'usd', enabled:true}
+    ];
+    return buckets.map(function(b, i){
+      return '<div class="ob-od-row ob-od-bucket-row" data-id="' + attr(b.id || '') + '" style="grid-template-columns:1fr 110px 110px 90px;align-items:end;margin-bottom:8px;">' +
+        '<label style="font-size:12px;color:rgba(246,241,233,.55);">Label<input class="ob-od-input ob-od-bucket-label" value="' + attr(b.label || '') + '"></label>' +
+        '<label style="font-size:12px;color:rgba(246,241,233,.55);">Hours<input class="ob-od-input ob-od-bucket-hours" type="number" min="0.05" step="0.05" value="' + attr(b.turnaround_hours || 24) + '"></label>' +
+        '<label style="font-size:12px;color:rgba(246,241,233,.55);">Price $<input class="ob-od-input ob-od-bucket-price" type="number" min="0.5" step="0.5" value="' + attr((Number(b.price_cents || 0)/100).toFixed(2)) + '"></label>' +
+        '<label style="font-size:12px;color:rgba(246,241,233,.55);display:flex;gap:7px;align-items:center;padding-bottom:12px;"><input class="ob-od-bucket-enabled" type="checkbox" ' + (b.enabled !== false ? 'checked' : '') + '> Active</label>' +
+      '</div>';
+    }).join('');
+  }
+  function requestCard(r){
+    var canWork = r.payment_status === 'paid' && ['awaiting_expert_review','accepted','in_progress'].indexOf(r.status) >= 0;
+    var answer = r.answer || r.ai_draft || '';
+    return '<div class="ob-od-request" data-id="' + attr(r.id) + '">' +
+      '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-wrap:wrap;"><div><div style="font-weight:900;color:#fff;">' + esc(r.client_name || 'Client') + ' - ' + esc(r.topic || 'General') + '</div><div style="font-size:12px;color:rgba(246,241,233,.52);margin-top:4px;">' + esc(r.status || '') + ' / ' + esc(r.payment_status || '') + ' / due ' + esc(when(r.due_at)) + ' / ' + esc(money(r.price_cents, r.currency)) + '</div></div><span class="ob-od-pill">' + esc(r.ai_mode || 'manual') + '</span></div>' +
+      '<div style="margin-top:12px;font-size:13px;color:rgba(246,241,233,.82);line-height:1.55;"><strong>Question:</strong> ' + esc(r.question || '') + '</div>' +
+      '<details style="margin-top:8px;"><summary style="cursor:pointer;color:#c8ff3d;font-size:12px;font-weight:900;">Context</summary><div style="font-size:12px;color:rgba(246,241,233,.7);line-height:1.55;margin-top:8px;white-space:pre-wrap;">' + esc(r.context || '') + (r.involved_people ? '\n\nPeople: ' + esc(r.involved_people) : '') + (r.birth_details ? '\n\nBirth/details: ' + esc(r.birth_details) : '') + '</div></details>' +
+      '<textarea id="ob-od-answer-' + attr(r.id) + '" class="ob-od-textarea" placeholder="Write or review the answer before delivery..." style="margin-top:10px;">' + esc(answer) + '</textarea>' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">' +
+        (canWork && r.status === 'awaiting_expert_review' ? '<button class="ob-od-btn secondary" onclick="obOdAccept(&quot;' + attr(r.id) + '&quot;)">Accept / start</button>' : '') +
+        (canWork ? '<button class="ob-od-btn secondary" onclick="obOdDraft(&quot;' + attr(r.id) + '&quot;)">AI draft</button><button class="ob-od-btn" onclick="obOdDeliver(&quot;' + attr(r.id) + '&quot;)">Deliver answer</button>' : '') +
+        (canWork && r.ai_mode === 'autopilot' ? '<button class="ob-od-btn secondary" onclick="obOdAutopilotNow(&quot;' + attr(r.id) + '&quot;)">Run autopilot now</button>' : '') +
+        (canWork ? '<button class="ob-od-btn danger" onclick="obOdDecline(&quot;' + attr(r.id) + '&quot;)">Decline / refund</button>' : '') +
+      '</div>' +
+    '</div>';
+  }
+  function renderExpertOnDemand(){
+    var panel = ensureExpertPanel();
+    if(!panel) return;
+    var s = state.expertSettings && state.expertSettings.settings || {};
+    var buckets = state.expertSettings && state.expertSettings.buckets || [];
+    var requests = state.expertRequests || [];
+    var gate = !s.email_ready ? 'Email provider must be configured and tested before On Demand can be used.' : (!s.admin_enabled ? 'Admin has not enabled On Demand for this expert yet.' : '');
+    panel.innerHTML = '<div class="db-content">' +
+      '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;flex-wrap:wrap;margin-bottom:18px;"><div><h2 style="margin:0;color:var(--brown);font-size:28px;letter-spacing:0;">On Demand</h2><div style="font-size:14px;color:var(--gray-400);margin-top:4px;">Manage paid written readings, response windows, manual delivery, and AI autopilot.</div></div><button class="ob-od-btn secondary" onclick="loadExpertOnDemand()">Refresh</button></div>' +
+      (gate ? '<div class="ob-od-card" style="border-color:rgba(220,38,38,.24);background:rgba(220,38,38,.08);color:#fecaca;"><strong>' + esc(gate) + '</strong></div>' : '') +
+      '<div class="ob-od-dash-grid">' +
+        '<div class="ob-od-dark-card"><h3>Settings</h3><p class="ob-od-sub" style="color:rgba(246,241,233,.56);">Client emails are sent only from your tested Email Center provider. Answers stay behind client login.</p>' +
+          '<div style="display:grid;gap:10px;margin-top:12px;">' +
+            '<label style="display:flex;align-items:center;gap:8px;font-weight:900;"><input id="ob-od-expert-enabled" type="checkbox" ' + (s.expert_enabled ? 'checked' : '') + ' ' + (gate ? 'disabled' : '') + '> Enable public written readings</label>' +
+            '<label style="display:flex;align-items:center;gap:8px;font-weight:900;"><input id="ob-od-autopilot" type="checkbox" ' + (s.expert_ai_autopilot_enabled ? 'checked' : '') + ' ' + (gate || !s.ai_autopilot_allowed ? 'disabled' : '') + '> AI autopilot</label>' +
+            '<label style="display:flex;align-items:center;gap:8px;font-weight:900;"><input id="ob-od-auto-accept" type="checkbox" ' + (s.auto_accept_paid ? 'checked' : '') + ' ' + (gate ? 'disabled' : '') + '> Auto-accept paid requests</label>' +
+            '<label style="font-size:12px;color:rgba(246,241,233,.55);">Public label<input id="ob-od-label" class="ob-od-input" value="' + attr(s.public_label || 'Written Reading') + '"></label>' +
+            '<label style="font-size:12px;color:rgba(246,241,233,.55);">Public intro<textarea id="ob-od-intro" class="ob-od-textarea">' + esc(s.intro_text || '') + '</textarea></label>' +
+            '<label style="font-size:12px;color:rgba(246,241,233,.55);">AI/expert instructions<textarea id="ob-od-instructions" class="ob-od-textarea">' + esc(s.intake_instructions || '') + '</textarea></label>' +
+            '<label style="display:flex;align-items:flex-start;gap:8px;font-size:12px;color:rgba(246,241,233,.72);"><input id="ob-od-safety" type="checkbox" ' + (s.safety_ack ? 'checked' : '') + '> I understand written readings must stay within safe, appropriate, non-guaranteed guidance.</label>' +
+          '</div>' +
+          '<h3 style="margin-top:18px;">Response windows</h3><div id="ob-od-buckets">' + bucketRows(buckets) + '</div><button class="ob-od-btn secondary" onclick="obOdAddBucket()">Add window</button>' +
+          '<div style="margin-top:14px;"><button class="ob-od-btn" onclick="obOdSaveSettings()">Save On Demand</button><span id="ob-od-save-status" style="font-size:12px;color:rgba(246,241,233,.56);margin-left:10px;"></span></div>' +
+        '</div>' +
+        '<div class="ob-od-dark-card"><h3>Requests</h3><div style="font-size:12px;color:rgba(246,241,233,.56);margin-bottom:12px;">' + requests.length + ' request' + (requests.length === 1 ? '' : 's') + '</div>' + (requests.map(requestCard).join('') || '<div style="padding:24px;text-align:center;color:rgba(246,241,233,.45);">No paid written requests yet.</div>') + '</div>' +
+      '</div></div>';
+  }
+  window.loadExpertOnDemand = function(){
+    installExpertNav();
+    var panel = ensureExpertPanel();
+    if(panel) panel.innerHTML = '<div class="db-content"><div style="padding:28px;color:var(--gray-400);">Loading On Demand...</div></div>';
+    Promise.all([
+      api('/api/on-demand/expert/settings'),
+      api('/api/on-demand/expert/requests')
+    ]).then(function(all){
+      state.expertSettings = all[0] || {};
+      state.expertRequests = all[1] && all[1].requests || [];
+      renderExpertOnDemand();
+    }).catch(function(err){
+      if(panel) panel.innerHTML = '<div class="db-content"><div class="ob-od-card" style="color:#dc2626;">' + esc(err.message || 'Could not load On Demand.') + '</div></div>';
+    });
+  };
+  window.obOdAddBucket = function(){
+    var wrap = document.getElementById('ob-od-buckets');
+    if(!wrap) return;
+    wrap.insertAdjacentHTML('beforeend', bucketRows([{label:'72 hours', turnaround_hours:72, price_cents:1900, currency:'usd', enabled:true}]));
+  };
+  function readBuckets(){
+    return Array.prototype.slice.call(document.querySelectorAll('.ob-od-bucket-row')).map(function(row, idx){
+      return {
+        id: row.getAttribute('data-id') || '',
+        label: (row.querySelector('.ob-od-bucket-label') || {}).value || '',
+        turnaround_hours: Number((row.querySelector('.ob-od-bucket-hours') || {}).value || 0),
+        price: Number((row.querySelector('.ob-od-bucket-price') || {}).value || 0),
+        currency: 'usd',
+        enabled: !!((row.querySelector('.ob-od-bucket-enabled') || {}).checked),
+        sort_order: idx
+      };
+    });
+  }
+  window.obOdSaveSettings = function(){
+    var status = document.getElementById('ob-od-save-status');
+    if(status) status.textContent = 'Saving...';
+    api('/api/on-demand/expert/settings', {method:'PUT', body:{
+      expert_enabled: !!((document.getElementById('ob-od-expert-enabled') || {}).checked),
+      ai_autopilot_enabled: !!((document.getElementById('ob-od-autopilot') || {}).checked),
+      auto_accept_paid: !!((document.getElementById('ob-od-auto-accept') || {}).checked),
+      public_label: (document.getElementById('ob-od-label') || {}).value || '',
+      intro_text: (document.getElementById('ob-od-intro') || {}).value || '',
+      intake_instructions: (document.getElementById('ob-od-instructions') || {}).value || '',
+      safety_ack: !!((document.getElementById('ob-od-safety') || {}).checked),
+      buckets: readBuckets()
+    }}).then(function(){
+      if(status) status.textContent = 'Saved.';
+      toastMsg('On Demand saved.', 'ok');
+      loadExpertOnDemand();
+    }).catch(function(err){ if(status) status.textContent = err.message || 'Save failed.'; toastMsg(err.message || 'Save failed.', 'err'); });
+  };
+  window.obOdAccept = function(id){ api('/api/on-demand/expert/requests/' + encodeURIComponent(id) + '/accept', {method:'POST', body:{}}).then(function(){ toastMsg('Request started.', 'ok'); loadExpertOnDemand(); }).catch(function(e){ toastMsg(e.message, 'err'); }); };
+  window.obOdDraft = function(id){
+    var el = document.getElementById('ob-od-answer-' + id); if(el) el.value = 'Generating...';
+    api('/api/on-demand/expert/requests/' + encodeURIComponent(id) + '/ai-draft', {method:'POST', body:{}}).then(function(d){
+      if(el) el.value = d.draft || '';
+      toastMsg('AI draft ready.', 'ok');
+      loadExpertOnDemand();
+    }).catch(function(e){ if(el) el.value = ''; toastMsg(e.message, 'err'); });
+  };
+  window.obOdDeliver = function(id){
+    var answer = (document.getElementById('ob-od-answer-' + id) || {}).value || '';
+    api('/api/on-demand/expert/requests/' + encodeURIComponent(id) + '/deliver', {method:'POST', body:{answer:answer}}).then(function(){ toastMsg('Answer delivered.', 'ok'); loadExpertOnDemand(); }).catch(function(e){ toastMsg(e.message, 'err'); });
+  };
+  window.obOdDecline = function(id){
+    var reason = prompt('Reason for declining/refunding this request:') || '';
+    if(!reason.trim()) return;
+    api('/api/on-demand/expert/requests/' + encodeURIComponent(id) + '/decline', {method:'POST', body:{reason:reason}}).then(function(){ toastMsg('Request declined/refunded.', 'ok'); loadExpertOnDemand(); }).catch(function(e){ toastMsg(e.message, 'err'); });
+  };
+  window.obOdAutopilotNow = function(id){ api('/api/on-demand/expert/requests/' + encodeURIComponent(id) + '/autopilot-now', {method:'POST', body:{}}).then(function(){ toastMsg('Autopilot processed due request.', 'ok'); loadExpertOnDemand(); }).catch(function(e){ toastMsg(e.message, 'err'); }); };
+
+  function publicCard(config){
+    var s = config.settings || {};
+    var buckets = config.buckets || [];
+    return '<div class="ob-od-card" id="ob-public-on-demand-card"><div style="display:flex;justify-content:space-between;gap:16px;align-items:flex-start;flex-wrap:wrap;"><div><h3>' + esc(s.public_label || 'Written Reading') + '</h3><p class="ob-od-sub">' + esc(s.intro_text || '') + '</p></div><button class="ob-od-btn" onclick="obOdOpenPublic()">Ask a Question</button></div><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;">' + buckets.map(function(b){ return '<span class="ob-od-pill">' + esc(b.label) + ' / ' + esc(money(b.price_cents, b.currency)) + '</span>'; }).join('') + '</div></div>';
+  }
+  function injectPublicCard(config){
+    if(!config || !config.available || document.getElementById('ob-public-on-demand-card')) return;
+    addStyle();
+    var host = document.querySelector('#ep-services .ob-packages') || document.getElementById('ep-services') || document.getElementById('ep-book') || document.querySelector('#view-4 .expert-public-content') || document.getElementById('view-4');
+    if(!host) return;
+    host.insertAdjacentHTML('afterbegin', publicCard(config));
+  }
+  function ensurePublicModal(){
+    addStyle();
+    var modal = document.getElementById('ob-od-public-modal');
+    if(modal) return modal;
+    modal = document.createElement('div');
+    modal.id = 'ob-od-public-modal';
+    modal.className = 'ob-od-modal';
+    modal.innerHTML = '<div class="ob-od-sheet"><button class="ob-od-close" onclick="obOdClosePublic()">x</button><div id="ob-od-public-body"></div></div>';
+    document.body.appendChild(modal);
+    return modal;
+  }
+  function renderPublicForm(){
+    var body = document.getElementById('ob-od-public-body');
+    var config = state.publicConfig || {};
+    var s = config.settings || {};
+    var buckets = config.buckets || [];
+    var logged = !!token();
+    body.innerHTML = '<h2 style="margin:0 0 6px;font-size:28px;letter-spacing:0;">' + esc(s.public_label || 'Written Reading') + '</h2><p class="ob-od-sub">' + esc(s.delivery_policy || 'Your answer is delivered securely after login.') + '</p>' +
+      '<div style="margin-top:16px;"><div style="font-weight:900;margin-bottom:8px;">Choose response time</div><div class="ob-od-row" id="ob-od-public-buckets">' + buckets.map(function(b, i){ return '<div class="ob-od-bucket ' + (i===0?'active':'') + '" data-id="' + attr(b.id) + '" onclick="obOdSelectBucket(this)"><strong>' + esc(b.label) + '</strong><div style="font-size:13px;color:#6d5b50;margin-top:4px;">' + esc(money(b.price_cents, b.currency)) + '</div></div>'; }).join('') + '</div></div>' +
+      '<div class="ob-od-row" style="margin-top:14px;"><label>Topic<select id="ob-od-topic" class="ob-od-select"><option>Love and relationships</option><option>Career and money</option><option>Family</option><option>Life direction</option><option>Business</option><option>Other</option></select></label><label>Birth/date details (optional)<input id="ob-od-birth" class="ob-od-input" placeholder="DOB, birth time, zodiac, or relevant date"></label></div>' +
+      '<label style="display:block;margin-top:12px;">Main question<textarea id="ob-od-question" class="ob-od-textarea" placeholder="What do you want answered?"></textarea></label>' +
+      '<label style="display:block;margin-top:12px;">Background and context<textarea id="ob-od-context" class="ob-od-textarea" placeholder="Share the details the expert should know. Include what happened, what you are unsure about, and what kind of guidance you want."></textarea></label>' +
+      '<label style="display:block;margin-top:12px;">People involved (optional)<textarea id="ob-od-people" class="ob-od-textarea" placeholder="Names, relationship, ages, or other context if relevant."></textarea></label>' +
+      '<div id="ob-od-auth-box" style="margin-top:14px;' + (logged ? 'display:none;' : '') + '">' +
+        '<div style="font-weight:900;margin-bottom:8px;">Client account</div><div style="display:flex;gap:8px;margin-bottom:10px;"><button class="ob-od-btn secondary" id="ob-od-auth-signup" onclick="obOdAuthMode(&quot;signup&quot;)">New client</button><button class="ob-od-btn secondary" id="ob-od-auth-login" onclick="obOdAuthMode(&quot;login&quot;)">Returning client</button></div>' +
+        '<div id="ob-od-auth-name-wrap"><input id="ob-od-auth-name" class="ob-od-input" placeholder="Your name" style="margin-bottom:8px;"></div><input id="ob-od-auth-email" class="ob-od-input" placeholder="Email" style="margin-bottom:8px;"><input id="ob-od-auth-pass" class="ob-od-input" type="password" placeholder="Password" style="margin-bottom:8px;">' +
+      '</div>' +
+      (logged ? '<div class="ob-od-status">Signed in. The final answer will be available in your client account.</div>' : '') +
+      '<label style="display:flex;gap:8px;align-items:flex-start;margin-top:12px;font-size:13px;line-height:1.45;"><input id="ob-od-consent" type="checkbox"> I understand this is a private written response. Status emails come from the expert provider, and the answer is read securely after login.</label>' +
+      '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:16px;"><button class="ob-od-btn" id="ob-od-submit" onclick="obOdSubmitPublic()">Continue to payment</button><span id="ob-od-public-status" class="ob-od-status"></span></div>';
+    obOdAuthMode(state.clientMode || 'signup');
+  }
+  window.obOdSelectBucket = function(el){ document.querySelectorAll('#ob-od-public-buckets .ob-od-bucket').forEach(function(x){ x.classList.remove('active'); }); if(el) el.classList.add('active'); };
+  window.obOdAuthMode = function(mode){
+    state.clientMode = mode;
+    var name = document.getElementById('ob-od-auth-name-wrap');
+    if(name) name.style.display = mode === 'signup' ? 'block' : 'none';
+    var su = document.getElementById('ob-od-auth-signup'), li = document.getElementById('ob-od-auth-login');
+    if(su) su.style.background = mode === 'signup' ? '#c4622d' : '#fff7f0';
+    if(su) su.style.color = mode === 'signup' ? '#fff' : '#241813';
+    if(li) li.style.background = mode === 'login' ? '#c4622d' : '#fff7f0';
+    if(li) li.style.color = mode === 'login' ? '#fff' : '#241813';
+  };
+  function ensureClientAuth(){
+    if(token()) return Promise.resolve();
+    var email = (document.getElementById('ob-od-auth-email') || {}).value || '';
+    var pass = (document.getElementById('ob-od-auth-pass') || {}).value || '';
+    var name = (document.getElementById('ob-od-auth-name') || {}).value || '';
+    if(state.clientMode === 'login') {
+      return authApi('/api/auth/login', {email:email.trim(), password:pass}).then(function(d){ saveAuth(d); });
+    }
+    return authApi('/api/auth/signup', Object.assign({name:name.trim(), email:email.trim(), password:pass, role:'client'}, clientContext())).then(function(d){ saveAuth(d, {name:name,email:email,role:'client'}); });
+  }
+  window.obOdOpenPublic = function(){ ensurePublicModal().classList.add('show'); renderPublicForm(); };
+  window.obOdClosePublic = function(){ var m = document.getElementById('ob-od-public-modal'); if(m) m.classList.remove('show'); };
+  window.obOdSubmitPublic = function(){
+    var status = document.getElementById('ob-od-public-status');
+    var btn = document.getElementById('ob-od-submit');
+    if(status) status.textContent = '';
+    var bucket = document.querySelector('#ob-od-public-buckets .ob-od-bucket.active');
+    if(!bucket) { if(status) status.textContent = 'Choose a response time.'; return; }
+    if(!((document.getElementById('ob-od-consent') || {}).checked)) { if(status) status.textContent = 'Confirm the delivery note first.'; return; }
+    if(btn) { btn.disabled = true; btn.textContent = 'Opening payment...'; }
+    ensureClientAuth().then(function(){
+      return api('/api/on-demand/public/' + encodeURIComponent(state.publicSlug) + '/checkout', {method:'POST', body:{
+        bucket_id: bucket.getAttribute('data-id'),
+        topic: (document.getElementById('ob-od-topic') || {}).value || '',
+        birth_details: (document.getElementById('ob-od-birth') || {}).value || '',
+        question: (document.getElementById('ob-od-question') || {}).value || '',
+        context: (document.getElementById('ob-od-context') || {}).value || '',
+        involved_people: (document.getElementById('ob-od-people') || {}).value || ''
+      }});
+    }).then(function(d){
+      if(d.checkout_url) location.href = d.checkout_url;
+      else throw new Error('Checkout URL missing.');
+    }).catch(function(err){
+      if(status) status.textContent = err.message || 'Could not start payment.';
+      if(btn) { btn.disabled = false; btn.textContent = 'Continue to payment'; }
+    });
+  };
+  function renderClientStatus(request){
+    ensurePublicModal().classList.add('show');
+    var body = document.getElementById('ob-od-public-body');
+    var delivered = request && request.status === 'delivered';
+    body.innerHTML = '<button class="ob-od-close" onclick="obOdClosePublic()">x</button><h2 style="margin:0 0 8px;font-size:28px;letter-spacing:0;">' + (delivered ? 'Your answer is ready' : 'Written request status') + '</h2>' +
+      '<div class="ob-od-card"><div><strong>Status:</strong> ' + esc(request.status || '') + '</div><div><strong>Expected by:</strong> ' + esc(when(request.due_at)) + '</div><div><strong>Topic:</strong> ' + esc(request.topic || '') + '</div></div>' +
+      (delivered ? '<div class="ob-od-card"><h3>Answer</h3><div style="white-space:pre-wrap;line-height:1.7;color:#3a2b24;">' + esc(request.answer || '') + '</div></div>' : '<p class="ob-od-sub">You will receive an email from the expert provider when the answer is ready.</p>');
+  }
+  function openRequestFromQuery(id){
+    if(!id) return;
+    if(!token()){
+      ensurePublicModal().classList.add('show');
+      var body = document.getElementById('ob-od-public-body');
+      body.innerHTML = '<h2 style="margin:0 0 8px;font-size:28px;letter-spacing:0;">Sign in to read your answer</h2><p class="ob-od-sub">For privacy, written answers are only shown after login.</p><div style="margin-top:14px;"><input id="ob-od-auth-email" class="ob-od-input" placeholder="Email" style="margin-bottom:8px;"><input id="ob-od-auth-pass" class="ob-od-input" type="password" placeholder="Password" style="margin-bottom:8px;"><button class="ob-od-btn" onclick="obOdLoginForRequest(&quot;' + attr(id) + '&quot;)">Sign in</button><span id="ob-od-public-status" class="ob-od-status" style="margin-left:8px;"></span></div>';
+      return;
+    }
+    api('/api/on-demand/me/' + encodeURIComponent(id)).then(function(d){ renderClientStatus(d.request || {}); }).catch(function(e){ toastMsg(e.message, 'err'); });
+  }
+  window.obOdLoginForRequest = function(id){
+    var email = (document.getElementById('ob-od-auth-email') || {}).value || '';
+    var pass = (document.getElementById('ob-od-auth-pass') || {}).value || '';
+    authApi('/api/auth/login', {email:email.trim(), password:pass}).then(function(d){ saveAuth(d); openRequestFromQuery(id); }).catch(function(e){ var st=document.getElementById('ob-od-public-status'); if(st) st.textContent=e.message; });
+  };
+  function confirmCheckoutFromQuery(){
+    var params = new URLSearchParams(location.search || '');
+    var checkout = params.get('checkout_session_id');
+    var reqId = params.get('request_id') || params.get('on_demand_request');
+    if(params.get('on_demand') === 'success' && checkout && token()){
+      api('/api/on-demand/checkout/confirm', {method:'POST', body:{checkout_session_id:checkout}}).then(function(d){ renderClientStatus(d.request || {}); }).catch(function(e){ toastMsg(e.message, 'err'); });
+    } else if(params.get('on_demand_request')) {
+      openRequestFromQuery(params.get('on_demand_request'));
+    } else if(reqId && params.get('on_demand') === 'success') {
+      openRequestFromQuery(reqId);
+    }
+  }
+  function loadPublicOnDemand(){
+    var slug = expertSlug();
+    if(!slug) return;
+    state.publicSlug = slug;
+    api('/api/on-demand/public/' + encodeURIComponent(slug)).then(function(config){
+      state.publicConfig = config;
+      injectPublicCard(config);
+      confirmCheckoutFromQuery();
+    }).catch(function(){ confirmCheckoutFromQuery(); });
+  }
+  function installPublic(){
+    if(!window.__obOnDemandPublicWrapped && typeof window.loadExpertWebsite === 'function'){
+      var prev = window.loadExpertWebsite;
+      window.loadExpertWebsite = function(slug){
+        var ret = prev.apply(this, arguments);
+        setTimeout(loadPublicOnDemand, 700);
+        setTimeout(loadPublicOnDemand, 1600);
+        return ret;
+      };
+      window.__obOnDemandPublicWrapped = true;
+    }
+    setTimeout(loadPublicOnDemand, 900);
+    setTimeout(loadPublicOnDemand, 2200);
+  }
+
+  function boot(){
+    installAdmin();
+    installExpertNav();
+    installPublic();
+    if(String(location.pathname || '').indexOf('/dash/') === 0 && String(location.pathname || '').indexOf('/on-demand') >= 0) {
+      setTimeout(function(){
+        var item = document.getElementById('db-nav-on-demand');
+        if(item && typeof window.dbNav === 'function') window.dbNav(item, 'on-demand');
+      }, 900);
+    }
+  }
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
+  else boot();
+  [800,1800,3600,6500].forEach(function(ms){ setTimeout(boot, ms); });
+})();
+</script>
 	</html>

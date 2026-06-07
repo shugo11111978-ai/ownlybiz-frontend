@@ -14,6 +14,43 @@
 <meta name="twitter:card" content="summary_large_image">
 <script>
 (function(){
+  function showEarlyOnDemandShell(params){
+    if(!params || document.getElementById('ob-od-public-modal')) return;
+    var mode = params.on_demand === 'success' && params.checkout_session_id ? 'payment' : 'reading';
+    function mount(){
+      if(document.getElementById('ob-od-public-modal')) return;
+      var style = document.createElement('style');
+      style.id = 'ob-od-return-shell-style';
+      style.textContent = '#ob-od-public-modal{position:fixed;inset:0;z-index:100001;background:rgba(17,10,7,.72);display:flex;align-items:center;justify-content:center;padding:16px;box-sizing:border-box}#ob-od-public-modal .ob-od-sheet{width:min(640px,100%);max-height:92vh;overflow:auto;background:#fffaf5;color:#241813;border-radius:10px;border:1px solid rgba(36,24,19,.14);padding:22px;box-shadow:0 28px 90px rgba(0,0,0,.36);box-sizing:border-box}#ob-od-public-modal .ob-od-close{float:right;border:1px solid rgba(36,24,19,.16);background:#fff;border-radius:8px;width:42px;height:42px;font-weight:900;cursor:pointer;color:#241813}#ob-od-public-modal .ob-od-input{width:100%;box-sizing:border-box;border:1px solid rgba(36,24,19,.18);background:#fffdf9!important;color:#241813!important;border-radius:8px;padding:12px;font:inherit;min-height:46px;margin-bottom:8px}#ob-od-public-modal .ob-od-btn{border:none;background:#c4622d;color:#fff;border-radius:8px;padding:11px 14px;min-height:42px;font-weight:900;cursor:pointer}#ob-od-public-modal .ob-od-sub{font-size:14px;line-height:1.55;color:#6d5b50;margin:0 0 14px}.ob-od-spin{width:28px;height:28px;border-radius:999px;border:3px solid rgba(196,98,45,.18);border-top-color:#c4622d;animation:obOdSpin .85s linear infinite}@keyframes obOdSpin{to{transform:rotate(360deg)}}';
+      (document.head || document.documentElement).appendChild(style);
+      var title = mode === 'payment' ? 'Payment received' : 'Opening your private reading';
+      var copy = mode === 'payment'
+        ? "We are confirming your payment securely. This usually takes a few seconds."
+        : "For privacy, your written reading opens after you sign in to your client account.";
+      var form = mode === 'reading'
+        ? '<div style="margin-top:14px;"><input id="ob-od-auth-email" class="ob-od-input" autocomplete="email" inputmode="email" placeholder="Email"><input id="ob-od-auth-pass" class="ob-od-input" type="password" autocomplete="current-password" placeholder="Password"><button class="ob-od-btn" onclick="window.__obOnDemandEarlyLogin&&window.__obOnDemandEarlyLogin()">Open my reading</button><div id="ob-od-public-status" style="font-size:12px;color:#6d5b50;margin-top:8px;"></div></div>'
+        : '<div style="display:flex;gap:12px;align-items:center;margin-top:16px;"><div class="ob-od-spin" aria-hidden="true"></div><div style="font-size:13px;color:#6d5b50;line-height:1.45;">Please keep this page open while we prepare your request summary.</div></div>';
+      var modal = document.createElement('div');
+      modal.id = 'ob-od-public-modal';
+      modal.className = 'ob-od-modal show';
+      modal.innerHTML = '<div class="ob-od-sheet"><button class="ob-od-close" onclick="var m=document.getElementById(&quot;ob-od-public-modal&quot;);if(m)m.style.display=&quot;none&quot;;">x</button><div id="ob-od-public-body"><h2 style="margin:0 0 8px;font-size:28px;letter-spacing:0;">' + title + '</h2><p class="ob-od-sub">' + copy + '</p>' + form + '</div></div>';
+      (document.body || document.documentElement).appendChild(modal);
+    }
+    window.__obOnDemandEarlyLogin = function(){
+      var status = document.getElementById('ob-od-public-status');
+      if(status) status.textContent = 'Secure sign in is loading...';
+      var id = params.on_demand_request || params.request_id || '';
+      var tries = 0;
+      (function waitForLogin(){
+        if(typeof window.obOdLoginForRequest === 'function') return window.obOdLoginForRequest(id);
+        tries += 1;
+        if(tries < 120) return setTimeout(waitForLogin, 100);
+        if(status) status.textContent = 'Refresh the page and try again.';
+      })();
+    };
+    if(document.body) mount();
+    else document.addEventListener('DOMContentLoaded', mount, {once:true});
+  }
   try {
     var q = new URLSearchParams(location.search || '');
     if(q.get('on_demand') || q.get('on_demand_request')){
@@ -24,6 +61,7 @@
         on_demand_request: q.get('on_demand_request') || '',
         checkout_session_id: q.get('checkout_session_id') || ''
       };
+      showEarlyOnDemandShell(window.__obOnDemandReturnParams);
     }
   } catch(e) {}
 })();
@@ -50126,6 +50164,37 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     if(!ts) return '-';
     try { return new Date(Number(ts) * 1000).toLocaleString('en-US', {dateStyle:'medium', timeStyle:'short'}); } catch(e){ return '-'; }
   }
+  function expertName(){
+    var cfg = state.publicConfig || {};
+    var expert = cfg.expert || window._currentExpert || {};
+    return expert.name || expert.email_from_name || expert.title || 'your expert';
+  }
+  function statusLabel(request){
+    var status = String(request && request.status || '').toLowerCase();
+    var payment = String(request && request.payment_status || '').toLowerCase();
+    if(status === 'delivered') return 'Ready to read';
+    if(status === 'in_progress') return expertName() + ' is preparing it';
+    if(status === 'accepted' || status === 'awaiting_expert_review') return 'With ' + expertName();
+    if(status === 'declined') return 'Closed';
+    if(status === 'refunded') return 'Refunded';
+    if(payment === 'paid') return 'Payment confirmed';
+    return 'Payment is finishing';
+  }
+  function detailHtml(label, value){
+    if(value == null || value === '' || value === '-') return '';
+    return '<div class="ob-od-kv"><span>' + esc(label) + '</span><strong>' + esc(value) + '</strong></div>';
+  }
+  function readingHtml(value){
+    var text = String(value || '').trim();
+    if(!text) return '<p>Your private reading is not visible yet.</p>';
+    var html = esc(text)
+      .replace(/\*\*([^*]{1,160})\*\*/g, '<strong>$1</strong>')
+      .replace(/\n{3,}/g, '\n\n')
+      .split(/\n{2,}/)
+      .map(function(part){ return '<p>' + part.replace(/\n/g, '<br>') + '</p>'; })
+      .join('');
+    return html || '<p>Your private reading is not visible yet.</p>';
+  }
   function toastMsg(msg, kind){
     if(typeof window.toast === 'function') window.toast(msg, kind || 'ok');
     else if(typeof window.toastMsg === 'function') window.toastMsg(msg, kind || 'ok');
@@ -50184,7 +50253,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       '.ob-od-card h3{margin:0 0 6px;font-size:22px;letter-spacing:0;color:#241813}.ob-od-sub{font-size:13px;line-height:1.55;color:#6d5b50;margin:0}' +
       '.ob-od-btn{border:none;background:#c4622d;color:#fff;border-radius:8px;padding:11px 14px;min-height:42px;font-weight:900;cursor:pointer}.ob-od-btn.secondary{background:#fff7f0;color:#241813;border:1px solid rgba(36,24,19,.16)}.ob-od-btn.danger{background:rgba(220,38,38,.1);color:#dc2626;border:1px solid rgba(220,38,38,.24)}.ob-od-btn:disabled{opacity:.55;cursor:not-allowed}' +
       '.ob-od-input,.ob-od-textarea,.ob-od-select{width:100%;box-sizing:border-box;border:1px solid rgba(36,24,19,.18);background:#fffdf9;color:#241813;border-radius:8px;padding:11px 12px;font:inherit;min-height:42px}.ob-od-textarea{min-height:96px;resize:vertical;line-height:1.5}' +
-      '.ob-od-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}.ob-od-modal{position:fixed;inset:0;z-index:100001;background:rgba(17,10,7,.72);display:none;align-items:center;justify-content:center;padding:16px}.ob-od-modal.show{display:flex}.ob-od-sheet{width:min(720px,100%);max-height:92vh;overflow:auto;background:#fffaf5;color:#241813;border-radius:10px;border:1px solid rgba(36,24,19,.14);padding:22px;box-shadow:0 28px 90px rgba(0,0,0,.36);box-sizing:border-box}.ob-od-close{float:right;border:1px solid rgba(36,24,19,.16);background:#fff;border-radius:8px;width:38px;height:38px;font-weight:900;cursor:pointer}' +
+      '.ob-od-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}.ob-od-modal{position:fixed;inset:0;z-index:100001;background:rgba(17,10,7,.72);display:none;align-items:center;justify-content:center;padding:16px}.ob-od-modal.show{display:flex}.ob-od-sheet{width:min(720px,100%);max-height:92vh;overflow:auto;background:#fffaf5;color:#241813;border-radius:10px;border:1px solid rgba(36,24,19,.14);padding:22px;box-shadow:0 28px 90px rgba(0,0,0,.36);box-sizing:border-box}.ob-od-close{float:right;border:1px solid rgba(36,24,19,.16);background:#fff;border-radius:8px;width:38px;height:38px;font-weight:900;cursor:pointer;color:#241813!important}.ob-od-sheet>.ob-od-close{width:42px!important;height:42px!important;min-width:42px!important;line-height:1!important;font-size:18px!important}.ob-od-modal .ob-od-input,.ob-od-modal .ob-od-textarea,.ob-od-modal .ob-od-select{background:#fffdf9!important;color:#241813!important}.ob-od-modal .ob-od-input::placeholder,.ob-od-modal .ob-od-textarea::placeholder{color:#7b6a60!important}.ob-od-summary-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:10px;margin:16px 0}.ob-od-kv{border:1px solid rgba(36,24,19,.12);background:#fffdf9;border-radius:8px;padding:12px;min-height:68px}.ob-od-kv span{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#8a7468;font-weight:900;margin-bottom:4px}.ob-od-kv strong{display:block;font-size:15px;line-height:1.35;color:#241813}.ob-od-reading-kicker{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#9a4b22;font-weight:900;margin-bottom:6px}.ob-od-reading-text{white-space:normal;line-height:1.75;color:#3a2b24;font-size:15px}.ob-od-reading-text p{margin:0 0 14px}.ob-od-reading-text strong{font-weight:900;color:#241813}.ob-od-spin{width:28px;height:28px;border-radius:999px;border:3px solid rgba(196,98,45,.18);border-top-color:#c4622d;animation:obOdSpin .85s linear infinite}@keyframes obOdSpin{to{transform:rotate(360deg)}}' +
       '.ob-od-bucket{border:1px solid rgba(36,24,19,.14);background:#fffdf9;border-radius:8px;padding:12px;cursor:pointer}.ob-od-bucket.active{border-color:#c4622d;box-shadow:inset 0 0 0 1px rgba(196,98,45,.22);background:#fff4eb}.ob-od-pill{display:inline-flex;align-items:center;border-radius:999px;padding:5px 9px;background:rgba(196,98,45,.12);color:#9a4b22;font-size:11px;font-weight:900}.ob-od-status{font-size:12px;color:#6d5b50;line-height:1.5;margin-top:8px}' +
       '.ob-od-alert{display:none;width:100%;box-sizing:border-box;border-radius:8px;padding:11px 12px;margin-top:12px;font-size:13px;line-height:1.45}.ob-od-alert.error{display:block;background:#fff1f2;border:1px solid rgba(220,38,38,.24);color:#9f1239}.ob-od-alert.info{display:block;background:#fff7ed;border:1px solid rgba(196,98,45,.22);color:#7c2d12}.ob-od-alert.ok{display:block;background:#ecfdf5;border:1px solid rgba(16,185,129,.24);color:#065f46}' +
       '.ob-od-service-card{border-color:rgba(196,98,45,.32)!important;background:#fffaf5!important}.ob-od-service-card .service-big-icon{width:52px;height:52px;border-radius:14px;background:rgba(196,98,45,.14);display:flex;align-items:center;justify-content:center}.ob-od-mini-card{cursor:pointer;border-color:rgba(196,98,45,.32)!important;background:#fffaf5!important}.ob-od-builder-row{border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:10px;margin-bottom:8px;background:rgba(255,255,255,.035)}' +
@@ -50647,8 +50716,36 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   }
   function ensurePublicModal(){
     addStyle();
+    var earlyStyle = document.getElementById('ob-od-return-shell-style');
+    if(earlyStyle && earlyStyle.parentNode) earlyStyle.parentNode.removeChild(earlyStyle);
     var modal = document.getElementById('ob-od-public-modal');
-    if(modal) return modal;
+    if(modal) {
+      modal.style.display = '';
+      modal.className = 'ob-od-modal';
+      var sheet = modal.querySelector('.ob-od-sheet');
+      if(!sheet) {
+        sheet = document.createElement('div');
+        sheet.className = 'ob-od-sheet';
+        while(modal.firstChild) sheet.appendChild(modal.firstChild);
+        modal.appendChild(sheet);
+      }
+      var close = sheet.querySelector('.ob-od-close');
+      if(!close) {
+        close = document.createElement('button');
+        close.className = 'ob-od-close';
+        close.setAttribute('onclick', 'obOdClosePublic()');
+        close.textContent = 'x';
+        sheet.insertBefore(close, sheet.firstChild);
+      } else {
+        close.setAttribute('onclick', 'obOdClosePublic()');
+      }
+      if(!document.getElementById('ob-od-public-body')) {
+        var body = document.createElement('div');
+        body.id = 'ob-od-public-body';
+        sheet.appendChild(body);
+      }
+      return modal;
+    }
     modal = document.createElement('div');
     modal.id = 'ob-od-public-modal';
     modal.className = 'ob-od-modal';
@@ -50705,7 +50802,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     var logged = clientSignedIn();
     var nonClient = !!token() && !logged;
     var fields = activeFormFields(config);
-    body.innerHTML = '<h2 style="margin:0 0 6px;font-size:28px;letter-spacing:0;">' + esc(s.public_label || 'Written Reading') + '</h2><p class="ob-od-sub">' + esc(s.delivery_policy || 'Your answer is delivered securely after login.') + '</p>' +
+    body.innerHTML = '<h2 style="margin:0 0 6px;font-size:28px;letter-spacing:0;">' + esc(s.public_label || 'Written Reading') + '</h2><p class="ob-od-sub">' + esc(s.delivery_policy || 'Your private reading is delivered securely after login.') + '</p>' +
       '<div style="margin-top:16px;"><div style="font-weight:900;margin-bottom:8px;">Choose response time</div><div class="ob-od-row" id="ob-od-public-buckets">' + buckets.map(function(b, i){ return '<div class="ob-od-bucket ' + (i===0?'active':'') + '" data-id="' + attr(b.id) + '" onclick="obOdSelectBucket(this)"><strong>' + esc(publicBucketLabel(b)) + '</strong><div style="font-size:13px;color:#6d5b50;margin-top:4px;">' + esc(money(b.price_cents, b.currency)) + '</div></div>'; }).join('') + '</div></div>' +
       fields.map(fieldInputHtml).join('') +
       '<div id="ob-od-auth-box" style="margin-top:14px;' + (logged ? 'display:none;' : '') + '">' +
@@ -50713,8 +50810,8 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
         '<div style="font-weight:900;margin-bottom:8px;">Client account</div><div style="display:flex;gap:8px;margin-bottom:10px;"><button type="button" class="ob-od-btn secondary" id="ob-od-auth-signup" onclick="obOdAuthMode(&quot;signup&quot;)">New client</button><button type="button" class="ob-od-btn secondary" id="ob-od-auth-login" onclick="obOdAuthMode(&quot;login&quot;)">Returning client</button></div>' +
         '<div id="ob-od-auth-name-wrap"><input id="ob-od-auth-name" class="ob-od-input" placeholder="Your name" style="margin-bottom:8px;"></div><input id="ob-od-auth-email" class="ob-od-input" placeholder="Email" style="margin-bottom:8px;"><input id="ob-od-auth-pass" class="ob-od-input" type="password" placeholder="Password" style="margin-bottom:8px;">' +
       '</div>' +
-      (logged ? '<div class="ob-od-status">Signed in. The final answer will be available in your client account.</div>' : '') +
-      '<label style="display:flex;gap:8px;align-items:flex-start;margin-top:12px;font-size:13px;line-height:1.45;"><input id="ob-od-consent" type="checkbox"> I understand this is a private written response. Status emails come from the expert provider, and the answer is read securely after login.</label>' +
+      (logged ? '<div class="ob-od-status">Signed in. Your private reading will stay in your client account.</div>' : '') +
+      '<label style="display:flex;gap:8px;align-items:flex-start;margin-top:12px;font-size:13px;line-height:1.45;"><input id="ob-od-consent" type="checkbox"> I understand this is a private written response. Status emails come from the expert provider, and the reading opens securely after login.</label>' +
       '<div id="ob-od-public-status" class="ob-od-alert" role="alert"></div><div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:16px;"><button type="button" class="ob-od-btn" id="ob-od-submit" onclick="obOdSubmitPublic()">Continue to payment</button></div>';
     obOdAuthMode(state.clientMode || 'signup');
   }
@@ -50778,16 +50875,30 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   function renderClientStatus(request){
     ensurePublicModal().classList.add('show');
     var body = document.getElementById('ob-od-public-body');
+    request = request || {};
     var delivered = request && request.status === 'delivered';
     var paid = request && (request.payment_status === 'paid' || ['awaiting_expert_review','in_progress','delivered'].indexOf(request.status) >= 0);
-    body.innerHTML = '<button class="ob-od-close" onclick="obOdClosePublic()">x</button><h2 style="margin:0 0 8px;font-size:28px;letter-spacing:0;">' + (delivered ? 'Your answer is ready' : (paid ? 'Payment received' : 'Written request status')) + '</h2>' +
-      '<div class="ob-od-card"><div><strong>Status:</strong> ' + esc(request.status || '') + '</div><div><strong>Expected by:</strong> ' + esc(when(request.due_at)) + '</div><div><strong>Topic:</strong> ' + esc(request.topic || '') + '</div></div>' +
-      (delivered ? '<div class="ob-od-card"><h3>Answer</h3><div style="white-space:pre-wrap;line-height:1.7;color:#3a2b24;">' + esc(request.answer || '') + '</div></div>' : '<p class="ob-od-sub">' + (paid ? 'Your request is now with the expert. You will receive status emails from the expert provider, and the answer will be available here after login.' : 'You will receive an email from the expert provider when the answer is ready.') + '</p>');
+    var title = delivered ? 'Your private reading is ready' : (paid ? 'Payment received' : 'Request received');
+    var summary = [
+      detailHtml('Progress', statusLabel(request)),
+      detailHtml('Amount paid', request.price_cents ? money(request.price_cents, request.currency) : ''),
+      detailHtml(delivered ? 'Delivered' : 'Expected by', delivered && request.delivered_at ? when(request.delivered_at) : when(request.due_at)),
+      detailHtml('Paid', request.paid_at ? when(request.paid_at) : ''),
+      detailHtml('Topic', request.topic || 'Private request')
+    ].filter(Boolean).join('');
+    var copy = delivered
+      ? 'This is kept private in your client account.'
+      : (paid
+        ? 'You are all set. ' + expertName() + ' has your request, and we will email you as it moves forward.'
+        : 'We will email you as soon as the request is ready.');
+    body.innerHTML = '<h2 style="margin:0 0 8px;font-size:28px;letter-spacing:0;">' + esc(title) + '</h2><p class="ob-od-sub">' + esc(copy) + '</p>' +
+      '<div class="ob-od-summary-grid">' + summary + '</div>' +
+      (delivered ? '<div class="ob-od-card ob-od-reading"><div class="ob-od-reading-kicker">Private reading from ' + esc(expertName()) + '</div><h3>For you</h3><div class="ob-od-reading-text">' + readingHtml(request.answer || '') + '</div></div>' : '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:6px;"><button type="button" class="ob-od-btn secondary" onclick="obOdOpenRequestFromQuery(&quot;' + attr(request.id || '') + '&quot;)">Refresh status</button></div>');
   }
   function showCheckoutMessage(title, message){
     ensurePublicModal().classList.add('show');
     var body = document.getElementById('ob-od-public-body');
-    if(body) body.innerHTML = '<button class="ob-od-close" onclick="obOdClosePublic()">x</button><h2 style="margin:0 0 8px;font-size:28px;letter-spacing:0;">' + esc(title) + '</h2><p class="ob-od-sub">' + esc(message) + '</p><div class="ob-od-card"><strong>Status:</strong> Finalizing payment confirmation...</div>';
+    if(body) body.innerHTML = '<h2 style="margin:0 0 8px;font-size:28px;letter-spacing:0;">' + esc(title) + '</h2><p class="ob-od-sub">' + esc(message) + '</p><div class="ob-od-card" style="display:flex;gap:12px;align-items:center;"><div class="ob-od-spin" aria-hidden="true"></div><div><strong>Finalizing securely</strong><div style="font-size:13px;color:#6d5b50;line-height:1.45;margin-top:3px;">Please keep this page open. This usually takes a few seconds.</div></div></div>';
   }
   function onDemandReturnParams(){
     try {
@@ -50806,31 +50917,49 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   function cleanOnDemandReturnUrl(){
     try {
       var url = new URL(location.href);
-      ['on_demand','request_id','checkout_session_id'].forEach(function(key){ url.searchParams.delete(key); });
+      ['on_demand','request_id','on_demand_request','checkout_session_id'].forEach(function(key){ url.searchParams.delete(key); });
       history.replaceState({}, '', url.pathname + (url.searchParams.toString() ? '?' + url.searchParams.toString() : '') + url.hash);
       window.__obOnDemandReturnParams = null;
     } catch(e) {}
+  }
+  function renderLoginForRequest(id, opts){
+    opts = opts || {};
+    ensurePublicModal().classList.add('show');
+    var body = document.getElementById('ob-od-public-body');
+    var existingEmail = (document.getElementById('ob-od-auth-email') || {}).value || '';
+    var existingPass = (document.getElementById('ob-od-auth-pass') || {}).value || '';
+    var name = expertName();
+    body.innerHTML = '<h2 style="margin:0 0 8px;font-size:28px;letter-spacing:0;">' + esc(opts.title || 'Sign in to open your private reading') + '</h2><p class="ob-od-sub">' + esc(opts.copy || ('For privacy, ' + name + ' keeps written readings behind your client account.')) + '</p><div style="margin-top:14px;"><input id="ob-od-auth-email" class="ob-od-input" autocomplete="email" inputmode="email" placeholder="Email" value="' + attr(existingEmail) + '" style="margin-bottom:8px;"><input id="ob-od-auth-pass" class="ob-od-input" type="password" autocomplete="current-password" placeholder="Password" style="margin-bottom:8px;"><button class="ob-od-btn" id="ob-od-login-request-btn" onclick="obOdLoginForRequest(&quot;' + attr(id) + '&quot;)">Open my reading</button><div id="ob-od-public-status" class="ob-od-status" style="margin-top:8px;"></div></div>';
+    if(existingPass) {
+      try { document.getElementById('ob-od-auth-pass').value = existingPass; } catch(e) {}
+    }
+    setTimeout(function(){ try { (document.getElementById(existingEmail ? 'ob-od-auth-pass' : 'ob-od-auth-email') || {}).focus(); } catch(e) {} }, 40);
   }
   function openRequestFromQuery(id, opts){
     opts = opts || {};
     if(!id) return;
     if(!token()){
-      ensurePublicModal().classList.add('show');
-      var body = document.getElementById('ob-od-public-body');
-      body.innerHTML = '<h2 style="margin:0 0 8px;font-size:28px;letter-spacing:0;">' + esc(opts.title || 'Sign in to read your answer') + '</h2><p class="ob-od-sub">' + esc(opts.copy || 'For privacy, written answers are only shown after login.') + '</p><div style="margin-top:14px;"><input id="ob-od-auth-email" class="ob-od-input" placeholder="Email" style="margin-bottom:8px;"><input id="ob-od-auth-pass" class="ob-od-input" type="password" placeholder="Password" style="margin-bottom:8px;"><button class="ob-od-btn" onclick="obOdLoginForRequest(&quot;' + attr(id) + '&quot;)">Sign in</button><span id="ob-od-public-status" class="ob-od-status" style="margin-left:8px;"></span></div>';
+      renderLoginForRequest(id, opts);
       return;
     }
+    showCheckoutMessage(opts.loadingTitle || 'Opening your private reading', opts.loadingCopy || 'Checking the latest status securely.');
     api('/api/on-demand/me/' + encodeURIComponent(id)).then(function(d){ renderClientStatus(d.request || {}); }).catch(function(e){ toastMsg(e.message, 'err'); });
   }
+  window.obOdOpenRequestFromQuery = openRequestFromQuery;
   window.obOdLoginForRequest = function(id){
     var email = (document.getElementById('ob-od-auth-email') || {}).value || '';
     var pass = (document.getElementById('ob-od-auth-pass') || {}).value || '';
+    var btn = document.getElementById('ob-od-login-request-btn');
+    var st = document.getElementById('ob-od-public-status');
+    if(!email.trim() || !pass) { if(st) st.textContent = 'Enter your email and password.'; return; }
+    if(btn) { btn.disabled = true; btn.textContent = 'Opening...'; }
+    if(st) st.textContent = 'Signing in securely...';
     authApi('/api/auth/login', {email:email.trim(), password:pass}).then(function(d){
       saveAuth(d);
       var params = onDemandReturnParams();
       if(params.get('on_demand') === 'success' && params.get('checkout_session_id')) confirmCheckoutFromQuery(0);
       else openRequestFromQuery(id);
-    }).catch(function(e){ var st=document.getElementById('ob-od-public-status'); if(st) st.textContent=e.message; });
+    }).catch(function(e){ if(st) st.textContent=e.message; if(btn) { btn.disabled = false; btn.textContent = 'Open my reading'; } });
   };
   function confirmCheckoutFromQuery(attempt){
     attempt = Number(attempt || 0);
@@ -50845,7 +50974,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
         return Promise.resolve(false);
       }
       state.confirmingCheckout = true;
-      showCheckoutMessage('Payment received', 'Give us a moment while we confirm the request with Stripe.');
+      showCheckoutMessage('Payment received', 'Give us a moment while we confirm your request.');
       return api('/api/on-demand/checkout/confirm', {method:'POST', body:{checkout_session_id:checkout}}).then(function(d){
         state.confirmingCheckout = false;
         state.confirmedCheckout = checkout;

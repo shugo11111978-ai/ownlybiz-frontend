@@ -50079,7 +50079,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   window.__obOnDemandReadings20260607 = true;
 
   var DEFAULT_API = 'https://ownlybiz-backend-production.up.railway.app';
-  var state = { publicConfig:null, publicSlug:'', publicModal:false, clientMode:'signup', expertSettings:null, expertRequests:[] };
+  var state = { publicConfig:null, publicSlug:'', publicModal:false, clientMode:'signup', expertSettings:null, expertRequests:[], confirmingCheckout:false, confirmedCheckout:'' };
   var adminInstallTimer = null;
 
   function base(){ return String(window.OWNLYBIZ_API_URL || window._OB_BACKEND || window.OWNLY_API || DEFAULT_API).replace(/\/+$/,''); }
@@ -50115,6 +50115,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     else if(typeof window.toastMsg === 'function') window.toastMsg(msg, kind || 'ok');
     else console.log(msg);
   }
+  function waitMs(ms){ return new Promise(function(resolve){ setTimeout(resolve, ms); }); }
   function setPublicStatus(kind, msg){
     var status = document.getElementById('ob-od-public-status');
     if(!status) return;
@@ -50747,6 +50748,9 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
         custom_fields: collected.values
       }});
     }).then(function(d){
+      try {
+        if(d && d.request && d.request.id) localStorage.setItem('ob_od_pending_checkout', JSON.stringify({request_id:d.request.id, slug:state.publicSlug || '', ts:Date.now()}));
+      } catch(e) {}
       if(d.checkout_url) location.href = d.checkout_url;
       else throw new Error('Checkout URL missing.');
     }).catch(function(err){
@@ -50759,16 +50763,30 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     ensurePublicModal().classList.add('show');
     var body = document.getElementById('ob-od-public-body');
     var delivered = request && request.status === 'delivered';
-    body.innerHTML = '<button class="ob-od-close" onclick="obOdClosePublic()">x</button><h2 style="margin:0 0 8px;font-size:28px;letter-spacing:0;">' + (delivered ? 'Your answer is ready' : 'Written request status') + '</h2>' +
+    var paid = request && (request.payment_status === 'paid' || ['awaiting_expert_review','in_progress','delivered'].indexOf(request.status) >= 0);
+    body.innerHTML = '<button class="ob-od-close" onclick="obOdClosePublic()">x</button><h2 style="margin:0 0 8px;font-size:28px;letter-spacing:0;">' + (delivered ? 'Your answer is ready' : (paid ? 'Payment received' : 'Written request status')) + '</h2>' +
       '<div class="ob-od-card"><div><strong>Status:</strong> ' + esc(request.status || '') + '</div><div><strong>Expected by:</strong> ' + esc(when(request.due_at)) + '</div><div><strong>Topic:</strong> ' + esc(request.topic || '') + '</div></div>' +
-      (delivered ? '<div class="ob-od-card"><h3>Answer</h3><div style="white-space:pre-wrap;line-height:1.7;color:#3a2b24;">' + esc(request.answer || '') + '</div></div>' : '<p class="ob-od-sub">You will receive an email from the expert provider when the answer is ready.</p>');
+      (delivered ? '<div class="ob-od-card"><h3>Answer</h3><div style="white-space:pre-wrap;line-height:1.7;color:#3a2b24;">' + esc(request.answer || '') + '</div></div>' : '<p class="ob-od-sub">' + (paid ? 'Your request is now with the expert. You will receive status emails from the expert provider, and the answer will be available here after login.' : 'You will receive an email from the expert provider when the answer is ready.') + '</p>');
   }
-  function openRequestFromQuery(id){
+  function showCheckoutMessage(title, message){
+    ensurePublicModal().classList.add('show');
+    var body = document.getElementById('ob-od-public-body');
+    if(body) body.innerHTML = '<button class="ob-od-close" onclick="obOdClosePublic()">x</button><h2 style="margin:0 0 8px;font-size:28px;letter-spacing:0;">' + esc(title) + '</h2><p class="ob-od-sub">' + esc(message) + '</p><div class="ob-od-card"><strong>Status:</strong> Finalizing payment confirmation...</div>';
+  }
+  function cleanOnDemandReturnUrl(){
+    try {
+      var url = new URL(location.href);
+      ['on_demand','request_id','checkout_session_id'].forEach(function(key){ url.searchParams.delete(key); });
+      history.replaceState({}, '', url.pathname + (url.searchParams.toString() ? '?' + url.searchParams.toString() : '') + url.hash);
+    } catch(e) {}
+  }
+  function openRequestFromQuery(id, opts){
+    opts = opts || {};
     if(!id) return;
     if(!token()){
       ensurePublicModal().classList.add('show');
       var body = document.getElementById('ob-od-public-body');
-      body.innerHTML = '<h2 style="margin:0 0 8px;font-size:28px;letter-spacing:0;">Sign in to read your answer</h2><p class="ob-od-sub">For privacy, written answers are only shown after login.</p><div style="margin-top:14px;"><input id="ob-od-auth-email" class="ob-od-input" placeholder="Email" style="margin-bottom:8px;"><input id="ob-od-auth-pass" class="ob-od-input" type="password" placeholder="Password" style="margin-bottom:8px;"><button class="ob-od-btn" onclick="obOdLoginForRequest(&quot;' + attr(id) + '&quot;)">Sign in</button><span id="ob-od-public-status" class="ob-od-status" style="margin-left:8px;"></span></div>';
+      body.innerHTML = '<h2 style="margin:0 0 8px;font-size:28px;letter-spacing:0;">' + esc(opts.title || 'Sign in to read your answer') + '</h2><p class="ob-od-sub">' + esc(opts.copy || 'For privacy, written answers are only shown after login.') + '</p><div style="margin-top:14px;"><input id="ob-od-auth-email" class="ob-od-input" placeholder="Email" style="margin-bottom:8px;"><input id="ob-od-auth-pass" class="ob-od-input" type="password" placeholder="Password" style="margin-bottom:8px;"><button class="ob-od-btn" onclick="obOdLoginForRequest(&quot;' + attr(id) + '&quot;)">Sign in</button><span id="ob-od-public-status" class="ob-od-status" style="margin-left:8px;"></span></div>';
       return;
     }
     api('/api/on-demand/me/' + encodeURIComponent(id)).then(function(d){ renderClientStatus(d.request || {}); }).catch(function(e){ toastMsg(e.message, 'err'); });
@@ -50776,19 +50794,47 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   window.obOdLoginForRequest = function(id){
     var email = (document.getElementById('ob-od-auth-email') || {}).value || '';
     var pass = (document.getElementById('ob-od-auth-pass') || {}).value || '';
-    authApi('/api/auth/login', {email:email.trim(), password:pass}).then(function(d){ saveAuth(d); openRequestFromQuery(id); }).catch(function(e){ var st=document.getElementById('ob-od-public-status'); if(st) st.textContent=e.message; });
+    authApi('/api/auth/login', {email:email.trim(), password:pass}).then(function(d){
+      saveAuth(d);
+      var params = new URLSearchParams(location.search || '');
+      if(params.get('on_demand') === 'success' && params.get('checkout_session_id')) confirmCheckoutFromQuery(0);
+      else openRequestFromQuery(id);
+    }).catch(function(e){ var st=document.getElementById('ob-od-public-status'); if(st) st.textContent=e.message; });
   };
-  function confirmCheckoutFromQuery(){
+  function confirmCheckoutFromQuery(attempt){
+    attempt = Number(attempt || 0);
     var params = new URLSearchParams(location.search || '');
     var checkout = params.get('checkout_session_id');
     var reqId = params.get('request_id') || params.get('on_demand_request');
-    if(params.get('on_demand') === 'success' && checkout && token()){
-      api('/api/on-demand/checkout/confirm', {method:'POST', body:{checkout_session_id:checkout}}).then(function(d){ renderClientStatus(d.request || {}); }).catch(function(e){ toastMsg(e.message, 'err'); });
+    if(params.get('on_demand') === 'success' && checkout){
+      if(state.confirmedCheckout === checkout) return Promise.resolve(true);
+      if(state.confirmingCheckout) return Promise.resolve(false);
+      if(!token()){
+        openRequestFromQuery(reqId, {title:'Payment received', copy:'Sign in so we can finish confirming your written request and show the status securely.'});
+        return Promise.resolve(false);
+      }
+      state.confirmingCheckout = true;
+      showCheckoutMessage('Payment received', 'Give us a moment while we confirm the request with Stripe.');
+      return api('/api/on-demand/checkout/confirm', {method:'POST', body:{checkout_session_id:checkout}}).then(function(d){
+        state.confirmingCheckout = false;
+        state.confirmedCheckout = checkout;
+        try { localStorage.removeItem('ob_od_pending_checkout'); } catch(e) {}
+        cleanOnDemandReturnUrl();
+        renderClientStatus(d.request || {});
+        return true;
+      }).catch(function(e){
+        state.confirmingCheckout = false;
+        if(attempt < 7) return waitMs(Math.min(6000, 900 + attempt * 900)).then(function(){ return confirmCheckoutFromQuery(attempt + 1); });
+        showCheckoutMessage('Payment received', e.message || 'The payment is still finalizing. Refresh this page in a moment or sign in to view your request status.');
+        toastMsg(e.message || 'Payment is still finalizing.', 'err');
+        return false;
+      });
     } else if(params.get('on_demand_request')) {
       openRequestFromQuery(params.get('on_demand_request'));
     } else if(reqId && params.get('on_demand') === 'success') {
       openRequestFromQuery(reqId);
     }
+    return Promise.resolve(false);
   }
   function loadPublicOnDemand(){
     var slug = expertSlug();
@@ -50797,8 +50843,8 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     api('/api/on-demand/public/' + encodeURIComponent(slug)).then(function(config){
       state.publicConfig = config;
       injectPublicCard(config);
-      confirmCheckoutFromQuery();
-    }).catch(function(){ confirmCheckoutFromQuery(); });
+      confirmCheckoutFromQuery(0);
+    }).catch(function(){ confirmCheckoutFromQuery(0); });
   }
   function installPublic(){
     if(!window.__obOnDemandPublicWrapped && typeof window.loadExpertWebsite === 'function'){
@@ -50823,6 +50869,9 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     }
     setTimeout(loadPublicOnDemand, 900);
     setTimeout(loadPublicOnDemand, 2200);
+    setTimeout(function(){ confirmCheckoutFromQuery(0); }, 250);
+    setTimeout(function(){ confirmCheckoutFromQuery(0); }, 1200);
+    setTimeout(function(){ confirmCheckoutFromQuery(0); }, 3200);
   }
 
   function boot(){

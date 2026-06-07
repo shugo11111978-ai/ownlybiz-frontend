@@ -50068,6 +50068,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
 
   var DEFAULT_API = 'https://victorious-wisdom-production-a6b0.up.railway.app';
   var state = { publicConfig:null, publicSlug:'', publicModal:false, clientMode:'signup', expertSettings:null, expertRequests:[] };
+  var adminInstallTimer = null;
 
   function base(){ return String(window.OWNLYBIZ_API_URL || window._OB_BACKEND || window.OWNLY_API || DEFAULT_API).replace(/\/+$/,''); }
   function token(){ return sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || localStorage.getItem('ob_client_token') || ''; }
@@ -50189,9 +50190,9 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     [250,700,1300,2200].forEach(function(ms){ setTimeout(function(){ injectAdminCard(id); }, ms); });
   }
   function installAdmin(){
-    if(window.__obOnDemandAdminWrapped) return;
+    if(window.__obOnDemandAdminWrapped) return true;
     var prev = window.obAdminOpenExpertDetail || window.adminViewExpertDashboard;
-    if(typeof prev !== 'function') return;
+    if(typeof prev !== 'function') return false;
     window.__obOnDemandAdminWrapped = true;
     window.obAdminOpenExpertDetail = function(id, slug, name){
       var ret = prev.apply(this, arguments);
@@ -50200,6 +50201,18 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     };
     window.adminViewExpertDashboard = window.obAdminOpenExpertDetail;
     if(window.OwnlyAPI) window.OwnlyAPI.adminViewExpertDashboard = window.obAdminOpenExpertDetail;
+    return true;
+  }
+  function retryInstallAdmin(){
+    if(adminInstallTimer || window.__obOnDemandAdminWrapped) return;
+    var tries = 0;
+    adminInstallTimer = setInterval(function(){
+      tries += 1;
+      if(installAdmin() || tries >= 30) {
+        clearInterval(adminInstallTimer);
+        adminInstallTimer = null;
+      }
+    }, 500);
   }
   window.obAdminSaveOnDemand = function(id){
     var status = document.getElementById('ob-admin-od-status');
@@ -50544,6 +50557,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
 
   function boot(){
     installAdmin();
+    retryInstallAdmin();
     installExpertNav();
     installPublic();
     if(String(location.pathname || '').indexOf('/dash/') === 0 && String(location.pathname || '').indexOf('/on-demand') >= 0) {

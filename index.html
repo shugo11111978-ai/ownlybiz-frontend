@@ -50189,26 +50189,39 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   function scheduleAdminCard(id){
     [250,700,1300,2200].forEach(function(ms){ setTimeout(function(){ injectAdminCard(id); }, ms); });
   }
+  function currentAdminOpenExpert(){
+    return window.obAdminOpenExpertDetail || window.adminViewExpertDashboard;
+  }
+  function isAdminWrapped(){
+    var fn = currentAdminOpenExpert();
+    return !!(fn && fn.__obOnDemandWrapped);
+  }
   function installAdmin(){
-    if(window.__obOnDemandAdminWrapped) return true;
-    var prev = window.obAdminOpenExpertDetail || window.adminViewExpertDashboard;
+    if(isAdminWrapped()) {
+      window.__obOnDemandAdminWrapped = true;
+      return true;
+    }
+    var prev = currentAdminOpenExpert();
     if(typeof prev !== 'function') return false;
-    window.__obOnDemandAdminWrapped = true;
-    window.obAdminOpenExpertDetail = function(id, slug, name){
+    var wrapped = function(id, slug, name){
       var ret = prev.apply(this, arguments);
       scheduleAdminCard(id);
       return ret;
     };
-    window.adminViewExpertDashboard = window.obAdminOpenExpertDetail;
-    if(window.OwnlyAPI) window.OwnlyAPI.adminViewExpertDashboard = window.obAdminOpenExpertDetail;
+    wrapped.__obOnDemandWrapped = true;
+    window.__obOnDemandAdminWrapped = true;
+    window.obAdminOpenExpertDetail = wrapped;
+    window.adminViewExpertDashboard = wrapped;
+    if(window.OwnlyAPI) window.OwnlyAPI.adminViewExpertDashboard = wrapped;
     return true;
   }
   function retryInstallAdmin(){
-    if(adminInstallTimer || window.__obOnDemandAdminWrapped) return;
+    if(adminInstallTimer) return;
     var tries = 0;
     adminInstallTimer = setInterval(function(){
       tries += 1;
-      if(installAdmin() || tries >= 30) {
+      installAdmin();
+      if(tries >= 120) {
         clearInterval(adminInstallTimer);
         adminInstallTimer = null;
       }

@@ -23256,15 +23256,62 @@ window._handleRTCMessage=function(d){
       freeMinutes.voice = parseInt(rates.voice_free_min || 0, 10) || 0;
       freeMinutes.video = parseInt(rates.video_free_min || 0, 10) || 0;
     }
+    window._obConfiguredPricingFree = {
+      chat: parseInt(rates.chat_free_min || 0, 10) || 0,
+      voice: parseInt(rates.voice_free_min || 0, 10) || 0,
+      video: parseInt(rates.video_free_min || 0, 10) || 0
+    };
     if(typeof window.obRefreshSessionStartModes==='function') window.obRefreshSessionStartModes();
-    if(window._currentExpert) Object.assign(window._currentExpert, rates);
+    enforceConfiguredPricingFree();
+    if(window._currentExpert) {
+      var mergeRates = Object.assign({}, rates);
+      if(window._obPricingAvailabilityDirty) {
+        ['chat','voice','video'].forEach(function(ch){ delete mergeRates[ch + '_enabled']; });
+      }
+      Object.assign(window._currentExpert, mergeRates);
+    }
   }
   window.obSyncRateControls = syncRateControls;
 
+  function isPrivatePricingPanel(){
+    var path = location.pathname || '';
+    var panel = document.getElementById('db-panel-payments');
+    return (path.indexOf('/dash/') === 0 || path === '/admin') && (
+      path.indexOf('/pricing') >= 0 ||
+      !!(panel && panel.classList && panel.classList.contains('show-pricing'))
+    );
+  }
+  function configuredFreeForPricing(ch){
+    if(!isPrivatePricingPanel()) return null;
+    if(window._obConfiguredPricingFree && window._obConfiguredPricingFree[ch] != null) return window._obConfiguredPricingFree[ch];
+    var data = window._currentExpert || {};
+    var key = ch + '_free_min';
+    var legacy = ch === 'chat' ? 'free_minutes' : 'free_minutes_' + ch;
+    var raw = data[key] != null ? data[key] : data[legacy];
+    var parsed = parseInt(raw, 10);
+    return isFinite(parsed) ? parsed : null;
+  }
+  var enforcingPricingFree = false;
+  function enforceConfiguredPricingFree(){
+    if(enforcingPricingFree || !isPrivatePricingPanel() || !window._obConfiguredPricingFree) return;
+    enforcingPricingFree = true;
+    try {
+      ['chat','voice','video'].forEach(function(ch){
+        var value = window._obConfiguredPricingFree[ch];
+        if(value === undefined || value === null) return;
+        setControlText('fm-' + ch, value);
+        setControlValue('free-min-' + ch, value);
+      });
+    } finally {
+      enforcingPricingFree = false;
+    }
+  }
+  window.obEnforceConfiguredPricingFree = enforceConfiguredPricingFree;
   function refreshSessionStartModes(){
     ['chat','voice','video'].forEach(function(ch){
       var fmEl=document.getElementById('fm-'+ch);
-      var fm=parseInt((freeMinutes&&freeMinutes[ch])||0,10)||0;
+      var configured = configuredFreeForPricing(ch);
+      var fm = configured != null ? configured : (parseInt((freeMinutes&&freeMinutes[ch])||0,10)||0);
       if(fmEl && fmEl.textContent !== String(fm)) fmEl.textContent = fm;
       var box=document.getElementById('ssm-'+ch);
       if(box) box.classList.remove('ssm-coming-soon');
@@ -23467,6 +23514,18 @@ window._handleRTCMessage=function(d){
     if(ch === 'voice') return int(data.voice_free_min != null ? data.voice_free_min : data.free_minutes_voice, 0);
     return int(data.video_free_min != null ? data.video_free_min : data.free_minutes_video, 0);
   }
+  function privatePricingPanel(){
+    var path = location.pathname || '';
+    var panel = document.getElementById('db-panel-payments');
+    return (path.indexOf('/dash/') === 0 || path === '/admin') && (
+      path.indexOf('/pricing') >= 0 ||
+      !!(panel && panel.classList && panel.classList.contains('show-pricing'))
+    );
+  }
+  function configuredPricingFree(ch){
+    if(!privatePricingPanel() || !window._obConfiguredPricingFree || window._obConfiguredPricingFree[ch] == null) return null;
+    return int(window._obConfiguredPricingFree[ch], 0);
+  }
   function normalizeRates(data){
     if(!data) return data;
     data.rate_chat = data.chat_pm = rateFor(data,'chat');
@@ -23475,6 +23534,12 @@ window._handleRTCMessage=function(d){
     data.chat_free_min = data.free_minutes = freeFor(data,'chat');
     data.voice_free_min = freeFor(data,'voice');
     data.video_free_min = freeFor(data,'video');
+    var cfgChat = configuredPricingFree('chat');
+    var cfgVoice = configuredPricingFree('voice');
+    var cfgVideo = configuredPricingFree('video');
+    if(cfgChat != null) data.chat_free_min = data.free_minutes = cfgChat;
+    if(cfgVoice != null) data.voice_free_min = cfgVoice;
+    if(cfgVideo != null) data.video_free_min = cfgVideo;
     if(typeof freeMinutes === 'object'){
       freeMinutes.chat = data.chat_free_min;
       freeMinutes.voice = data.voice_free_min;
@@ -25921,6 +25986,24 @@ window._handleRTCMessage=function(d){
     data = data || window._currentExpert || {};
     return enabledFlag(data[ch + '_enabled'], 1) === 1;
   }
+  function hasOwn(obj, key){
+    return !!obj && Object.prototype.hasOwnProperty.call(obj, key);
+  }
+  function hasAvailabilityFields(data){
+    return CHANNELS.some(function(ch){ return hasOwn(data, ch + '_enabled'); });
+  }
+  function privatePricingContext(){
+    var path = location.pathname || '';
+    var panel = document.getElementById('db-panel-payments');
+    return (path.indexOf('/dash/') === 0 || path === '/admin') && (
+      path.indexOf('/pricing') >= 0 ||
+      !!document.querySelector('#view-3.active,#view-6.active') ||
+      !!(panel && panel.classList && panel.classList.contains('show-pricing'))
+    );
+  }
+  function shouldDeferPrivateAvailability(data){
+    return privatePricingContext() && !window._obPricingRatesLoaded && !window._obPricingAvailabilityDirty;
+  }
   function firstEnabledChannel(data){
     data = data || window._currentExpert || {};
     for(var i=0;i<CHANNELS.length;i++){ if(channelEnabled(data, CHANNELS[i])) return CHANNELS[i]; }
@@ -25946,6 +26029,18 @@ window._handleRTCMessage=function(d){
     }
     return 0;
   }
+  function currentFreeMin(ch){
+    if(window._obConfiguredPricingFree && window._obConfiguredPricingFree[ch] != null) return int(window._obConfiguredPricingFree[ch], 0);
+    var data = window._currentExpert || {};
+    var key = ch + '_free_min';
+    var legacy = ch === 'chat' ? 'free_minutes' : 'free_minutes_' + ch;
+    return int(data[key] != null ? data[key] : data[legacy], 0);
+  }
+  function readConfiguredFreeMin(ch, ids){
+    var ui = firstExistingInt(ids);
+    var current = currentFreeMin(ch);
+    return ui > 0 || current <= 0 ? ui : current;
+  }
   function readNum(id, fallback){
     var el = document.getElementById(id);
     return el ? num(el.value, fallback) : fallback;
@@ -25953,13 +26048,13 @@ window._handleRTCMessage=function(d){
   function collectRatesWithAvailability(){
     return {
       chat_pm: readNum('rate-chat', readNum('sfield-chat-rate', 3.5)),
-      chat_free_min: firstExistingInt(['fm-chat','free-min-chat','sfield-free-min']),
+      chat_free_min: readConfiguredFreeMin('chat', ['fm-chat','free-min-chat','sfield-free-min']),
       chat_enabled: readEnabled('chat'),
       voice_pm: readNum('rate-voice', readNum('sfield-voice-rate', 4)),
-      voice_free_min: firstExistingInt(['fm-voice','free-min-voice']),
+      voice_free_min: readConfiguredFreeMin('voice', ['fm-voice','free-min-voice']),
       voice_enabled: readEnabled('voice'),
       video_pm: readNum('rate-video', readNum('sfield-video-rate', 5)),
-      video_free_min: firstExistingInt(['fm-video','free-min-video']),
+      video_free_min: readConfiguredFreeMin('video', ['fm-video','free-min-video']),
       video_enabled: readEnabled('video')
     };
   }
@@ -25971,19 +26066,25 @@ window._handleRTCMessage=function(d){
       var label = ch.charAt(0).toUpperCase() + ch.slice(1);
       var row = document.createElement('label');
       row.className = 'ob-channel-toggle';
-      row.innerHTML = '<span><span style="display:block;">Accept ' + label + ' sessions</span><span class="ob-channel-state">Available</span></span><input type="checkbox" id="' + ch + '-enabled" checked>';
+      row.classList.add('is-loading');
+      row.innerHTML = '<span><span style="display:block;">Accept ' + label + ' sessions</span><span class="ob-channel-state">Loading...</span></span><input type="checkbox" id="' + ch + '-enabled" disabled>';
       var preview = card.querySelector('.rate-preview');
       if(preview && preview.parentNode) preview.parentNode.insertBefore(row, preview);
       else card.appendChild(row);
-      row.querySelector('input').addEventListener('change', function(){ applyChannelAvailabilityUi(window._currentExpert || collectRatesWithAvailability()); });
+      row.querySelector('input').addEventListener('change', function(){
+        window._obPricingAvailabilityDirty = true;
+        window._currentExpert = window._currentExpert || {};
+        window._currentExpert[ch + '_enabled'] = this.checked ? 1 : 0;
+        applyChannelAvailabilityUi(Object.assign({}, window._currentExpert, collectRatesWithAvailability()));
+      });
     });
   }
   function syncEnabledControls(rates){
     rates = rates || {};
     ensurePricingToggles();
     CHANNELS.forEach(function(ch){
-      setChecked(ch + '-enabled', rates[ch + '_enabled']);
-      if(window._currentExpert) window._currentExpert[ch + '_enabled'] = enabledFlag(rates[ch + '_enabled'], 1);
+      if(hasOwn(rates, ch + '_enabled')) setChecked(ch + '-enabled', rates[ch + '_enabled']);
+      if(window._currentExpert && hasOwn(rates, ch + '_enabled')) window._currentExpert[ch + '_enabled'] = enabledFlag(rates[ch + '_enabled'], 1);
     });
     applyChannelAvailabilityUi(Object.assign({}, window._currentExpert || {}, rates));
   }
@@ -26008,14 +26109,18 @@ window._handleRTCMessage=function(d){
     }
   }
   function applyChannelAvailabilityUi(data){
+    if(shouldDeferPrivateAvailability(data || {})) return;
+    if(privatePricingContext() && !hasAvailabilityFields(data || {}) && !hasAvailabilityFields(window._currentExpert || {})) return;
     data = Object.assign({}, window._currentExpert || {}, data || {});
     CHANNELS.forEach(function(ch){
       var on = channelEnabled(data, ch);
       var toggle = document.getElementById(ch + '-enabled');
       if(toggle){
+        toggle.disabled = false;
         toggle.checked = on;
         var row = toggle.closest('.ob-channel-toggle');
         if(row){
+          row.classList.remove('is-loading');
           row.classList.toggle('is-off', !on);
           var state = row.querySelector('.ob-channel-state');
           if(state) state.textContent = on ? 'Available' : 'Off';
@@ -26056,6 +26161,8 @@ window._handleRTCMessage=function(d){
     var url = window._adminViewingExpertId ? '/api/admin/experts/' + encodeURIComponent(window._adminViewingExpertId) + '/rates' : '/api/experts/rates';
     return api(url).then(function(d){
       var rates = d.rates || d || {};
+      window._obPricingRatesLoaded = true;
+      if(window._obPricingAvailabilityDirty && privatePricingContext()) return rates;
       syncEnabledControls(rates);
       return rates;
     }).catch(function(){ applyChannelAvailabilityUi(); return null; });
@@ -26072,6 +26179,8 @@ window._handleRTCMessage=function(d){
     if(btn){ btn.disabled = true; btn.textContent = 'Saving...'; }
     return api(url, {method:method, body:JSON.stringify(body)}).then(function(){
       if(window._currentExpert) Object.assign(window._currentExpert, body);
+      window._obPricingAvailabilityDirty = false;
+      window._obPricingRatesLoaded = true;
       syncEnabledControls(body);
       if(typeof window.obSyncRateControls === 'function') try { window.obSyncRateControls(body); } catch(e) {}
       if(statusEl){ statusEl.textContent = 'Saved'; statusEl.style.color = 'var(--sage)'; }
@@ -26110,6 +26219,7 @@ window._handleRTCMessage=function(d){
     if(currentApplyWebsite && !currentApplyWebsite._obAvailabilityWrapped){
       window._applyExpertWebsite = function(data){
         var ret = currentApplyWebsite.apply(this, arguments);
+        if(privatePricingContext()) return ret;
         if(data) {
           data.chat_enabled = enabledFlag(data.chat_enabled, 1);
           data.voice_enabled = enabledFlag(data.voice_enabled, 1);
@@ -26929,6 +27039,15 @@ window._handleRTCMessage=function(d){
   function currentData(data){
     return Object.assign({}, window._currentExpert || {}, data || {});
   }
+  function hasOwn(obj, key){
+    return !!obj && Object.prototype.hasOwnProperty.call(obj, key);
+  }
+  function hasAvailabilityFields(data){
+    return CHANNELS.some(function(ch){ return hasOwn(data, ch + '_enabled'); });
+  }
+  function shouldDeferPrivateAvailability(data){
+    return privateRatesContext() && !window._obPricingRatesLoaded && !window._obPricingAvailabilityDirty;
+  }
   function channelEnabled(data, ch){
     data = currentData(data);
     return enabledFlag(data[ch + '_enabled'], 1) === 1;
@@ -26950,6 +27069,18 @@ window._handleRTCMessage=function(d){
     }
     return fallback || 0;
   }
+  function currentFreeMin(ch){
+    if(window._obConfiguredPricingFree && window._obConfiguredPricingFree[ch] != null) return int(window._obConfiguredPricingFree[ch], 0);
+    var data = window._currentExpert || {};
+    var key = ch + '_free_min';
+    var legacy = ch === 'chat' ? 'free_minutes' : 'free_minutes_' + ch;
+    return int(data[key] != null ? data[key] : data[legacy], 0);
+  }
+  function readConfiguredFreeMin(ch, ids){
+    var ui = readInt(ids, 0);
+    var current = currentFreeMin(ch);
+    return ui > 0 || current <= 0 ? ui : current;
+  }
   function readEnabled(ch){
     var el = document.getElementById(ch + '-enabled');
     if(el) return el.checked ? 1 : 0;
@@ -26958,15 +27089,41 @@ window._handleRTCMessage=function(d){
   function collectRates(){
     return {
       chat_pm: readNum('rate-chat', readNum('sfield-chat-rate', 3.5)),
-      chat_free_min: readInt(['fm-chat','free-min-chat','sfield-free-min'], 0),
+      chat_free_min: readConfiguredFreeMin('chat', ['fm-chat','free-min-chat','sfield-free-min']),
       chat_enabled: readEnabled('chat'),
       voice_pm: readNum('rate-voice', readNum('sfield-voice-rate', 4)),
-      voice_free_min: readInt(['fm-voice','free-min-voice'], 0),
+      voice_free_min: readConfiguredFreeMin('voice', ['fm-voice','free-min-voice']),
       voice_enabled: readEnabled('voice'),
       video_pm: readNum('rate-video', readNum('sfield-video-rate', 5)),
-      video_free_min: readInt(['fm-video','free-min-video'], 0),
+      video_free_min: readConfiguredFreeMin('video', ['fm-video','free-min-video']),
       video_enabled: readEnabled('video')
     };
+  }
+  function setControlValue(id, value){
+    var el = document.getElementById(id);
+    if(!el || value === undefined || value === null) return;
+    if('value' in el) el.value = value;
+    else el.textContent = value;
+  }
+  function syncFreeMinuteControls(rates){
+    rates = rates || {};
+    setControlValue('fm-chat', rates.chat_free_min);
+    setControlValue('fm-voice', rates.voice_free_min);
+    setControlValue('fm-video', rates.video_free_min);
+    setControlValue('free-min-chat', rates.chat_free_min);
+    setControlValue('free-min-voice', rates.voice_free_min);
+    setControlValue('free-min-video', rates.video_free_min);
+    if(typeof freeMinutes === 'object'){
+      freeMinutes.chat = int(rates.chat_free_min, freeMinutes.chat || 0);
+      freeMinutes.voice = int(rates.voice_free_min, freeMinutes.voice || 0);
+      freeMinutes.video = int(rates.video_free_min, freeMinutes.video || 0);
+    }
+    window._obConfiguredPricingFree = {
+      chat: int(rates.chat_free_min, 0),
+      voice: int(rates.voice_free_min, 0),
+      video: int(rates.video_free_min, 0)
+    };
+    if(typeof window.obEnforceConfiguredPricingFree === 'function') window.obEnforceConfiguredPricingFree();
   }
   function channelFromEl(el){
     if(!el) return '';
@@ -27049,6 +27206,8 @@ window._handleRTCMessage=function(d){
     btn.style.pointerEvents = '';
   }
   function applyAvailability(data){
+    if(shouldDeferPrivateAvailability(data || {})) return;
+    if(privateRatesContext() && !hasAvailabilityFields(data || {}) && !hasAvailabilityFields(window._currentExpert || {})) return;
     data = currentData(data);
     if(data) {
       CHANNELS.forEach(function(ch){ data[ch + '_enabled'] = enabledFlag(data[ch + '_enabled'], 1); });
@@ -27094,6 +27253,8 @@ window._handleRTCMessage=function(d){
     if(statusEl){ statusEl.textContent = 'Saving...'; statusEl.style.color = 'var(--gray-400)'; }
     return api(url, {method:method, body:JSON.stringify(body)}).then(function(){
       window._currentExpert = Object.assign(window._currentExpert || {}, body);
+      window._obPricingAvailabilityDirty = false;
+      window._obPricingRatesLoaded = true;
       if(typeof freeMinutes === 'object'){
         freeMinutes.chat = body.chat_free_min;
         freeMinutes.voice = body.voice_free_min;
@@ -27189,6 +27350,9 @@ window._handleRTCMessage=function(d){
     var url = adminId ? '/admin/experts/' + encodeURIComponent(adminId) + '/rates' : '/experts/rates';
     return api(url).then(function(d){
       var rates = d.rates || d || {};
+      window._obPricingRatesLoaded = true;
+      syncFreeMinuteControls(rates);
+      if(window._obPricingAvailabilityDirty && privateRatesContext()) return rates;
       window._currentExpert = Object.assign(window._currentExpert || {}, rates);
       applyAvailability(rates);
       return rates;
@@ -27287,6 +27451,7 @@ window._handleRTCMessage=function(d){
     var apply = window._applyExpertWebsite;
     if(apply && !apply._obProductionExperienceWrapped){
       window._applyExpertWebsite = function(data){
+        if(!isPublicExpertRoute()) return apply.apply(this, arguments);
         if(data){
           CHANNELS.forEach(function(ch){ data[ch + '_enabled'] = enabledFlag(data[ch + '_enabled'], 1); });
           window._currentExpert = Object.assign(window._currentExpert || {}, data);
@@ -27452,6 +27617,7 @@ window._handleRTCMessage=function(d){
   document.addEventListener('change', function(e){
     if(e.target && /^(chat|voice|video)-enabled$/.test(e.target.id || '')){
       var ch = e.target.id.replace('-enabled','');
+      window._obPricingAvailabilityDirty = true;
       window._currentExpert = window._currentExpert || {};
       window._currentExpert[ch + '_enabled'] = e.target.checked ? 1 : 0;
       applyAvailability(window._currentExpert);

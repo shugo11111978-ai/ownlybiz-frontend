@@ -47685,15 +47685,25 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     if(status === 'cancelled') return ['Cancelled','#ef4444'];
     return [status || 'Pending','#9ca3af'];
   }
-  function renderSessionRows(clientId, sessions, requests){
+  function readingStatusLabel(status, paymentStatus){
+    status = String(status || '').toLowerCase();
+    paymentStatus = String(paymentStatus || '').toLowerCase();
+    if(status === 'delivered') return ['Delivered','#22c55e'];
+    if(status === 'refunded' || status === 'cancelled' || status === 'declined') return [status.replace(/_/g,' '),'#ef4444'];
+    if(paymentStatus === 'paid') return [status ? status.replace(/_/g,' ') : 'Paid','#f59e0b'];
+    return [status || paymentStatus || 'Pending','#9ca3af'];
+  }
+  function renderSessionRows(clientId, sessions, requests, readings){
     var list = document.getElementById('cd-sessions-list');
     if(!list) return;
-    if(!sessions || !sessions.length){
-      list.innerHTML = '<div style="padding:30px;text-align:center;color:var(--gray-400);font-size:13px;">No sessions yet</div>';
+    sessions = sessions || [];
+    readings = readings || [];
+    if(!sessions.length && !readings.length){
+      list.innerHTML = '<div style="padding:30px;text-align:center;color:var(--gray-400);font-size:13px;">No activity yet</div>';
       return;
     }
     sessionCache[clientId] = sessions;
-    list.innerHTML = sessions.map(function(sess){
+    var sessionRows = sessions.map(function(sess){
       var channel = sess.channel || 'chat';
       var icon = channel === 'voice' ? '🎙️' : channel === 'video' ? '🎥' : '💬';
       var duration = (sess.duration || sess.duration_seconds) ? Math.ceil((sess.duration || sess.duration_seconds) / 60) + ' min' : '—';
@@ -47704,15 +47714,32 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       var time = sess.created_at ? new Date(sess.created_at * 1000).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}) : '';
       var st = statusLabel(sess.status);
       var request = requestForSession(requests, sess.id);
-      return '<div data-ob-session-row="1" data-session-id="' + attr(sess.id || '') + '" style="display:flex;align-items:center;gap:14px;padding:14px 20px;border-bottom:1px solid var(--gray-100);flex-wrap:wrap;">' +
+      return {ts:Number(sess.created_at || 0), html:'<div data-ob-session-row="1" data-session-id="' + attr(sess.id || '') + '" style="display:flex;align-items:center;gap:14px;padding:14px 20px;border-bottom:1px solid var(--gray-100);flex-wrap:wrap;">' +
         '<div style="font-size:18px;flex-shrink:0;">' + icon + '</div>' +
         '<div style="flex:1;min-width:140px;"><div style="font-weight:600;font-size:13px;color:var(--brown);">' + esc(channel.charAt(0).toUpperCase() + channel.slice(1)) + ' Session</div><div style="font-size:11px;color:var(--gray-400);">' + esc(date + ' · ' + time) + '</div></div>' +
         '<div style="font-size:13px;color:var(--brown);min-width:50px;text-align:center;">' + esc(duration) + '</div>' +
         '<div style="font-weight:700;font-size:13px;color:var(--terra);min-width:78px;text-align:center;">' + money(charged) + sub + '</div>' +
         '<div><span style="font-size:11px;font-weight:600;padding:3px 10px;border-radius:100px;background:' + st[1] + '20;color:' + st[1] + ';">' + esc(st[0]) + '</span></div>' +
         '<div class="ob-session-refund-action">' + refundAction(clientId, sess, request) + '</div>' +
-      '</div>';
-    }).join('');
+      '</div>'};
+    });
+    var readingRows = readings.map(function(reading){
+      var cents = reading.price_cents != null ? Number(reading.price_cents || 0) : Math.round(Number(reading.price_amount || 0) * 100);
+      var charged = cents > 0 ? money(cents / 100) : money(reading.price_amount || 0);
+      var ts = Number(reading.delivered_at || reading.paid_at || reading.created_at || 0);
+      var date = ts ? new Date(ts * 1000).toLocaleDateString() : '—';
+      var time = ts ? new Date(ts * 1000).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}) : '';
+      var st = readingStatusLabel(reading.status, reading.payment_status);
+      return {ts:ts, html:'<div data-ob-reading-row="1" data-request-id="' + attr(reading.id || '') + '" style="display:flex;align-items:center;gap:14px;padding:14px 20px;border-bottom:1px solid var(--gray-100);flex-wrap:wrap;">' +
+        '<div style="font-size:12px;font-weight:900;flex-shrink:0;color:var(--terra);min-width:24px;text-align:center;">WR</div>' +
+        '<div style="flex:1;min-width:140px;"><div style="font-weight:600;font-size:13px;color:var(--brown);">' + esc(reading.public_label || 'Written Reading') + '</div><div style="font-size:11px;color:var(--gray-400);">' + esc(reading.topic || 'Private request') + ' · ' + esc(date + ' · ' + time) + '</div></div>' +
+        '<div style="font-size:13px;color:var(--brown);min-width:50px;text-align:center;">Async</div>' +
+        '<div style="font-weight:700;font-size:13px;color:var(--terra);min-width:78px;text-align:center;">' + charged + '</div>' +
+        '<div><span style="font-size:11px;font-weight:600;padding:3px 10px;border-radius:100px;background:' + st[1] + '20;color:' + st[1] + ';text-transform:capitalize;">' + esc(st[0]) + '</span></div>' +
+        '<div class="ob-session-refund-action"><span class="ob-session-refund-pill muted">Written reading</span></div>' +
+      '</div>'};
+    });
+    list.innerHTML = sessionRows.concat(readingRows).sort(function(a,b){ return Number(b.ts || 0) - Number(a.ts || 0); }).map(function(row){ return row.html; }).join('');
   }
   function refreshSessionRefunds(clientId, options){
     if(!clientId || !token()) return Promise.resolve();
@@ -47727,7 +47754,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       api('GET','/api/experts/me/clients/' + encodeURIComponent(clientId)),
       api('GET','/api/credits/clients/' + encodeURIComponent(clientId) + '/refund-requests').catch(function(){ return {requests:[]}; })
     ]).then(function(results){
-      renderSessionRows(clientId, (results[0] && results[0].sessions) || [], (results[1] && results[1].requests) || []);
+      renderSessionRows(clientId, (results[0] && results[0].sessions) || [], (results[1] && results[1].requests) || [], (results[0] && results[0].on_demand_requests) || []);
       if(typeof window.obCreditRenderClientDetail === 'function') window.obCreditRenderClientDetail(clientId);
     }).catch(function(){}).finally(function(){ state.inFlight = false; });
     return state.promise;

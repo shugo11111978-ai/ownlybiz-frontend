@@ -13377,6 +13377,26 @@ async function savePaymentConfig() {
 #view-4 #ep-book #stype-grid .ob-live-card-chat .stype-btn-name{
   font-size:20px!important;
 }
+#view-4 #ep-book #stype-grid .ob-live-card-chat .stype-btn-price{
+  display:flex!important;
+  align-items:center;
+  justify-content:flex-end;
+  gap:6px;
+  white-space:nowrap;
+}
+#view-4 #ep-book #stype-grid .ob-live-card-chat .ob-live-free-pill{
+  display:inline-flex!important;
+  align-items:center;
+  min-height:20px;
+  padding:3px 8px;
+  border-radius:999px;
+  background:color-mix(in srgb,var(--ob-book-action),transparent 84%);
+  color:var(--ob-book-action);
+  font-size:10px;
+  line-height:1;
+  font-weight:950;
+  white-space:nowrap;
+}
 #view-4 #ep-book #stype-grid .ob-live-card-meta{
   display:block;
   margin-top:3px;
@@ -13682,7 +13702,10 @@ async function savePaymentConfig() {
   }
   function priceText(card){
     var el = card && card.querySelector('.stype-btn-price');
-    return cleanText(el && el.textContent);
+    var current = cleanText(el && el.textContent);
+    var stored = cleanText(el && el.getAttribute('data-ob-full-price'));
+    if(freeMinuteText(current) && !freeMinuteText(stored)) return current;
+    return stored || current;
   }
   function compactLivePrice(text){
     return cleanText(text).replace(/\s*[·-]\s*\d+\s*min(?:ute)?s?\s*free.*$/i, '');
@@ -13772,16 +13795,26 @@ async function savePaymentConfig() {
     var priceCopy = priceText(card);
     var priceEl = card.querySelector('.stype-btn-price');
     var freeCopy = freeMinuteText(priceCopy);
+    if(priceEl && priceCopy && (!priceEl.getAttribute('data-ob-full-price') || freeCopy)) priceEl.setAttribute('data-ob-full-price', priceCopy);
     var freePill = card.querySelector('.ob-live-free-pill');
-    if(!disabled && channel !== 'chat' && priceEl && priceCopy) setText(priceEl, compactLivePrice(priceCopy));
-    if(!disabled && channel !== 'chat' && freeCopy) {
-      if(!freePill) {
+    var rateCopy = compactLivePrice(priceCopy);
+    if(!disabled && priceEl && priceCopy && channel !== 'chat') setText(priceEl, rateCopy);
+    if(!disabled && freeCopy) {
+      if(channel === 'chat' && priceEl) {
+        var currentRate = cleanText(priceEl.childNodes && priceEl.childNodes.length ? priceEl.childNodes[0].nodeValue : priceEl.textContent);
+        if(!freePill || freePill.parentNode !== priceEl || currentRate !== rateCopy) {
+          priceEl.textContent = rateCopy + ' ';
+          freePill = document.createElement('span');
+          freePill.className = 'ob-live-free-pill';
+          priceEl.appendChild(freePill);
+        }
+      } else if(!freePill) {
         freePill = document.createElement('div');
         freePill.className = 'ob-live-free-pill';
         if(priceEl && priceEl.parentNode) priceEl.parentNode.insertBefore(freePill, priceEl.nextSibling);
         else card.appendChild(freePill);
       }
-      setText(freePill, freeCopy);
+      if(freePill) setText(freePill, freeCopy);
     } else if(freePill) {
       freePill.remove();
     }
@@ -13878,7 +13911,7 @@ async function savePaymentConfig() {
           decorate();
         }, 80);
       };
-      new MutationObserver(scheduleDecorate).observe(document.getElementById('ep-book') || document.body, {childList:true, subtree:true, attributes:true, attributeFilter:['class','style','data-channel-disabled','aria-disabled']});
+      new MutationObserver(scheduleDecorate).observe(document.getElementById('ep-book') || document.body, {childList:true, subtree:true, characterData:true, attributes:true, attributeFilter:['class','style','data-channel-disabled','aria-disabled']});
     } catch(e) {}
     var previousShow = window.showExpertPage;
     if(typeof previousShow === 'function' && !previousShow.__obExpertBookingSelector20260608){

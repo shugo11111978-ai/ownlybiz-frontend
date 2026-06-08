@@ -16811,19 +16811,24 @@ function openClientDetail(clientId) {
         '</div>'};
       });
       var readingRows = readings.map(function(reading) {
-        var charged = reading.price_cents ? "$" + (parseFloat(reading.price_cents || 0) / 100).toFixed(2) : (reading.price_amount ? "$" + parseFloat(reading.price_amount).toFixed(2) : "$0");
+        var amount = reading.price_cents ? (parseFloat(reading.price_cents || 0) / 100) : parseFloat(reading.price_amount || 0);
+        var charged = amount ? "$" + amount.toFixed(2) : "$0";
         var ts = reading.delivered_at || reading.paid_at || reading.created_at || 0;
         var date = ts ? new Date(ts * 1000).toLocaleDateString() : "—";
         var time = ts ? new Date(ts * 1000).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}) : "";
         var status = reading.status || reading.payment_status || "pending";
         var statusColor = status === "delivered" ? "#22c55e" : (status === "declined" || status === "refunded" ? "#ef4444" : "#f59e0b");
         var statusLabel = status === "delivered" ? "Delivered" : status.replace(/_/g," ");
+        var action = String(reading.payment_status || "").toLowerCase() === "paid" && String(reading.status || "").toLowerCase() !== "refunded" && amount > 0
+          ? '<button type="button" class="ob-session-refund-btn" onclick="obOpenOnDemandRefundRequest(&quot;' + _clientSafe(clientId) + '&quot;,&quot;' + _clientSafe(reading.id || "") + '&quot;,' + amount.toFixed(2) + ')">Request refund</button>'
+          : '<span class="ob-session-refund-pill muted">' + _clientSafe(String(reading.payment_status || "").toLowerCase() === "refunded" || String(reading.status || "").toLowerCase() === "refunded" ? "Refunded" : "Written reading") + '</span>';
         return {ts:ts, html:'<div style="display:flex;align-items:center;gap:14px;padding:14px 20px;border-bottom:1px solid var(--gray-100);flex-wrap:wrap;">' +
           '<div style="font-size:13px;font-weight:900;flex-shrink:0;color:var(--terra);">WR</div>' +
           '<div style="flex:1;min-width:120px;"><div style="font-weight:600;font-size:13px;color:var(--brown);">' + _clientSafe(reading.public_label || "Written Reading") + '</div><div style="font-size:11px;color:var(--gray-400);">' + _clientSafe(reading.topic || "Private request") + ' · ' + _clientSafe(date) + ' · ' + _clientSafe(time) + '</div></div>' +
           '<div style="font-size:13px;color:var(--brown);min-width:50px;text-align:center;">Async</div>' +
           '<div style="font-weight:700;font-size:13px;color:var(--terra);min-width:60px;text-align:center;">' + _clientSafe(charged) + '</div>' +
           '<div><span style="font-size:11px;font-weight:600;padding:3px 10px;border-radius:100px;background:' + statusColor + '20;color:' + statusColor + ';text-transform:capitalize;">' + _clientSafe(statusLabel) + '</span></div>' +
+          '<div class="ob-session-refund-action">' + action + '</div>' +
         '</div>'};
       });
       list.innerHTML = sessionRows.concat(readingRows).sort(function(a,b){ return (b.ts || 0) - (a.ts || 0); }).map(function(row){ return row.html; }).join("");
@@ -25501,13 +25506,19 @@ window._handleRTCMessage=function(d){
     }).join('') + '</div>';
   }
   function adminExpertRefundRows(requests){
+    function refundTypeLabel(type){
+      type = String(type || '').toLowerCase();
+      if(type === 'session') return 'Session';
+      if(type === 'on_demand') return 'Written reading';
+      return 'Client credit';
+    }
     return (requests || []).map(function(r){
       var status = String(r.status || 'pending').toLowerCase();
       var badge = status === 'approved' ? adminExpertPill('Approved','ok') : (status === 'declined' || status === 'failed' ? adminExpertPill(status,'bad') : adminExpertPill('Pending','warn'));
       var action = status === 'pending'
         ? '<button class="admin-action-btn" type="button" onclick="obAdminExpertApproveRefund(&quot;' + esc(r.id || '') + '&quot;)">Approve</button> <button class="admin-action-btn danger" type="button" onclick="obAdminExpertDeclineRefund(&quot;' + esc(r.id || '') + '&quot;)">Decline</button>'
         : esc(r.error_message || r.decline_reason || r.admin_note || '-');
-      return '<tr><td>' + esc(r.client_name || r.client_id || '-') + '<br><small>' + esc(r.client_email || '') + '</small></td><td>' + esc(r.request_type || '-') + '</td><td>' + adminExpertMoney(r.amount_requested || 0) + '</td><td>' + badge + '</td><td>' + esc(r.expert_reason || '-') + '</td><td>' + action + '</td></tr>';
+      return '<tr><td>' + esc(r.client_name || r.client_id || '-') + '<br><small>' + esc(r.client_email || '') + '</small></td><td>' + esc(refundTypeLabel(r.request_type)) + (r.on_demand_topic ? '<br><small>' + esc(r.on_demand_topic) + '</small>' : '') + '</td><td>' + adminExpertMoney(r.amount_requested || 0) + '</td><td>' + badge + '</td><td>' + esc(r.expert_reason || '-') + '</td><td>' + action + '</td></tr>';
     }).join('');
   }
   function adminExpertSessionsRows(sessions){
@@ -38100,13 +38111,19 @@ body.ob-ui-dark .ob-connection-note,
     }).join('') + '</div>';
   }
   function refunds(expertId, list){
+    function refundTypeLabel(type){
+      type = String(type || '').toLowerCase();
+      if(type === 'session') return 'Session';
+      if(type === 'on_demand') return 'Written reading';
+      return 'Client credit';
+    }
     var rows = (list || []).map(function(r){
       var s = String(r.status || 'pending').toLowerCase();
       var pending = s === 'pending';
       var action = pending
         ? '<button class="admin-action-btn" type="button" onclick="obAdminExpertApproveRefund(&quot;' + attr(r.id) + '&quot;)">Approve</button> <button class="admin-action-btn danger" type="button" onclick="obAdminExpertDeclineRefund(&quot;' + attr(r.id) + '&quot;)">Decline</button>'
         : esc(r.error_message || r.decline_reason || r.admin_note || '-');
-      return '<tr><td>' + esc(r.client_name || r.client_id || '-') + '<br><small>' + esc(r.client_email || '') + '</small></td><td>' + esc(r.request_type || '-') + '</td><td>' + money(r.amount_requested || 0) + '</td><td>' + (s === 'approved' ? pill('Approved','ok') : (s === 'declined' || s === 'failed' ? pill(s,'bad') : pill('Pending','warn'))) + '</td><td>' + esc(r.expert_reason || '-') + '</td><td>' + action + '</td></tr>';
+      return '<tr><td>' + esc(r.client_name || r.client_id || '-') + '<br><small>' + esc(r.client_email || '') + '</small></td><td>' + esc(refundTypeLabel(r.request_type)) + (r.on_demand_topic ? '<br><small>' + esc(r.on_demand_topic) + '</small>' : '') + '</td><td>' + money(r.amount_requested || 0) + '</td><td>' + (s === 'approved' ? pill('Approved','ok') : (s === 'declined' || s === 'failed' ? pill(s,'bad') : pill('Pending','warn'))) + '</td><td>' + esc(r.expert_reason || '-') + '</td><td>' + action + '</td></tr>';
     }).join('');
     return '<div class="admin-card" style="padding:18px;margin-top:18px;"><div class="admin-card-title">Refund requests <span class="admin-card-title-sub">Review this expert without leaving their record</span></div><div style="font-size:12px;color:rgba(246,241,233,.55);line-height:1.55;margin-bottom:12px;">Approving a pending refund can touch Stripe in the active Stripe mode. Declining records the decision without touching Stripe.</div><div style="overflow:auto;"><table class="experts-table" style="width:100%;"><thead><tr><th>Client</th><th>Type</th><th>Amount</th><th>Status</th><th>Expert note</th><th>Action / decision</th></tr></thead><tbody>' + (rows || '<tr><td colspan="6" style="padding:24px;text-align:center;color:rgba(246,241,233,.45);">No refund requests for this expert.</td></tr>') + '</tbody></table></div></div>';
   }
@@ -47112,9 +47129,15 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     return '<span style="font-size:11px;font-weight:800;color:' + color + ';">' + safe(s.toUpperCase()) + '</span>';
   }
   function refundQueueHtml(requests){
+    function refundTypeLabel(type){
+      type = String(type || '').toLowerCase();
+      if(type === 'session') return 'Session';
+      if(type === 'on_demand') return 'Written reading';
+      return 'Client credit';
+    }
     var rows = (requests || []).map(function(r){
       var pending = String(r.status || '') === 'pending';
-      return '<tr><td>' + safe(r.client_name || r.client_id || '-') + '<br><small>' + safe(r.client_email || '') + '</small></td><td>' + safe(r.expert_name || r.expert_id || '-') + '</td><td>' + safe(r.request_type || '-') + '</td><td>' + usd(r.amount_requested || 0) + '</td><td>' + refundStatusBadge(r.status) + '</td><td>' + safe(r.expert_reason || '-') + '</td><td>' + (pending ? '<button class="admin-action-btn" onclick="obAdminApproveRefund(\'' + attr(r.id) + '\')">Approve</button> <button class="admin-action-btn danger" onclick="obAdminDeclineRefund(\'' + attr(r.id) + '\')">Decline</button>' : safe(r.error_message || r.decline_reason || r.admin_note || '-')) + '</td></tr>';
+      return '<tr><td>' + safe(r.client_name || r.client_id || '-') + '<br><small>' + safe(r.client_email || '') + '</small></td><td>' + safe(r.expert_name || r.expert_id || '-') + '</td><td>' + safe(refundTypeLabel(r.request_type)) + (r.on_demand_topic ? '<br><small>' + safe(r.on_demand_topic) + '</small>' : '') + '</td><td>' + usd(r.amount_requested || 0) + '</td><td>' + refundStatusBadge(r.status) + '</td><td>' + safe(r.expert_reason || '-') + '</td><td>' + (pending ? '<button class="admin-action-btn" onclick="obAdminApproveRefund(\'' + attr(r.id) + '\')">Approve</button> <button class="admin-action-btn danger" onclick="obAdminDeclineRefund(\'' + attr(r.id) + '\')">Decline</button>' : safe(r.error_message || r.decline_reason || r.admin_note || '-')) + '</td></tr>';
     }).join('');
     return '<div class="admin-card" id="ob-admin-refund-queue" style="margin-top:18px;"><div class="admin-card-title">Payments / Refund Requests <span class="admin-card-title-sub">Expert requests require admin approval before Stripe is touched</span></div>' +
       '<div style="font-size:12px;color:rgba(246,241,233,.55);line-height:1.55;margin-bottom:12px;">For destination charges, approved refunds reverse the connected-account transfer and refund the proportional application fee when Stripe allows it. If the connected account balance cannot cover the reversal, Stripe can reject the approval.</div>' +
@@ -47646,8 +47669,12 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   function attr(s){ return esc(s).replace(/"/g,'&quot;'); }
   function money(n){ return '$' + Number(n || 0).toFixed(2); }
   function notify(msg,type){
-    if(typeof window.toast === 'function') return window.toast(msg,type || 'ok');
-    if(typeof window._showToast === 'function') return window._showToast(msg,type === 'err' ? 'red' : 'green');
+    try {
+      if(typeof window.toast === 'function') return window.toast(msg,type || 'ok');
+    } catch(_) {}
+    try {
+      if(typeof window._showToast === 'function') return window._showToast(msg,type === 'err' ? 'red' : 'green');
+    } catch(_) {}
   }
   function api(method,path,body){
     return fetch(BASE + path, {
@@ -47666,6 +47693,11 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     matches.sort(function(a,b){ return Number(b.created_at || 0) - Number(a.created_at || 0); });
     return matches[0] || null;
   }
+  function requestForReading(requests, requestId){
+    var matches = (requests || []).filter(function(r){ return r && r.on_demand_request_id === requestId; });
+    matches.sort(function(a,b){ return Number(b.created_at || 0) - Number(a.created_at || 0); });
+    return matches[0] || null;
+  }
   function refundAction(clientId, sess, request){
     var status = String((request && request.status) || '').toLowerCase();
     var amount = Number(sess.refundable_amount || sess.card_charged || 0);
@@ -47675,6 +47707,20 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     if(String(sess.payment_status || '') !== 'paid') return '<span class="ob-session-refund-pill muted">Not paid</span>';
     if(amount <= 0) return '<span class="ob-session-refund-pill muted">' + (Number(sess.credit_applied || 0) > 0 ? 'Paid by credit' : 'No card charge') + '</span>';
     var requestButton = '<button type="button" class="ob-session-refund-btn" onclick="obOpenSessionRefundRequest(&quot;' + attr(clientId) + '&quot;,&quot;' + attr(sess.id) + '&quot;,' + amount.toFixed(2) + ')">' + (status === 'declined' || status === 'failed' ? 'Request again' : 'Request refund') + '</button>';
+    if(status === 'declined' || status === 'failed') return '<div style="display:flex;gap:8px;align-items:center;justify-content:flex-end;flex-wrap:wrap;"><span class="ob-session-refund-pill declined">Refund declined</span>' + requestButton + '</div>';
+    return requestButton;
+  }
+  function readingRefundAction(clientId, reading, request){
+    var status = String((request && request.status) || '').toLowerCase();
+    var paymentStatus = String(reading && reading.payment_status || '').toLowerCase();
+    var requestStatus = String(reading && reading.status || '').toLowerCase();
+    var amount = reading && reading.price_cents != null ? Number(reading.price_cents || 0) / 100 : Number(reading && reading.price_amount || 0);
+    if(status === 'pending') return '<span class="ob-session-refund-pill pending">Pending admin</span>';
+    if(status === 'approved') return '<span class="ob-session-refund-pill approved">Refund approved</span>';
+    if(paymentStatus === 'refunded' || requestStatus === 'refunded') return '<span class="ob-session-refund-pill approved">Refunded</span>';
+    if(paymentStatus !== 'paid') return '<span class="ob-session-refund-pill muted">Not paid</span>';
+    if(amount <= 0) return '<span class="ob-session-refund-pill muted">No card charge</span>';
+    var requestButton = '<button type="button" class="ob-session-refund-btn" onclick="obOpenOnDemandRefundRequest(&quot;' + attr(clientId) + '&quot;,&quot;' + attr(reading.id || '') + '&quot;,' + amount.toFixed(2) + ')">' + (status === 'declined' || status === 'failed' ? 'Request again' : 'Request refund') + '</button>';
     if(status === 'declined' || status === 'failed') return '<div style="display:flex;gap:8px;align-items:center;justify-content:flex-end;flex-wrap:wrap;"><span class="ob-session-refund-pill declined">Refund declined</span>' + requestButton + '</div>';
     return requestButton;
   }
@@ -47730,13 +47776,14 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       var date = ts ? new Date(ts * 1000).toLocaleDateString() : '—';
       var time = ts ? new Date(ts * 1000).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}) : '';
       var st = readingStatusLabel(reading.status, reading.payment_status);
+      var request = requestForReading(requests, reading.id);
       return {ts:ts, html:'<div data-ob-reading-row="1" data-request-id="' + attr(reading.id || '') + '" style="display:flex;align-items:center;gap:14px;padding:14px 20px;border-bottom:1px solid var(--gray-100);flex-wrap:wrap;">' +
         '<div style="font-size:12px;font-weight:900;flex-shrink:0;color:var(--terra);min-width:24px;text-align:center;">WR</div>' +
         '<div style="flex:1;min-width:140px;"><div style="font-weight:600;font-size:13px;color:var(--brown);">' + esc(reading.public_label || 'Written Reading') + '</div><div style="font-size:11px;color:var(--gray-400);">' + esc(reading.topic || 'Private request') + ' · ' + esc(date + ' · ' + time) + '</div></div>' +
         '<div style="font-size:13px;color:var(--brown);min-width:50px;text-align:center;">Async</div>' +
         '<div style="font-weight:700;font-size:13px;color:var(--terra);min-width:78px;text-align:center;">' + charged + '</div>' +
         '<div><span style="font-size:11px;font-weight:600;padding:3px 10px;border-radius:100px;background:' + st[1] + '20;color:' + st[1] + ';text-transform:capitalize;">' + esc(st[0]) + '</span></div>' +
-        '<div class="ob-session-refund-action"><span class="ob-session-refund-pill muted">Written reading</span></div>' +
+        '<div class="ob-session-refund-action">' + readingRefundAction(clientId, reading, request) + '</div>' +
       '</div>'};
     });
     list.innerHTML = sessionRows.concat(readingRows).sort(function(a,b){ return Number(b.ts || 0) - Number(a.ts || 0); }).map(function(row){ return row.html; }).join('');
@@ -47763,22 +47810,24 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     var el = document.getElementById('ob-session-refund-modal');
     if(el && el.parentNode) el.parentNode.removeChild(el);
   }
-  window.obOpenSessionRefundRequest = function(clientId, sessionId, amount){
+  function openRefundDialog(opts){
+    opts = opts || {};
     closeDialog();
-    var sessions = sessionCache[clientId] || [];
-    var sess = sessions.filter(function(s){ return s && s.id === sessionId; })[0] || {};
-    var maxAmount = Math.max(0, Number(amount || 0));
-    var label = (sess.channel ? sess.channel.charAt(0).toUpperCase() + sess.channel.slice(1) : 'Session') + ' · up to ' + money(maxAmount);
+    var maxAmount = Math.max(0, Number(opts.amount || 0));
+    var label = opts.label || ('Refund up to ' + money(maxAmount));
+    var title = opts.title || 'Request refund';
+    var intro = opts.intro || 'This sends the request to admin review under the platform refund, dispute, and risk conditions. Stripe is not touched until an admin approves it.';
+    var defaultReason = opts.defaultReason || 'Client requested a refund.';
     var modal = document.createElement('div');
     modal.id = 'ob-session-refund-modal';
     modal.className = 'ob-session-refund-modal';
     modal.innerHTML =
       '<div class="ob-session-refund-dialog" role="dialog" aria-modal="true" aria-labelledby="ob-session-refund-title">' +
-        '<h3 id="ob-session-refund-title">Request session refund</h3>' +
-        '<p>This sends the request to admin review under the platform refund, dispute, and risk conditions. Stripe is not touched until an admin approves it.</p>' +
+        '<h3 id="ob-session-refund-title">' + esc(title) + '</h3>' +
+        '<p>' + esc(intro) + '</p>' +
         '<div style="font-size:13px;font-weight:900;margin-bottom:10px;color:var(--terra);">' + esc(label) + '</div>' +
         '<div class="ob-session-refund-field"><label for="ob-session-refund-amount">Refund amount</label><input id="ob-session-refund-amount" type="number" min="0.01" max="' + maxAmount.toFixed(2) + '" step="0.01" value="' + maxAmount.toFixed(2) + '"><div class="ob-session-refund-help">Use the full card charge or enter a smaller fixed amount. Admin will review before any Stripe refund is created.</div></div>' +
-        '<div class="ob-session-refund-field"><label for="ob-session-refund-reason">Reason for admin review</label><textarea id="ob-session-refund-reason" placeholder="Reason for admin review">Client requested a refund for this paid session.</textarea></div>' +
+        '<div class="ob-session-refund-field"><label for="ob-session-refund-reason">Reason for admin review</label><textarea id="ob-session-refund-reason" placeholder="Reason for admin review">' + esc(defaultReason) + '</textarea></div>' +
         '<div class="actions"><button type="button" class="ob-credit-btn secondary" id="ob-session-refund-cancel">Cancel</button><button type="button" class="ob-credit-btn" id="ob-session-refund-submit">Send to admin</button></div>' +
       '</div>';
     modal.addEventListener('click', function(e){ if(e.target === modal) closeDialog(); });
@@ -47794,15 +47843,14 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       if(requestedAmount > maxAmount){ notify('Refund amount cannot exceed ' + money(maxAmount) + '.', 'err'); return; }
       submit.disabled = true;
       submit.textContent = 'Sending...';
-      api('POST','/api/credits/clients/' + encodeURIComponent(clientId) + '/refund-requests', {
-        session_id:sessionId,
+      api('POST','/api/credits/clients/' + encodeURIComponent(opts.clientId) + '/refund-requests', Object.assign({}, opts.payload || {}, {
         amount:requestedAmount,
         reason:reason
-      }).then(function(result){
+      })).then(function(result){
         closeDialog();
-        notify(result.duplicate ? 'A pending refund request already exists.' : 'Refund request sent to admin for approval.', 'ok');
-        refreshSessionRefunds(clientId, {force:true});
+        refreshSessionRefunds(opts.clientId, {force:true});
         if(typeof window.loadClients === 'function') setTimeout(window.loadClients, 500);
+        notify(result.duplicate ? 'A pending refund request already exists.' : 'Refund request sent to admin for approval.', 'ok');
       }).catch(function(err){
         submit.disabled = false;
         submit.textContent = 'Send to admin';
@@ -47810,6 +47858,31 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       });
     };
     setTimeout(function(){ var t = document.getElementById('ob-session-refund-reason'); if(t) t.focus(); }, 60);
+  }
+  window.obOpenSessionRefundRequest = function(clientId, sessionId, amount){
+    var sessions = sessionCache[clientId] || [];
+    var sess = sessions.filter(function(s){ return s && s.id === sessionId; })[0] || {};
+    var maxAmount = Math.max(0, Number(amount || 0));
+    var label = (sess.channel ? sess.channel.charAt(0).toUpperCase() + sess.channel.slice(1) : 'Session') + ' · up to ' + money(maxAmount);
+    openRefundDialog({
+      clientId:clientId,
+      amount:maxAmount,
+      label:label,
+      title:'Request session refund',
+      defaultReason:'Client requested a refund for this paid session.',
+      payload:{session_id:sessionId}
+    });
+  };
+  window.obOpenOnDemandRefundRequest = function(clientId, requestId, amount){
+    var maxAmount = Math.max(0, Number(amount || 0));
+    openRefundDialog({
+      clientId:clientId,
+      amount:maxAmount,
+      label:'Written reading · up to ' + money(maxAmount),
+      title:'Request written reading refund',
+      defaultReason:'Client requested a refund for this written reading.',
+      payload:{on_demand_request_id:requestId}
+    });
   };
   function wrapOpenClientDetail(){
     var fn = window.openClientDetail;
@@ -49174,12 +49247,18 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     return '<div class="admin-card" style="padding:18px;margin-top:18px;"><div class="admin-card-title">Recent sessions <span class="admin-card-title-sub">Last 10 sessions for this expert</span></div><div style="overflow:auto;"><table class="experts-table" style="width:100%;"><thead><tr><th>Client</th><th>Channel</th><th>Status</th><th>Charged</th><th>Expert earned</th><th>Date</th></tr></thead><tbody>' + (rows || '<tr><td colspan="6" style="padding:24px;text-align:center;color:rgba(246,241,233,.45);">No recent sessions.</td></tr>') + '</tbody></table></div></div>';
   }
   function refundsTable(expertId, requests){
+    function refundTypeLabel(type){
+      type = String(type || '').toLowerCase();
+      if(type === 'session') return 'Session';
+      if(type === 'on_demand') return 'Written reading';
+      return 'Client credit';
+    }
     var rows = (requests || []).map(function(r){
       var pending = String(r.status || '').toLowerCase() === 'pending';
       var action = pending
         ? '<button class="admin-action-btn" type="button" onclick="obAdminExpertApproveRefund(&quot;' + attr(r.id) + '&quot;)">Approve</button> <button class="admin-action-btn danger" type="button" onclick="obAdminExpertDeclineRefund(&quot;' + attr(r.id) + '&quot;)">Decline</button>'
         : esc(r.error_message || r.decline_reason || r.admin_note || '-');
-      return '<tr><td>' + esc(r.client_name || r.client_id || '-') + '<br><small>' + esc(r.client_email || '') + '</small></td><td>' + esc(r.request_type || '-') + '</td><td>' + money(r.amount_requested || 0) + '</td><td>' + refundStatus(r.status) + '</td><td>' + esc(r.expert_reason || '-') + '</td><td>' + action + '</td></tr>';
+      return '<tr><td>' + esc(r.client_name || r.client_id || '-') + '<br><small>' + esc(r.client_email || '') + '</small></td><td>' + esc(refundTypeLabel(r.request_type)) + (r.on_demand_topic ? '<br><small>' + esc(r.on_demand_topic) + '</small>' : '') + '</td><td>' + money(r.amount_requested || 0) + '</td><td>' + refundStatus(r.status) + '</td><td>' + esc(r.expert_reason || '-') + '</td><td>' + action + '</td></tr>';
     }).join('');
     return '<div class="admin-card" id="ob-admin-expert-detail-refunds" style="padding:18px;margin-top:18px;"><div class="admin-card-title">Refund requests <span class="admin-card-title-sub">Review this expert without leaving their record</span></div><div style="font-size:12px;color:rgba(246,241,233,.55);line-height:1.55;margin-bottom:12px;">Approving a pending refund can touch Stripe in the active Stripe mode. Declining records the decision without touching Stripe.</div><div style="overflow:auto;"><table class="experts-table" style="width:100%;"><thead><tr><th>Client</th><th>Type</th><th>Amount</th><th>Status</th><th>Expert note</th><th>Action / decision</th></tr></thead><tbody>' + (rows || '<tr><td colspan="6" style="padding:24px;text-align:center;color:rgba(246,241,233,.45);">No refund requests for this expert.</td></tr>') + '</tbody></table></div></div>';
   }

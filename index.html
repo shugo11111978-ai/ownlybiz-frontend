@@ -33,7 +33,7 @@
       var modal = document.createElement('div');
       modal.id = 'ob-od-public-modal';
       modal.className = 'ob-od-modal show';
-      modal.innerHTML = '<div class="ob-od-sheet"><button class="ob-od-close" onclick="var m=document.getElementById(&quot;ob-od-public-modal&quot;);if(m)m.style.display=&quot;none&quot;;">x</button><div id="ob-od-public-body"><h2 style="margin:0 0 8px;font-size:28px;letter-spacing:0;">' + title + '</h2><p class="ob-od-sub">' + copy + '</p>' + form + '</div></div>';
+      modal.innerHTML = '<div class="ob-od-sheet"><button class="ob-od-close" onclick="window.__obOnDemandEarlyClose&&window.__obOnDemandEarlyClose()">x</button><div id="ob-od-public-body"><h2 style="margin:0 0 8px;font-size:28px;letter-spacing:0;">' + title + '</h2><p class="ob-od-sub">' + copy + '</p>' + form + '</div></div>';
       (document.body || document.documentElement).appendChild(modal);
     }
     window.__obOnDemandEarlyLogin = function(){
@@ -47,6 +47,18 @@
         if(tries < 120) return setTimeout(waitForLogin, 100);
         if(status) status.textContent = 'Refresh the page and try again.';
       })();
+    };
+    window.__obOnDemandEarlyClose = function(){
+      try {
+        if(mode === 'reading') {
+          var url = new URL(location.href);
+          ['on_demand','request_id','on_demand_request','checkout_session_id'].forEach(function(key){ url.searchParams.delete(key); });
+          history.replaceState({}, '', url.pathname + (url.searchParams.toString() ? '?' + url.searchParams.toString() : '') + url.hash);
+          window.__obOnDemandReturnParams = null;
+        }
+      } catch(e) {}
+      var m = document.getElementById('ob-od-public-modal');
+      if(m) m.style.display = 'none';
     };
     if(document.body) mount();
     else document.addEventListener('DOMContentLoaded', mount, {once:true});
@@ -52010,7 +52022,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     return authApi('/api/auth/signup', Object.assign({name:name.trim(), email:email.trim(), password:pass, role:'client'}, clientContext())).then(function(d){ saveAuth(d, {name:name,email:email,role:'client'}); });
   }
   window.obOdOpenPublic = function(){ ensurePublicModal().classList.add('show'); renderPublicForm(); };
-  window.obOdClosePublic = function(){ var m = document.getElementById('ob-od-public-modal'); if(m) m.classList.remove('show'); };
+  window.obOdClosePublic = function(){ consumeReadyReadingIntent(); var m = document.getElementById('ob-od-public-modal'); if(m) m.classList.remove('show'); };
   window.obOdSubmitPublic = function(){
     var btn = document.getElementById('ob-od-submit');
     setPublicStatus('', '');
@@ -52093,6 +52105,13 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       window.__obOnDemandReturnParams = null;
     } catch(e) {}
   }
+  function consumeReadyReadingIntent(){
+    try {
+      var params = onDemandReturnParams();
+      if(params.get('checkout_session_id')) return;
+      if(params.get('on_demand_request') || params.get('request_id') || params.get('on_demand')) cleanOnDemandReturnUrl();
+    } catch(e) {}
+  }
   function renderLoginForRequest(id, opts){
     opts = opts || {};
     ensurePublicModal().classList.add('show');
@@ -52109,6 +52128,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   function openRequestFromQuery(id, opts){
     opts = opts || {};
     if(!id) return;
+    consumeReadyReadingIntent();
     if(!token()){
       renderLoginForRequest(id, opts);
       return;

@@ -52224,4 +52224,400 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   [600,1600,3200,6000].forEach(function(ms){ setTimeout(boot, ms); });
 })();
 </script>
+<script id="ownlybiz-pricing-availability-stability-20260608">
+(function(){
+  if(window.__obPricingAvailabilityStability20260608) return;
+  window.__obPricingAvailabilityStability20260608 = true;
+  var CHANNELS = ['chat','voice','video'];
+  var LABELS = {chat:'Chat', voice:'Voice', video:'Video'};
+  var BASE = (window.OWNLYBIZ_API_URL || window._OB_BACKEND || 'https://ownlybiz-backend-production.up.railway.app').replace(/\/+$/,'');
+  var state = window.__obPricingAvailabilityState || (window.__obPricingAvailabilityState = {ready:false,rates:null,lastSavedBody:null});
+
+  function token(){
+    return sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || '';
+  }
+  function isDashboard(){
+    return /^\/dash(?:\/|$)/.test(location.pathname || '') || !!document.getElementById('db-panel-payments');
+  }
+  function isPricingContext(){
+    var panel = document.getElementById('db-panel-payments');
+    return isDashboard() && (
+      /\/pricing(?:\/|$)/.test(location.pathname || '') ||
+      !!(panel && panel.classList.contains('active') && panel.classList.contains('show-pricing')) ||
+      !!document.querySelector('.db-nav-item.active[onclick*="pricing"]')
+    );
+  }
+  function panel(){
+    return document.getElementById('db-panel-payments') || document.getElementById('db-panel-pricing');
+  }
+  function num(value, fallback){
+    var n = parseFloat(value);
+    return isFinite(n) ? n : (fallback || 0);
+  }
+  function int(value, fallback){
+    var n = parseInt(value, 10);
+    return isFinite(n) ? n : (fallback || 0);
+  }
+  function enabledFlag(value, fallback){
+    if(value === undefined || value === null || value === '') return fallback === 0 ? 0 : 1;
+    if(value === false) return 0;
+    return ['0','false','off','no','disabled'].indexOf(String(value).trim().toLowerCase()) >= 0 ? 0 : 1;
+  }
+  function readNum(id, fallback){
+    var el = document.getElementById(id);
+    return el ? num(el.value, fallback) : fallback;
+  }
+  function readInt(ids, fallback){
+    for(var i = 0; i < ids.length; i++){
+      var el = document.getElementById(ids[i]);
+      if(el) return int(('value' in el ? el.value : el.textContent), fallback || 0);
+    }
+    return fallback || 0;
+  }
+  function knownEnabled(ch){
+    var rates = state.rates || {};
+    if(rates[ch + '_enabled'] !== undefined) return enabledFlag(rates[ch + '_enabled'], 1);
+    if(window._currentExpert && window._currentExpert[ch + '_enabled'] !== undefined) return enabledFlag(window._currentExpert[ch + '_enabled'], 1);
+    return 1;
+  }
+  function readEnabled(ch){
+    var input = document.getElementById(ch + '-enabled');
+    if(input && !input.indeterminate) return input.checked ? 1 : 0;
+    return knownEnabled(ch);
+  }
+  function normalizeRates(raw){
+    raw = raw || {};
+    var prev = state.rates || {};
+    return {
+      chat_pm: num(raw.chat_pm != null ? raw.chat_pm : raw.rate_chat, num(prev.chat_pm, readNum('rate-chat', 3.5))),
+      chat_free_min: int(raw.chat_free_min != null ? raw.chat_free_min : raw.free_minutes, int(prev.chat_free_min, readInt(['fm-chat','free-min-chat','sfield-free-min'], 0))),
+      chat_enabled: enabledFlag(raw.chat_enabled, prev.chat_enabled !== undefined ? prev.chat_enabled : readEnabled('chat')),
+      voice_pm: num(raw.voice_pm != null ? raw.voice_pm : raw.rate_voice, num(prev.voice_pm, readNum('rate-voice', 4))),
+      voice_free_min: int(raw.voice_free_min, int(prev.voice_free_min, readInt(['fm-voice','free-min-voice'], 0))),
+      voice_enabled: enabledFlag(raw.voice_enabled, prev.voice_enabled !== undefined ? prev.voice_enabled : readEnabled('voice')),
+      video_pm: num(raw.video_pm != null ? raw.video_pm : raw.rate_video, num(prev.video_pm, readNum('rate-video', 5))),
+      video_free_min: int(raw.video_free_min, int(prev.video_free_min, readInt(['fm-video','free-min-video'], 0))),
+      video_enabled: enabledFlag(raw.video_enabled, prev.video_enabled !== undefined ? prev.video_enabled : readEnabled('video')),
+      free_minute_limit: raw.free_minute_limit != null ? raw.free_minute_limit : prev.free_minute_limit,
+      free_minute_plan: raw.free_minute_plan || prev.free_minute_plan,
+      free_minutes_new_clients_only: raw.free_minutes_new_clients_only != null ? raw.free_minutes_new_clients_only : prev.free_minutes_new_clients_only
+    };
+  }
+  function ensureStyle(){
+    if(document.getElementById('ob-pricing-availability-stability-css')) return;
+    var style = document.createElement('style');
+    style.id = 'ob-pricing-availability-stability-css';
+    style.textContent = [
+      '#db-panel-payments.ob-pricing-awaiting-rates .ob-channel-toggle{opacity:.66;pointer-events:none;}',
+      '#db-panel-payments.ob-pricing-awaiting-rates .ob-channel-toggle .ob-channel-state{color:var(--gray-400,#9ca3af)!important;}',
+      '#db-panel-payments .ob-channel-toggle.is-loading{background:rgba(148,130,112,.08)!important;border-color:rgba(148,130,112,.22)!important;}'
+    ].join('');
+    document.head.appendChild(style);
+  }
+  function ensureToggles(){
+    CHANNELS.forEach(function(ch){
+      if(document.getElementById(ch + '-enabled')) return;
+      var rate = document.getElementById('rate-' + ch);
+      var card = rate && rate.closest ? rate.closest('.rate-config-card') : null;
+      if(!card) return;
+      var row = document.createElement('label');
+      row.className = 'ob-channel-toggle is-loading';
+      row.innerHTML = '<span><span style="display:block;">Accept ' + LABELS[ch] + ' sessions</span><span class="ob-channel-state">Loading...</span></span><input type="checkbox" id="' + ch + '-enabled" disabled>';
+      var preview = card.querySelector('.rate-preview');
+      if(preview && preview.parentNode) preview.parentNode.insertBefore(row, preview);
+      else card.appendChild(row);
+      var input = row.querySelector('input');
+      input.indeterminate = true;
+      input.addEventListener('change', function(){
+        window._currentExpert = window._currentExpert || {};
+        window._currentExpert[ch + '_enabled'] = input.checked ? 1 : 0;
+        if(state.rates) state.rates[ch + '_enabled'] = input.checked ? 1 : 0;
+        paintRates(state.rates || collectRates(), {sync:false});
+      });
+    });
+  }
+  function setPending(){
+    if(!isPricingContext()) return;
+    ensureStyle();
+    ensureToggles();
+    var root = panel();
+    if(root) root.classList.add('ob-pricing-awaiting-rates');
+    CHANNELS.forEach(function(ch){
+      var input = document.getElementById(ch + '-enabled');
+      var row = input && input.closest ? input.closest('.ob-channel-toggle') : null;
+      if(!input || !row) return;
+      if(!state.ready){
+        input.disabled = true;
+        input.indeterminate = true;
+        row.classList.add('is-loading');
+        var label = row.querySelector('.ob-channel-state');
+        if(label) label.textContent = 'Loading...';
+      }
+    });
+  }
+  function paintRates(raw, opts){
+    opts = opts || {};
+    if(!isDashboard()) return;
+    ensureStyle();
+    ensureToggles();
+    if(!raw && !state.rates){ setPending(); return; }
+    var rates = normalizeRates(raw || state.rates || {});
+    state.ready = true;
+    state.rates = rates;
+    window._currentExpert = Object.assign(window._currentExpert || {}, {
+      chat_pm: rates.chat_pm,
+      rate_chat: rates.chat_pm,
+      chat_free_min: rates.chat_free_min,
+      free_minutes: rates.chat_free_min,
+      chat_enabled: rates.chat_enabled,
+      voice_pm: rates.voice_pm,
+      rate_voice: rates.voice_pm,
+      voice_free_min: rates.voice_free_min,
+      voice_enabled: rates.voice_enabled,
+      video_pm: rates.video_pm,
+      rate_video: rates.video_pm,
+      video_free_min: rates.video_free_min,
+      video_enabled: rates.video_enabled
+    });
+    var root = panel();
+    if(root) root.classList.remove('ob-pricing-awaiting-rates');
+    CHANNELS.forEach(function(ch){
+      var on = enabledFlag(rates[ch + '_enabled'], 1) === 1;
+      var input = document.getElementById(ch + '-enabled');
+      var row = input && input.closest ? input.closest('.ob-channel-toggle') : null;
+      if(input){
+        input.indeterminate = false;
+        input.disabled = false;
+        input.checked = on;
+      }
+      if(row){
+        row.classList.remove('is-loading');
+        row.classList.toggle('is-off', !on);
+        var label = row.querySelector('.ob-channel-state');
+        if(label) label.textContent = on ? 'Available' : 'Off';
+      }
+    });
+    [['rate-chat',rates.chat_pm],['rate-voice',rates.voice_pm],['rate-video',rates.video_pm]].forEach(function(pair){
+      var el = document.getElementById(pair[0]);
+      if(el && pair[1] !== undefined && pair[1] !== null) el.value = pair[1];
+    });
+    [['fm-chat',rates.chat_free_min],['fm-voice',rates.voice_free_min],['fm-video',rates.video_free_min]].forEach(function(pair){
+      var el = document.getElementById(pair[0]);
+      if(el && pair[1] !== undefined && pair[1] !== null) el.textContent = pair[1];
+    });
+    if(opts.sync !== false && typeof window.obSyncRateControls === 'function') {
+      try { window.obSyncRateControls(rates); } catch(e) {}
+    }
+  }
+  function collectRates(){
+    return normalizeRates({
+      chat_pm: readNum('rate-chat', 3.5),
+      chat_free_min: readInt(['fm-chat','free-min-chat','sfield-free-min'], 0),
+      chat_enabled: readEnabled('chat'),
+      voice_pm: readNum('rate-voice', 4),
+      voice_free_min: readInt(['fm-voice','free-min-voice'], 0),
+      voice_enabled: readEnabled('voice'),
+      video_pm: readNum('rate-video', 5),
+      video_free_min: readInt(['fm-video','free-min-video'], 0),
+      video_enabled: readEnabled('video')
+    });
+  }
+  function toastMsg(message, type){
+    try {
+      if(typeof window.toast === 'function') return window.toast(message, type === 'err' ? 'err' : 'ok');
+      if(typeof window._showToast === 'function') return window._showToast(message, type === 'err' ? 'red' : 'green');
+    } catch(e) {}
+  }
+  function api(path, opts){
+    opts = opts || {};
+    var headers = Object.assign({'Content-Type':'application/json'}, opts.headers || {});
+    if(token()) headers.Authorization = 'Bearer ' + token();
+    return fetch(BASE + '/api' + path, {
+      method: opts.method || 'GET',
+      headers: headers,
+      body: opts.body ? JSON.stringify(opts.body) : undefined
+    }).then(function(res){
+      return res.json().catch(function(){ return {}; }).then(function(data){
+        if(!res.ok || data.success === false) throw new Error(data.error || ('HTTP ' + res.status));
+        return data;
+      });
+    });
+  }
+  function ratesPath(){
+    return window._adminViewingExpertId
+      ? '/admin/experts/' + encodeURIComponent(window._adminViewingExpertId) + '/rates'
+      : '/experts/rates';
+  }
+  function fetchCanonicalRates(){
+    if(!token() || !isDashboard()) return Promise.resolve(null);
+    if(isPricingContext()) setPending();
+    return api(ratesPath()).then(function(data){
+      var rates = data.rates || data || {};
+      paintRates(rates);
+      return rates;
+    }).catch(function(){ return null; });
+  }
+  function setSaving(isSaving){
+    var btn = document.getElementById('pay-save-btn');
+    var status = document.getElementById('save-status-pricing') || document.getElementById('pay-save-status');
+    if(btn){
+      if(!btn.dataset.obOriginalText) btn.dataset.obOriginalText = btn.textContent || 'Save All Changes';
+      btn.disabled = !!isSaving;
+      btn.textContent = isSaving ? 'Saving...' : btn.dataset.obOriginalText;
+    }
+    if(status){
+      status.textContent = isSaving ? 'Saving...' : '';
+      status.style.color = 'var(--gray-400)';
+    }
+  }
+  function savePricing(){
+    if(!token()){ toastMsg('Please log in first', 'err'); return Promise.resolve(false); }
+    var body = collectRates();
+    state.lastSavedBody = body;
+    setSaving(true);
+    var adminMode = !!window._adminViewingExpertId;
+    return api(ratesPath(), {method: adminMode ? 'PUT' : 'POST', body: body}).then(function(data){
+      paintRates(data.rates || body);
+      var status = document.getElementById('save-status-pricing') || document.getElementById('pay-save-status');
+      if(status){ status.textContent = 'Saved'; status.style.color = 'var(--sage,#22c55e)'; }
+      var btn = document.getElementById('pay-save-btn');
+      if(btn){ btn.disabled = false; btn.textContent = btn.dataset.obOriginalText || 'Save All Changes'; }
+      toastMsg('Pricing saved. Your website availability is updated.', 'ok');
+      setTimeout(fetchCanonicalRates, 250);
+      return true;
+    }).catch(function(err){
+      var status = document.getElementById('save-status-pricing') || document.getElementById('pay-save-status');
+      if(status){ status.textContent = 'Error'; status.style.color = '#dc2626'; }
+      var btn = document.getElementById('pay-save-btn');
+      if(btn){ btn.disabled = false; btn.textContent = btn.dataset.obOriginalText || 'Save All Changes'; }
+      toastMsg((err && err.message) || 'Save failed', 'err');
+      return false;
+    });
+  }
+  function isRatesUrl(url){
+    url = String(url || '');
+    return /\/api\/experts\/rates(?:\?|$)/.test(url) || /\/api\/admin\/experts\/[^/]+\/rates(?:\?|$)/.test(url) || /\/api\/expert-payments\/rates(?:\?|$)/.test(url);
+  }
+  function bodyWithAvailability(body){
+    if(!body || typeof body !== 'object') body = {};
+    var current = collectRates();
+    CHANNELS.forEach(function(ch){ body[ch + '_enabled'] = current[ch + '_enabled']; });
+    return body;
+  }
+  function installFetchGuard(){
+    if(window.fetch.__obPricingAvailabilityStable) return;
+    var previous = window.fetch;
+    window.fetch = function(input, init){
+      var url = typeof input === 'string' ? input : (input && input.url) || '';
+      var guardedInit = init;
+      try {
+        var method = String((init && init.method) || (input && input.method) || 'GET').toUpperCase();
+        if(isPricingContext() && isRatesUrl(url) && method !== 'GET' && init && init.body){
+          var parsed = typeof init.body === 'string' ? JSON.parse(init.body) : init.body;
+          guardedInit = Object.assign({}, init, {body: JSON.stringify(bodyWithAvailability(parsed))});
+        }
+      } catch(e) {}
+      return previous.call(this, input, guardedInit).then(function(response){
+        try {
+          if(isDashboard() && isRatesUrl(url)) {
+            response.clone().json().then(function(data){
+              if(data && (data.rates || data.chat_pm !== undefined || data.voice_pm !== undefined || data.video_pm !== undefined)) {
+                paintRates(data.rates || data);
+              }
+            }).catch(function(){});
+          }
+        } catch(e) {}
+        return response;
+      });
+    };
+    window.fetch.__obPricingAvailabilityStable = true;
+  }
+  function installSaveGuards(){
+    window.obSavePricingAvailabilityStable = savePricing;
+    window.savePaymentSettings = savePricing;
+    window.saveExpertPricing = savePricing;
+    var previousSaveSettingsBlock = window.saveSettingsBlock;
+    window.saveSettingsBlock = function(section){
+      if(section === 'pricing') return savePricing();
+      if(typeof previousSaveSettingsBlock === 'function') return previousSaveSettingsBlock.apply(this, arguments);
+    };
+  }
+  function installPrivateRendererGuard(){
+    if(window._applyExpertWebsite && !window._applyExpertWebsite.__obPricingPrivateGuard){
+      var previousApply = window._applyExpertWebsite;
+      window._applyExpertWebsite = function(data){
+        if(isPricingContext()){
+          if(state.ready && data && typeof data === 'object') {
+            CHANNELS.forEach(function(ch){ data[ch + '_enabled'] = state.rates[ch + '_enabled']; });
+          }
+          paintRates(state.rates, {sync:false});
+          return undefined;
+        }
+        return previousApply.apply(this, arguments);
+      };
+      window._applyExpertWebsite.__obPricingPrivateGuard = true;
+    }
+    if(window.obApplyChannelAvailabilityUi && !window.obApplyChannelAvailabilityUi.__obPricingPrivateGuard){
+      var previousAvailability = window.obApplyChannelAvailabilityUi;
+      window.obApplyChannelAvailabilityUi = function(data){
+        if(isPricingContext()){
+          paintRates(state.rates || data, {sync:false});
+          return;
+        }
+        return previousAvailability.apply(this, arguments);
+      };
+      window.obApplyChannelAvailabilityUi.__obPricingPrivateGuard = true;
+    }
+  }
+  function installNavGuard(){
+    if(window.dbNav && !window.dbNav.__obPricingAvailabilityStable){
+      var previousDbNav = window.dbNav;
+      window.dbNav = function(el, panelName){
+        var result = previousDbNav.apply(this, arguments);
+        if(panelName === 'pricing') {
+          setPending();
+          setTimeout(fetchCanonicalRates, 0);
+          setTimeout(fetchCanonicalRates, 220);
+          setTimeout(function(){ paintRates(state.rates, {sync:false}); }, 520);
+        }
+        return result;
+      };
+      window.dbNav.__obPricingAvailabilityStable = true;
+    }
+  }
+  function boot(){
+    if(!isDashboard()) return;
+    ensureStyle();
+    installFetchGuard();
+    installSaveGuards();
+    installPrivateRendererGuard();
+    installNavGuard();
+    if(isPricingContext()) {
+      setPending();
+      fetchCanonicalRates();
+    }
+    if(!window.__obPricingAvailabilityStableTimer){
+      var startedAt = Date.now();
+      window.__obPricingAvailabilityStableTimer = setInterval(function(){
+        if(Date.now() - startedAt > 4200){
+          clearInterval(window.__obPricingAvailabilityStableTimer);
+          window.__obPricingAvailabilityStableTimer = null;
+          return;
+        }
+        if(isPricingContext()) paintRates(state.rates, {sync:false});
+      }, 90);
+    }
+    [60,180,420,760,1100,1600,2400,3600].forEach(function(ms){
+      setTimeout(function(){
+        installPrivateRendererGuard();
+        installSaveGuards();
+        if(isPricingContext()) paintRates(state.rates, {sync:false});
+      }, ms);
+    });
+  }
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
+  else boot();
+  [500,1200,2400,5000,9000].forEach(function(ms){ setTimeout(boot, ms); });
+})();
+</script>
 	</html>

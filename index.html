@@ -13240,6 +13240,16 @@ async function savePaymentConfig() {
 #view-4 #ep-book #booking-main-layout{
   display:block!important;
 }
+#view-4 #ep-book:not(.ob-book-od-ready) #booking-main-layout>div:first-child{
+  opacity:0!important;
+  transform:translateY(4px)!important;
+  pointer-events:none!important;
+}
+#view-4 #ep-book.ob-book-od-ready #booking-main-layout>div:first-child{
+  opacity:1!important;
+  transform:none!important;
+  transition:opacity .18s ease,transform .18s ease!important;
+}
 #view-4 #ep-book #booking-main-layout>div:first-child{
   background:var(--ob-book-surface)!important;
   color:var(--ob-book-text)!important;
@@ -13592,6 +13602,13 @@ async function savePaymentConfig() {
   function setText(el, text){
     if(el && cleanText(el.textContent) !== text) el.textContent = text;
   }
+  function setBookSelectorReady(ready){
+    var root = bookRoot();
+    if(root) root.classList.toggle('ob-book-od-ready', !!ready);
+  }
+  function syncBookSelectorReady(){
+    setBookSelectorReady(!!window.__obOnDemandPublicReady);
+  }
   function ensureBookProfileHeader(){
     var root = bookRoot();
     var inner = root && root.querySelector('.book-inner');
@@ -13733,6 +13750,7 @@ async function savePaymentConfig() {
   function decorate(){
     var root = bookRoot();
     var grid = root && root.querySelector('#stype-grid');
+    syncBookSelectorReady();
     if(!grid) return;
     ensureBookProfileHeader();
     updateCopy();
@@ -13741,6 +13759,7 @@ async function savePaymentConfig() {
     ensureBookLaterRow();
   }
   function install(){
+    syncBookSelectorReady();
     decorate();
     [160, 500, 1000, 1800, 2800].forEach(function(ms){ setTimeout(decorate, ms); });
     try {
@@ -13764,7 +13783,14 @@ async function savePaymentConfig() {
       };
       window.showExpertPage.__obExpertBookingSelector20260608 = true;
     }
-    window.addEventListener('ob:on-demand-public-ready', function(){ setTimeout(decorate, 40); });
+    window.addEventListener('ob:on-demand-public-ready', function(){ setBookSelectorReady(true); setTimeout(decorate, 40); });
+    setTimeout(function(){
+      if(!window.__obOnDemandPublicReady) {
+        window.__obOnDemandPublicReady = true;
+        setBookSelectorReady(true);
+        decorate();
+      }
+    }, 3500);
     window.addEventListener('popstate', function(){ setTimeout(decorate, 180); });
   }
   if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', install, {once:true});
@@ -51461,10 +51487,32 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     var s = config.settings || {};
     var buckets = config.buckets || [];
     var price = buckets.length ? money(buckets[0].price_cents, buckets[0].currency) : '';
-    var fastest = buckets.length ? publicBucketLabel(buckets[0]) : '';
     var label = esc(s.public_label || 'Written Reading');
-    var meta = fastest ? esc(fastest) : 'Private answer';
+    var meta = 'Send one private question. Delivered securely after login.';
     return '<div class="stype-btn ob-od-stype-card ob-public-on-demand-entry" id="ob-public-on-demand-card" data-mode="written" role="button" tabindex="0" onclick="obOdOpenPublic()" onkeydown="if(event.key===&quot;Enter&quot;||event.key===&quot; &quot;){event.preventDefault();obOdOpenPublic();}"><div class="stype-btn-icon">WR</div><div class="stype-btn-name">' + label + '</div><div class="stype-btn-price">' + esc(price ? 'from ' + price : 'Written answer') + '</div><div class="ob-od-stype-meta">' + meta + '</div></div>';
+  }
+  function removePublicOnDemandEntries(except){
+    document.querySelectorAll('.ob-public-on-demand-entry').forEach(function(el){
+      if(el && el !== except && el.parentNode) el.parentNode.removeChild(el);
+    });
+  }
+  function syncPublicBookingTypeCard(card, config){
+    if(!card || !config) return false;
+    var s = config.settings || {};
+    var buckets = config.buckets || [];
+    var price = buckets.length ? money(buckets[0].price_cents, buckets[0].currency) : '';
+    var icon = card.querySelector('.stype-btn-icon');
+    var name = card.querySelector('.stype-btn-name');
+    var priceEl = card.querySelector('.stype-btn-price');
+    var meta = card.querySelector('.ob-od-stype-meta');
+    if(icon) {
+      icon.removeAttribute('data-ob-line-icon');
+      icon.textContent = 'WR';
+    }
+    if(name) name.textContent = s.public_label || 'Written Reading';
+    if(priceEl) priceEl.textContent = price ? 'from ' + price : 'Written answer';
+    if(meta) meta.textContent = 'Send one private question. Delivered securely after login.';
+    return true;
   }
   function activePublicPage(){
     var active = document.querySelector('#view-4 .expert-page.active');
@@ -51490,8 +51538,10 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     return null;
   }
   function injectPublicCard(config){
-    document.querySelectorAll('.ob-public-on-demand-entry').forEach(function(el){ if(el && el.parentNode) el.parentNode.removeChild(el); });
-    if(!config || !config.available || !placementAllows(config)) return;
+    if(!config || !config.available || !placementAllows(config)) {
+      removePublicOnDemandEntries();
+      return;
+    }
     addStyle();
     var p = config.settings && config.settings.placement || {};
     var page = activePublicPage();
@@ -51503,6 +51553,13 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       host = visibleHost([document.querySelector('#ep-book #stype-grid')]);
       if(host) {
         host.classList.add('ob-has-on-demand');
+        var existingBook = host.querySelector('#ob-public-on-demand-card.ob-od-stype-card');
+        if(existingBook) {
+          syncPublicBookingTypeCard(existingBook, config);
+          removePublicOnDemandEntries(existingBook);
+          return;
+        }
+        removePublicOnDemandEntries();
         var bookHtml = publicBookingTypeCard(config);
         var disabled = Array.prototype.slice.call(host.children || []).find(function(child){ return child && child.classList && child.classList.contains('disabled-channel'); });
         if(p.position === 'top') host.insertAdjacentHTML('afterbegin', bookHtml);
@@ -51515,6 +51572,9 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     }
     else host = visibleHost([document.querySelector('#view-4 .services-grid-4'), document.querySelector('#view-4 .services-preview-inner'), document.querySelector('#view-4 .services-preview')]);
     if(!host) return;
+    var existing = host.querySelector('#ob-public-on-demand-card.ob-public-on-demand-entry');
+    if(existing && !existing.classList.contains('ob-od-stype-card')) return;
+    removePublicOnDemandEntries();
     var html = p.card_style === 'banner' ? publicCard(config) : publicServiceCard(config, compact);
     if(page === 'services' && p.position === 'after_live_services' && host.children && host.children.length > 3) host.children[3].insertAdjacentHTML('beforebegin', html);
     else if(p.position === 'bottom') host.insertAdjacentHTML('beforeend', html);
@@ -51810,12 +51870,22 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     var slug = expertSlug();
     if(!slug) { markPublicOnDemandReady(); return; }
     state.publicSlug = slug;
+    if(state.publicConfig && state.publicLoadedSlug === slug) {
+      injectPublicCard(state.publicConfig);
+      confirmCheckoutFromQuery(0);
+      markPublicOnDemandReady();
+      return;
+    }
+    if(state.publicLoadInFlightSlug === slug) return;
+    state.publicLoadInFlightSlug = slug;
     api('/api/on-demand/public/' + encodeURIComponent(slug)).then(function(config){
+      state.publicLoadInFlightSlug = '';
       state.publicConfig = config;
+      state.publicLoadedSlug = slug;
       injectPublicCard(config);
       confirmCheckoutFromQuery(0);
       markPublicOnDemandReady();
-    }).catch(function(){ confirmCheckoutFromQuery(0); markPublicOnDemandReady(); });
+    }).catch(function(){ state.publicLoadInFlightSlug = ''; confirmCheckoutFromQuery(0); markPublicOnDemandReady(); });
   }
   function installPublic(){
     if(!window.__obOnDemandPublicWrapped && typeof window.loadExpertWebsite === 'function'){

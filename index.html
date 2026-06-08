@@ -13731,6 +13731,46 @@ async function savePaymentConfig() {
     var match = cleanText(text).match(/(\d+)\s*min(?:ute)?s?\s*free/i);
     return match ? match[1] + ' min free' : '';
   }
+  function bookToken(){
+    try { return sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || localStorage.getItem('ob_client_token') || ''; }
+    catch(e) { return ''; }
+  }
+  function bookRoleName(){
+    try {
+      var stored = JSON.parse(sessionStorage.getItem('ob_u') || localStorage.getItem('ob_u') || '{}');
+      if(stored && stored.role) return String(stored.role).toLowerCase();
+    } catch(e) {}
+    try {
+      var payload = JSON.parse(atob((bookToken().split('.')[1] || '').replace(/-/g,'+').replace(/_/g,'/')));
+      return String(payload.role || '').toLowerCase();
+    } catch(e2) {}
+    return '';
+  }
+  function bookClientAuthPresent(){
+    var role = bookRoleName();
+    return !!bookToken() && (role === 'client' || (!role && !!(localStorage.getItem('ob_client_token') || sessionStorage.getItem('ob_client_t'))));
+  }
+  function bookFreeNumber(value){
+    var out = parseInt(value, 10);
+    return Number.isFinite(out) && out > 0 ? out : 0;
+  }
+  function bookConfiguredFree(ch){
+    var e = window._currentExpert || {};
+    if(window._obConfiguredFreeMinutes && window._obConfiguredFreeMinutes[ch] != null) return bookFreeNumber(window._obConfiguredFreeMinutes[ch]);
+    if(ch === 'chat') return bookFreeNumber(e.chat_free_min != null ? e.chat_free_min : e.free_minutes);
+    if(ch === 'voice') return bookFreeNumber(e.voice_free_min != null ? e.voice_free_min : e.free_minutes_voice);
+    return bookFreeNumber(e.video_free_min != null ? e.video_free_min : e.free_minutes_video);
+  }
+  function bookAvailableFree(ch){
+    var e = window._currentExpert || {};
+    var expertId = (e && (e.user_id || e.id)) || window._currentExpertId || '';
+    if(expertId && typeof window.obIsFreeUsed === 'function' && window.obIsFreeUsed(expertId, ch)) return 0;
+    if(window._obAvailableFreeMinutes && Object.prototype.hasOwnProperty.call(window._obAvailableFreeMinutes, ch)) return bookFreeNumber(window._obAvailableFreeMinutes[ch]);
+    var key = ch + '_free_min_available';
+    if(e[key] !== undefined && e[key] !== null) return bookFreeNumber(e[key]);
+    if(ch === 'chat' && e.free_minutes_available !== undefined && e.free_minutes_available !== null) return bookFreeNumber(e.free_minutes_available);
+    return bookClientAuthPresent() ? 0 : bookConfiguredFree(ch);
+  }
   function setText(el, text){
     if(el && cleanText(el.textContent) !== text) el.textContent = text;
   }
@@ -13811,11 +13851,12 @@ async function savePaymentConfig() {
     }
     var priceCopy = priceText(card);
     var priceEl = card.querySelector('.stype-btn-price');
-    var freeCopy = freeMinuteText(priceCopy);
-    if(priceEl && priceCopy && (!priceEl.getAttribute('data-ob-full-price') || freeCopy)) priceEl.setAttribute('data-ob-full-price', priceCopy);
+    var freeValue = bookAvailableFree(channel);
+    var freeCopy = freeValue > 0 ? freeValue + ' min free' : '';
     var freePill = card.querySelector('.ob-live-free-pill');
     var rateCopy = compactLivePrice(priceCopy);
-    if(!disabled && priceEl && priceCopy && channel !== 'chat') setText(priceEl, rateCopy);
+    if(priceEl && rateCopy) priceEl.setAttribute('data-ob-full-price', rateCopy + (freeCopy ? ' · ' + freeCopy : ''));
+    if(!disabled && priceEl && priceCopy && (channel !== 'chat' || !freeCopy)) setText(priceEl, rateCopy);
     if(!disabled && freeCopy) {
       if(channel === 'chat' && priceEl) {
         var currentRate = cleanText(priceEl.childNodes && priceEl.childNodes.length ? priceEl.childNodes[0].nodeValue : priceEl.textContent);
@@ -13914,6 +13955,7 @@ async function savePaymentConfig() {
     decorateWrittenCard();
     ensureBookLaterRow();
   }
+  window.obRefreshBookSelectorCards = decorate;
   function install(){
     syncBookSelectorReady();
     decorate();
@@ -17753,7 +17795,10 @@ window.loadExpertWebsite = function(slug) {
   }
 
   // Fetch expert data + rates and refresh public page
-  fetch('https://ownlybiz-backend-production.up.railway.app/api/experts/' + slug)
+  var _mainPublicExpertToken = '';
+  try { _mainPublicExpertToken = sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || localStorage.getItem('ob_client_token') || ''; } catch(e) {}
+  var _mainPublicExpertFetchOpts = _mainPublicExpertToken ? { headers: { Authorization: 'Bearer ' + _mainPublicExpertToken } } : {};
+  fetch('https://ownlybiz-backend-production.up.railway.app/api/experts/' + slug, _mainPublicExpertFetchOpts)
     .then(function(r){ return r.json(); })
     .then(function(d){
       var e = d.expert || d;
@@ -19657,9 +19702,10 @@ body.expert-page #mob-cta-bar{display:none!important;}
 	        window._obPendingSessId=null;if(typeof toast==='function')toast(d.type==='session_expired'?'Session request expired — please start again':'Expert declined — try again','err');
 	      }
 	    }
-	    if(d.type==='session_started'){
-	      console.log('[OB] session_started received, started_at:', d.started_at);
-	      if(d.session && d.session.session_promo_percent_off != null) window._expertSessPromoPercent=parseFloat(d.session.session_promo_percent_off||0)||0;
+		    if(d.type==='session_started'){
+		      console.log('[OB] session_started received, started_at:', d.started_at);
+		      try{var _stSess=d.session||{};var _stEid=_stSess.expert_id||window._currentExpertId;var _stCh=_stSess.channel||window._obPendingChannel||window.currentBookChannel||'chat';if(_stEid&&parseInt(_stSess.free_minutes||0,10)>0&&typeof window.obMarkFreeUsed==='function'){window.obMarkFreeUsed(_stEid,_stCh);if(typeof window.obRefreshBookSelectorCards==='function')window.obRefreshBookSelectorCards();}}catch(e){}
+		      if(d.session && d.session.session_promo_percent_off != null) window._expertSessPromoPercent=parseFloat(d.session.session_promo_percent_off||0)||0;
 	      // Start expert timer
       if(typeof startExpertSessionTimer==='function'){
         clearInterval(window._expertSessInterval);
@@ -24445,8 +24491,9 @@ window._handleRTCMessage=function(d){
     var started = d.started_at || (d.session && d.session.started_at);
     if(!sid || sid === window._obActiveSessId || sid === window._sid || sid === window._sessId){
       if(started){
-	          if(d.session){
-	            if(d.session.free_minutes != null) window._expertSessFreeMins = int(d.session.free_minutes, 0);
+		          if(d.session){
+		            try{var _hsEid=d.session.expert_id||window._currentExpertId;var _hsCh=d.session.channel||window._obPendingChannel||window.currentBookChannel||'chat';if(_hsEid&&parseInt(d.session.free_minutes||0,10)>0&&typeof window.obMarkFreeUsed==='function'){window.obMarkFreeUsed(_hsEid,_hsCh);if(typeof window.obRefreshBookSelectorCards==='function')window.obRefreshBookSelectorCards();}}catch(e){}
+		            if(d.session.free_minutes != null) window._expertSessFreeMins = int(d.session.free_minutes, 0);
 	            if(d.session.rate_per_min != null) window._expertSessRate = num(d.session.rate_per_min, window._expertSessRate || 3.5);
 	            if(d.session.session_promo_percent_off != null) window._expertSessPromoPercent = num(d.session.session_promo_percent_off, 0);
 	            if(d.session.session_promo_code || d.session.promo_code) window._obSessionPromoCode = d.session.session_promo_code || d.session.promo_code || '';
@@ -26926,13 +26973,14 @@ window._handleRTCMessage=function(d){
     window._applyExpertWebsite._obFreeAvailabilityWrapped = true;
   }
   var currentFreeCopy = window.obRefreshPublicFreeMinuteCopy;
-  if(currentFreeCopy && !currentFreeCopy._obFreeAvailabilityWrapped){
-    window.obRefreshPublicFreeMinuteCopy = function(data){
-      patchExpertData(data);
-      var ret = currentFreeCopy.apply(this, arguments);
-      refreshPublicFreeLabels();
-      return ret;
-    };
+	  if(currentFreeCopy && !currentFreeCopy._obFreeAvailabilityWrapped){
+	    window.obRefreshPublicFreeMinuteCopy = function(data){
+	      patchExpertData(data);
+	      var ret = currentFreeCopy.apply(this, arguments);
+	      refreshPublicFreeLabels();
+	      if(typeof window.obRefreshBookSelectorCards === 'function') window.obRefreshBookSelectorCards();
+	      return ret;
+	    };
     window.obRefreshPublicFreeMinuteCopy._obFreeAvailabilityWrapped = true;
   }
 
@@ -43093,9 +43141,10 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       freeMinutes.voice = window._obAvailableFreeMinutes.voice;
       freeMinutes.video = window._obAvailableFreeMinutes.video;
     }
-    if(typeof window.obRefreshSessionStartModes === 'function') window.obRefreshSessionStartModes();
-    if(typeof window.obRefreshPublicFreeMinuteCopy === 'function') window.obRefreshPublicFreeMinuteCopy(window._currentExpert);
-  }
+	    if(typeof window.obRefreshSessionStartModes === 'function') window.obRefreshSessionStartModes();
+	    if(typeof window.obRefreshPublicFreeMinuteCopy === 'function') window.obRefreshPublicFreeMinuteCopy(window._currentExpert);
+	    if(typeof window.obRefreshBookSelectorCards === 'function') window.obRefreshBookSelectorCards();
+	  }
   function refreshClientAvailability(){
     var t = token();
     var s = slug();
@@ -43514,13 +43563,13 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
         '#stype-grid .stype-btn[data-ch="' + ch + '"] .stype-btn-price',
         '#stype-grid .stype-btn[data-ob-channel="' + ch + '"] .stype-btn-price',
         '#stype-grid .stype-btn'
-      ];
-      document.querySelectorAll(selectors.join(',')).forEach(function(el){
-        var cardText = (el.closest && el.closest('.stype-btn') ? el.closest('.stype-btn').textContent : el.textContent) || '';
-        if(selectors[2] === '#stype-grid .stype-btn' && cardText.toLowerCase().indexOf(ch) < 0) return;
-        var price = el.classList && el.classList.contains('stype-btn') ? el.querySelector('.stype-btn-price') : el;
-        if(price) price.textContent = stripFreeSuffix(price.textContent);
-      });
+	      ];
+	      document.querySelectorAll(selectors.join(',')).forEach(function(el){
+	        var card = el.closest && el.closest('.stype-btn');
+	        if(card && channelFromBookButton(card) !== ch) return;
+	        var price = el.classList && el.classList.contains('stype-btn') ? el.querySelector('.stype-btn-price') : el;
+	        if(price) price.textContent = stripFreeSuffix(price.textContent);
+	      });
       var rateEls = ch === 'chat' ? '[data-rate="chat"],.ep-chat-rate,.service-mini-price' : ch === 'voice' ? '[data-rate="voice"],.ep-voice-rate,.service-mini-price' : '[data-rate="video"],.ep-video-rate,.service-mini-price';
       document.querySelectorAll(rateEls).forEach(function(el){
         var txt = (el.textContent || '').toLowerCase();
@@ -43553,7 +43602,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     var existing = btn.getAttribute('data-ch') || btn.getAttribute('data-ob-channel') || '';
     if(existing) return existing.toLowerCase();
     var txt = (btn.textContent || '').toLowerCase();
-    if(txt.indexOf('voice') >= 0) return 'voice';
+    if(txt.indexOf('voice') >= 0 || txt.indexOf('call') >= 0) return 'voice';
     if(txt.indexOf('video') >= 0) return 'video';
     if(txt.indexOf('chat') >= 0) return 'chat';
     return '';

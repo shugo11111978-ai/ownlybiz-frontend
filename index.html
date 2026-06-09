@@ -51319,6 +51319,12 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   .ob-admin-ec-muted-row{opacity:.74}
   .ob-admin-ec-row-actions{display:flex;gap:6px;flex-wrap:wrap}
   .ob-admin-ec-row-actions .ob-admin-ec-btn{min-height:32px;padding:6px 9px;font-size:12px}
+  .ob-admin-ec-toolbar{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;align-items:end;margin:0 0 10px}
+  .ob-admin-ec-table-wrap{border:1px solid rgba(255,255,255,.08);border-radius:8px;overflow:auto;max-height:520px}
+  .ob-admin-ec-checkcell{width:34px;text-align:center}
+  .ob-admin-ec-checkcell input{width:16px;height:16px;accent-color:#d8ff5d}
+  .ob-admin-ec-pager{display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin-top:10px}
+  .ob-admin-ec-pager .ob-admin-ec-btn{min-height:34px;padding:7px 10px;font-size:12px}
   @media(max-width:760px){.ob-admin-ec-head{grid-template-columns:1fr}.ob-admin-ec-preview iframe{height:460px}.ob-admin-ec-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
 </style>
 <script id="ownlybiz-admin-email-center-js">
@@ -51327,7 +51333,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   if(window.__ownlybizAdminEmailCenter20260601) return;
   window.__ownlybizAdminEmailCenter20260601 = true;
   var BASE = String(window.OWNLYBIZ_API_URL || window._OB_BACKEND || 'https://ownlybiz-backend-production.up.railway.app').replace(/\/+$/,'');
-  var state = { tab:'campaign', loading:false, overview:null, status:'', draft:null, campaign:null, importPreview:null, file:null, importListName:'', importConsent:'', importConfirmed:false, importBusy:false, audience:'uploaded_all', list_id:'', target:'audience', cycle_key:'admin_newsletter', contactListId:'', contacts:null, contactsLoading:false };
+  var state = { tab:'campaign', loading:false, overview:null, status:'', draft:null, campaign:null, importPreview:null, file:null, importListName:'', importConsent:'', importConfirmed:false, importBusy:false, audience:'uploaded_all', list_id:'', target:'audience', cycle_key:'admin_newsletter', contactListId:'', contacts:null, contactsMeta:null, contactsLoading:false, contactLimit:10, contactOffset:0, contactSearch:'', contactStatus:'all', selectedContacts:{}, bulkAction:'', bulkListId:'' };
   var tabs = [['campaign','Campaign Builder'],['uploads','Lists & Uploads'],['analytics','Analytics'],['map','Flow Map'],['core','Core Scenarios'],['marketing','Marketing Cycles']];
   function tok(){ return sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || localStorage.getItem('ownlybiz_token') || sessionStorage.getItem('ownlybiz_token') || ''; }
   function esc(v){ return String(v == null ? '' : v).replace(/[&<>"']/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
@@ -51371,6 +51377,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   function platform(){ var o=state.overview||{}; return o.platform || {}; }
   function lists(){ return platform().lists || []; }
   function contacts(){ return state.contacts || platform().contacts || []; }
+  function contactMeta(){ return state.contactsMeta || {}; }
   function campaigns(){ return platform().campaigns || []; }
   function audiences(){ return platform().audiences || []; }
   function coreScenarios(){ return scenarios().filter(function(s){ return !(s.marketing || s.unsubscribe_applicable || s.is_custom); }); }
@@ -51383,6 +51390,11 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     Array.prototype.forEach.call(document.querySelectorAll('[data-ob-admin-ec-status]'), function(el){ el.textContent=state.status; });
   }
   function setStatus(msg){ paintStatus(msg); render(); }
+  function realContactListId(){ var value=String(state.contactListId||''); return value && value.indexOf('__')!==0 ? value : ''; }
+  function contactScope(){ var value=String(state.contactListId||''); if(value==='__all') return 'all'; if(value==='__unlisted') return 'unlisted'; return 'listed'; }
+  function selectedContactIds(){ var selected=state.selectedContacts||{}; return Object.keys(selected).filter(function(id){ return selected[id]; }); }
+  function visibleContactIds(){ return contacts().map(function(c){ return String(c.id||''); }).filter(Boolean); }
+  function allVisibleSelected(){ var ids=visibleContactIds(); return !!ids.length && ids.every(function(id){ return !!(state.selectedContacts||{})[id]; }); }
   function selectedTarget(){ var el=$('ob-admin-campaign-target'); return el ? el.value : (state.target || 'audience'); }
   function selectedAudience(){ var el=$('ob-admin-campaign-audience'); return el ? el.value : (state.audience || 'uploaded_all'); }
   function selectedList(){ var el=$('ob-admin-campaign-list'); return el ? el.value : (state.list_id || ''); }
@@ -51481,7 +51493,11 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   }
   function contactListOptions(){
     var current=state.contactListId||'';
-    var out=['<option value="" '+(!current?'selected':'')+'>All Email Center contacts</option>'];
+    var out=[
+      '<option value="" '+(!current?'selected':'')+'>Listed contacts</option>',
+      '<option value="__all" '+(current==='__all'?'selected':'')+'>All contacts including unlisted</option>',
+      '<option value="__unlisted" '+(current==='__unlisted'?'selected':'')+'>Unlisted contacts</option>'
+    ];
     lists().forEach(function(l){ out.push('<option value="'+esc(l.id)+'" '+(l.id===current?'selected':'')+'>'+esc(l.name||'Imported list')+' ('+fmt(l.contact_count||0)+')</option>'); });
     return out.join('');
   }
@@ -51556,15 +51572,38 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   }
   function contactsTableHtml(){
     var rows=contacts();
-    var listId=state.contactListId||'';
+    var listId=realContactListId();
+    var meta=contactMeta();
+    var limit=Number(meta.limit||state.contactLimit||10);
+    var offset=Number(meta.offset||state.contactOffset||0);
+    var total=Number(meta.total||0);
+    var end=rows.length ? Math.min(offset+rows.length,total) : offset;
+    var selectedCount=selectedContactIds().length;
+    var hasPrev=offset>0;
+    var hasNext=!!meta.has_more;
     var loading=state.contactsLoading ? '<div class="ob-admin-ec-empty">Loading contacts...</div>' : '';
-    var header='<div class="ob-admin-ec-form" style="margin-bottom:10px"><label>Show contacts<select id="ob-admin-contact-list" onchange="window.OBAdminEmailCenter.setContactList(this.value)">'+contactListOptions()+'</select></label><div class="ob-admin-ec-small">Deleting here removes only the Email Center imported contact record. It does not delete a client or expert login account.</div></div>';
+    var bulkListOptions=lists().map(function(l){ return '<option value="'+esc(l.id)+'" '+((state.bulkListId||'')===l.id?'selected':'')+'>'+esc(l.name||'Imported list')+'</option>'; }).join('');
+    var bulkRemoveOption=listId ? '<option value="remove_from_list" '+(state.bulkAction==='remove_from_list'?'selected':'')+'>Remove selected from this list</option>' : '';
+    var header='<div class="ob-admin-ec-form" style="margin-bottom:10px">'
+      + '<div class="ob-admin-ec-toolbar">'
+      + '<label>Show contacts<select id="ob-admin-contact-list" onchange="window.OBAdminEmailCenter.setContactList(this.value)">'+contactListOptions()+'</select></label>'
+      + '<label>Search<input id="ob-admin-contact-search" value="'+esc(state.contactSearch||'')+'" placeholder="Email, name, source" oninput="window.OBAdminEmailCenter.setContactSearch(this.value)"></label>'
+      + '<label>Status<select id="ob-admin-contact-status" onchange="window.OBAdminEmailCenter.setContactStatus(this.value)"><option value="all" '+((state.contactStatus||'all')==='all'?'selected':'')+'>Any status</option><option value="subscribed" '+(state.contactStatus==='subscribed'?'selected':'')+'>Subscribed</option><option value="suppressed" '+(state.contactStatus==='suppressed'?'selected':'')+'>Suppressed</option><option value="no_consent" '+(state.contactStatus==='no_consent'?'selected':'')+'>No consent</option></select></label>'
+      + '<label>Rows per page<select id="ob-admin-contact-limit" onchange="window.OBAdminEmailCenter.setContactLimit(this.value)"><option value="10" '+(limit===10?'selected':'')+'>10</option><option value="100" '+(limit===100?'selected':'')+'>100</option><option value="200" '+(limit===200?'selected':'')+'>200</option><option value="500" '+(limit===500?'selected':'')+'>500</option></select></label>'
+      + '<button class="ob-admin-ec-btn" type="button" onclick="window.OBAdminEmailCenter.applyContactFilters()">Apply filters</button>'
+      + '</div>'
+      + '<div class="ob-admin-ec-toolbar">'
+      + '<label>Bulk action<select id="ob-admin-contact-bulk-action" onchange="window.OBAdminEmailCenter.setBulkAction(this.value)"><option value="">Choose action</option>'+bulkRemoveOption+'<option value="add_to_list" '+(state.bulkAction==='add_to_list'?'selected':'')+'>Apply selected to list</option><option value="delete" '+(state.bulkAction==='delete'?'selected':'')+'>Delete selected contacts</option></select></label>'
+      + '<label>Target list<select id="ob-admin-contact-bulk-list" onchange="window.OBAdminEmailCenter.setBulkList(this.value)"><option value="">Choose list</option>'+bulkListOptions+'</select></label>'
+      + '<button class="ob-admin-ec-btn primary" type="button" onclick="window.OBAdminEmailCenter.applyBulkContacts()">Apply to '+fmt(selectedCount)+' selected</button>'
+      + '</div>'
+      + '<div class="ob-admin-ec-small">Default view shows only contacts that still belong to a list. Use Unlisted contacts if you need to review leftovers from older deletes. Deleting here removes only Email Center contact records, not client or expert login accounts.</div></div>';
     if(state.contactsLoading) return header+loading;
     if(!rows.length) return header+'<div class="ob-admin-ec-empty">No Email Center contacts found for this view.</div>';
-    return header+'<table class="ob-admin-ec-table"><thead><tr><th>Contact</th><th>Status</th><th>Lists</th><th>Consent source</th><th>Actions</th></tr></thead><tbody>'+rows.map(function(c){
+    return header+'<div class="ob-admin-ec-table-wrap"><table class="ob-admin-ec-table"><thead><tr><th class="ob-admin-ec-checkcell"><input type="checkbox" '+(allVisibleSelected()?'checked':'')+' onchange="window.OBAdminEmailCenter.toggleVisibleContacts(this.checked)"></th><th>Contact</th><th>Status</th><th>Lists</th><th>Consent source</th><th>Actions</th></tr></thead><tbody>'+rows.map(function(c){
       var removeBtn=listId ? '<button class="ob-admin-ec-btn" type="button" onclick="window.OBAdminEmailCenter.removeContactFromList(\''+jsArg(listId)+'\',\''+jsArg(c.id)+'\',\''+jsArg(c.email||'this contact')+'\')">Remove from list</button>' : '';
-      return '<tr><td><strong>'+esc(c.email||'')+'</strong><div class="ob-admin-ec-small">'+esc(c.name||'')+'</div></td><td>'+esc(c.subscribed?'Subscribed':c.suppressed?'Suppressed':'No active consent')+'</td><td>'+fmt(c.list_count||0)+'</td><td>'+esc(c.consent_source||c.source||'')+'</td><td><div class="ob-admin-ec-row-actions">'+removeBtn+'<button class="ob-admin-ec-btn danger" type="button" onclick="window.OBAdminEmailCenter.deleteContact(\''+jsArg(c.id)+'\',\''+jsArg(c.email||'this contact')+'\')">Delete contact</button></div></td></tr>';
-    }).join('')+'</tbody></table>';
+      return '<tr><td class="ob-admin-ec-checkcell"><input type="checkbox" '+((state.selectedContacts||{})[c.id]?'checked':'')+' onchange="window.OBAdminEmailCenter.toggleContact(\''+jsArg(c.id)+'\',this.checked)"></td><td><strong>'+esc(c.email||'')+'</strong><div class="ob-admin-ec-small">'+esc(c.name||'')+'</div></td><td>'+esc(c.subscribed?'Subscribed':c.suppressed?'Suppressed':'No active consent')+'</td><td>'+fmt(c.list_count||0)+'</td><td>'+esc(c.consent_source||c.source||'')+'</td><td><div class="ob-admin-ec-row-actions">'+removeBtn+'<button class="ob-admin-ec-btn danger" type="button" onclick="window.OBAdminEmailCenter.deleteContact(\''+jsArg(c.id)+'\',\''+jsArg(c.email||'this contact')+'\')">Delete contact</button></div></td></tr>';
+    }).join('')+'</tbody></table></div><div class="ob-admin-ec-pager"><span class="ob-admin-ec-small">Showing '+fmt(offset+1)+'-'+fmt(end)+' of '+fmt(total)+' · '+fmt(selectedCount)+' selected</span><span class="ob-admin-ec-row-actions"><button class="ob-admin-ec-btn" type="button" '+(!hasPrev?'disabled':'')+' onclick="window.OBAdminEmailCenter.pageContacts(-1)">Previous</button><button class="ob-admin-ec-btn" type="button" '+(!hasNext?'disabled':'')+' onclick="window.OBAdminEmailCenter.pageContacts(1)">Next</button></span></div>';
   }
   function uploadsHtml(){
     var fileName = state.file && state.file.filename ? state.file.filename : 'No file selected yet';
@@ -51589,10 +51628,16 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   function load(){ state.loading=true; render(); return api('/overview').then(function(d){ state.overview=d.overview||{}; }).catch(function(e){ state.status=e.message; }).finally(function(){ state.loading=false; render(); }); }
   function loadContacts(listId){
     state.contactsLoading=true;
-    state.contactListId=listId||'';
+    if(listId !== undefined) state.contactListId=listId||'';
     render();
-    var path='/contacts'+(state.contactListId ? '?list_id='+encodeURIComponent(state.contactListId) : '');
-    return api(path).then(function(d){ state.contacts=d.contacts||[]; state.contactListId=d.list_id||state.contactListId||''; }).catch(function(e){ state.status=e.message; }).finally(function(){ state.contactsLoading=false; render(); });
+    var params=new URLSearchParams();
+    var list=realContactListId();
+    if(list) params.set('list_id',list); else params.set('scope',contactScope());
+    params.set('limit',String(state.contactLimit||10));
+    params.set('offset',String(state.contactOffset||0));
+    if(state.contactSearch) params.set('search',state.contactSearch);
+    if(state.contactStatus && state.contactStatus!=='all') params.set('status',state.contactStatus);
+    return api('/contacts?'+params.toString()).then(function(d){ state.contacts=d.contacts||[]; state.contactsMeta={limit:d.limit||state.contactLimit||10,offset:d.offset||0,total:d.total||0,page:d.page||1,has_more:!!d.has_more,scope:d.scope||contactScope(),status:d.status||state.contactStatus||'all',search:d.search||state.contactSearch||''}; state.selectedContacts={}; }).catch(function(e){ state.status=e.message; }).finally(function(){ state.contactsLoading=false; render(); });
   }
   function loadAndMaybeContacts(){
     return load().then(function(){ if(state.tab==='uploads') return loadContacts(state.contactListId); });
@@ -51619,7 +51664,16 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     setTarget:function(value){ state.target=value==='cycle'?'cycle':'audience'; state.campaign=null; render(); },
     setAudience:function(value){ state.audience=value||'uploaded_all'; state.list_id=audienceListId(state.audience); state.campaign=null; render(); },
     setCycle:function(value){ state.cycle_key=value||''; state.campaign=null; render(); },
-    setContactList:function(value){ loadContacts(value||''); },
+    setContactList:function(value){ state.contactOffset=0; state.selectedContacts={}; loadContacts(value||''); },
+    setContactLimit:function(value){ var n=Number(value||10); state.contactLimit=[10,100,200,500].indexOf(n)>-1?n:10; state.contactOffset=0; state.selectedContacts={}; loadContacts(); },
+    setContactSearch:function(value){ state.contactSearch=String(value||'').slice(0,180); },
+    setContactStatus:function(value){ state.contactStatus=value||'all'; state.contactOffset=0; state.selectedContacts={}; loadContacts(); },
+    applyContactFilters:function(){ state.contactOffset=0; state.selectedContacts={}; loadContacts(); },
+    pageContacts:function(direction){ var meta=contactMeta(); var limit=Number(meta.limit||state.contactLimit||10); var next=Number(meta.offset||state.contactOffset||0)+(direction>0?limit:-limit); state.contactOffset=Math.max(0,next); state.selectedContacts={}; loadContacts(); },
+    toggleContact:function(id,checked){ state.selectedContacts=state.selectedContacts||{}; if(checked) state.selectedContacts[id]=true; else delete state.selectedContacts[id]; render(); },
+    toggleVisibleContacts:function(checked){ state.selectedContacts=state.selectedContacts||{}; visibleContactIds().forEach(function(id){ if(checked) state.selectedContacts[id]=true; else delete state.selectedContacts[id]; }); render(); },
+    setBulkAction:function(value){ state.bulkAction=value||''; render(); },
+    setBulkList:function(value){ state.bulkListId=value||''; },
     saveScenario:function(key){
       var body={enabled:!!($(fId(key,'enabled'))&&$(fId(key,'enabled')).checked),subject:val(fId(key,'subject')),preheader:val(fId(key,'preheader')),eyebrow:val(fId(key,'eyebrow')),title:val(fId(key,'title')),subtitle:val(fId(key,'subtitle')),image_url:val(fId(key,'image_url')),body_html:val(fId(key,'body_html')),cta_label:val(fId(key,'cta_label')),cta_url:val(fId(key,'cta_url')),footer_text:val(fId(key,'footer_text'))};
       api('/scenarios/'+encodeURIComponent(key),{method:'PUT',body:body}).then(function(){state.status='Cycle saved.'; load();}).catch(function(e){state.status=e.message; render();});
@@ -51685,8 +51739,8 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     },
     deleteList:function(id,name){
       if(!id) return;
-      if(!confirm('Delete "'+(name||'this list')+'"? Contacts remain available in Email Center unless you delete them separately.')) return;
-      api('/lists/'+encodeURIComponent(id),{method:'DELETE',body:{confirm_delete:true}}).then(function(){ if(state.contactListId===id) state.contactListId=''; state.status='List deleted.'; loadAndMaybeContacts(); }).catch(function(e){state.status=e.message; render();});
+      if(!confirm('Delete "'+(name||'this list')+'"? Contacts that only belong to this list will be removed from Email Center. Contacts in other lists or linked to platform users stay.')) return;
+      api('/lists/'+encodeURIComponent(id),{method:'DELETE',body:{confirm_delete:true,delete_orphan_contacts:true}}).then(function(d){ var r=d.result||{}; if(state.contactListId===id) state.contactListId=''; state.contactOffset=0; state.selectedContacts={}; state.status='List deleted. '+fmt(r.orphan_contact_count||0)+' orphan contacts removed.'; loadAndMaybeContacts(); }).catch(function(e){state.status=e.message; render();});
     },
     deleteContact:function(id,email){
       if(!id) return;
@@ -51697,6 +51751,32 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       if(!listId||!contactId) return;
       if(!confirm('Remove '+(email||'this contact')+' from this list?')) return;
       api('/lists/'+encodeURIComponent(listId)+'/contacts/'+encodeURIComponent(contactId),{method:'DELETE',body:{confirm_delete:true}}).then(function(){ state.status='Contact removed from list.'; loadAndMaybeContacts(); }).catch(function(e){state.status=e.message; render();});
+    },
+    applyBulkContacts:function(){
+      var ids=selectedContactIds();
+      var action=state.bulkAction||val('ob-admin-contact-bulk-action');
+      var targetList=state.bulkListId||val('ob-admin-contact-bulk-list');
+      var body={action:action,contact_ids:ids};
+      if(!ids.length){ state.status='Select at least one contact first.'; render(); return; }
+      if(action==='delete'){
+        if(!confirm('Delete '+fmt(ids.length)+' selected Email Center contacts? This does not delete client or expert login accounts.')) return;
+        body.confirm_delete=true;
+      } else if(action==='remove_from_list'){
+        var listId=realContactListId();
+        if(!listId){ state.status='Choose a specific list before removing selected contacts from it.'; render(); return; }
+        if(!confirm('Remove '+fmt(ids.length)+' selected contacts from this list?')) return;
+        body.list_id=listId;
+        body.confirm_delete=true;
+      } else if(action==='add_to_list'){
+        if(!targetList){ state.status='Choose a target list for the selected contacts.'; render(); return; }
+        if(!confirm('Apply '+fmt(ids.length)+' selected contacts to the target list?')) return;
+        body.list_id=targetList;
+      } else {
+        state.status='Choose a bulk action first.';
+        render();
+        return;
+      }
+      api('/contacts/bulk',{method:'POST',body:body}).then(function(d){ var r=d.result||{}; state.selectedContacts={}; state.status='Bulk action complete: '+esc(r.deleted||r.removed||r.added||0)+' updated, '+fmt(r.skipped||0)+' skipped.'; loadAndMaybeContacts(); }).catch(function(e){state.status=e.message; render();});
     },
     syncImportForm:function(){
       captureUploadFields();

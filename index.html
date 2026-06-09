@@ -13852,6 +13852,12 @@ async function savePaymentConfig() {
   function setText(el, text){
     if(el && cleanText(el.textContent) !== text) el.textContent = text;
   }
+  function setAttr(el, name, value){
+    if(el && el.getAttribute(name) !== String(value)) el.setAttribute(name, value);
+  }
+  function removeAttr(el, name){
+    if(el && el.hasAttribute(name)) el.removeAttribute(name);
+  }
   function setBookSelectorReady(ready){
     var root = bookRoot();
     if(root) root.classList.toggle('ob-book-od-ready', !!ready);
@@ -13913,7 +13919,7 @@ async function savePaymentConfig() {
     var channel = channelForCard(card);
     if(!channel) return;
     card.classList.add('ob-live-card', 'ob-live-card-' + channel);
-    if(card.getAttribute('data-ob-channel') !== channel) card.setAttribute('data-ob-channel', channel);
+    setAttr(card, 'data-ob-channel', channel);
     var name = card.querySelector('.stype-btn-name');
     if(channel === 'chat') setText(name, 'Chat with ' + expertFirstName() + ' now');
     else if(channel === 'voice') setText(name, 'Call');
@@ -13933,17 +13939,17 @@ async function savePaymentConfig() {
     var freeCopy = freeValue > 0 ? freeValue + ' min free' : '';
     var freePill = card.querySelector('.ob-live-free-pill');
     var rateCopy = liveRateCopy(channel, priceCopy);
-    if(priceEl && rateCopy) priceEl.setAttribute('data-ob-full-price', rateCopy + (freeCopy ? ' · ' + freeCopy : ''));
+    if(priceEl && rateCopy) setAttr(priceEl, 'data-ob-full-price', rateCopy + (freeCopy ? ' · ' + freeCopy : ''));
     if(!disabled && priceEl && rateCopy) setText(priceEl, rateCopy);
     if(!disabled && freeCopy) {
       if(!freePill) {
         freePill = document.createElement('div');
         freePill.className = 'ob-live-free-pill';
-      } else if(freePill.parentNode) {
-        freePill.parentNode.removeChild(freePill);
       }
-      if(priceEl && priceEl.parentNode) priceEl.parentNode.insertBefore(freePill, priceEl.nextSibling);
-      else card.appendChild(freePill);
+      if(!freePill.parentNode) {
+        if(priceEl && priceEl.parentNode) priceEl.parentNode.insertBefore(freePill, priceEl.nextSibling);
+        else card.appendChild(freePill);
+      }
       if(freePill) setText(freePill, freeCopy);
     } else if(freePill) {
       freePill.remove();
@@ -13977,7 +13983,7 @@ async function savePaymentConfig() {
     card.classList.add('ob-book-option-row');
     var icon = card.querySelector('.stype-btn-icon');
     if(icon) {
-      icon.removeAttribute('data-ob-line-icon');
+      removeAttr(icon, 'data-ob-line-icon');
       setText(icon, 'WR');
     }
     var meta = card.querySelector('.ob-od-stype-meta');
@@ -14027,19 +14033,27 @@ async function savePaymentConfig() {
     decorateWrittenCard();
     ensureBookLaterRow();
   }
-  window.obRefreshBookSelectorCards = decorate;
+  var bookSelectorSelfDecorating = false;
+  function runDecorate(){
+    if(bookSelectorSelfDecorating) return;
+    bookSelectorSelfDecorating = true;
+    try { decorate(); }
+    finally { setTimeout(function(){ bookSelectorSelfDecorating = false; }, 0); }
+  }
+  window.obRefreshBookSelectorCards = runDecorate;
   function install(){
     syncBookSelectorReady();
-    decorate();
-    [160, 500, 1000, 1800, 2800].forEach(function(ms){ setTimeout(decorate, ms); });
+    runDecorate();
+    [160, 500, 1000, 1800, 2800].forEach(function(ms){ setTimeout(runDecorate, ms); });
     try {
       var scheduled = false;
       var scheduleDecorate = function(){
+        if(bookSelectorSelfDecorating) return;
         if(scheduled) return;
         scheduled = true;
         setTimeout(function(){
           scheduled = false;
-          decorate();
+          runDecorate();
         }, 80);
       };
       new MutationObserver(scheduleDecorate).observe(document.getElementById('ep-book') || document.body, {childList:true, subtree:true, characterData:true, attributes:true, attributeFilter:['class','style','data-channel-disabled','aria-disabled']});
@@ -14048,20 +14062,20 @@ async function savePaymentConfig() {
     if(typeof previousShow === 'function' && !previousShow.__obExpertBookingSelector20260608){
       window.showExpertPage = function(page){
         var out = previousShow.apply(this, arguments);
-        if(page === 'book') [80, 300, 900].forEach(function(ms){ setTimeout(decorate, ms); });
+        if(page === 'book') [80, 300, 900].forEach(function(ms){ setTimeout(runDecorate, ms); });
         return out;
       };
       window.showExpertPage.__obExpertBookingSelector20260608 = true;
     }
-    window.addEventListener('ob:on-demand-public-ready', function(){ setBookSelectorReady(true); setTimeout(decorate, 40); });
+    window.addEventListener('ob:on-demand-public-ready', function(){ setBookSelectorReady(true); setTimeout(runDecorate, 40); });
     setTimeout(function(){
       if(!window.__obOnDemandPublicReady) {
         window.__obOnDemandPublicReady = true;
         setBookSelectorReady(true);
-        decorate();
+        runDecorate();
       }
     }, 3500);
-    window.addEventListener('popstate', function(){ setTimeout(decorate, 180); });
+    window.addEventListener('popstate', function(){ setTimeout(runDecorate, 180); });
   }
   if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', install, {once:true});
   else install();
@@ -17853,6 +17867,60 @@ function _adminPath(suffix) {
 // Fix 4: Payments panel rates section hidden (Settings is the real UI)
 
 // --- Clean single loadExpertWebsite (replaces all previous wrappers) ---
+window.__obPublicExpertLoadState = window.__obPublicExpertLoadState || { inFlight:{}, recent:{} };
+(function(){
+  if(window.__obPublicExpertFetchCoalescer || typeof window.fetch !== 'function') return;
+  window.__obPublicExpertFetchCoalescer = true;
+  var nativeFetch = window.fetch;
+  var inFlight = {};
+  var recent = {};
+  var maxAgeMs = 2800;
+  function headerValue(headers, name){
+    name = String(name || '').toLowerCase();
+    if(!headers) return '';
+    if(typeof headers.get === 'function') return headers.get(name) || headers.get(name.toUpperCase()) || '';
+    for(var key in headers){
+      if(Object.prototype.hasOwnProperty.call(headers, key) && String(key).toLowerCase() === name) return headers[key] || '';
+    }
+    return '';
+  }
+  function requestKey(input, init){
+    var method = String((init && init.method) || (input && input.method) || 'GET').toUpperCase();
+    if(method !== 'GET') return '';
+    var raw = typeof input === 'string' ? input : (input && input.url ? input.url : '');
+    if(!raw) return '';
+    var url;
+    try { url = new URL(raw, location.href); } catch(e) { return ''; }
+    var match = url.pathname.match(/\/api\/experts\/([^/?#]+)$/);
+    if(!match || !match[1] || /^(me|rates)$/i.test(match[1])) return '';
+    var auth = headerValue(init && init.headers, 'authorization') || headerValue(input && input.headers, 'authorization');
+    return url.origin + url.pathname + '|auth:' + (auth ? '1:' + auth.slice(0, 16) : '0');
+  }
+  function responseFromRecord(record){
+    return new Response(record.body, {status:record.status, statusText:record.statusText, headers:record.headers});
+  }
+  window.fetch = function(input, init){
+    var key = requestKey(input, init);
+    if(!key) return nativeFetch.apply(this, arguments);
+    var now = Date.now();
+    var cached = recent[key];
+    if(cached && now - cached.at < maxAgeMs) return Promise.resolve(responseFromRecord(cached.record));
+    if(inFlight[key]) return inFlight[key].then(responseFromRecord);
+    inFlight[key] = nativeFetch.apply(this, arguments).then(function(response){
+      return response.text().then(function(body){
+        var record = {
+          body: body,
+          status: response.status,
+          statusText: response.statusText,
+          headers: Array.from(response.headers.entries())
+        };
+        recent[key] = {at:Date.now(), record:record};
+        return record;
+      });
+    }).finally(function(){ delete inFlight[key]; });
+    return inFlight[key].then(responseFromRecord);
+  };
+})();
 window.loadExpertWebsite = function(slug) {
   slug = slug || window._browseExpert || 'expert-slug';
   slug = (slug == null ? '' : String(slug).trim());
@@ -17863,16 +17931,22 @@ window.loadExpertWebsite = function(slug) {
   window._browseExpert = slug;
   if(typeof window._markRouteLoading === 'function') window._markRouteLoading('public');
 
-  // Call the ORIGINAL Cursor function (buried in s3) via OwnlyAPI if available
-  if(window.OwnlyAPI && window.OwnlyAPI.loadExpertWebsite) {
-    window.OwnlyAPI.loadExpertWebsite(slug);
-  }
-
-  // Fetch expert data + rates and refresh public page
+  // This loader is authoritative for public expert pages. Calling
+  // OwnlyAPI.loadExpertWebsite here re-enters older wrappers and repeats the
+  // same public fetch/decorate work several times.
   var _mainPublicExpertToken = '';
   try { _mainPublicExpertToken = sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || localStorage.getItem('ob_client_token') || ''; } catch(e) {}
   var _mainPublicExpertFetchOpts = _mainPublicExpertToken ? { headers: { Authorization: 'Bearer ' + _mainPublicExpertToken } } : {};
-  fetch('https://ownlybiz-backend-production.up.railway.app/api/experts/' + slug, _mainPublicExpertFetchOpts)
+  var _loadKey = slug + '|' + (_mainPublicExpertToken ? 'auth' : 'public');
+  var _loadState = window.__obPublicExpertLoadState;
+  var _recent = _loadState.recent[_loadKey];
+  var _now = Date.now();
+  if(_loadState.inFlight[_loadKey]) return _loadState.inFlight[_loadKey];
+  if(_recent && _now - _recent.at < 1500 && window._currentExpert && (window._currentExpert.slug === slug || window._currentExpertSlug === slug)) {
+    if(typeof window._markRouteReady === 'function') window._markRouteReady('public');
+    return _recent.promise;
+  }
+  var _loadPromise = fetch('https://ownlybiz-backend-production.up.railway.app/api/experts/' + slug, _mainPublicExpertFetchOpts)
     .then(function(r){ return r.json(); })
     .then(function(d){
       var e = d.expert || d;
@@ -17895,9 +17969,15 @@ window.loadExpertWebsite = function(slug) {
       if(typeof window._applyExpertWebsite === 'function') window._applyExpertWebsite(e);
       _refreshPublicPage(e);
       if(typeof window._markRouteReady === 'function') window._markRouteReady('public');
+      _loadState.recent[_loadKey] = { at:Date.now(), promise:_loadPromise };
+      return e;
     }).catch(function(){
       if(typeof window._markRouteReady === 'function') window._markRouteReady('public');
+    }).finally(function(){
+      delete _loadState.inFlight[_loadKey];
     });
+  _loadState.inFlight[_loadKey] = _loadPromise;
+  return _loadPromise;
 };
 
 // --- Start live poll on expert public pages ---
@@ -26318,6 +26398,12 @@ window._handleRTCMessage=function(d){
       badge.remove();
     }
   }
+  function setAttrIfChanged(el, name, value){
+    if(el && el.getAttribute(name) !== String(value)) el.setAttribute(name, value);
+  }
+  function setDatasetIfChanged(el, name, value){
+    if(el && el.dataset && el.dataset[name] !== String(value)) el.dataset[name] = String(value);
+  }
   function applyChannelAvailabilityUi(data){
     if(shouldDeferPrivateAvailability(data || {})) return;
     if(privatePricingContext() && !hasAvailabilityFields(data || {}) && !hasAvailabilityFields(window._currentExpert || {})) return;
@@ -26341,20 +26427,20 @@ window._handleRTCMessage=function(d){
       var ch = channelFromText(btn);
       if(!ch) return;
       var on = channelEnabled(data, ch);
-      btn.dataset.ch = ch;
-      btn.dataset.channelDisabled = on ? '0' : '1';
+      setDatasetIfChanged(btn, 'ch', ch);
+      setDatasetIfChanged(btn, 'channelDisabled', on ? '0' : '1');
       btn.classList.toggle('disabled-channel', !on);
-      btn.setAttribute('aria-disabled', on ? 'false' : 'true');
+      setAttrIfChanged(btn, 'aria-disabled', on ? 'false' : 'true');
       setUnavailableBadge(btn, !on);
     });
     document.querySelectorAll('.bfl-type-btn').forEach(function(btn){
       var ch = btn.getAttribute('data-ch') || channelFromText(btn);
       if(!ch) return;
       var on = channelEnabled(data, ch);
-      btn.dataset.channelDisabled = on ? '0' : '1';
+      setDatasetIfChanged(btn, 'channelDisabled', on ? '0' : '1');
       btn.style.opacity = on ? '1' : '.45';
       btn.style.pointerEvents = on ? 'auto' : 'none';
-      btn.setAttribute('aria-disabled', on ? 'false' : 'true');
+      setAttrIfChanged(btn, 'aria-disabled', on ? 'false' : 'true');
       setUnavailableBadge(btn, !on);
     });
     var activeBfl = document.querySelector('.bfl-type-btn.active');
@@ -27359,22 +27445,31 @@ window._handleRTCMessage=function(d){
       badge.remove();
     }
   }
+  function setAttrIfChanged(el, name, value){
+    if(el && el.getAttribute(name) !== String(value)) el.setAttribute(name, value);
+  }
+  function removeAttrIfPresent(el, name){
+    if(el && el.hasAttribute(name)) el.removeAttribute(name);
+  }
+  function setDatasetIfChanged(el, name, value){
+    if(el && el.dataset && el.dataset[name] !== String(value)) el.dataset[name] = String(value);
+  }
   function markChannelElement(el, ch, on){
     if(!el || !ch) return;
-    el.setAttribute('data-ob-channel', ch);
-    el.dataset.channelDisabled = on ? '0' : '1';
+    setAttrIfChanged(el, 'data-ob-channel', ch);
+    setDatasetIfChanged(el, 'channelDisabled', on ? '0' : '1');
     el.classList.toggle('disabled-channel', !on);
     el.classList.toggle('ob-channel-unavailable', !on);
-    el.setAttribute('aria-disabled', on ? 'false' : 'true');
+    setAttrIfChanged(el, 'aria-disabled', on ? 'false' : 'true');
     setBadge(el, !on);
     var buttons = el.matches && el.matches('button,[role="button"]') ? [el] : Array.prototype.slice.call(el.querySelectorAll('button,[role="button"]'));
     buttons.forEach(function(btn){
       if(!on){
-        btn.setAttribute('aria-disabled','true');
-        btn.dataset.obDisabledByAvailability = '1';
+        setAttrIfChanged(btn, 'aria-disabled', 'true');
+        setDatasetIfChanged(btn, 'obDisabledByAvailability', '1');
         if(btn.tagName === 'BUTTON') btn.disabled = true;
       } else if(btn.dataset.obDisabledByAvailability === '1') {
-        btn.removeAttribute('aria-disabled');
+        removeAttrIfPresent(btn, 'aria-disabled');
         delete btn.dataset.obDisabledByAvailability;
         if(btn.tagName === 'BUTTON') btn.disabled = false;
       }
@@ -33253,6 +33348,9 @@ body{
     var match = text.match(/you keep\s+(88|92|95)%/i) || text.match(/\b(88|92|95)%\s+of paid sessions/i);
     if(match) el.textContent = match[1] + '%';
   }
+  function setAttrIfChanged(el, name, value){
+    if(el && el.getAttribute(name) !== String(value)) el.setAttribute(name, value);
+  }
   function decorateIcons(){
     var groups = [
       ['.page-card-icon',['HM','AB','SV','BK','CT']],
@@ -33270,8 +33368,9 @@ body{
     ];
     groups.forEach(function(group){
       document.querySelectorAll(group[0]).forEach(function(el,i){
-        if(!el.getAttribute('data-ob-line-icon')) el.setAttribute('data-ob-line-icon', group[1][i % group[1].length]);
-        el.setAttribute('aria-hidden','true');
+        if(group[0] === '.stype-btn-icon' && el.closest && el.closest('.ob-od-stype-card')) return;
+        if(!el.getAttribute('data-ob-line-icon')) setAttrIfChanged(el, 'data-ob-line-icon', group[1][i % group[1].length]);
+        setAttrIfChanged(el, 'aria-hidden', 'true');
       });
     });
   }
@@ -34477,16 +34576,25 @@ body:has(#view-2.active) .privacy-consent.active{
 </style>
 <script id="ownlybiz-v3-overlay-close-finalizer">
 (function(){
+  function setAttrIfChanged(el, name, value){
+    if(el && el.getAttribute(name) !== String(value)) el.setAttribute(name, value);
+  }
+  function removeAttrIfPresent(el, name){
+    if(el && el.hasAttribute(name)) el.removeAttribute(name);
+  }
+  function setTextIfChanged(el, value){
+    if(el && String(el.textContent || '') !== String(value)) el.textContent = value;
+  }
   function finalizeBookingIcons(){
     var tokens = ['CH','VO','VI','FX','60','WR'];
     document.querySelectorAll('#view-4 .stype-btn-icon').forEach(function(el, i){
       if(el.closest && el.closest('.ob-od-stype-card')){
-        el.removeAttribute('data-ob-line-icon');
-        if(!String(el.textContent || '').trim()) el.textContent = 'WR';
+        removeAttrIfPresent(el, 'data-ob-line-icon');
+        if(!String(el.textContent || '').trim()) setTextIfChanged(el, 'WR');
         return;
       }
-      if(!el.getAttribute('data-ob-line-icon')) el.setAttribute('data-ob-line-icon', tokens[i % tokens.length]);
-      el.setAttribute('aria-hidden','true');
+      if(!el.getAttribute('data-ob-line-icon')) setAttrIfChanged(el, 'data-ob-line-icon', tokens[i % tokens.length]);
+      setAttrIfChanged(el, 'aria-hidden', 'true');
     });
   }
   document.addEventListener('keydown', function(e){
@@ -35165,10 +35273,13 @@ body.ob-ui-light #live-session-notes:focus{
   }
   window.obApplyPublicDesignTokens = applyPublicTokens;
 
+  function setAttrIfChanged(el, name, value){
+    if(el && el.getAttribute(name) !== String(value)) el.setAttribute(name, value);
+  }
   function refreshSelectionState(root){
     (root || document).querySelectorAll('#view-4 .stype-btn, #view-5 .service-option').forEach(function(el){
       var selected = el.classList.contains('active') || el.classList.contains('selected');
-      el.setAttribute('aria-pressed', selected ? 'true' : 'false');
+      setAttrIfChanged(el, 'aria-pressed', selected ? 'true' : 'false');
       el.classList.toggle('ob-selection-active', selected);
     });
   }
@@ -35958,46 +36069,55 @@ body.ob-ui-dark .ob-connection-note,
       el.setAttribute('aria-label', value + ' initials');
     });
   }
+  function setAttrIfChanged(el, name, value){
+    if(el && el.getAttribute(name) !== String(value)) el.setAttribute(name, value);
+  }
+  function removeAttrIfPresent(el, name){
+    if(el && el.hasAttribute(name)) el.removeAttribute(name);
+  }
+  function setTextIfChanged(el, value){
+    if(el && String(el.textContent || '') !== String(value)) el.textContent = value;
+  }
   function installLineIcons(){
     document.querySelectorAll('#view-4 .stype-btn').forEach(function(card){
       if(card.classList && card.classList.contains('ob-od-stype-card')) {
         var writtenIcon = card.querySelector('.stype-btn-icon');
         if(writtenIcon) {
-          writtenIcon.removeAttribute('data-ob-line-icon');
-          if(!String(writtenIcon.textContent || '').trim()) writtenIcon.textContent = 'WR';
+          removeAttrIfPresent(writtenIcon, 'data-ob-line-icon');
+          if(!String(writtenIcon.textContent || '').trim()) setTextIfChanged(writtenIcon, 'WR');
         }
         return;
       }
       var icon = card.querySelector('.stype-btn-icon');
-      if(icon){ icon.setAttribute('data-ob-line-icon', channelToken(card.textContent)); icon.textContent = ''; }
+      if(icon){ setAttrIfChanged(icon, 'data-ob-line-icon', channelToken(card.textContent)); setTextIfChanged(icon, ''); }
     });
     document.querySelectorAll('#view-4 .service-mini, #view-4 .service-big').forEach(function(card){
       var icon = card.querySelector('.service-mini-icon,.service-big-icon');
-      if(icon){ icon.setAttribute('data-ob-line-icon', channelToken(card.textContent)); icon.textContent = ''; }
+      if(icon){ setAttrIfChanged(icon, 'data-ob-line-icon', channelToken(card.textContent)); setTextIfChanged(icon, ''); }
     });
     document.querySelectorAll('#view-5 .service-option').forEach(function(card){
       var icon = card.querySelector('.service-option-icon');
-      if(icon){ icon.setAttribute('data-ob-line-icon', channelToken(card.textContent)); icon.textContent = ''; }
+      if(icon){ setAttrIfChanged(icon, 'data-ob-line-icon', channelToken(card.textContent)); setTextIfChanged(icon, ''); }
     });
     var presessIcon = document.getElementById('presess-channel-icon');
     if(presessIcon){
-      presessIcon.setAttribute('data-ob-line-icon', channelToken((document.getElementById('presess-type') || {}).textContent || presessIcon.textContent));
-      presessIcon.textContent = '';
+      setAttrIfChanged(presessIcon, 'data-ob-line-icon', channelToken((document.getElementById('presess-type') || {}).textContent || presessIcon.textContent));
+      setTextIfChanged(presessIcon, '');
     }
     var bovIcon = document.getElementById('bov-channel-icon');
     if(bovIcon){
-      bovIcon.setAttribute('data-ob-line-icon', channelToken((document.getElementById('bov-channel-name') || {}).textContent || bovIcon.textContent));
-      bovIcon.textContent = '';
+      setAttrIfChanged(bovIcon, 'data-ob-line-icon', channelToken((document.getElementById('bov-channel-name') || {}).textContent || bovIcon.textContent));
+      setTextIfChanged(bovIcon, '');
     }
     var vidPlaceholder = document.getElementById('vid-placeholder');
     if(vidPlaceholder){
-      vidPlaceholder.setAttribute('data-ob-line-icon', initials());
-      vidPlaceholder.textContent = '';
+      setAttrIfChanged(vidPlaceholder, 'data-ob-line-icon', initials());
+      setTextIfChanged(vidPlaceholder, '');
     }
     document.querySelectorAll('#view-5 .video-remote > span:not(#vid-placeholder)').forEach(function(el){
       el.classList.add('ob-video-placeholder');
-      el.setAttribute('data-ob-line-icon', initials());
-      el.textContent = '';
+      setAttrIfChanged(el, 'data-ob-line-icon', initials());
+      setTextIfChanged(el, '');
     });
 	    document.querySelectorAll('#view-5 .voice-avatar').forEach(function(el){
 	      clearTextNodes(el);
@@ -36013,20 +36133,20 @@ body.ob-ui-dark .ob-connection-note,
     });
     document.querySelectorAll('#view-4 button').forEach(function(btn){
       if(/(?:Schedule|Book) for Later/i.test(btn.textContent || '') && !btn.querySelector('.ob-line-mini')){
-        btn.textContent = /Book for Later/i.test(btn.textContent || '') ? 'Book for Later' : 'Schedule for Later';
+        setTextIfChanged(btn, /Book for Later/i.test(btn.textContent || '') ? 'Book for Later' : 'Schedule for Later');
       }
     });
     ['ew-hero-cta','bottom-cta-btn'].forEach(function(id){
       var el = document.getElementById(id);
-      if(el) el.textContent = (el.textContent || '').replace(/^[^\w]+/,'').trim();
+      if(el) setTextIfChanged(el, (el.textContent || '').replace(/^[^\w]+/,'').trim());
     });
 	    var status = document.getElementById('hero-status-badge');
 	    if(status){
-	      status.setAttribute('aria-hidden','true');
+	      setAttrIfChanged(status, 'aria-hidden', 'true');
 	      status.style.display = 'none';
 	    }
     var liveCopy = document.querySelector('#book-permin-panel > div:first-child');
-    if(liveCopy) liveCopy.textContent = 'Connect now - no scheduling needed';
+    if(liveCopy) setTextIfChanged(liveCopy, 'Connect now - no scheduling needed');
   }
   function polishPreSession(){
     var freeNote = document.getElementById('presess-free-note');
@@ -50832,12 +50952,24 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     }
   }
   window.obRenderPublicReviews = renderPublicReviews;
+  var publicReviewFetchState = { key:'', promise:null, at:0 };
   function fetchPublicReviewsForSlug(slug){
     if(!slug) return;
-    fetch(apiBase() + '/api/experts/' + encodeURIComponent(slug))
+    var key = String(slug || '').trim();
+    var now = Date.now();
+    if(publicReviewFetchState.key === key && publicReviewFetchState.promise && now - publicReviewFetchState.at < 1600) return publicReviewFetchState.promise;
+    publicReviewFetchState.key = key;
+    publicReviewFetchState.at = now;
+    publicReviewFetchState.promise = fetch(apiBase() + '/api/experts/' + encodeURIComponent(slug))
       .then(function(r){ return r.json(); })
       .then(function(data){ renderPublicReviews(data); })
-      .catch(function(){ renderPublicReviews({reviews:[]}); });
+      .catch(function(){ renderPublicReviews({reviews:[]}); })
+      .finally(function(){
+        setTimeout(function(){
+          if(publicReviewFetchState.key === key) publicReviewFetchState.promise = null;
+        }, 1600);
+      });
+    return publicReviewFetchState.promise;
   }
   function currentSlug(data){
     return (data && (data.slug || (data.expert && data.expert.slug))) || window._currentExpertSlug || window._browseExpert || '';
@@ -53371,12 +53503,12 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     var priceEl = card.querySelector('.stype-btn-price');
     var meta = card.querySelector('.ob-od-stype-meta');
     if(icon) {
-      icon.removeAttribute('data-ob-line-icon');
-      icon.textContent = 'WR';
+      if(icon.hasAttribute('data-ob-line-icon')) icon.removeAttribute('data-ob-line-icon');
+      if(icon.textContent !== 'WR') icon.textContent = 'WR';
     }
-    if(name) name.textContent = s.public_label || 'Written Reading';
-    if(priceEl) priceEl.textContent = price ? 'from ' + price : 'Written answer';
-    if(meta) meta.textContent = 'Send one private question. Delivered securely after login.';
+    if(name && name.textContent !== (s.public_label || 'Written Reading')) name.textContent = s.public_label || 'Written Reading';
+    if(priceEl && priceEl.textContent !== (price ? 'from ' + price : 'Written answer')) priceEl.textContent = price ? 'from ' + price : 'Written answer';
+    if(meta && meta.textContent !== 'Send one private question. Delivered securely after login.') meta.textContent = 'Send one private question. Delivered securely after login.';
     return true;
   }
   function activePublicPage(){
@@ -53765,6 +53897,11 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     }).catch(function(){ state.publicLoadInFlightSlug = ''; confirmCheckoutFromQuery(0); markPublicOnDemandReady(); });
   }
   function installPublic(){
+    if(state.publicInstalled) {
+      setTimeout(loadPublicOnDemand, 60);
+      return;
+    }
+    state.publicInstalled = true;
     if(!window.__obOnDemandPublicWrapped && typeof window.loadExpertWebsite === 'function'){
       var prev = window.loadExpertWebsite;
       window.loadExpertWebsite = function(slug){

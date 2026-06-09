@@ -51339,7 +51339,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   if(window.__ownlybizAdminEmailCenter20260601) return;
   window.__ownlybizAdminEmailCenter20260601 = true;
   var BASE = String(window.OWNLYBIZ_API_URL || window._OB_BACKEND || 'https://ownlybiz-backend-production.up.railway.app').replace(/\/+$/,'');
-  var state = { tab:'campaigns', loading:false, overview:null, status:'', draft:null, campaign:null, importPreview:null, file:null, importListName:'', importConsent:'', importConfirmed:false, importBusy:false, audience:'uploaded_all', list_id:'', target:'audience', cycle_key:'admin_newsletter', link_key:'auto', aiBusy:false, aiPrompt:'', aiCtaLabel:'', aiCtaUrl:'', aiGenerateImage:false, aiImagePrompt:'', contactListId:'', contacts:null, contactsMeta:null, contactsLoading:false, contactLimit:10, contactOffset:0, contactSearch:'', contactStatus:'all', selectedContacts:{}, bulkAction:'', bulkListId:'' };
+  var state = { tab:'campaigns', loading:false, overview:null, status:'', draft:null, campaign:null, importPreview:null, file:null, importListName:'', importConsent:'', importConfirmed:false, importBusy:false, manualText:'', manualListMode:'new', manualListId:'', manualListName:'', manualConsent:'', manualConfirmed:false, manualPreview:null, manualBusy:false, testTo:'', audience:'uploaded_all', list_id:'', target:'audience', cycle_key:'admin_newsletter', journey_id:'', journey_step_id:'', journeyBusy:false, link_key:'auto', aiBusy:false, aiPrompt:'', aiCtaLabel:'', aiCtaUrl:'', aiGenerateImage:false, aiImagePrompt:'', contactListId:'', contacts:null, contactsMeta:null, contactsLoading:false, contactLimit:10, contactOffset:0, contactSearch:'', contactStatus:'all', selectedContacts:{}, bulkAction:'', bulkListId:'' };
   var tabs = [['campaigns','Campaigns'],['campaign','Builder'],['uploads','Lists & Uploads'],['analytics','Analytics'],['map','Flow Map'],['core','Core Scenarios'],['marketing','Marketing Cycles']];
   function tok(){ return sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || localStorage.getItem('ownlybiz_token') || sessionStorage.getItem('ownlybiz_token') || ''; }
   function esc(v){ return String(v == null ? '' : v).replace(/[&<>"']/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
@@ -51398,6 +51398,8 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     {key:'admin_email_center',label:'Admin Email Center',url:'https://ownlybiz.com/admin/experts'}
   ]; }
   function audiences(){ return platform().audiences || []; }
+  function journeys(){ return platform().journeys || []; }
+  function journeyPresets(){ return platform().journey_presets || []; }
   function coreScenarios(){ return scenarios().filter(function(s){ return !(s.marketing || s.unsubscribe_applicable || s.is_custom); }); }
   function marketingScenarios(){ return scenarios().filter(function(s){ return !!(s.marketing || s.unsubscribe_applicable || s.is_custom); }); }
   function mapRows(){ var o=state.overview||{}; return o.map || scenarios(); }
@@ -51417,6 +51419,8 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   function selectedAudience(){ var el=$('ob-admin-campaign-audience'); return el ? el.value : (state.audience || 'uploaded_all'); }
   function selectedList(){ var el=$('ob-admin-campaign-list'); return el ? el.value : (state.list_id || ''); }
   function selectedCycle(){ var el=$('ob-admin-campaign-cycle'); return el ? el.value : (state.cycle_key || 'admin_newsletter'); }
+  function selectedJourney(){ var el=$('ob-admin-campaign-journey'); return el ? el.value : (state.journey_id || ''); }
+  function selectedJourneyStep(){ var el=$('ob-admin-campaign-journey-step'); return el ? el.value : (state.journey_step_id || ''); }
   function selectedLinkKey(){ var el=$('ob-admin-ai-link-key'); return el ? el.value : (state.link_key || 'auto'); }
   function selectedDraftLinkKey(){ var el=$('ob-admin-draft-link-key'); return el ? el.value : (state.draft && state.draft.link_key || state.link_key || 'auto'); }
   function linkUrlForKey(key){ var item=campaignLinks().filter(function(l){return l.key===key;})[0]; return item ? item.url : ''; }
@@ -51438,6 +51442,35 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   function timeText(ts){ var n=Number(ts||0); if(!n) return 'Not yet'; try { return new Date(n*1000).toLocaleString(); } catch(e){ return 'Not yet'; } }
   function audienceKey(value){ value=String(value||'uploaded_all'); return value.indexOf('list:')===0 ? 'uploaded_list' : value; }
   function audienceListId(value){ value=String(value||''); return value.indexOf('list:')===0 ? value.slice(5) : (audienceKey(value)==='uploaded_list' ? selectedList() : ''); }
+  function audienceListIdValue(value){ value=String(value||''); return value.indexOf('list:')===0 ? value.slice(5) : ''; }
+  function journeyById(id){ return journeys().filter(function(j){ return String(j.id||'')===String(id||''); })[0] || null; }
+  function selectedJourneyObject(){ return journeyById(selectedJourney()) || journeys()[0] || null; }
+  function journeyOptions(){
+    var items=journeys();
+    if(!items.length) return '<option value="">Create a marketing journey first</option>';
+    var current=state.journey_id || (items[0] && items[0].id) || '';
+    return items.map(function(j){ return '<option value="'+esc(j.id)+'" '+(j.id===current?'selected':'')+'>'+esc(j.name||'Marketing journey')+' · '+esc(j.status||'draft')+'</option>'; }).join('');
+  }
+  function journeyStepOptions(journeyId){
+    var j=journeyById(journeyId || state.journey_id) || journeys()[0] || {};
+    var steps=j.steps || [];
+    if(!steps.length) return '<option value="">Add a step to this journey first</option>';
+    var current=state.journey_step_id || (steps[0] && steps[0].id) || '';
+    return steps.map(function(step){
+      var label='Step '+fmt(step.step_order||1)+' · '+(step.delay_label||'At trigger');
+      if(step.campaign_subject) label += ' · '+step.campaign_subject;
+      return '<option value="'+esc(step.id)+'" '+(step.id===current?'selected':'')+'>'+esc(label)+'</option>';
+    }).join('');
+  }
+  function campaignOptions(current){
+    var rows=campaigns().filter(function(c){ return c.status!=='failed'; });
+    var out=['<option value="">No campaign assigned</option>'];
+    rows.forEach(function(c){
+      var d=campaignDraft(c);
+      out.push('<option value="'+esc(c.id)+'" '+(String(c.id||'')===String(current||'')?'selected':'')+'>'+esc(c.name||d.subject||c.subject||'Untitled campaign')+' · '+esc(c.status_label||c.status||'draft')+'</option>');
+    });
+    return out.join('');
+  }
   function bodyHtmlFromPlain(text){ return String(text||'').split(/\n{2,}/).map(function(part){ part=part.trim(); return part ? '<p>'+esc(part).replace(/\n/g,'<br>')+'</p>' : ''; }).join(''); }
   function htmlAttr(v){ return esc(v).replace(/`/g,'&#96;'); }
   function jsArg(v){ return String(v == null ? '' : v).replace(/\r?\n/g,' ').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
@@ -51499,8 +51532,43 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       +field(s.key,'subject','Subject',f.subject)+field(s.key,'preheader','Preheader',f.preheader)+field(s.key,'eyebrow','Eyebrow',f.eyebrow)+field(s.key,'title','Title',f.title)+field(s.key,'subtitle','Header subtitle',f.subtitle)+field(s.key,'image_url','Email image URL',f.image_url)+field(s.key,'body_html','Body HTML',f.body_html,true)+field(s.key,'cta_label','CTA label',f.cta_label)+field(s.key,'cta_url','CTA URL',f.cta_url)+field(s.key,'footer_text','Footer text',f.footer_text,true)
       +'<div class="ob-admin-ec-actions"><button class="ob-admin-ec-btn primary" type="button" onclick="window.OBAdminEmailCenter.saveScenario(\''+esc(s.key)+'\')">Save cycle</button></div></div></details>';
   }
+  function jId(id,field){ return 'ob-admin-journey-'+safeId(id)+'-'+field; }
+  function jStepId(id,stepId,field){ return 'ob-admin-journey-'+safeId(id)+'-step-'+safeId(stepId)+'-'+field; }
+  function journeyAudienceValue(j){ return j && j.audience_key==='uploaded_list' && j.list_id ? 'list:'+j.list_id : (j && j.audience_key || 'uploaded_all'); }
+  function journeyPresetCards(){
+    var presets=journeyPresets();
+    if(!presets.length) return '<div class="ob-admin-ec-empty">No journey presets available yet.</div>';
+    return presets.map(function(p){
+      return '<div class="ob-admin-ec-box"><h3>'+esc(p.name||'Marketing journey')+'</h3><div class="ob-admin-ec-small">'+esc(p.description||'')+'</div><div class="ob-admin-ec-small" style="margin-top:8px">Trigger: '+esc(p.trigger_event||'manual')+' · Steps: '+fmt((p.steps||[]).length)+'</div><button class="ob-admin-ec-btn primary" type="button" style="margin-top:10px" onclick="window.OBAdminEmailCenter.createJourney(\''+jsArg(p.key)+'\')">Create journey</button></div>';
+    }).join('');
+  }
+  function journeyStepRow(j,step){
+    var campaignId=step.campaign_id || step.template_id || '';
+    return '<tr><td><strong>Step '+fmt(step.step_order||1)+'</strong><div class="ob-admin-ec-small">'+esc(step.delay_label||'At trigger')+'</div></td><td><input id="'+jStepId(j.id,step.id,'delay')+'" value="'+esc(step.delay_minutes||0)+'" inputmode="numeric"></td><td><select id="'+jStepId(j.id,step.id,'campaign')+'">'+campaignOptions(campaignId)+'</select><div class="ob-admin-ec-small">'+(campaignId?'Assigned: '+esc(step.campaign_subject||step.subject||'Campaign draft'):'No campaign assigned yet')+'</div></td><td><button class="ob-admin-ec-btn danger" type="button" onclick="window.OBAdminEmailCenter.removeJourneyStep(\''+jsArg(j.id)+'\',\''+jsArg(step.id)+'\')">Remove</button></td></tr>';
+  }
+  function journeyCard(j){
+    var steps=j.steps || [];
+    var statusClass=j.status==='active'?'ready':'';
+    var nextStatus=j.status==='active'?'paused':'active';
+    return '<details class="ob-admin-ec-box" open><summary style="cursor:pointer;display:flex;justify-content:space-between;gap:12px;align-items:center"><span><strong>'+esc(j.name||'Marketing journey')+'</strong><span class="ob-admin-ec-small" style="display:block">'+esc(j.description||'')+'</span></span><span class="ob-admin-ec-badge '+statusClass+'">'+esc(j.status||'draft')+'</span></summary>'
+      + '<div class="ob-admin-ec-form" style="margin-top:12px"><div class="ob-admin-ec-grid"><label>Journey name<input id="'+jId(j.id,'name')+'" value="'+esc(j.name||'')+'"></label><label>Trigger event<input id="'+jId(j.id,'trigger')+'" value="'+esc(j.trigger_event||'manual')+'" placeholder="client_signup"></label></div>'
+      + '<label>Description<input id="'+jId(j.id,'description')+'" value="'+esc(j.description||'')+'"></label>'
+      + '<label>Default audience<select id="'+jId(j.id,'audience')+'">'+audienceOptions(journeyAudienceValue(j))+'</select></label>'
+      + '<div class="ob-admin-ec-small">0 minutes means send at the trigger. 2880 = 48 hours. 10080 = 7 days. Assign a saved campaign to each step.</div>'
+      + '<div class="ob-admin-ec-table-wrap"><table class="ob-admin-ec-table"><thead><tr><th>Step</th><th>Delay minutes</th><th>Campaign</th><th>Action</th></tr></thead><tbody>'+(steps.length?steps.map(function(step){return journeyStepRow(j,step);}).join(''):'<tr><td colspan="4">No steps yet.</td></tr>')+'</tbody></table></div>'
+      + '<div class="ob-admin-ec-actions"><button class="ob-admin-ec-btn" type="button" onclick="window.OBAdminEmailCenter.addJourneyStep(\''+jsArg(j.id)+'\')">+ Add step</button><button class="ob-admin-ec-btn primary" type="button" onclick="window.OBAdminEmailCenter.saveJourney(\''+jsArg(j.id)+'\')">Save journey</button><button class="ob-admin-ec-btn" type="button" onclick="window.OBAdminEmailCenter.setJourneyStatus(\''+jsArg(j.id)+'\',\''+nextStatus+'\')">'+esc(j.status==='active'?'Pause journey':'Activate journey')+'</button></div></div></details>';
+  }
+  function marketingJourneysHtml(){
+    var js=journeys();
+    var marketing=marketingScenarios();
+    var createBox='<div class="ob-admin-ec-box"><h3>Create marketing journey</h3><div class="ob-admin-ec-small">Start from a common user journey, then adjust the trigger, delays, audience, and assigned campaigns.</div></div>'+journeyPresetCards();
+    var journeyList=js.length?js.map(journeyCard).join(''):'<div class="ob-admin-ec-empty">No marketing journeys yet. Create one from a preset, then assign campaigns to its steps.</div>';
+    var legacyBox='<div class="ob-admin-ec-box"><h3>Marketing templates</h3><div class="ob-admin-ec-small">These are marketing-oriented templates only. Required account, password, receipt, and security emails stay in Core Scenarios.</div></div>'+(marketing.length?marketing.map(card).join(''):'<div class="ob-admin-ec-empty">No marketing templates yet.</div>');
+    return '<div class="ob-admin-ec-grid"><div>'+createBox+'<div class="ob-admin-ec-box"><h3>Journey builder</h3><div class="ob-admin-ec-small">Each journey is a trigger plus timed steps. Build campaigns in Campaign Builder, save them, then assign them here.</div></div>'+journeyList+'</div><div>'+legacyBox+'</div></div>';
+  }
   function scenariosHtml(kind){
     var marketing = kind === 'marketing';
+    if(marketing) return marketingJourneysHtml();
     var list = marketing ? marketingScenarios() : coreScenarios();
     var title = marketing ? 'Marketing cycles' : 'Must-have account and receipt cycles';
     var note = marketing
@@ -51509,10 +51577,10 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     var createBox = marketing ? '<div class="ob-admin-ec-box"><h3>Create marketing cycle</h3><div class="ob-admin-ec-form"><label>Name<input id="ob-admin-new-name" placeholder="Partner announcement"></label><label>Audience<select id="ob-admin-new-audience"><option value="expert">Experts</option><option value="client">Clients</option></select></label><input id="ob-admin-new-type" type="hidden" value="marketing"><button class="ob-admin-ec-btn primary" type="button" onclick="window.OBAdminEmailCenter.createScenario()">Create marketing cycle</button><div class="ob-admin-ec-small">New cycles created here are marketing cycles, so opt-in, unsubscribe, and suppression rules apply.</div></div></div>' : '<div class="ob-admin-ec-box"><h3>Protected core cycles</h3><div class="ob-admin-ec-small">Use these carefully. Campaign Builder cannot overwrite these required transactional cycles.</div></div>';
     return '<div class="ob-admin-ec-grid"><div><div class="ob-admin-ec-box"><h3>'+esc(title)+'</h3><div class="ob-admin-ec-small">'+esc(note)+'</div></div>'+(list.length?list.map(card).join(''):'<div class="ob-admin-ec-empty">No cycles in this group.</div>')+'</div><div>'+createBox+mapHtml()+'</div></div>';
   }
-  function audienceOptions(){
+  function audienceOptions(currentValue){
     var items=audiences();
     if(!items.length) items=[{key:'uploaded_all',label:'All uploaded opted-in contacts',count:0},{key:'uploaded_list',label:'Specific uploaded list',count:0,requires_list:true}];
-    var current=state.audience||'uploaded_all';
+    var current=currentValue || state.audience || 'uploaded_all';
     var out = [];
     items.forEach(function(a){
       if(a.key === 'uploaded_list') {
@@ -51555,11 +51623,14 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     if(!state.draft) return '<div class="ob-admin-ec-empty">Generate an email to see the preview and editable draft.</div>';
     var target = selectedTarget();
     var actionButtons = target === 'cycle'
-      ? '<button class="ob-admin-ec-btn" type="button" onclick="window.OBAdminEmailCenter.refreshPreview()">Refresh preview</button><button class="ob-admin-ec-btn primary" type="button" onclick="window.OBAdminEmailCenter.applyToCycle()">Apply to selected cycle</button>'
+      ? '<button class="ob-admin-ec-btn" type="button" onclick="window.OBAdminEmailCenter.refreshPreview()">Refresh preview</button><button class="ob-admin-ec-btn primary" type="button" onclick="window.OBAdminEmailCenter.applyToCycle()">Save and assign to journey step</button>'
       : '<button class="ob-admin-ec-btn" type="button" onclick="window.OBAdminEmailCenter.refreshPreview()">Refresh preview</button><button class="ob-admin-ec-btn primary" type="button" onclick="window.OBAdminEmailCenter.saveCampaign()">Save draft</button><button class="ob-admin-ec-btn primary" type="button" onclick="window.OBAdminEmailCenter.sendCampaign()">Send campaign</button>';
     var confirmCopy = target === 'cycle'
-      ? 'I reviewed this draft and want to update the selected marketing cycle template.'
+      ? 'I reviewed this draft and want to assign it to the selected marketing journey step.'
       : 'I confirm this is a marketing/platform update and every recipient in this audience has permission or an applicable Ownlybiz email preference.';
+    var testControls = state.campaign && state.campaign.id
+      ? '<div class="ob-admin-ec-grid"><label>Test recipient<input id="ob-admin-campaign-test-to" value="'+esc(state.testTo||'')+'" placeholder="Leave blank to use your admin email" oninput="window.OBAdminEmailCenter.setTestTo(this.value)"></label><div class="ob-admin-ec-actions" style="align-items:end"><button class="ob-admin-ec-btn" type="button" onclick="window.OBAdminEmailCenter.sendTestCampaign()">Send test to admin</button></div></div>'
+      : '<div class="ob-admin-ec-small">Save the campaign draft before sending a test email to admin.</div>';
     var draftLinkKey = d.link_key || state.link_key || 'auto';
     var linkWarning = d.link_warning ? '<div class="ob-admin-ec-small" style="color:#fbbf24">'+esc(d.link_warning)+'</div>' : '';
     var imageNote = d.image_note ? '<div class="ob-admin-ec-small">'+esc(d.image_note)+'</div>' : '';
@@ -51574,7 +51645,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       + '<div class="ob-admin-ec-grid"><label>Email image URL<input id="ob-admin-draft-image-url" value="'+esc(d.image_url||'')+'" placeholder="Generated image URL or reviewed hosted image"></label><label>Image alt text<input id="ob-admin-draft-image-alt" value="'+esc(d.image_alt||'')+'"></label></div>'
       + '<label>Image prompt / brief<textarea id="ob-admin-draft-image-prompt" placeholder="Optional visual direction for this campaign">'+esc(d.image_prompt||'')+'</textarea></label>'+imageNote
       + '<div class="ob-admin-ec-checks"><label class="ob-admin-ec-check"><input id="ob-admin-send-confirm-consent" type="checkbox"> '+esc(confirmCopy)+'</label><label class="ob-admin-ec-check"><input id="ob-admin-send-confirm-preview" type="checkbox"> I reviewed the subject, preview, links, audience/cycle, and unsubscribe note.</label></div>'
-      + '<div class="ob-admin-ec-actions">'+actionButtons+'</div>'
+      + testControls + '<div class="ob-admin-ec-actions">'+actionButtons+'</div>'
       + '<div class="ob-admin-ec-small">'+esc(d.compliance_note||'Trackable links, open tracking, unsubscribe footer, and List-Unsubscribe headers are added when sending.')+'</div></div>';
   }
   function previewCard(){
@@ -51587,7 +51658,8 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     var d=campaignDraft(c);
     var sent=Number(c.sent_count||0), failed=Number(c.failed_count||0);
     var action=c.status==='sent'||c.status==='failed'?'Use as draft':'Review/send';
-    return '<tr><td><strong>'+esc(c.name||d.subject||c.subject||'Untitled campaign')+'</strong><div class="ob-admin-ec-small">'+esc(d.subject||c.subject||'No subject')+'</div></td><td><span class="ob-admin-ec-badge '+(c.status==='sent'?'ready':'')+'">'+esc(campaignStatus(c))+'</span></td><td>'+esc(c.audience_label||'Audience')+'</td><td>'+fmt(sent)+' sent / '+fmt(failed)+' failed</td><td>'+esc(timeText(c.updated_at||c.created_at))+'</td><td><div class="ob-admin-ec-row-actions"><button class="ob-admin-ec-btn" type="button" onclick="window.OBAdminEmailCenter.editCampaign(\''+jsArg(c.id)+'\')">Edit</button><button class="ob-admin-ec-btn primary" type="button" onclick="window.OBAdminEmailCenter.reviewCampaign(\''+jsArg(c.id)+'\')">'+esc(action)+'</button></div></td></tr>';
+    var testBtn=c.ready_to_send!==false && c.status!=='sent' && c.status!=='failed' ? '<button class="ob-admin-ec-btn" type="button" onclick="window.OBAdminEmailCenter.sendTestCampaign(\''+jsArg(c.id)+'\')">Send test</button>' : '';
+    return '<tr><td><strong>'+esc(c.name||d.subject||c.subject||'Untitled campaign')+'</strong><div class="ob-admin-ec-small">'+esc(d.subject||c.subject||'No subject')+'</div></td><td><span class="ob-admin-ec-badge '+(c.status==='sent'?'ready':'')+'">'+esc(campaignStatus(c))+'</span></td><td>'+esc(c.audience_label||'Audience')+'</td><td>'+fmt(sent)+' sent / '+fmt(failed)+' failed</td><td>'+esc(timeText(c.updated_at||c.created_at))+'</td><td><div class="ob-admin-ec-row-actions"><button class="ob-admin-ec-btn" type="button" onclick="window.OBAdminEmailCenter.editCampaign(\''+jsArg(c.id)+'\')">Edit</button>'+testBtn+'<button class="ob-admin-ec-btn primary" type="button" onclick="window.OBAdminEmailCenter.reviewCampaign(\''+jsArg(c.id)+'\')">'+esc(action)+'</button></div></td></tr>';
   }
   function campaignTable(items,empty){
     if(!items.length) return '<div class="ob-admin-ec-empty">'+esc(empty)+'</div>';
@@ -51597,32 +51669,32 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     var rows=campaigns();
     var drafts=rows.filter(function(c){ return c.status!=='sent' && c.status!=='failed'; });
     var history=rows.filter(function(c){ return c.status==='sent' || c.status==='failed'; });
-    return '<div class="ob-admin-ec-actions" style="margin-bottom:12px"><button class="ob-admin-ec-btn primary" type="button" onclick="window.OBAdminEmailCenter.newCampaign()">+ New campaign</button><button class="ob-admin-ec-btn" type="button" onclick="window.OBAdminEmailCenter.open(\'campaign\')">Open builder</button></div>'
+    return '<div class="ob-admin-ec-toolbar"><label>Test recipient<input id="ob-admin-campaign-test-to" value="'+esc(state.testTo||'')+'" placeholder="Leave blank to use your admin email" oninput="window.OBAdminEmailCenter.setTestTo(this.value)"></label><div class="ob-admin-ec-actions" style="align-items:end;margin-bottom:0"><button class="ob-admin-ec-btn primary" type="button" onclick="window.OBAdminEmailCenter.newCampaign()">+ New campaign</button><button class="ob-admin-ec-btn" type="button" onclick="window.OBAdminEmailCenter.open(\'campaign\')">Open builder</button></div></div>'
       + '<div class="ob-admin-ec-kpis">'+stat('Saved campaigns',rows.length)+stat('Ready drafts',drafts.filter(function(c){return c.ready_to_send!==false;}).length)+stat('Sent campaigns',history.filter(function(c){return c.status==='sent';}).length)+stat('Failed campaigns',history.filter(function(c){return c.status==='failed';}).length)+'</div>'
       + '<div class="ob-admin-ec-grid"><div class="ob-admin-ec-box"><h3>Ready drafts</h3><div class="ob-admin-ec-small">Saved campaigns live here until you review, confirm consent, and send. Builder work is separate so you can always come back to this list.</div>'+campaignTable(drafts,'No saved drafts yet. Create one from the builder.')+'</div>'
       + '<div class="ob-admin-ec-box"><h3>Sent and failed history</h3><div class="ob-admin-ec-small">Sent campaigns stay locked in history. To reuse one, open it and save as a new campaign name before sending again.</div>'+campaignTable(history,'No sent campaigns yet.')+'</div></div>';
   }
   function campaignHtml(){
     var target = state.target || 'audience';
-    var cycleSelect = '<label style="display:'+(target==='cycle'?'grid':'none')+'">Marketing cycle<select id="ob-admin-campaign-cycle" onchange="window.OBAdminEmailCenter.setCycle(this.value)">'+cycleOptions()+'</select></label>';
+    var selectedJ = state.journey_id || (journeys()[0] && journeys()[0].id) || '';
+    var journeySelect = '<div class="ob-admin-ec-grid" style="display:'+(target==='cycle'?'grid':'none')+'"><label>Marketing journey<select id="ob-admin-campaign-journey" onchange="window.OBAdminEmailCenter.setJourney(this.value)">'+journeyOptions()+'</select></label><label>Journey step<select id="ob-admin-campaign-journey-step" onchange="window.OBAdminEmailCenter.setJourneyStep(this.value)">'+journeyStepOptions(selectedJ)+'</select></label></div>';
     var audienceSelect = '<label style="display:'+(target==='audience'?'grid':'none')+'">Audience or list<select id="ob-admin-campaign-audience" onchange="window.OBAdminEmailCenter.setAudience(this.value)">'+audienceOptions()+'</select></label>';
     var currentLink = state.link_key || (state.draft && state.draft.link_key) || 'auto';
     var ctaUrl = state.aiCtaUrl || (currentLink === 'auto' ? '' : linkUrlForKey(currentLink));
     return '<div class="ob-admin-ec-actions" style="margin-bottom:12px"><button class="ob-admin-ec-btn primary" type="button" onclick="window.OBAdminEmailCenter.newCampaign()">+ New campaign</button><button class="ob-admin-ec-btn" type="button" onclick="window.OBAdminEmailCenter.open(\'campaigns\')">Campaign list</button></div>'
       + '<div class="ob-admin-ec-grid"><div><div class="ob-admin-ec-box"><h3>1. Choose audience and prompt AI</h3><div class="ob-admin-ec-form">'
-      + '<label>Use draft for<select id="ob-admin-campaign-target" onchange="window.OBAdminEmailCenter.setTarget(this.value)"><option value="audience" '+(target==='audience'?'selected':'')+'>Send to audience or list</option><option value="cycle" '+(target==='cycle'?'selected':'')+'>Apply to marketing cycle</option></select></label>'+audienceSelect+cycleSelect
+      + '<label>Use draft for<select id="ob-admin-campaign-target" onchange="window.OBAdminEmailCenter.setTarget(this.value)"><option value="audience" '+(target==='audience'?'selected':'')+'>Send to audience or list</option><option value="cycle" '+(target==='cycle'?'selected':'')+'>Assign to marketing journey step</option></select></label>'+audienceSelect+journeySelect
       + '<label>Prompt<textarea id="ob-admin-ai-prompt" placeholder="Example: Give potential expert customers the top Ownlybiz selling points and invite them to explore the platform.">'+esc(state.aiPrompt||'')+'</textarea></label>'
       + '<label>Button link picker<select id="ob-admin-ai-link-key" onchange="window.OBAdminEmailCenter.setLink(this.value)">'+linkOptions(currentLink)+'</select></label>'
       + '<div class="ob-admin-ec-grid"><label>Button text<input id="ob-admin-ai-cta-label" value="'+esc(state.aiCtaLabel||'')+'" placeholder="Explore Ownlybiz"></label><label>Button link<input id="ob-admin-ai-cta-url" value="'+esc(ctaUrl)+'" placeholder="'+esc(currentLink==='auto'?'AI will choose a verified Ownlybiz page':'Choose from picker or enter a reviewed custom URL')+'"></label></div>'
       + '<label class="ob-admin-ec-check" style="text-transform:none;letter-spacing:0;font-weight:700"><input id="ob-admin-ai-generate-image" type="checkbox" '+(state.aiGenerateImage?'checked':'')+'> Add an AI image when the prompt asks for a visual</label>'
       + '<label>Image request<textarea id="ob-admin-ai-image-prompt" placeholder="Optional: describe the banner/photo/visual you want in this email.">'+esc(state.aiImagePrompt||'')+'</textarea></label>'
       + '<button class="ob-admin-ec-btn primary" type="button" '+(state.aiBusy?'disabled':'')+' onclick="window.OBAdminEmailCenter.generateAi()">'+esc(state.aiBusy?'Generating...':'Generate email')+'</button>'+aiProgressHtml()
-      + '<div class="ob-admin-ec-small">'+esc(target==='cycle'?'The AI creates a draft only. Nothing is sent; applying updates the selected marketing cycle template.':'The AI creates a draft only. Nothing is sent until you review and click Send campaign.')+'</div></div></div>'
+      + '<div class="ob-admin-ec-small">'+esc(target==='cycle'?'The AI creates a draft only. Nothing is sent; assigning saves a campaign draft and attaches it to the selected journey step.':'The AI creates a draft only. Nothing is sent until you review and click Send campaign.')+'</div></div></div>'
       + '<div class="ob-admin-ec-box"><h3>2. Edit and approve</h3>'+draftFields()+'</div></div><div>'+previewCard()+'</div></div>';
   }
-  function uploadPreviewHtml(){
-    var p=state.importPreview;
-    if(!p) return '<div class="ob-admin-ec-empty">Upload a CSV, TSV, TXT, or .xlsx file and preview it here.</div>';
+  function importPreviewHtml(p, emptyCopy){
+    if(!p) return '<div class="ob-admin-ec-empty">'+esc(emptyCopy||'Preview contacts here first.')+'</div>';
     var accepted=(p.accepted||[]).slice(0,8).map(function(r){return '<tr><td>'+esc(r.email)+'</td><td>'+esc(r.name||'-')+'</td><td>'+esc((r.tags||[]).join(', '))+'</td></tr>';}).join('');
     var rejected=(p.rejected||[]).slice(0,8).map(function(r){return '<tr class="ob-admin-ec-muted-row"><td>'+esc(r.row)+'</td><td>'+esc(r.email||'-')+'</td><td>'+esc(r.reason||'Rejected')+'</td></tr>';}).join('');
     return '<div class="ob-admin-ec-kpis">'+stat('Accepted', (p.accepted||[]).length)+stat('Rejected', (p.rejected||[]).length)+stat('Rows read', p.total_rows||0)+'</div>'
@@ -51630,6 +51702,8 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       + '<table class="ob-admin-ec-table" style="margin-top:10px"><thead><tr><th>Email</th><th>Name</th><th>Tags</th></tr></thead><tbody>'+accepted+'</tbody></table>'
       + (rejected?'<h3 style="margin-top:14px">Rejected rows</h3><table class="ob-admin-ec-table"><thead><tr><th>Row</th><th>Email</th><th>Reason</th></tr></thead><tbody>'+rejected+'</tbody></table>':'');
   }
+  function uploadPreviewHtml(){ return importPreviewHtml(state.importPreview, 'Upload a CSV, TSV, TXT, or .xlsx file and preview it here.'); }
+  function manualPreviewHtml(){ return importPreviewHtml(state.manualPreview, 'Paste contacts and preview them here.'); }
   function captureUploadFields(){
     var name=$('ob-admin-import-list-name');
     var consent=$('ob-admin-import-consent');
@@ -51637,6 +51711,20 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     if(name) state.importListName=name.value||'';
     if(consent) state.importConsent=consent.value||'';
     if(confirm) state.importConfirmed=!!confirm.checked;
+  }
+  function captureManualFields(){
+    var text=$('ob-admin-manual-contacts');
+    var mode=$('ob-admin-manual-list-mode');
+    var listId=$('ob-admin-manual-list-id');
+    var listName=$('ob-admin-manual-list-name');
+    var consent=$('ob-admin-manual-consent');
+    var confirm=$('ob-admin-manual-confirm');
+    if(text) state.manualText=text.value||'';
+    if(mode) state.manualListMode=mode.value||'new';
+    if(listId) state.manualListId=listId.value||'';
+    if(listName) state.manualListName=listName.value||'';
+    if(consent) state.manualConsent=consent.value||'';
+    if(confirm) state.manualConfirmed=!!confirm.checked;
   }
   function listsTableHtml(){
     if(!lists().length) return '<div class="ob-admin-ec-empty">No uploaded lists yet.</div>';
@@ -51682,6 +51770,9 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   function uploadsHtml(){
     var fileName = state.file && state.file.filename ? state.file.filename : 'No file selected yet';
     var busy = state.importBusy ? 'disabled' : '';
+    var manualBusy = state.manualBusy ? 'disabled' : '';
+    var manualMode = state.manualListMode || 'new';
+    var existingListSelect = lists().length ? '<label style="display:'+(manualMode==='existing'?'grid':'none')+'">Existing list<select id="ob-admin-manual-list-id" onchange="window.OBAdminEmailCenter.syncManualForm()">'+lists().map(function(l){ return '<option value="'+esc(l.id)+'" '+(l.id===state.manualListId?'selected':'')+'>'+esc(l.name||'Imported list')+' ('+fmt(l.contact_count||0)+')</option>'; }).join('')+'</select></label>' : '<div class="ob-admin-ec-small" style="display:'+(manualMode==='existing'?'block':'none')+'">Create a list first, or switch back to New list.</div>';
     return '<div class="ob-admin-ec-grid"><div><div class="ob-admin-ec-box"><h3>Upload opted-in contacts</h3><div class="ob-admin-ec-form">'
       + '<label class="ob-admin-ec-file"><span>CSV, TSV, TXT, or Excel .xlsx</span><strong>Choose file</strong><span class="ob-admin-ec-file-meta" id="ob-admin-upload-file-name">'+esc(fileName)+'</span><input id="ob-admin-upload-file" type="file" accept=".csv,.tsv,.txt,.xlsx,text/csv,text/tab-separated-values" onchange="window.OBAdminEmailCenter.readImportFile(this)"></label>'
       + '<label>New list name<input id="ob-admin-import-list-name" value="'+esc(state.importListName||'')+'" placeholder="June 2026 launch list" oninput="window.OBAdminEmailCenter.syncImportForm()"></label>'
@@ -51690,6 +51781,15 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       + '<div class="ob-admin-ec-actions"><button class="ob-admin-ec-btn primary" type="button" '+busy+' onclick="window.OBAdminEmailCenter.previewImport()">Preview upload</button><button class="ob-admin-ec-btn primary" type="button" '+busy+' onclick="window.OBAdminEmailCenter.commitImport()">Create list and import</button></div>'
       + '<div class="ob-admin-ec-inline-status" data-ob-admin-ec-status>'+esc(state.status||'')+'</div>'
       + '<div class="ob-admin-ec-small">Raw files are parsed in memory and discarded. Contacts are stored only after preview and consent confirmation.</div></div></div>'
+      + '<div class="ob-admin-ec-box"><h3>Add contacts manually</h3><div class="ob-admin-ec-form">'
+      + '<label>Emails, names, and tags<textarea id="ob-admin-manual-contacts" placeholder="alice@example.com, Alice Cohen, vip&#10;bob@example.com&#10;Maya Levi, maya@example.com, launch list" oninput="window.OBAdminEmailCenter.syncManualForm()">'+esc(state.manualText||'')+'</textarea></label>'
+      + '<label>Add contacts to<select id="ob-admin-manual-list-mode" onchange="window.OBAdminEmailCenter.setManualListMode(this.value)"><option value="new" '+(manualMode==='new'?'selected':'')+'>Create a new list</option><option value="existing" '+(manualMode==='existing'?'selected':'')+'>Add to existing list</option></select></label>'
+      + '<label style="display:'+(manualMode==='new'?'grid':'none')+'">New list name<input id="ob-admin-manual-list-name" value="'+esc(state.manualListName||'')+'" placeholder="Manual VIP contacts" oninput="window.OBAdminEmailCenter.syncManualForm()"></label>'+existingListSelect
+      + '<label>Consent source<input id="ob-admin-manual-consent" value="'+esc(state.manualConsent||'')+'" placeholder="Example: phone opt-in, form opt-in, consent email" oninput="window.OBAdminEmailCenter.syncManualForm()"></label>'
+      + '<label class="ob-admin-ec-check" style="text-transform:none;letter-spacing:0;font-weight:700"><input id="ob-admin-manual-confirm" type="checkbox" '+(state.manualConfirmed?'checked':'')+' onchange="window.OBAdminEmailCenter.syncManualForm()"> I confirm every manually added contact gave permission for marketing emails.</label>'
+      + '<div class="ob-admin-ec-actions"><button class="ob-admin-ec-btn primary" type="button" '+manualBusy+' onclick="window.OBAdminEmailCenter.previewManual()">Preview manual contacts</button><button class="ob-admin-ec-btn primary" type="button" '+manualBusy+' onclick="window.OBAdminEmailCenter.commitManual()">Add contacts</button></div>'
+      + '<div class="ob-admin-ec-small">Accepted formats: one email per line, or name/email/tags separated by commas or tabs.</div></div></div>'
+      + '<div class="ob-admin-ec-box"><h3>Manual review</h3>'+manualPreviewHtml()+'</div>'
       + '<div class="ob-admin-ec-box"><h3>Import review</h3>'+uploadPreviewHtml()+'</div></div>'
       + '<div><div class="ob-admin-ec-box"><h3>Uploaded lists</h3>'+listsTableHtml()+'</div><div class="ob-admin-ec-box"><h3>Contacts</h3>'+contactsTableHtml()+'</div></div></div>';
   }
@@ -51734,7 +51834,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   window.OBAdminEmailCenter={
     show:showPanel,
     open:function(tab){ state.tab=tab||'map'; loadAndMaybeContacts(); },
-    renderOnly:function(){ state.target=selectedTarget(); state.audience=selectedAudience(); state.list_id=audienceListId(state.audience); state.cycle_key=selectedCycle(); render(); },
+    renderOnly:function(){ state.target=selectedTarget(); state.audience=selectedAudience(); state.list_id=audienceListId(state.audience); state.cycle_key=selectedCycle(); state.journey_id=selectedJourney(); state.journey_step_id=selectedJourneyStep(); render(); },
     newCampaign:function(){
       state.tab='campaign';
       state.draft=null;
@@ -51743,6 +51843,8 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       state.target='audience';
       state.audience='uploaded_all';
       state.list_id='';
+      state.journey_id=journeys()[0] && journeys()[0].id || '';
+      state.journey_step_id=selectedJourneyObject() && selectedJourneyObject().steps && selectedJourneyObject().steps[0] && selectedJourneyObject().steps[0].id || '';
       state.link_key='auto';
       state.aiBusy=false;
       state.aiPrompt='';
@@ -51790,9 +51892,27 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       api('/campaigns/preview',{method:'POST',body:Object.assign({}, d,{audience_key:a.key||'uploaded_all',list_id:a.list_id||'',link_key:state.link_key})}).then(function(res){state.preview=res.preview||null; render();}).catch(function(e){state.status=e.message; render();});
     },
     reviewCampaign:function(id){ this.editCampaign(id); },
-    setTarget:function(value){ state.target=value==='cycle'?'cycle':'audience'; state.campaign=null; render(); },
+    setTarget:function(value){
+      state.target=value==='cycle'?'cycle':'audience';
+      state.campaign=null;
+      if(state.target==='cycle' && !state.journey_id) {
+        state.journey_id=journeys()[0] && journeys()[0].id || '';
+        var j=selectedJourneyObject();
+        state.journey_step_id=j && j.steps && j.steps[0] && j.steps[0].id || '';
+      }
+      render();
+    },
     setAudience:function(value){ state.audience=value||'uploaded_all'; state.list_id=audienceListId(state.audience); state.campaign=null; render(); },
     setCycle:function(value){ state.cycle_key=value||''; state.campaign=null; render(); },
+    setJourney:function(value){
+      state.journey_id=value||'';
+      var j=selectedJourneyObject();
+      state.journey_step_id=j && j.steps && j.steps[0] && j.steps[0].id || '';
+      state.campaign=null;
+      render();
+    },
+    setJourneyStep:function(value){ state.journey_step_id=value||''; state.campaign=null; render(); },
+    setTestTo:function(value){ state.testTo=String(value||'').trim().slice(0,180); },
     setContactList:function(value){ state.contactOffset=0; state.selectedContacts={}; loadContacts(value||''); },
     setContactLimit:function(value){ var n=Number(value||10); state.contactLimit=[10,100,200,500].indexOf(n)>-1?n:10; state.contactOffset=0; state.selectedContacts={}; loadContacts(); },
     setContactSearch:function(value){ state.contactSearch=String(value||'').slice(0,180); },
@@ -51811,10 +51931,64 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       var type=val('ob-admin-new-type');
       api('/scenarios',{method:'POST',body:{name:val('ob-admin-new-name')||'Custom email cycle',audience:val('ob-admin-new-audience')||'expert',marketing:type==='marketing',transactional:type!=='marketing',unsubscribe_applicable:type==='marketing',sender:'ownlybiz_platform',category:type==='marketing'?'Marketing':'Custom'}}).then(function(){state.status='Cycle created.'; state.tab='marketing'; load();}).catch(function(e){state.status=e.message; render();});
     },
+    createJourney:function(presetKey){
+      state.journeyBusy=true;
+      state.status='Creating marketing journey...';
+      render();
+      api('/journeys',{method:'POST',body:{preset_key:presetKey||'manual_marketing_series'}}).then(function(d){
+        var j=d.journey||{};
+        state.tab='marketing';
+        state.journey_id=j.id||state.journey_id||'';
+        state.journey_step_id=j.steps&&j.steps[0]&&j.steps[0].id||'';
+        state.status='Marketing journey created. Assign campaigns to its steps when ready.';
+        load();
+      }).catch(function(e){state.status=e.message; render();}).finally(function(){state.journeyBusy=false;});
+    },
+    journeyBody:function(id, overrideSteps){
+      var j=journeyById(id) || {};
+      var audience=val(jId(id,'audience')) || journeyAudienceValue(j);
+      var steps=overrideSteps || (j.steps||[]).map(function(step){
+        return {
+          id: step.id,
+          delay_minutes: Number(val(jStepId(id,step.id,'delay')) || step.delay_minutes || 0),
+          campaign_id: val(jStepId(id,step.id,'campaign')) || step.campaign_id || ''
+        };
+      });
+      return {
+        name: val(jId(id,'name')) || j.name || 'Marketing journey',
+        description: val(jId(id,'description')) || j.description || '',
+        trigger_event: val(jId(id,'trigger')) || j.trigger_event || 'manual',
+        status: j.status || 'draft',
+        audience_key: audienceKey(audience),
+        list_id: audienceListIdValue(audience),
+        steps: steps
+      };
+    },
+    saveJourney:function(id){
+      if(!id){ state.status='Choose a journey first.'; render(); return; }
+      api('/journeys/'+encodeURIComponent(id),{method:'PUT',body:this.journeyBody(id)}).then(function(){state.status='Journey saved.'; load();}).catch(function(e){state.status=e.message; render();});
+    },
+    addJourneyStep:function(id){
+      var j=journeyById(id) || {};
+      var steps=(j.steps||[]).map(function(step){ return {id:step.id,delay_minutes:step.delay_minutes||0,campaign_id:step.campaign_id||''}; });
+      var last=steps.length ? Number(steps[steps.length-1].delay_minutes||0) : 0;
+      steps.push({delay_minutes:last ? last + 24*60 : 0,campaign_id:''});
+      api('/journeys/'+encodeURIComponent(id),{method:'PUT',body:this.journeyBody(id,steps)}).then(function(){state.status='Journey step added.'; load();}).catch(function(e){state.status=e.message; render();});
+    },
+    removeJourneyStep:function(id,stepId){
+      if(!confirm('Remove this journey step? The assigned campaign draft will remain in Campaigns.')) return;
+      var j=journeyById(id) || {};
+      var steps=(j.steps||[]).filter(function(step){ return String(step.id||'')!==String(stepId||''); }).map(function(step){ return {id:step.id,delay_minutes:step.delay_minutes||0,campaign_id:step.campaign_id||''}; });
+      api('/journeys/'+encodeURIComponent(id),{method:'PUT',body:this.journeyBody(id,steps)}).then(function(){state.status='Journey step removed.'; load();}).catch(function(e){state.status=e.message; render();});
+    },
+    setJourneyStatus:function(id,status){
+      if(status==='active' && !confirm('Activate this marketing journey? Only use this after every step, audience, and campaign assignment is reviewed.')) return;
+      api('/journeys/'+encodeURIComponent(id)+'/status',{method:'POST',body:{status:status}}).then(function(){state.status=status==='active'?'Journey activated.':'Journey paused.'; load();}).catch(function(e){state.status=e.message; render();});
+    },
     generateAi:function(){
       if(state.aiBusy) return;
       var audienceValue=selectedAudience();
-      var body={target_type:selectedTarget(),audience:audienceKey(audienceValue),list_id:audienceListId(audienceValue),scenario_key:selectedCycle(),prompt:val('ob-admin-ai-prompt'),cta_label:val('ob-admin-ai-cta-label'),cta_url:val('ob-admin-ai-cta-url'),link_key:selectedLinkKey(),generate_image:!!(($('ob-admin-ai-generate-image')||{}).checked),image_prompt:val('ob-admin-ai-image-prompt')};
+      var body={target_type:selectedTarget(),audience:audienceKey(audienceValue),list_id:audienceListId(audienceValue),scenario_key:selectedCycle(),journey_id:selectedJourney(),journey_step_id:selectedJourneyStep(),prompt:val('ob-admin-ai-prompt'),cta_label:val('ob-admin-ai-cta-label'),cta_url:val('ob-admin-ai-cta-url'),link_key:selectedLinkKey(),generate_image:!!(($('ob-admin-ai-generate-image')||{}).checked),image_prompt:val('ob-admin-ai-image-prompt')};
       state.aiPrompt=body.prompt||'';
       state.aiCtaLabel=body.cta_label||'';
       state.aiCtaUrl=body.cta_url||'';
@@ -51848,14 +52022,37 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       api('/campaigns',{method:'POST',body:campaignPayload()}).then(function(d){state.campaign=d.campaign||null; state.status='Campaign draft saved.'; load();}).catch(function(e){state.status=e.message; render();});
     },
     applyToCycle:function(){
-      if(!state.draft){ state.status='Generate or write an email draft before applying it to a cycle.'; render(); return; }
-      if(!selectedCycle()){ state.status='Choose a marketing cycle first.'; render(); return; }
-      if(!(($('ob-admin-send-confirm-consent')||{}).checked) || !(($('ob-admin-send-confirm-preview')||{}).checked)){ state.status='Confirm review before applying this draft to the selected cycle.'; render(); return; }
-      if(!confirm('Apply this draft to the selected marketing cycle? No email will be sent.')) return;
-      api('/campaigns/apply-cycle',{method:'POST',body:campaignPayload()}).then(function(){state.status='Marketing cycle updated. No email was sent.'; load();}).catch(function(e){state.status=e.message; render();});
+      if(!state.draft){ state.status='Generate or write an email draft before assigning it to a journey step.'; render(); return; }
+      var journeyId=selectedJourney();
+      var stepId=selectedJourneyStep();
+      if(!journeyId){ state.status='Create or choose a marketing journey first.'; render(); return; }
+      if(!stepId){ state.status='Choose a journey step first.'; render(); return; }
+      if(!(($('ob-admin-send-confirm-consent')||{}).checked) || !(($('ob-admin-send-confirm-preview')||{}).checked)){ state.status='Confirm review before assigning this draft to the selected journey step.'; render(); return; }
+      if(!confirm('Save this draft and assign it to the selected journey step? No email will be sent.')) return;
+      var payload=campaignPayload();
+      payload.target_type='cycle';
+      api('/campaigns',{method:'POST',body:payload}).then(function(d){
+        var c=d.campaign||{};
+        state.campaign=c;
+        return api('/journeys/'+encodeURIComponent(journeyId)+'/assign-step',{method:'POST',body:{step_id:stepId,campaign_id:c.id}});
+      }).then(function(){state.status='Campaign saved and assigned to the journey step. No email was sent.'; state.tab='marketing'; load();}).catch(function(e){state.status=e.message; render();});
+    },
+    sendTestCampaign:function(id){
+      var campaignId=id || (state.campaign && state.campaign.id);
+      if(!campaignId){ state.status='Save the campaign draft before sending a test.'; render(); return; }
+      var input=$('ob-admin-campaign-test-to');
+      if(input) state.testTo=String(input.value||'').trim();
+      if(!confirm('Send a test email for this campaign to the admin review address?')) return;
+      state.status='Sending test email...';
+      render();
+      api('/campaigns/'+encodeURIComponent(campaignId)+'/test-send',{method:'POST',body:{to:state.testTo||''}}).then(function(d){
+        var r=d.result||{};
+        state.status='Test email sent to '+(r.to||'admin')+'.';
+        render();
+      }).catch(function(e){state.status=e.message; render();});
     },
     sendCampaign:function(){
-      if(selectedTarget()==='cycle'){ state.status='This mode updates a marketing cycle and does not send email. Switch to audience/list to send a campaign.'; render(); return; }
+      if(selectedTarget()==='cycle'){ state.status='This mode assigns a campaign to a marketing journey and does not send email. Switch to audience/list to send a campaign.'; render(); return; }
       if(!state.campaign || !state.campaign.id){ state.status='Save the campaign draft before sending.'; render(); return; }
       if(!(($('ob-admin-send-confirm-consent')||{}).checked) || !(($('ob-admin-send-confirm-preview')||{}).checked)){ state.status='Confirm consent and preview review before sending.'; render(); return; }
       if(!confirm('Send this campaign now to the selected opted-in audience?')) return;
@@ -51888,6 +52085,33 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       if(!state.importConfirmed){ paintStatus('Confirm that every imported contact gave permission for marketing email.'); render(); return; }
       state.importBusy=true; paintStatus('Creating list and importing opted-in contacts...'); render();
       api('/imports/commit',{method:'POST',body:Object.assign({},state.file,{list_name:state.importListName,consent_source:state.importConsent,consent_confirmed:state.importConfirmed})}).then(function(d){var r=d.result||d.import||{}; state.importPreview=null; state.file=null; state.importListName=''; state.importConsent=''; state.importConfirmed=false; state.importBusy=false; state.contactListId=r.list_id||state.contactListId||''; paintStatus('List imported'+(r.accepted_rows!=null?': '+fmt(r.accepted_rows)+' contacts added.':'.')); loadAndMaybeContacts();}).catch(function(e){state.importBusy=false; paintStatus(e.message); render();});
+    },
+    setManualListMode:function(value){
+      captureManualFields();
+      state.manualListMode=value==='existing'?'existing':'new';
+      render();
+    },
+    syncManualForm:function(){
+      captureManualFields();
+    },
+    previewManual:function(){
+      captureManualFields();
+      if(!String(state.manualText||'').trim()){ paintStatus('Paste at least one email address first.'); render(); return; }
+      paintStatus('Reading manual contact preview...');
+      api('/imports/preview',{method:'POST',body:{manual_text:state.manualText,filename:'manual-contacts.txt'}}).then(function(d){state.manualPreview=d.preview||null; paintStatus('Manual preview ready. Review accepted and rejected rows, then add contacts.'); render();}).catch(function(e){paintStatus(e.message); render();});
+    },
+    commitManual:function(){
+      captureManualFields();
+      if(!String(state.manualText||'').trim()){ paintStatus('Paste at least one email address first.'); render(); return; }
+      if(!state.manualPreview){ paintStatus('Preview the manual contacts before adding them.'); render(); return; }
+      if(state.manualListMode==='existing' && !state.manualListId){ paintStatus('Choose an existing list or switch to New list.'); render(); return; }
+      if(state.manualListMode!=='existing' && !String(state.manualListName||'').trim()){ paintStatus('Add a new list name for these contacts.'); render(); return; }
+      if(!String(state.manualConsent||'').trim()){ paintStatus('Add the consent source for these contacts.'); render(); return; }
+      if(!state.manualConfirmed){ paintStatus('Confirm that every manually added contact gave permission for marketing email.'); render(); return; }
+      state.manualBusy=true; paintStatus('Adding manually entered opted-in contacts...'); render();
+      var body={manual_text:state.manualText,filename:'manual-contacts.txt',source:'manual_entry',consent_source:state.manualConsent,consent_confirmed:state.manualConfirmed};
+      if(state.manualListMode==='existing') body.list_id=state.manualListId; else body.list_name=state.manualListName;
+      api('/imports/commit',{method:'POST',body:body}).then(function(d){var r=d.result||d.import||{}; state.manualText=''; state.manualPreview=null; state.manualListName=''; state.manualConsent=''; state.manualConfirmed=false; state.manualBusy=false; state.contactListId=r.list_id||state.contactListId||''; paintStatus('Manual contacts added'+(r.accepted_rows!=null?': '+fmt(r.accepted_rows)+' contacts added.':'.')); loadAndMaybeContacts();}).catch(function(e){state.manualBusy=false; paintStatus(e.message); render();});
     },
     deleteList:function(id,name){
       if(!id) return;

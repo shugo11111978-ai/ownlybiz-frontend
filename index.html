@@ -13788,6 +13788,23 @@ async function savePaymentConfig() {
   function compactLivePrice(text){
     return cleanText(text).replace(/\s*[·-]\s*\d+\s*min(?:ute)?s?\s*free.*$/i, '');
   }
+  function liveRateNumber(channel){
+    var e = window._currentExpert || {};
+    var keys = ['rate_' + channel, channel + '_pm'];
+    if(channel === 'chat') keys.push('chat_rate', 'rate', 'rate_per_min');
+    if(channel === 'voice') keys.push('voice_rate');
+    if(channel === 'video') keys.push('video_rate');
+    for(var i = 0; i < keys.length; i++){
+      var n = parseFloat(e[keys[i]]);
+      if(isFinite(n) && n > 0) return n;
+    }
+    return null;
+  }
+  function liveRateCopy(channel, fallbackText){
+    var n = liveRateNumber(channel);
+    if(n != null) return '$' + n.toFixed(2) + '/min';
+    return compactLivePrice(fallbackText);
+  }
   function freeMinuteText(text){
     var match = cleanText(text).match(/(\d+)\s*min(?:ute)?s?\s*free/i);
     return match ? match[1] + ' min free' : '';
@@ -13915,9 +13932,9 @@ async function savePaymentConfig() {
     var freeValue = bookAvailableFree(channel);
     var freeCopy = freeValue > 0 ? freeValue + ' min free' : '';
     var freePill = card.querySelector('.ob-live-free-pill');
-    var rateCopy = compactLivePrice(priceCopy);
+    var rateCopy = liveRateCopy(channel, priceCopy);
     if(priceEl && rateCopy) priceEl.setAttribute('data-ob-full-price', rateCopy + (freeCopy ? ' · ' + freeCopy : ''));
-    if(!disabled && priceEl && priceCopy) setText(priceEl, rateCopy);
+    if(!disabled && priceEl && rateCopy) setText(priceEl, rateCopy);
     if(!disabled && freeCopy) {
       if(!freePill) {
         freePill = document.createElement('div');
@@ -16533,11 +16550,11 @@ function loadClients() {
     slug = slug || window._browseExpert || "expert-slug";
     // Call original first
     if (_origLEW) _origLEW.call(this, slug);
-	    // Then fetch from API and update nav-logo-text. Include the client token when
-	    // present so the backend can return client-specific free-minute availability.
-	    var _authTok = sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || localStorage.getItem('ob_client_token') || '';
-	    var _fetchOpts = _authTok ? { headers: { Authorization: 'Bearer ' + _authTok } } : {};
-	    fetch("https://ownlybiz-backend-production.up.railway.app/api/experts/" + slug, _fetchOpts)
+    // Then fetch from API and update nav-logo-text. Include the client token when
+    // present so the backend can return client-specific free-minute availability.
+    var _authTok = sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || localStorage.getItem('ob_client_token') || '';
+    var _fetchOpts = _authTok ? { headers: { Authorization: 'Bearer ' + _authTok } } : {};
+    fetch("https://ownlybiz-backend-production.up.railway.app/api/experts/" + slug, _fetchOpts)
       .then(function(r){ return r.json(); })
       .then(function(d){
         var e = d.expert || d;
@@ -16551,17 +16568,19 @@ function loadClients() {
         // Sync freeMinutes from expert data (API returns single free_minutes field)
         if(typeof freeMinutes !== 'undefined'){
           var _numFree = function(v){ var n=parseInt(v,10); return Number.isFinite(n)&&n>0?n:0; };
-	          var _fm = _numFree(e.chat_free_min_available != null ? e.chat_free_min_available : (e.free_minutes_available != null ? e.free_minutes_available : (e.chat_free_min || e.free_minutes)));
-	          // Check if client already used free minutes with this expert
-	          var _eid=e.user_id||e.id;
-	          if(_eid&&obIsFreeUsed(_eid,'chat')) _fm=0;
-	          freeMinutes.chat  = _fm;
-	          freeMinutes.voice = _eid&&obIsFreeUsed(_eid,'voice') ? 0 : _numFree(e.voice_free_min_available != null ? e.voice_free_min_available : (e.voice_free_min || e.free_minutes_voice));
-	          freeMinutes.video = _eid&&obIsFreeUsed(_eid,'video') ? 0 : _numFree(e.video_free_min_available != null ? e.video_free_min_available : (e.video_free_min || e.free_minutes_video));
+          var _fm = _numFree(e.chat_free_min_available != null ? e.chat_free_min_available : (e.free_minutes_available != null ? e.free_minutes_available : (e.chat_free_min || e.free_minutes)));
+          // Check if client already used free minutes with this expert
+          var _eid=e.user_id||e.id;
+          if(_eid&&obIsFreeUsed(_eid,'chat')) _fm=0;
+          freeMinutes.chat  = _fm;
+          freeMinutes.voice = _eid&&obIsFreeUsed(_eid,'voice') ? 0 : _numFree(e.voice_free_min_available != null ? e.voice_free_min_available : (e.voice_free_min || e.free_minutes_voice));
+          freeMinutes.video = _eid&&obIsFreeUsed(_eid,'video') ? 0 : _numFree(e.video_free_min_available != null ? e.video_free_min_available : (e.video_free_min || e.free_minutes_video));
           if(typeof window.obRefreshSessionStartModes==='function') window.obRefreshSessionStartModes();
         }
         // Update LIVE/OFFLINE badge
         setExpertOnlineStatus(!!e.is_online);
+        if(typeof window.obRefreshPublicFreeMinuteCopy === 'function') window.obRefreshPublicFreeMinuteCopy(e);
+        if(typeof window.obRefreshBookSelectorCards === 'function') window.obRefreshBookSelectorCards();
       }).catch(function(){});
   };
 })();

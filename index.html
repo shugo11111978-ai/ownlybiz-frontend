@@ -54414,6 +54414,13 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     value = String(value || '').trim().toLowerCase().replace(/^\/+|\/+$/g,'').split('/')[0] || '';
     return /^[a-z0-9][a-z0-9-]{1,62}$/i.test(value) ? value : '';
   }
+  function slugFromPublicLocation(){
+    var hostSlug = ownlybizSubdomainSlug();
+    if(hostSlug) return hostSlug;
+    var first = String(location.pathname || '').replace(/^\/+/, '').split('/')[0] || '';
+    var reserved = ['admin','dash','login','signup','api','legal','terms','pricing','how','features','experts','contact'];
+    return reserved.indexOf(first.toLowerCase()) >= 0 ? '' : expertSlug(first);
+  }
   function publicView(){
     return document.getElementById('view-4');
   }
@@ -54459,8 +54466,8 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     }
     if(publicGate.inFlight[slug]) return publicGate.inFlight[slug];
     publicGate.pending[slug] = true;
-    if(!hasRenderedExpertShell()) renderPublicGate(slug, 'loading');
-    publicGate.inFlight[slug] = fetch(apiBase() + '/api/experts/' + encodeURIComponent(slug), {cache:'no-store'})
+    var timeout = new Promise(function(_, reject){ setTimeout(function(){ reject(new Error('Expert site check timed out')); }, 4500); });
+    publicGate.inFlight[slug] = Promise.race([fetch(apiBase() + '/api/experts/' + encodeURIComponent(slug), {cache:'no-store'}), timeout])
       .then(function(response){
         return response.json().catch(function(){ return {}; }).then(function(body){
           if(!response.ok || body.error) throw new Error(body.error || 'Expert site is not published yet');
@@ -54506,7 +54513,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     var view = publicView();
     if(!view) return;
     view.dataset.obBookingBlocked = '1';
-    var names = /^(book a session|start session now|start session now →|book for later|start|schedule)$/i;
+    var names = /^(book a session|start session now|start session now →|start chat now|book for later|chat with .+ now|call|video|start|schedule)$/i;
     Array.prototype.slice.call(view.querySelectorAll('a,button,[role="button"]')).forEach(function(el){
       var text = String(el.innerText || el.textContent || '').trim().replace(/\s+/g,' ');
       var isBookRoute = el.tagName === 'A' && (/\/book(?:$|\?)/i.test(el.getAttribute('href') || '') || /showExpertPage\(['"]book['"]\)/i.test(el.getAttribute('onclick') || ''));
@@ -54543,7 +54550,21 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     var reason = publicBookingBlockReason(data);
     window.__obPublicBookingBlockReason = reason;
     if(!reason) return;
-    [0,80,260,700].forEach(function(ms){ setTimeout(function(){ applyPublicBookingBlock(reason); }, ms); });
+    [0,80,260,700,1600,3200].forEach(function(ms){ setTimeout(function(){ applyPublicBookingBlock(reason); }, ms); });
+  }
+  function refreshPublicBookabilityFromApi(){
+    var slug = slugFromPublicLocation();
+    if(!slug) return;
+    fetch(apiBase() + '/api/experts/' + encodeURIComponent(slug), {cache:'no-store'})
+      .then(function(response){ return response.json().catch(function(){ return {}; }).then(function(body){ if(!response.ok || body.error) return null; return body.expert || body; }); })
+      .then(function(expert){
+        if(!expert) return;
+        publicGate.payload[slug] = expert;
+        if(String(expert.slug || '').toLowerCase() === slug) publicGate.allowed[slug] = true;
+        window._currentExpert = Object.assign(window._currentExpert || {}, expert);
+        syncPublicBookingBlock(expert);
+      })
+      .catch(function(){});
   }
 
   function installPublicSubdomainGate(){
@@ -54766,6 +54787,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
   function boot(){
     installPublicSubdomainGate();
     installPublicBookingBlock();
+    refreshPublicBookabilityFromApi();
     installPricingRateRepair();
     installPracticeCardRepair();
     repairPricingRates();

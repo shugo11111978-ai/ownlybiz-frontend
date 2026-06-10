@@ -54514,15 +54514,28 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     var data = Object.assign({}, window._currentExpert || {}, source || {});
     return positive(data['rate_' + ch], data[ch + '_pm'], data[ch + '_rate'], fallback);
   }
-  function setValue(id, value){
+  function setValue(id, value, force){
     var el = document.getElementById(id);
-    if(el && 'value' in el) el.value = Number(value).toFixed(2).replace(/\.00$/,'');
+    if(el && 'value' in el){
+      if(!force && document.activeElement === el) return;
+      var next = Number(value).toFixed(2).replace(/\.00$/,'');
+      el.value = next;
+      try { el.setAttribute('value', next); } catch(e) {}
+    }
   }
   function setText(id, value){
     var el = document.getElementById(id);
     if(el) el.textContent = value;
   }
-  function repairPricingRates(source){
+  function pricingSurfaceActive(){
+    var path = location.pathname || '';
+    var panel = document.getElementById('db-panel-payments');
+    return (path.indexOf('/dash/') === 0 || path === '/admin') && (
+      path.indexOf('/pricing') >= 0 ||
+      !!(panel && panel.classList && panel.classList.contains('show-pricing'))
+    );
+  }
+  function repairPricingRates(source, force){
     if(!document.getElementById('rate-chat') && !document.getElementById('sfield-chat-rate')) return;
     var rates = {
       chat: currentRate('chat', source),
@@ -54531,8 +54544,8 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     };
     [['chat','rate-chat','sfield-chat-rate'],['voice','rate-voice','sfield-voice-rate'],['video','rate-video','sfield-video-rate']].forEach(function(row){
       var ch = row[0], main = document.getElementById(row[1]), settings = document.getElementById(row[2]);
-      if(main && positive(main.value) <= 0) setValue(row[1], rates[ch]);
-      if(settings && positive(settings.value) <= 0) setValue(row[2], rates[ch]);
+      if(main && positive(main.value) <= 0) setValue(row[1], rates[ch], force);
+      if(settings && positive(settings.value) <= 0) setValue(row[2], rates[ch], force);
     });
     setText('rp-chat', '$' + rates.chat.toFixed(2) + '/min');
     setText('rp-voice', '$' + rates.voice.toFixed(2) + '/min');
@@ -54567,11 +54580,37 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     var oldSavePricing = window.saveExpertPricing;
     if(typeof oldSavePricing === 'function' && !oldSavePricing.__obHighRiskRateRepair){
       window.saveExpertPricing = function(){
-        repairPricingRates();
+        repairPricingRates(null, true);
         return oldSavePricing.apply(this, arguments);
       };
       window.saveExpertPricing.__obHighRiskRateRepair = true;
     }
+  }
+  function installPricingRateWatcher(){
+    if(window.__obHighRiskPricingRateWatcher) return;
+    window.__obHighRiskPricingRateWatcher = true;
+    var lastRun = 0;
+    function runSoon(){
+      if(!pricingSurfaceActive()) return;
+      var now = Date.now();
+      if(now - lastRun < 140) return;
+      lastRun = now;
+      setTimeout(function(){ repairPricingRates(); }, 0);
+    }
+    [120,360,900,1800,3200,5600,9000,13000,18000,24000].forEach(function(ms){
+      setTimeout(function(){ repairPricingRates(); }, ms);
+    });
+    try {
+      new MutationObserver(runSoon).observe(document.body, {childList:true, subtree:true});
+    } catch(e) {}
+    setInterval(function(){
+      if(!pricingSurfaceActive()) return;
+      var bad = ['rate-chat','rate-voice','rate-video','sfield-chat-rate','sfield-voice-rate','sfield-video-rate'].some(function(id){
+        var el = document.getElementById(id);
+        return el && positive(el.value) <= 0 && document.activeElement !== el;
+      });
+      if(bad) repairPricingRates();
+    }, 1000);
   }
 
   function syncPracticeCommandCard(){
@@ -54642,6 +54681,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
   function boot(){
     installPublicSubdomainGate();
     installPricingRateRepair();
+    installPricingRateWatcher();
     installPracticeCardRepair();
     repairPricingRates();
     syncPracticeCommandCard();

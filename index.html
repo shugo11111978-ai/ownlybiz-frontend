@@ -1747,6 +1747,13 @@
     var mode = activeSessionCreditMode();
     var targets = visibleSessionTargets();
     if(!targets.length) return;
+    if(mode !== 'prepaid'){
+      targets.forEach(function(screen){
+        var oldBar = screen.querySelector('[id^="ob-credit-session-bar-"]');
+        if(oldBar && oldBar.parentNode) oldBar.parentNode.removeChild(oldBar);
+      });
+      return;
+    }
     var d = await loadClientCreditSummary();
     if(!d || !(d.settings && d.settings.is_enabled)){
       document.querySelectorAll('[id^="ob-credit-session-bar-"]').forEach(function(bar){ bar.style.display='none'; });
@@ -8397,7 +8404,7 @@ if (!window.toast) {
             <div style="padding:20px 16px;overflow-y:auto;height:100%;">
               <!-- Expert card -->
               <div style="display:flex;align-items:center;gap:14px;background:rgba(196,98,45,.08);border:1.5px solid rgba(196,98,45,.2);border-radius:14px;padding:16px;margin-bottom:20px;">
-                <div style="width:52px;height:52px;border-radius:50%;background:var(--terra);color:white;font-size:18px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;">SC</div>
+                <div id="presess-expert-avatar" style="width:52px;height:52px;border-radius:50%;background:var(--terra);color:white;font-size:18px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;">EX</div>
                 <div>
                   <div style="font-weight:700;font-size:16px;color:var(--brown);" id="presess-expert-name">Expert</div>
                   <div style="font-size:13px;color:var(--gray-400);" id="presess-expert-title">Consultant</div>
@@ -34005,6 +34012,16 @@ body.ob-ui-dark .ob-ui-theme-toggle{
   color:#FFFDF8!important;
   text-shadow:none!important;
 }
+#screen-PRESESS #presess-expert-avatar{
+  background-size:cover!important;
+  background-position:center!important;
+  overflow:hidden!important;
+  box-shadow:inset 0 0 0 1px rgba(255,255,255,.34);
+}
+#screen-PRESESS #presess-expert-avatar.has-image{
+  color:transparent!important;
+  font-size:0!important;
+}
 #screen-PRESESS .ob-session-detail-row{
   display:grid;
   grid-template-columns:minmax(92px,.8fr) minmax(0,1.2fr);
@@ -34835,6 +34852,12 @@ body.ob-ui-light #live-session-notes:focus{
 #view-5 .session-header{
   background:linear-gradient(135deg,#17110D,#2B1810)!important;
   border-bottom:1px solid rgba(255,250,240,.08);
+}
+#view-5 #screen-A4 .session-header{
+  position:sticky!important;
+  top:0!important;
+  z-index:42!important;
+  box-shadow:0 14px 28px rgba(18,13,10,.24);
 }
 #view-5 #screen-A4 .session-header > div:first-child{
   display:grid!important;
@@ -43601,6 +43624,93 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     ensurePromoRow();
     setText('req-promo', promoLabel(sess, opts));
   }
+  function expertWebsiteContent(expert){
+    expert = expert || window._currentExpert || {};
+    var wc = expert.website_content || {};
+    if(typeof wc === 'string'){
+      try { wc = JSON.parse(wc) || {}; } catch(e) { wc = {}; }
+    }
+    return wc || {};
+  }
+  function firstClean(values){
+    for(var i=0;i<values.length;i++){
+      var value = values[i];
+      if(Array.isArray(value)) value = value.filter(Boolean).join(', ');
+      value = String(value == null ? '' : value).trim();
+      if(value) return value;
+    }
+    return '';
+  }
+  function expertInitials(name){
+    var words = String(name || '').trim().split(/\s+/).filter(Boolean);
+    var letters = words.slice(0, 2).map(function(word){ return word.charAt(0); }).join('').toUpperCase();
+    return letters || 'EX';
+  }
+  function trustedImageUrl(value){
+    value = String(value || '').trim();
+    if(!value) return '';
+    if(/^https?:\/\//i.test(value) || value.charAt(0) === '/' || /^data:image\//i.test(value)) return value;
+    return '';
+  }
+  function expertCardImage(expert){
+    var wc = expertWebsiteContent(expert);
+    return trustedImageUrl(firstClean([
+      wc.logo_image,
+      expert && expert.logo_url,
+      wc.profile_image,
+      wc.favicon_image,
+      expert && expert.avatar_url,
+      expert && expert.user_avatar_url,
+      expert && expert.profile_image
+    ]));
+  }
+  function expertProfessionLabel(expert){
+    expert = expert || window._currentExpert || {};
+    var wc = expertWebsiteContent(expert);
+    var explicit = firstClean([
+      expert.title,
+      expert.profession,
+      expert.professional_title,
+      expert.specialty,
+      expert.category
+    ]);
+    if(explicit && explicit.toLowerCase() !== 'consultant') return explicit;
+    var tags = Array.isArray(expert.tags) ? expert.tags.join(' ') : String(expert.tags || '');
+    var haystack = [
+      expert.name,
+      expert.slug,
+      expert.hero_tagline,
+      wc.hero_tagline,
+      wc.svc_subtitle,
+      expert.about_text,
+      expert.bio,
+      tags
+    ].map(function(value){ return String(value == null ? '' : value); }).join(' ').toLowerCase();
+    if(/\b(psychic|tarot|spiritual|intuitive|astrology|numerology)\b/i.test(haystack)){
+      if(/\bintuitive\b/i.test(haystack)) return 'Intuitive psychic reader';
+      return 'Psychic reader';
+    }
+    if(/\b(coach|coaching)\b/i.test(haystack)) return 'Coach';
+    if(/\b(strategy|business|consultant|consulting)\b/i.test(haystack)) return 'Consultant';
+    return 'Expert advisor';
+  }
+  function refreshPreSessionExpertIdentity(){
+    var expert = window._currentExpert || {};
+    var name = firstClean([expert.name, expert.display_name, expert.email_from_name, expert.title, 'Expert']);
+    setText('presess-expert-name', name);
+    setText('presess-expert-title', expertProfessionLabel(expert));
+    var avatar = document.getElementById('presess-expert-avatar');
+    if(!avatar) return;
+    var image = expertCardImage(expert);
+    avatar.classList.toggle('has-image', !!image);
+    if(image){
+      avatar.textContent = '';
+      avatar.style.backgroundImage = 'url("' + image.replace(/["\\]/g, '') + '")';
+    } else {
+      avatar.style.backgroundImage = '';
+      avatar.textContent = expertInitials(name);
+    }
+  }
   function applyPreSessionInfo(sess){
     sess = sess || {};
     var ch = channelFrom(sess, {});
@@ -43612,6 +43722,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       var expert = window._currentExpert || {};
       rate = parseFloat(expert['rate_' + ch] || expert[ch + '_pm'] || (ch === 'chat' ? 3.5 : ch === 'voice' ? 4 : 5));
     }
+    refreshPreSessionExpertIdentity();
     setText('presess-rate', money(rate) + '/min');
     var freeRow = document.getElementById('presess-free-row');
     var freeNote = document.getElementById('presess-free-note');
@@ -43652,6 +43763,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     }
     setText('presess-payment', baseLabel);
   }
+  window.obRefreshPreSessionExpertIdentity = refreshPreSessionExpertIdentity;
   var previousShowSessionRequest = window.showSessionRequest;
   if(typeof previousShowSessionRequest === 'function'){
     window.showSessionRequest = function(opts){

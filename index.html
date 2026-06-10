@@ -7168,9 +7168,12 @@ if (!window.toast) {
                 <div class="ob-profile-basics-hint">Saved as your primary expertise tag.</div>
               </div>
               <div class="ob-profile-basics-field">
-                <label>Public link</label>
-                <div class="settings-field-input" id="we-profile-public-link" style="display:flex;align-items:center;color:var(--gray-400);background:var(--cream);min-height:44px;">Auto-created during signup</div>
-                <div class="ob-profile-basics-hint">The link already exists; editing it is optional later.</div>
+                <label for="we-profile-public-link">Public link</label>
+                <div style="display:flex;align-items:stretch;gap:0;">
+                  <input class="settings-field-input" id="we-profile-public-link" inputmode="url" autocomplete="off" spellcheck="false" placeholder="your-name" aria-describedby="we-profile-public-link-hint" onblur="_obNormalizeProfileLinkInput(this)" style="border-radius:10px 0 0 10px!important;border-right:none!important;min-width:0!important;">
+                  <span class="settings-field-input" aria-hidden="true" style="display:flex;align-items:center;width:auto!important;min-width:0!important;border-radius:0 10px 10px 0!important;color:var(--gray-400)!important;white-space:nowrap;">.ownlybiz.com</span>
+                </div>
+                <div class="ob-profile-basics-hint" id="we-profile-public-link-hint">Use lowercase letters, numbers, and hyphens. Changes apply after saving.</div>
               </div>
               <div class="ob-profile-basics-field full">
                 <label for="we-profile-bio">Short intro</label>
@@ -18729,6 +18732,22 @@ function _obCleanInput(id) {
   var el = document.getElementById(id);
   return el ? String(el.value || '').replace(/\s+/g, ' ').trim() : '';
 }
+function _obNormalizeProfileSlug(value) {
+  var raw = String(value || '').trim().toLowerCase();
+  raw = raw.replace(/^https?:\/\//, '').replace(/^www\./, '');
+  raw = raw.replace(/^ownlybiz\.com\/+/, '');
+  raw = raw.replace(/\/.*$/, '').replace(/\.ownlybiz\.com$/, '');
+  return raw.replace(/[^a-z0-9-]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 48);
+}
+function _obCleanSlugInput(id) {
+  var el = document.getElementById(id);
+  return el ? _obNormalizeProfileSlug(el.value) : '';
+}
+function _obNormalizeProfileLinkInput(el) {
+  if (!el) return;
+  el.value = _obNormalizeProfileSlug(el.value);
+  if (typeof updateSlug === 'function') updateSlug(el.value);
+}
 function _obProfileTags(raw) {
   if (Array.isArray(raw)) return raw.map(function(v){ return String(v || '').trim(); }).filter(Boolean);
   if (typeof raw === 'string') {
@@ -18756,8 +18775,12 @@ function _obMergePrimarySpecialty(existing, primary) {
   return out;
 }
 function _obSetProfileBasicsLink(slug) {
+  var clean = _obNormalizeProfileSlug(slug);
   var el = document.getElementById('we-profile-public-link');
-  if (el) el.textContent = slug ? slug + '.ownlybiz.com' : 'Auto-created during signup';
+  if (el) el.value = clean || '';
+  var legacySlug = document.getElementById('sfield-slug');
+  if (legacySlug && clean) legacySlug.value = clean;
+  if (clean && typeof updateSlug === 'function') updateSlug(clean);
 }
 
 function wePreviewImage(input, previewId) {
@@ -18795,6 +18818,14 @@ function saveWebsiteContent() {
   var profileTitle = _obCleanInput('we-profile-title');
   var profileBio = _obCleanInput('we-profile-bio');
   var profileSpecialty = _obCleanInput('we-profile-specialty');
+  _obNormalizeProfileLinkInput(document.getElementById('we-profile-public-link'));
+  var profileSlug = _obCleanSlugInput('we-profile-public-link');
+  var currentProfileSlug = _obNormalizeProfileSlug(window._websiteData && window._websiteData.slug);
+  if (profileSlug && profileSlug.length < 3) {
+    _showToast('Public link must be at least 3 characters', 'red');
+    if (btn) { btn.disabled = false; btn.textContent = 'Save All Changes'; }
+    return;
+  }
   var profileTags = _obMergePrimarySpecialty(window._websiteData && window._websiteData.tags, profileSpecialty);
   var nextWebsiteContent = Object.assign({}, existingWc, {
     hero_cta: document.getElementById('we-hero-cta')?.value || '',
@@ -18849,6 +18880,7 @@ function saveWebsiteContent() {
     theme_color: (window.obGetWebsiteDesignTokens && window.obGetWebsiteDesignTokens().accent) || document.getElementById('we-accent-color')?.value || '',
     website_content: JSON.stringify(nextWebsiteContent)
   };
+  if (profileSlug && profileSlug !== currentProfileSlug) payload.slug = profileSlug;
 
   fetch('https://ownlybiz-backend-production.up.railway.app/api/auth/me', {
     method: 'PUT',
@@ -18858,6 +18890,10 @@ function saveWebsiteContent() {
     if (d.success) {
       _showToast('Website content saved!', 'green');
       window._websiteData = Object.assign({}, window._websiteData || {}, payload, { website_content: payload.website_content });
+      if (profileSlug) {
+        window._websiteData.slug = profileSlug;
+        _obSetProfileBasicsLink(profileSlug);
+      }
       // Apply changes to the live template
       window._applyExpertWebsite(payload);
       try {

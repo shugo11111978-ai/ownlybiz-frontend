@@ -31519,14 +31519,16 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
     plan = normPlan(user.subscription_plan || user.plan || user.current_plan || (user.expert && (user.expert.subscription_plan || user.expert.plan)));
     if(plan) return plan;
     plan = normPlan(window._currentExpert && (window._currentExpert.subscription_plan || window._currentExpert.plan));
-    return plan || 'starter';
+    return plan || '';
   }
   function limitForPlan(plan){
-    plan = normPlan(plan) || 'starter';
+    plan = normPlan(plan);
+    if(!plan) return null;
     return LIMITS[plan] || 0;
   }
   function clamp(value, plan){
-    return Math.min(intVal(value), limitForPlan(plan));
+    var limit = limitForPlan(plan);
+    return limit == null ? intVal(value) : Math.min(intVal(value), limit);
   }
   function valueOf(el){
     if(!el) return 0;
@@ -31553,6 +31555,7 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
     if(ch === 'video') window._currentExpert.free_minutes_video = val;
   }
   function policyCopy(plan, limit){
+    if(!normPlan(plan)) return 'Free intro limits are checked against your current plan when saved.';
     if(plan === 'pro') return 'Pro includes up to 5 free intro minutes for a new client only. Returning clients are billed from minute one.';
     if(plan === 'scale') return 'Scale includes up to 10 free intro minutes for a new client only. Returning clients are billed from minute one.';
     return 'Free intro minutes are available on Pro and Scale. Starter experts can still offer paid sessions, but no free intro minutes are applied.';
@@ -31581,24 +31584,25 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
   }
   function setFreeState(plan){
     plan = normPlan(plan) || knownPlan();
+    var planKnown = !!plan;
     var limit = limitForPlan(plan);
     ensurePolicyNote(plan, limit);
     CHANNELS.forEach(function(ch){
       var primary = document.getElementById('fm-' + ch);
       var secondary = document.getElementById('free-min-' + ch);
       var rawVal = primary ? valueOf(primary) : (secondary ? valueOf(secondary) : (window.freeMinutes && window.freeMinutes[ch]));
-      var val = clamp(rawVal, plan);
+      var val = planKnown ? clamp(rawVal, plan) : intVal(rawVal);
       writeFreeState(ch, val);
       var fm = document.getElementById('fm-' + ch);
       var row = fm && fm.closest ? fm.closest('.free-mins-row') : null;
       if(row){
-        row.classList.toggle('ob-free-disabled', limit <= 0);
+        row.classList.toggle('ob-free-disabled', planKnown && limit <= 0);
         Array.from(row.querySelectorAll('button')).forEach(function(btn){
-          btn.disabled = limit <= 0;
-          btn.title = limit <= 0 ? 'Upgrade to Pro or Scale to offer free intro minutes' : 'Limit: ' + limit + ' minutes for new clients only';
+          btn.disabled = planKnown && limit <= 0;
+          btn.title = !planKnown ? 'Plan limit checked when saved' : (limit <= 0 ? 'Upgrade to Pro or Scale to offer free intro minutes' : 'Limit: ' + limit + ' minutes for new clients only');
         });
         var desc = row.querySelector('.free-mins-desc');
-        if(desc) desc.textContent = limit <= 0 ? 'Available on Pro and Scale for new clients only' : 'Up to ' + limit + ' minutes for new clients only';
+        if(desc) desc.textContent = !planKnown ? 'Plan limit checked when saved' : (limit <= 0 ? 'Available on Pro and Scale for new clients only' : 'Up to ' + limit + ' minutes for new clients only');
       }
     });
     if(typeof window.obRefreshSessionStartModes === 'function') {
@@ -31608,13 +31612,16 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
   function clampRatePayload(rates){
     rates = rates || {};
     var plan = normPlan(rates.free_minute_plan) || knownPlan();
+    var planKnown = !!plan;
     if(rates.free_minute_plan) window._obFreeMinutePlan = plan;
-    rates.chat_free_min = clamp(rates.chat_free_min != null ? rates.chat_free_min : rates.free_minutes, plan);
-    rates.voice_free_min = clamp(rates.voice_free_min, plan);
-    rates.video_free_min = clamp(rates.video_free_min, plan);
+    rates.chat_free_min = planKnown ? clamp(rates.chat_free_min != null ? rates.chat_free_min : rates.free_minutes, plan) : intVal(rates.chat_free_min != null ? rates.chat_free_min : rates.free_minutes);
+    rates.voice_free_min = planKnown ? clamp(rates.voice_free_min, plan) : intVal(rates.voice_free_min);
+    rates.video_free_min = planKnown ? clamp(rates.video_free_min, plan) : intVal(rates.video_free_min);
     rates.free_minutes = rates.chat_free_min;
-    rates.free_minute_limit = limitForPlan(plan);
-    rates.free_minute_plan = plan;
+    if(planKnown){
+      rates.free_minute_limit = limitForPlan(plan);
+      rates.free_minute_plan = plan;
+    }
     rates.free_minutes_new_clients_only = true;
     return rates;
   }
@@ -31672,10 +31679,7 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
       try {
         var url = typeof input === 'string' ? input : (input && input.url) || '';
         if(init && init.body && /\/api\/(?:experts|expert-payments)\/rates(?:\?|$)|\/api\/admin\/experts\/[^/]+\/rates(?:\?|$)/.test(url)){
-          var body = typeof init.body === 'string' ? JSON.parse(init.body) : init.body;
-          if(body && typeof body === 'object'){
-            init = Object.assign({}, init, { body: JSON.stringify(clampRatePayload(body)) });
-          }
+          // Leave pricing payloads untouched; the backend has the authoritative plan and enforces caps.
         }
       } catch(e) {}
       return oldFetch.call(this, input, init);

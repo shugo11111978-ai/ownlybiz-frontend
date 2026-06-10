@@ -14534,16 +14534,31 @@ async function savePaymentConfig() {
       });
       $$('#expert-photo-emoji,.db-expert-emoji').forEach(e=>e.style.display='none');
     }
-    // Rates
+    // Rates: /api/experts/rates is authoritative. Legacy profile rate_* fields may be 0.
     if(p) {
-      const rc=p.rate_chat||3.50;
+      const rateNum = function(){
+        for (let i = 0; i < arguments.length; i++) {
+          const n = parseFloat(arguments[i]);
+          if (Number.isFinite(n) && n > 0) return n;
+        }
+        return 0;
+      };
+      const current = window._currentExpert || {};
+      const rc = rateNum(current.chat_pm, current.rate_chat, p.chat_pm, p.rate_chat, 3.50);
+      const rv = rateNum(current.voice_pm, current.rate_voice, p.voice_pm, p.rate_voice, 4.00);
+      const rvd = rateNum(current.video_pm, current.rate_video, p.video_pm, p.rate_video, 5.00);
+      window._currentExpert = Object.assign(window._currentExpert || {}, p, {
+        rate_chat: rc, chat_pm: rc,
+        rate_voice: rv, voice_pm: rv,
+        rate_video: rvd, video_pm: rvd
+      });
       $$('#db-rate-display,#db-rate-val').forEach(e=>e.textContent=fmt$(rc));
-      inp('rate-chat',   p.rate_chat);
-      inp('rate-voice',  p.rate_voice);
-      inp('rate-video',  p.rate_video);
+      inp('rate-chat', rc);
+      inp('rate-voice', rv);
+      inp('rate-video', rvd);
       set('rp-chat', `60-min session: ~${fmt$(rc*60)} · You keep: ~${fmt$(rc*60*.88)} after 12% fee`);
-      if(p.rate_voice) set('rp-voice',`60-min session: ~${fmt$(p.rate_voice*60)} · You keep: ~${fmt$(p.rate_voice*60*.88)} after 12% fee`);
-      if(p.rate_video) set('rp-video',`60-min session: ~${fmt$(p.rate_video*60)} · You keep: ~${fmt$(p.rate_video*60*.88)} after 12% fee`);
+      set('rp-voice', `60-min session: ~${fmt$(rv*60)} · You keep: ~${fmt$(rv*60*.88)} after 12% fee`);
+      set('rp-video', `60-min session: ~${fmt$(rvd*60)} · You keep: ~${fmt$(rvd*60*.88)} after 12% fee`);
       set('fm-chat', p.free_minutes||0);
       set('fm-voice',p.free_minutes_voice||0);
       set('fm-video',p.free_minutes_video||0);
@@ -14578,7 +14593,11 @@ async function savePaymentConfig() {
     // KPI reviews
     var kr=document.getElementById('db-kpi-reviews');if(kr&&p?.review_count!=null)kr.textContent=p.review_count+' reviews';
     // Apply website content to template
-    if(typeof window._applyExpertWebsite==='function') window._applyExpertWebsite(p);
+    if(typeof window._applyExpertWebsite==='function') window._applyExpertWebsite(Object.assign({}, p, {
+      rate_chat: (window._currentExpert && window._currentExpert.rate_chat) || p.rate_chat,
+      rate_voice: (window._currentExpert && window._currentExpert.rate_voice) || p.rate_voice,
+      rate_video: (window._currentExpert && window._currentExpert.rate_video) || p.rate_video
+    }));
     // Booking toggles
     var aoEl=document.getElementById('avail-accept-offline');
     if(aoEl) aoEl.checked = p.accept_offline !== 0;
@@ -54527,14 +54546,6 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     var el = document.getElementById(id);
     if(el) el.textContent = value;
   }
-  function pricingSurfaceActive(){
-    var path = location.pathname || '';
-    var panel = document.getElementById('db-panel-payments');
-    return (path.indexOf('/dash/') === 0 || path === '/admin') && (
-      path.indexOf('/pricing') >= 0 ||
-      !!(panel && panel.classList && panel.classList.contains('show-pricing'))
-    );
-  }
   function repairPricingRates(source, force){
     if(!document.getElementById('rate-chat') && !document.getElementById('sfield-chat-rate')) return;
     var rates = {
@@ -54586,33 +54597,6 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
       window.saveExpertPricing.__obHighRiskRateRepair = true;
     }
   }
-  function installPricingRateWatcher(){
-    if(window.__obHighRiskPricingRateWatcher) return;
-    window.__obHighRiskPricingRateWatcher = true;
-    var lastRun = 0;
-    function runSoon(){
-      if(!pricingSurfaceActive()) return;
-      var now = Date.now();
-      if(now - lastRun < 140) return;
-      lastRun = now;
-      setTimeout(function(){ repairPricingRates(); }, 0);
-    }
-    [120,360,900,1800,3200,5600,9000,13000,18000,24000].forEach(function(ms){
-      setTimeout(function(){ repairPricingRates(); }, ms);
-    });
-    try {
-      new MutationObserver(runSoon).observe(document.body, {childList:true, subtree:true});
-    } catch(e) {}
-    setInterval(function(){
-      if(!pricingSurfaceActive()) return;
-      var bad = ['rate-chat','rate-voice','rate-video','sfield-chat-rate','sfield-voice-rate','sfield-video-rate'].some(function(id){
-        var el = document.getElementById(id);
-        return el && positive(el.value) <= 0 && document.activeElement !== el;
-      });
-      if(bad) repairPricingRates();
-    }, 1000);
-  }
-
   function syncPracticeCommandCard(){
     var box = document.getElementById('ob-v3-dash-command');
     if(!box) return;
@@ -54681,7 +54665,6 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
   function boot(){
     installPublicSubdomainGate();
     installPricingRateRepair();
-    installPricingRateWatcher();
     installPracticeCardRepair();
     repairPricingRates();
     syncPracticeCommandCard();

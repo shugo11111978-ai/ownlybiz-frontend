@@ -9,6 +9,10 @@ const RESERVED = new Set([
   'payments', 'packages', 'reviews', 'clients', 'sessions', 'pricing', 'how',
   'features', 'experts', 'blog', 'contact', 'terms', 'legal',
 ]);
+const CUSTOM_DOMAIN_SLUG_FALLBACKS = {
+  'lunapsychics.com': 'liranprodtest',
+  'www.lunapsychics.com': 'liranprodtest',
+};
 
 let cachedIndex = null;
 
@@ -150,7 +154,7 @@ async function resolveExpert(req, host) {
 
   if (!slug && route.kind === 'custom-domain') {
     const lookup = await fetchJson(`${BACKEND}/api/domains/lookup?domain=${encodeURIComponent(host)}`);
-    slug = clean(lookup && lookup.slug);
+    slug = clean(lookup && lookup.slug) || CUSTOM_DOMAIN_SLUG_FALLBACKS[host] || '';
   }
   if (!slug) return null;
 

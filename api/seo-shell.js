@@ -203,6 +203,14 @@ function setCanonical(html, href) {
   return replaceTag(html, /<link\s+rel=["']canonical["'][^>]*>/i, tag);
 }
 
+function whiteLabelAssetUrl(value, origin) {
+  const url = clean(value);
+  if (!url) return '';
+  if (url.startsWith(`${BACKEND}/api/media/`)) return `${origin}${url.slice(BACKEND.length)}`;
+  if (url.startsWith(`${BACKEND}/api/experts/favicon`)) return `${origin}${url.slice(BACKEND.length)}`;
+  return url;
+}
+
 function injectSeo(html, seo) {
   html = html.replace(/<title>[\s\S]*?<\/title>/i, `<title>${esc(seo.title)}</title>`);
   html = setMeta(html, 'name', 'description', seo.description);
@@ -298,7 +306,7 @@ module.exports = async function handler(req, res) {
       description: expertDescription(expert),
       canonical: expertCanonical,
       robots: robotsValue,
-      image: clean(expert && (expert.og_image_url || expert.logo_url || expert.avatar_url)),
+      image: whiteLabelAssetUrl(expert && (expert.og_image_url || expert.logo_url || expert.avatar_url), origin),
     });
     res.setHeader('X-Robots-Tag', robotsValue);
   } else {

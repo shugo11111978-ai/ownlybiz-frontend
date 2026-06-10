@@ -4377,6 +4377,53 @@ if (!window.toast) {
 	window.OWNLY_API=window.OWNLYBIZ_API_URL;
 	window.OWNLYBIZ_WS_URL='wss://ownlybiz-backend-production.up.railway.app';
 
+  (function(){
+    var BACKEND = 'https://ownlybiz-backend-production.up.railway.app';
+    function expertHost(){
+      var host = String(location.hostname || '').toLowerCase();
+      return !!host && host !== 'ownlybiz.com' && host !== 'www.ownlybiz.com' && host !== 'localhost' && host !== '127.0.0.1' && host.indexOf('vercel.app') < 0;
+    }
+    function rewrite(value){
+      value = String(value || '');
+      if(!expertHost()) return value;
+      if(value.indexOf(BACKEND + '/api/media/') === 0) return value.slice(BACKEND.length);
+      if(value.indexOf(BACKEND + '/api/experts/favicon') === 0) return value.slice(BACKEND.length);
+      return value;
+    }
+    window.obWhiteLabelAssetUrl = rewrite;
+    var attrs = ['src','href','content','poster','action'];
+    var oldSet = Element.prototype.setAttribute;
+    Element.prototype.setAttribute = function(name, value){
+      if(attrs.indexOf(String(name || '').toLowerCase()) >= 0) value = rewrite(value);
+      return oldSet.call(this, name, value);
+    };
+    function scan(root){
+      if(!expertHost()) return;
+      root = root || document;
+      var selector = attrs.map(function(attr){ return '[' + attr + ']'; }).join(',');
+      var nodes = [];
+      if(root.matches && root.matches(selector)) nodes.push(root);
+      nodes = nodes.concat(Array.prototype.slice.call(root.querySelectorAll ? root.querySelectorAll(selector) : []));
+      nodes.forEach(function(el){
+        attrs.forEach(function(attr){
+          var current = el.getAttribute(attr);
+          var next = rewrite(current);
+          if(current && next !== current) oldSet.call(el, attr, next);
+        });
+      });
+    }
+    if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', function(){ scan(document); });
+    else scan(document);
+    new MutationObserver(function(items){
+      items.forEach(function(item){
+        if(item.type === 'attributes') scan(item.target.parentNode || document);
+        Array.prototype.slice.call(item.addedNodes || []).forEach(function(node){
+          if(node && node.nodeType === 1) scan(node);
+        });
+      });
+    }).observe(document.documentElement, { childList:true, subtree:true, attributes:true, attributeFilter:attrs });
+  })();
+
 	</script>
 
 

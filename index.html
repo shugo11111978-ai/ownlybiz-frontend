@@ -54392,7 +54392,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
   window.__ownlybizExpertFunnelHighRisk20260610 = true;
 
   var DEFAULT_API = 'https://ownlybiz-backend-production.up.railway.app';
-  var publicGate = { pending:{}, allowed:{}, blocked:{}, inFlight:{} };
+  var publicGate = { pending:{}, allowed:{}, blocked:{}, inFlight:{}, payload:{} };
 
   function apiBase(){
     return String(window.OWNLYBIZ_API_URL || window._OB_BACKEND || window.OWNLY_API || DEFAULT_API).replace(/\/+$/,'');
@@ -54442,6 +54442,13 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     if(typeof window._markRouteReady === 'function' && !loading) window._markRouteReady('public');
     else if(typeof window._markRouteLoading === 'function' && loading) window._markRouteLoading('public');
   }
+  function hasRenderedExpertShell(){
+    var title = String(document.title || '');
+    var text = String(document.body && document.body.innerText || '');
+    if(/This expert site is not available yet|Checking this expert site/i.test(text)) return false;
+    if(/Independent Expert|Ownlybiz - Own your expertise/i.test(title)) return false;
+    return /Client Growth Consultant|\$\d+(?:\.\d{2})?\/min|Start Session|Book a Session|How I Can Help/i.test(text);
+  }
   function verifyOwnlybizSubdomain(slug){
     slug = expertSlug(slug);
     if(!slug) return Promise.resolve(false);
@@ -54452,7 +54459,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     }
     if(publicGate.inFlight[slug]) return publicGate.inFlight[slug];
     publicGate.pending[slug] = true;
-    renderPublicGate(slug, 'loading');
+    if(!hasRenderedExpertShell()) renderPublicGate(slug, 'loading');
     publicGate.inFlight[slug] = fetch(apiBase() + '/api/experts/' + encodeURIComponent(slug), {cache:'no-store'})
       .then(function(response){
         return response.json().catch(function(){ return {}; }).then(function(body){
@@ -54461,6 +54468,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
           if(!expert || !expert.slug || String(expert.slug).toLowerCase() !== slug) throw new Error('Expert site unavailable');
           publicGate.allowed[slug] = true;
           publicGate.blocked[slug] = false;
+          publicGate.payload[slug] = expert;
           return true;
         });
       })
@@ -54476,6 +54484,67 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
       });
     return publicGate.inFlight[slug];
   }
+  function publicExpertData(data){
+    return (data && data.expert) || data || window._currentExpert || {};
+  }
+  function publicBookingBlockReason(data){
+    var expert = publicExpertData(data);
+    if(!expert || !Object.keys(expert).length) return '';
+    if(expert.service_pause && expert.service_pause.blocked) return expert.service_pause.message || 'Sessions are temporarily unavailable.';
+    if(expert.payments_enabled === false || expert.payments_enabled === 0 || expert.payments_enabled === '0') {
+      return 'This expert is not accepting paid sessions yet. Please check back later.';
+    }
+    var chat = expert.chat_enabled, voice = expert.voice_enabled, video = expert.video_enabled;
+    if((chat === 0 || chat === false || chat === '0') && (voice === 0 || voice === false || voice === '0') && (video === 0 || video === false || video === '0')) {
+      return 'This expert is not accepting sessions right now. Please check back later.';
+    }
+    return '';
+  }
+  function applyPublicBookingBlock(reason){
+    reason = reason || window.__obPublicBookingBlockReason || '';
+    if(!reason) return;
+    var view = publicView();
+    if(!view) return;
+    view.dataset.obBookingBlocked = '1';
+    var names = /^(book a session|start session now|start session now →|book for later|start|schedule)$/i;
+    Array.prototype.slice.call(view.querySelectorAll('a,button,[role="button"]')).forEach(function(el){
+      var text = String(el.innerText || el.textContent || '').trim().replace(/\s+/g,' ');
+      var isBookRoute = el.tagName === 'A' && (/\/book(?:$|\?)/i.test(el.getAttribute('href') || '') || /showExpertPage\(['"]book['"]\)/i.test(el.getAttribute('onclick') || ''));
+      if(isBookRoute && /^book a session$/i.test(text)){
+        el.style.display = 'none';
+        return;
+      }
+      if(!names.test(text)) return;
+      el.setAttribute('aria-disabled','true');
+      el.setAttribute('data-ob-booking-blocked','1');
+      if(el.tagName === 'A') el.removeAttribute('href');
+      el.onclick = function(e){
+        if(e){ e.preventDefault(); e.stopPropagation(); }
+        try { if(typeof toast === 'function') toast(reason, 'err'); else alert(reason); } catch(_) {}
+        applyPublicBookingBlock(reason);
+        return false;
+      };
+      if(/start|book|schedule/i.test(text)) el.textContent = 'Sessions not available yet';
+      el.style.opacity = '.72';
+      el.style.cursor = 'not-allowed';
+    });
+    var bookLayout = document.getElementById('booking-main-layout');
+    var bookPageActive = /\/book(?:$|\?)/i.test(location.pathname || '') || (bookLayout && bookLayout.offsetParent !== null);
+    if(bookLayout && bookPageActive && !bookLayout.dataset.obBookingBlocked){
+      bookLayout.dataset.obBookingBlocked = '1';
+      bookLayout.innerHTML =
+        '<div style="background:#FFFDF8;border:1px solid #E1D6C8;border-radius:8px;padding:28px;text-align:center;color:#241A15;max-width:560px;margin:0 auto;">' +
+          '<div style="font-family:var(--font-head);font-size:28px;line-height:1.12;margin-bottom:10px;">Sessions are not available yet</div>' +
+          '<p style="color:#5F554D;line-height:1.65;margin:0;">' + esc(reason) + '</p>' +
+        '</div>';
+    }
+  }
+  function syncPublicBookingBlock(data){
+    var reason = publicBookingBlockReason(data);
+    window.__obPublicBookingBlockReason = reason;
+    if(!reason) return;
+    [0,80,260,700].forEach(function(ms){ setTimeout(function(){ applyPublicBookingBlock(reason); }, ms); });
+  }
 
   function installPublicSubdomainGate(){
     var oldLoad = window.loadExpertWebsite;
@@ -54488,6 +54557,9 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
           window._browseExpert = hostSlug;
           return verifyOwnlybizSubdomain(hostSlug).then(function(ok){
             if(!ok) return null;
+            if(publicGate.payload[hostSlug] && typeof window._applyExpertWebsite === 'function'){
+              try { window._applyExpertWebsite(publicGate.payload[hostSlug]); } catch(e) {}
+            }
             return oldLoad.call(window, resolved);
           });
         }
@@ -54506,7 +54578,9 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
             return undefined;
           }
         }
-        return oldApply.apply(this, arguments);
+        var result = oldApply.apply(this, arguments);
+        syncPublicBookingBlock(data);
+        return result;
       };
       guardedApply.__obHighRiskSubdomainGate = true;
       window._applyExpertWebsite = guardedApply;
@@ -54515,6 +54589,9 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     if(hostSlug){
       window._browseExpert = hostSlug;
       verifyOwnlybizSubdomain(hostSlug).then(function(ok){
+        if(ok && publicGate.payload[hostSlug] && typeof window._applyExpertWebsite === 'function'){
+          try { window._applyExpertWebsite(publicGate.payload[hostSlug]); } catch(e) {}
+        }
         if(ok && typeof window.loadExpertWebsite === 'function') window.loadExpertWebsite(hostSlug);
       });
     }
@@ -54597,6 +54674,30 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
       window.saveExpertPricing.__obHighRiskRateRepair = true;
     }
   }
+  function installPublicBookingBlock(){
+    var oldShow = window.showExpertPage;
+    if(typeof oldShow === 'function' && !oldShow.__obHighRiskBookingBlock){
+      window.showExpertPage = function(){
+        var result = oldShow.apply(this, arguments);
+        syncPublicBookingBlock(window._currentExpert || {});
+        return result;
+      };
+      window.showExpertPage.__obHighRiskBookingBlock = true;
+    }
+    var oldHandle = window.handleExpertCTA;
+    if(typeof oldHandle === 'function' && !oldHandle.__obHighRiskBookingBlock){
+      window.handleExpertCTA = function(){
+        var reason = window.__obPublicBookingBlockReason || publicBookingBlockReason(window._currentExpert || {});
+        if(reason){
+          applyPublicBookingBlock(reason);
+          try { if(typeof toast === 'function') toast(reason, 'err'); else alert(reason); } catch(_) {}
+          return false;
+        }
+        return oldHandle.apply(this, arguments);
+      };
+      window.handleExpertCTA.__obHighRiskBookingBlock = true;
+    }
+  }
   function syncPracticeCommandCard(){
     var box = document.getElementById('ob-v3-dash-command');
     if(!box) return;
@@ -54664,6 +54765,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
 
   function boot(){
     installPublicSubdomainGate();
+    installPublicBookingBlock();
     installPricingRateRepair();
     installPracticeCardRepair();
     repairPricingRates();

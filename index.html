@@ -54367,4 +54367,281 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
   [600,1600,3200,6000].forEach(function(ms){ setTimeout(boot, ms); });
 })();
 </script>
+<script id="ownlybiz-expert-funnel-high-risk-20260610">
+(function(){
+  if(window.__ownlybizExpertFunnelHighRisk20260610) return;
+  window.__ownlybizExpertFunnelHighRisk20260610 = true;
+
+  var DEFAULT_API = 'https://ownlybiz-backend-production.up.railway.app';
+  var publicGate = { pending:{}, allowed:{}, blocked:{}, inFlight:{} };
+
+  function apiBase(){
+    return String(window.OWNLYBIZ_API_URL || window._OB_BACKEND || window.OWNLY_API || DEFAULT_API).replace(/\/+$/,'');
+  }
+  function esc(value){
+    var d = document.createElement('div');
+    d.textContent = value == null ? '' : String(value);
+    return d.innerHTML;
+  }
+  function ownlybizSubdomainSlug(){
+    var host = String(location.hostname || '').toLowerCase();
+    var match = host.match(/^([a-z0-9][a-z0-9-]{1,62})\.ownlybiz\.com$/i);
+    if(!match || match[1] === 'www') return '';
+    var slug = match[1];
+    var reserved = ['api','admin','app','blog','help','support','login','signup','dashboard','pricing','how','features','experts','contact'];
+    return reserved.indexOf(slug) >= 0 ? '' : slug;
+  }
+  function expertSlug(value){
+    value = String(value || '').trim().toLowerCase().replace(/^\/+|\/+$/g,'').split('/')[0] || '';
+    return /^[a-z0-9][a-z0-9-]{1,62}$/i.test(value) ? value : '';
+  }
+  function publicView(){
+    return document.getElementById('view-4');
+  }
+  function activatePublicView(){
+    try {
+      document.querySelectorAll('.view').forEach(function(view){
+        view.classList.toggle('active', view.id === 'view-4');
+      });
+    } catch(e) {}
+  }
+  function renderPublicGate(slug, mode){
+    var view = publicView();
+    if(!view) return;
+    activatePublicView();
+    view.classList.add('ob-expert-unavailable','ob-site-theme-light');
+    view.classList.remove('ob-site-theme-dark');
+    var loading = mode === 'loading';
+    view.innerHTML =
+      '<main style="min-height:100vh;display:flex;align-items:center;justify-content:center;text-align:center;padding:72px 22px;background:#F7F1E8;color:#241A15;">' +
+        '<section style="max-width:540px;background:#FFFDF8;border:1px solid #E1D6C8;border-radius:8px;padding:34px 28px;box-shadow:0 18px 60px rgba(42,28,18,.08);">' +
+          '<div style="font-family:var(--font-head);font-size:32px;line-height:1.1;margin-bottom:12px;">' + (loading ? 'Checking this expert site' : 'This expert site is not available yet') + '</div>' +
+          '<p style="color:#5F554D;line-height:1.65;margin:0 0 22px;">' + (loading ? 'We are confirming whether this Ownlybiz link is published.' : esc(slug ? slug + '.ownlybiz.com is reserved, but it is not published yet.' : 'This expert profile is not published yet.')) + '</p>' +
+          '<a href="https://ownlybiz.com/" style="display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:0 18px;border-radius:999px;background:#C4622D;color:white;font-weight:800;text-decoration:none;">Back to Ownlybiz</a>' +
+        '</section>' +
+      '</main>';
+    if(typeof window._markRouteReady === 'function' && !loading) window._markRouteReady('public');
+    else if(typeof window._markRouteLoading === 'function' && loading) window._markRouteLoading('public');
+  }
+  function verifyOwnlybizSubdomain(slug){
+    slug = expertSlug(slug);
+    if(!slug) return Promise.resolve(false);
+    if(publicGate.allowed[slug]) return Promise.resolve(true);
+    if(publicGate.blocked[slug]) {
+      renderPublicGate(slug, 'unavailable');
+      return Promise.resolve(false);
+    }
+    if(publicGate.inFlight[slug]) return publicGate.inFlight[slug];
+    publicGate.pending[slug] = true;
+    renderPublicGate(slug, 'loading');
+    publicGate.inFlight[slug] = fetch(apiBase() + '/api/experts/' + encodeURIComponent(slug), {cache:'no-store'})
+      .then(function(response){
+        return response.json().catch(function(){ return {}; }).then(function(body){
+          if(!response.ok || body.error) throw new Error(body.error || 'Expert site is not published yet');
+          var expert = body.expert || body;
+          if(!expert || !expert.slug || String(expert.slug).toLowerCase() !== slug) throw new Error('Expert site unavailable');
+          publicGate.allowed[slug] = true;
+          publicGate.blocked[slug] = false;
+          return true;
+        });
+      })
+      .catch(function(){
+        publicGate.allowed[slug] = false;
+        publicGate.blocked[slug] = true;
+        renderPublicGate(slug, 'unavailable');
+        return false;
+      })
+      .finally(function(){
+        publicGate.pending[slug] = false;
+        delete publicGate.inFlight[slug];
+      });
+    return publicGate.inFlight[slug];
+  }
+
+  function installPublicSubdomainGate(){
+    var oldLoad = window.loadExpertWebsite;
+    if(typeof oldLoad === 'function' && !oldLoad.__obHighRiskSubdomainGate){
+      var guardedLoad = function(slug){
+        var hostSlug = ownlybizSubdomainSlug();
+        var resolved = expertSlug(slug || hostSlug || window._browseExpert || '');
+        if(hostSlug){
+          resolved = hostSlug;
+          window._browseExpert = hostSlug;
+          return verifyOwnlybizSubdomain(hostSlug).then(function(ok){
+            if(!ok) return null;
+            return oldLoad.call(window, resolved);
+          });
+        }
+        return oldLoad.apply(this, arguments);
+      };
+      guardedLoad.__obHighRiskSubdomainGate = true;
+      window.loadExpertWebsite = guardedLoad;
+    }
+    var oldApply = window._applyExpertWebsite;
+    if(typeof oldApply === 'function' && !oldApply.__obHighRiskSubdomainGate){
+      var guardedApply = function(data){
+        var hostSlug = ownlybizSubdomainSlug();
+        if(hostSlug){
+          var dataSlug = expertSlug((data && (data.slug || (data.expert && data.expert.slug))) || '');
+          if(publicGate.blocked[hostSlug] || publicGate.pending[hostSlug] || !publicGate.allowed[hostSlug] || (dataSlug && dataSlug !== hostSlug)){
+            return undefined;
+          }
+        }
+        return oldApply.apply(this, arguments);
+      };
+      guardedApply.__obHighRiskSubdomainGate = true;
+      window._applyExpertWebsite = guardedApply;
+    }
+    var hostSlug = ownlybizSubdomainSlug();
+    if(hostSlug){
+      window._browseExpert = hostSlug;
+      verifyOwnlybizSubdomain(hostSlug).then(function(ok){
+        if(ok && typeof window.loadExpertWebsite === 'function') window.loadExpertWebsite(hostSlug);
+      });
+    }
+  }
+
+  function positive(){
+    for(var i=0;i<arguments.length;i++){
+      var n = parseFloat(arguments[i]);
+      if(Number.isFinite(n) && n > 0) return n;
+    }
+    return 0;
+  }
+  function currentRate(ch, source){
+    source = source || {};
+    var fallback = ch === 'chat' ? 3.5 : ch === 'voice' ? 4 : 5;
+    var data = Object.assign({}, window._currentExpert || {}, source || {});
+    return positive(data['rate_' + ch], data[ch + '_pm'], data[ch + '_rate'], fallback);
+  }
+  function setValue(id, value){
+    var el = document.getElementById(id);
+    if(el && 'value' in el) el.value = Number(value).toFixed(2).replace(/\.00$/,'');
+  }
+  function setText(id, value){
+    var el = document.getElementById(id);
+    if(el) el.textContent = value;
+  }
+  function repairPricingRates(source){
+    if(!document.getElementById('rate-chat') && !document.getElementById('sfield-chat-rate')) return;
+    var rates = {
+      chat: currentRate('chat', source),
+      voice: currentRate('voice', source),
+      video: currentRate('video', source)
+    };
+    [['chat','rate-chat','sfield-chat-rate'],['voice','rate-voice','sfield-voice-rate'],['video','rate-video','sfield-video-rate']].forEach(function(row){
+      var ch = row[0], main = document.getElementById(row[1]), settings = document.getElementById(row[2]);
+      if(main && positive(main.value) <= 0) setValue(row[1], rates[ch]);
+      if(settings && positive(settings.value) <= 0) setValue(row[2], rates[ch]);
+    });
+    setText('rp-chat', '$' + rates.chat.toFixed(2) + '/min');
+    setText('rp-voice', '$' + rates.voice.toFixed(2) + '/min');
+    setText('rp-video', '$' + rates.video.toFixed(2) + '/min');
+    setText('db-rate-val', '$' + rates.chat.toFixed(2));
+    setText('db-rate-display', '$' + rates.chat.toFixed(2));
+    if(window._currentExpert){
+      window._currentExpert.rate_chat = window._currentExpert.chat_pm = rates.chat;
+      window._currentExpert.rate_voice = window._currentExpert.voice_pm = rates.voice;
+      window._currentExpert.rate_video = window._currentExpert.video_pm = rates.video;
+    }
+  }
+  function installPricingRateRepair(){
+    var oldSync = window.obSyncRateControls;
+    if(typeof oldSync === 'function' && !oldSync.__obHighRiskRateRepair){
+      window.obSyncRateControls = function(rawRates){
+        var result = oldSync.apply(this, arguments);
+        repairPricingRates(rawRates || {});
+        return result;
+      };
+      window.obSyncRateControls.__obHighRiskRateRepair = true;
+    }
+    var oldLoadPricing = window.loadExpertPricing;
+    if(typeof oldLoadPricing === 'function' && !oldLoadPricing.__obHighRiskRateRepair){
+      window.loadExpertPricing = function(){
+        var result = oldLoadPricing.apply(this, arguments);
+        [180,650,1400,2600].forEach(function(ms){ setTimeout(repairPricingRates, ms); });
+        return result;
+      };
+      window.loadExpertPricing.__obHighRiskRateRepair = true;
+    }
+    var oldSavePricing = window.saveExpertPricing;
+    if(typeof oldSavePricing === 'function' && !oldSavePricing.__obHighRiskRateRepair){
+      window.saveExpertPricing = function(){
+        repairPricingRates();
+        return oldSavePricing.apply(this, arguments);
+      };
+      window.saveExpertPricing.__obHighRiskRateRepair = true;
+    }
+  }
+
+  function syncPracticeCommandCard(){
+    var box = document.getElementById('ob-v3-dash-command');
+    if(!box) return;
+    var launch = document.getElementById('ob-launch-center-v1');
+    var title = box.querySelector('.ob-v3-command-card h3');
+    var copy = box.querySelector('.ob-v3-command-card p');
+    var payBtn = document.getElementById('ob-v3-open-payments');
+    var metrics = box.querySelectorAll('.ob-v3-command-metrics strong');
+    var text = launch ? String(launch.textContent || '') : '';
+    var requiredMatch = text.match(/(\d+)\s+required\s+(?:item|items)?\s*left/i);
+    var requiredLeft = requiredMatch ? parseInt(requiredMatch[1], 10) : 0;
+    var stripePending = /connect stripe|stripe setup was started|finish setup/i.test(text);
+    function write(node, value){
+      if(node && String(node.textContent || '') !== String(value)) node.textContent = value;
+    }
+    if(!launch || (!requiredMatch && /checking/i.test(text))){
+      write(title, 'Checking launch status.');
+      write(copy, 'We are checking your required launch items before showing client-readiness guidance.');
+      write(payBtn, 'Billing & payouts');
+      write(metrics[2], 'Checking');
+      write(metrics[3], 'Checking');
+      return;
+    }
+    if(requiredLeft > 0 && stripePending){
+      write(title, 'Finish Stripe before going live.');
+      write(copy, 'Clients cannot pay or book until Stripe onboarding is complete. Finish the required launch item before turning your attention to live sessions.');
+      write(payBtn, 'Finish setup');
+      write(metrics[2], 'Pending');
+      write(metrics[3], 'Blocked');
+    } else if(requiredLeft > 0){
+      write(title, 'Finish launch setup first.');
+      write(copy, 'Complete the remaining required launch items before clients can book or start paid sessions.');
+      write(payBtn, 'Review setup');
+      write(metrics[3], 'Not live');
+    } else {
+      write(title, 'Ready for clients.');
+      write(copy, 'Your required launch items are ready. Check payouts, messages, and the live room before your next booking.');
+      write(payBtn, 'Billing & payouts');
+      if(metrics[2] && /pending/i.test(metrics[2].textContent || '')) write(metrics[2], 'Ready');
+      write(metrics[3], 'Ready');
+    }
+  }
+  function installPracticeCardRepair(){
+    var oldInstall = window.installDashboardV3;
+    if(typeof oldInstall === 'function' && !oldInstall.__obHighRiskPracticeCard){
+      window.installDashboardV3 = function(){
+        var result = oldInstall.apply(this, arguments);
+        setTimeout(syncPracticeCommandCard, 80);
+        return result;
+      };
+      window.installDashboardV3.__obHighRiskPracticeCard = true;
+    }
+    [250,900,1800,3200,5200].forEach(function(ms){ setTimeout(syncPracticeCommandCard, ms); });
+    try {
+      new MutationObserver(function(){ syncPracticeCommandCard(); }).observe(document.body, {childList:true, subtree:true, characterData:true});
+    } catch(e) {}
+  }
+
+  function boot(){
+    installPublicSubdomainGate();
+    installPricingRateRepair();
+    installPracticeCardRepair();
+    repairPricingRates();
+    syncPracticeCommandCard();
+  }
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
+  else boot();
+  [500,1400,2800,5200].forEach(function(ms){ setTimeout(boot, ms); });
+})();
+</script>
 	</html>

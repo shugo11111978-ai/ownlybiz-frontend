@@ -50230,6 +50230,48 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     }).join('');
     return '<div class="admin-card" style="padding:18px;margin-top:18px;"><div class="admin-card-title">Packages</div><div style="overflow:auto;"><table class="experts-table" style="width:100%;"><thead><tr><th>Name</th><th>Price</th><th>Type</th><th>Status</th></tr></thead><tbody>' + (rows || '<tr><td colspan="4" style="padding:24px;text-align:center;color:rgba(246,241,233,.45);">No packages configured.</td></tr>') + '</tbody></table></div></div>';
   }
+  function aiCreditRows(rows){
+    rows = rows || [];
+    if(!rows.length) return '<tr><td colspan="4" style="padding:18px;text-align:center;color:rgba(246,241,233,.45);">No AI credit activity yet.</td></tr>';
+    return rows.slice(0,6).map(function(row){
+      var amount = int(row.amount || 0);
+      var tone = amount >= 0 ? 'color:#86efac;' : 'color:#fecaca;';
+      return '<tr><td style="' + tone + 'font-weight:900;">' + esc(amount >= 0 ? '+' + amount : amount) + '</td><td>' + esc(row.type || 'usage') + '</td><td>' + esc(row.description || '-') + '</td><td>' + when(row.created_at) + '</td></tr>';
+    }).join('');
+  }
+  function aiCreditsCard(id, name, email, aiCredits){
+    aiCredits = aiCredits || {};
+    var c = aiCredits.credits || {};
+    var eligible = !!aiCredits.eligible;
+    var available = int(c.available || 0);
+    var includedRemaining = int(c.included_remaining || 0);
+    var includedLimit = int(c.included_monthly_limit || 0);
+    var purchased = int(c.purchased_balance || 0);
+    var imageCost = int(c.image_cost || 0);
+    var note = aiCredits.error
+      ? 'AI credit status could not load: ' + aiCredits.error
+      : (eligible ? 'This expert can use available credits for Website Editor and Email Center AI.' : (aiCredits.reason || 'Credits can be granted, but the expert may need an active Pro or Scale plan before using them.'));
+    return '<div class="admin-card" id="ob-admin-ai-credit-grant-card" style="padding:18px;margin-top:18px;border-color:rgba(200,255,61,.18);">'
+      + '<div class="admin-card-title">AI credits <span class="admin-card-title-sub">Grant credits to this expert only</span></div>'
+      + '<div style="font-size:12px;color:rgba(246,241,233,.58);line-height:1.55;margin-bottom:12px;">' + esc(note) + '</div>'
+      + '<div class="ob-admin-live-grid" style="margin-top:10px;">'
+      +   kpi('Available', available, 'Ready to use')
+      +   kpi('Monthly remaining', includedRemaining + ' / ' + includedLimit, String(c.included_month || 'current month'))
+      +   kpi('Extra balance', purchased, 'Granted or purchased')
+      +   kpi('Image cost', imageCost, 'Per generated image')
+      + '</div>'
+      + '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;align-items:end;margin-top:16px;">'
+      +   '<label style="font-size:12px;color:rgba(246,241,233,.55);">Credits to grant<input id="ob-ai-credit-grant-amount" class="admin-input" type="number" min="1" max="10000" step="1" placeholder="100" style="width:100%;margin-top:6px;"></label>'
+      +   '<label style="font-size:12px;color:rgba(246,241,233,.55);">Reason<input id="ob-ai-credit-grant-reason" class="admin-input" placeholder="Example: owner support credit" style="width:100%;margin-top:6px;"></label>'
+      +   '<label style="display:flex;align-items:center;gap:10px;font-size:12px;color:rgba(246,241,233,.72);line-height:1.4;"><input id="ob-ai-credit-grant-confirm" type="checkbox"> I confirm this grant is for ' + esc(name || email || 'this expert') + ' only.</label>'
+      + '</div>'
+      + '<div style="display:flex;gap:10px;align-items:center;margin-top:12px;flex-wrap:wrap;">'
+      +   '<button class="admin-action-btn" type="button" onclick="obAdminGrantAiCredits(&quot;' + attr(id) + '&quot;,&quot;' + attr(name || email || 'Expert') + '&quot;)">Grant AI credits</button>'
+      +   '<span id="ob-ai-credit-grant-status" style="font-size:12px;color:rgba(246,241,233,.55);"></span>'
+      + '</div>'
+      + '<div style="overflow:auto;margin-top:16px;"><table class="experts-table" style="width:100%;"><thead><tr><th>Amount</th><th>Type</th><th>Note</th><th>Date</th></tr></thead><tbody>' + aiCreditRows(c.recent || []) + '</tbody></table></div>'
+      + '</div>';
+  }
   function detailHtml(id, profileData, dashboardData, refundData){
     var user = profileData.user || dashboardData.user || {};
     var profile = Object.assign({}, dashboardData.profile || {}, profileData.profile || {});
@@ -50282,6 +50324,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       + '</div>'
       + stripeModeCard(id, stripeMode)
       + groupSessionsCard(id, profileData.group_sessions || {})
+      + aiCreditsCard(id, name, user.email || '', profileData.ai_credits || {})
       + '<div class="admin-card" style="padding:18px;margin-top:18px;border-color:' + (pauseAllowed ? 'rgba(34,197,94,.26)' : 'rgba(255,255,255,.08)') + ';">'
       +   '<div class="admin-card-title">Service pause access <span class="admin-card-title-sub">' + (pausePaused ? 'Global pause is on' : 'Global pause is off') + '</span></div>'
       +   '<div style="display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;">'
@@ -50371,6 +50414,29 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     }).catch(function(err){
       if(status) status.textContent = err.message || 'Save failed.';
       notify(err.message || 'Expert AI save failed.', 'err');
+    });
+  };
+  window.obAdminGrantAiCredits = function(id, label){
+    var status = document.getElementById('ob-ai-credit-grant-status');
+    var amount = int((document.getElementById('ob-ai-credit-grant-amount') || {}).value || 0);
+    var reason = ((document.getElementById('ob-ai-credit-grant-reason') || {}).value || '').trim();
+    var confirmed = !!((document.getElementById('ob-ai-credit-grant-confirm') || {}).checked);
+    if(status) status.textContent = '';
+    if(!amount || amount < 1 || amount > 10000){ if(status) status.textContent = 'Enter 1 to 10,000 credits.'; notify('Enter a valid AI credit amount.', 'err'); return; }
+    if(reason.length < 4){ if(status) status.textContent = 'Reason required.'; notify('Add a short reason before granting credits.', 'err'); return; }
+    if(!confirmed){ if(status) status.textContent = 'Confirm this exact expert first.'; notify('Confirm the expert before granting credits.', 'err'); return; }
+    if(!confirm('Grant ' + amount + ' AI credits to ' + (label || 'this expert') + '?')) return;
+    if(status) status.textContent = 'Granting credits...';
+    api('/admin/experts/' + encodeURIComponent(id) + '/ai-credits/grant', {
+      method:'POST',
+      body:{amount:amount, reason:reason, confirmed:true}
+    }).then(function(){
+      if(status) status.textContent = 'Credits granted.';
+      notify('AI credits granted.', 'ok');
+      openExpertDetail(id, activeExpertDetail && activeExpertDetail.slug, activeExpertDetail && activeExpertDetail.name);
+    }).catch(function(err){
+      if(status) status.textContent = err.message || 'Grant failed.';
+      notify(err.message || 'AI credit grant failed.', 'err');
     });
   };
   window.obAdminExpertApproveRefund = function(id){

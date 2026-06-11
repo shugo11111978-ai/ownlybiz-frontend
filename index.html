@@ -5781,7 +5781,10 @@ if (!window.toast) {
             <div>
               <div style="font-size:14px;color:var(--gray-400);margin-bottom:4px;">Payments & Billing Configuration</div>
             </div>
-            <button class="btn btn-primary btn-sm" id="pay-save-btn" onclick="savePaymentSettings()">Save All Changes</button>
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;justify-content:flex-end;">
+              <button class="btn btn-sm" id="ob-payments-help-btn" onclick="obOpenPaymentsHelp()" style="background:transparent;border:1px solid var(--terra);color:var(--terra);">Need help?</button>
+              <button class="btn btn-primary btn-sm" id="pay-save-btn" onclick="savePaymentSettings()">Save All Changes</button>
+            </div>
           </div>
 
           <!-- Payment Processors -->
@@ -28503,7 +28506,9 @@ window._handleRTCMessage=function(d){
 	    var privateRoutes = {
 	      admin:1, dash:1, dashboard:1, login:1, signup:1, session:1, group:1,
 	      settings:1, messages:1, analytics:1, payments:1, packages:1,
-	      reviews:1, clients:1, sessions:1, pricing:1, legal:1, terms:1
+	      reviews:1, clients:1, sessions:1, pricing:1, legal:1, terms:1,
+	      verify:1, 'verify-email':1, reset:1, 'reset-password':1, checkout:1,
+	      payment:1, wallet:1, stripe:1, connect:1, auth:1
 	    };
 	    if(privateRoutes[first]) return true;
 	    if(document.querySelector('#view-2.active,#view-3.active,#view-5.active,#view-6.active')) return true;
@@ -30301,6 +30306,8 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
     if(!r.ok) {
       var err = new Error(d.error || 'Request failed');
       err.data = d;
+      err.status = r.status;
+      err.retryAfter = r.headers && r.headers.get ? r.headers.get('retry-after') : '';
       throw err;
     }
     return d;
@@ -31026,23 +31033,35 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
       + '<div class="ob-plan-actions"><button type="button" class="btn btn-primary btn-sm ob-plan-confirm-btn" id="ob-plan-confirm-btn-'+esc(context)+'" onclick="obSubmitPlanChange()">Confirm Plan Change</button><span class="save-status ob-plan-save-status" id="save-status-plan-'+esc(context)+'"></span></div>'
       + '<div class="ob-plan-action-hint"></div>';
   }
-  function removeProfilePlanCard(){
-    var profile = document.getElementById('sblock-profile');
-    var old = document.getElementById('plan-settings-card');
-    if(old && profile && profile.contains(old)) old.remove();
+	  function removeProfilePlanCard(){
+	    var profile = document.getElementById('sblock-profile');
+	    var old = document.getElementById('plan-settings-card');
+	    if(old && profile && profile.contains(old)) old.remove();
+  }
+  function ensurePaymentsPlanCard(){
+    var payments = document.querySelector('#db-panel-payments .db-content');
+    if(!payments) return null;
+    var payCard = document.getElementById('ob-payments-plan-card');
+    if(!payCard){
+      payCard = document.createElement('div');
+      payCard.id = 'ob-payments-plan-card';
+      payCard.className = 'ob-plan-console ob-payments-plan-card';
+    }
+    var processorSection = payments.querySelector('.pay-section[data-group="payment"]');
+    if(processorSection){
+      if(payCard.parentNode !== payments || payCard.previousElementSibling !== processorSection){
+        payments.insertBefore(payCard, processorSection.nextSibling);
+      }
+    } else if(payCard.parentNode !== payments){
+      payments.appendChild(payCard);
+    }
+    return payCard;
   }
 	  function renderBillingManagement(d){
 	    writeBillingSnapshot(d);
 	    var p = d.current_plan || planDefaults[0];
     var connect = d.stripe_connect || {};
-    var payments = document.querySelector('#db-panel-payments .db-content');
-    if(payments && !document.getElementById('ob-payments-plan-card')){
-      var payCard = document.createElement('div');
-      payCard.id = 'ob-payments-plan-card';
-      payCard.className = 'ob-plan-console';
-      payments.insertBefore(payCard, payments.children[1] || payments.firstChild);
-    }
-    var pay = document.getElementById('ob-payments-plan-card');
+    var pay = ensurePaymentsPlanCard();
     if(pay) pay.innerHTML = planManagementHtml(d, 'payments');
     var billingBlock = document.getElementById('sblock-billing');
     if(billingBlock){
@@ -31121,6 +31140,24 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
   function hideStripeRedirectNotice(){
     var existing = document.getElementById('ob-stripe-redirect-notice');
     if(existing) existing.remove();
+  }
+  function stripeConnectErrorMessage(e){
+    var data = e && e.data || {};
+    var raw = String((data && (data.code || data.error)) || (e && e.message) || '').toLowerCase();
+    var rateLimited = (e && e.status === 429) || raw.indexOf('too many requests') >= 0 || raw.indexOf('rate') >= 0;
+    if(rateLimited) return 'Stripe setup is busy right now. Please wait about a minute and try again, or use Need help so Ownlybiz can jump in.';
+    if(data && data.code === 'stripe_connect_in_progress') return 'Stripe setup is already opening. Please wait a moment for the secure Stripe page.';
+    if(data && data.code === 'stripe_connect_recent_attempt') return 'Stripe setup was just requested. Please wait a few seconds and try again.';
+    return (e && e.message) || 'Could not open Stripe Connect';
+  }
+  function setStripeConnectBusy(isBusy){
+    var selector = "button[onclick*=\"openConnectorModal('stripe')\"],.pay-processor[onclick*=\"openConnectorModal('stripe')\"] button";
+    document.querySelectorAll(selector).forEach(function(btn){
+      if(btn && btn.tagName === 'BUTTON'){
+        btn.disabled = !!isBusy;
+        btn.dataset.obBusy = isBusy ? '1' : '';
+      }
+    });
   }
   function redirectToStripe(url, title, body){
     showStripeRedirectNotice(title, body);
@@ -31283,7 +31320,82 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
 	      modal.onclick = function(e){ if(e.target === modal) closeStripeCountryModal(modal, null, resolve); };
 	    });
 	  }
+  function supportFieldValue(id){
+    var el = document.getElementById(id);
+    return el ? String(el.value || '').trim() : '';
+  }
+  function paymentsHelpContext(issue){
+    var u = readUserSnapshot();
+    var billing = planState.billing || readBillingSnapshot();
+    var plan = (billing && billing.current_plan) || planState.current || selectedPlan();
+    var connect = (billing && billing.stripe_connect) || {};
+    var statusText = connect.configured || connect.connected ? 'connected' : (connect.pending || connect.account_id ? 'pending' : 'not connected');
+    return [
+      'Issue:',
+      issue || 'No details provided.',
+      '',
+      'Payments setup context:',
+      'URL: ' + location.href,
+      'User ID: ' + (u.id || ''),
+      'Name: ' + (u.name || ''),
+      'Email: ' + (u.email || ''),
+      'Slug: ' + (u.slug || (u.expert && u.expert.slug) || ''),
+      'Current plan: ' + ((plan && (plan.id || plan.name)) || ''),
+      'Stripe Connect: ' + statusText,
+      'Stripe account ID: ' + (connect.account_id || ''),
+      'Browser time: ' + new Date().toISOString()
+    ].join('\n');
+  }
+  window.obOpenPaymentsHelp = function(){
+    var existing = document.getElementById('ob-payments-help-modal');
+    if(existing) existing.remove();
+    var u = readUserSnapshot();
+    var modal = document.createElement('div');
+    modal.id = 'ob-payments-help-modal';
+    modal.className = 'ob-modal-backdrop';
+    modal.innerHTML = '<div class="ob-modal" role="dialog" aria-modal="true" aria-labelledby="ob-payments-help-title">'
+      + '<h3 id="ob-payments-help-title">Get help with payments</h3>'
+      + '<p>Tell Ownlybiz what happened on this step. This sends a high priority note to support with your account context.</p>'
+      + '<div class="modal-field"><label class="modal-label" for="ob-payments-help-email">Email</label><input id="ob-payments-help-email" class="modal-input" type="email" value="'+esc(u.email || '')+'"></div>'
+      + '<div class="modal-field"><label class="modal-label" for="ob-payments-help-message">What do you need help with?</label><textarea id="ob-payments-help-message" class="modal-input" style="min-height:120px;resize:vertical;" placeholder="Example: Stripe showed too many requests, or I cannot finish payouts."></textarea></div>'
+      + '<div class="ob-modal-actions"><button type="button" class="btn btn-sm" id="ob-payments-help-cancel" style="background:var(--cream);border:1px solid var(--gray-200);color:var(--brown);">Cancel</button><button type="button" class="btn btn-primary btn-sm" id="ob-payments-help-submit">Send help request</button></div>'
+      + '<div id="ob-payments-help-status" class="save-status" style="margin-top:10px;"></div>'
+      + '</div>';
+    document.body.appendChild(modal);
+    modal.querySelector('#ob-payments-help-cancel').onclick = function(){ modal.remove(); };
+    modal.onclick = function(e){ if(e.target === modal) modal.remove(); };
+    modal.querySelector('#ob-payments-help-submit').onclick = async function(){
+      var btn = this;
+      var status = document.getElementById('ob-payments-help-status');
+      var issue = supportFieldValue('ob-payments-help-message');
+      if(!issue){ if(status){ status.textContent = 'Add a short note first.'; status.style.color = '#dc2626'; } return; }
+      var u = readUserSnapshot();
+      var email = supportFieldValue('ob-payments-help-email') || u.email || '';
+      btn.disabled = true;
+      var old = btn.textContent;
+      btn.textContent = 'Sending...';
+      if(status){ status.textContent = ''; }
+      try {
+        await obJson('/api/marketing/support', {method:'POST', body:{
+          name:u.name || u.email || 'Expert',
+          email:email,
+          priority:'urgent',
+          subject:'Payments setup help' + (email ? ': ' + email : ''),
+          message:paymentsHelpContext(issue)
+        }});
+        toastOk('Help request sent. Ownlybiz support was notified.');
+        modal.remove();
+      } catch(e) {
+        if(status){ status.textContent = e.message || 'Could not send help request'; status.style.color = '#dc2626'; }
+      } finally {
+        btn.disabled = false;
+        btn.textContent = old;
+      }
+    };
+    setTimeout(function(){ var msg = document.getElementById('ob-payments-help-message'); if(msg) msg.focus(); }, 60);
+  };
 	  var previousOpenConnectorModal = window.openConnectorModal;
+  var stripeConnectBusy = false;
 		  window.openConnectorModal = function(type){
 		    if(String(type || '').toLowerCase() !== 'stripe'){
 		      if(previousOpenConnectorModal) return previousOpenConnectorModal.apply(this, arguments);
@@ -31291,6 +31403,11 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
 		      return;
 	    }
 	    if(!token()){ toastErr('Please log in first.'); return; }
+	    if(stripeConnectBusy){ toastErr('Stripe setup is already opening. Please wait a moment.'); return; }
+	    stripeConnectBusy = true;
+	    setStripeConnectBusy(true);
+	    var u = readUserSnapshot();
+	    window._obConnectExpertUserId = u.id || window._currentDashUserId || window._viewingExpertUserId || '';
 	    return obJson('/api/experts/stripe/connect/options', {method:'GET'})
 	      .then(function(options){
 	        return chooseStripeConnectCountry(options).then(function(country){
@@ -31307,8 +31424,12 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
 	      })
 	      .catch(function(e){
 	        hideStripeRedirectNotice();
-	        toastErr(e.message || 'Could not open Stripe Connect');
-		      });
+	        toastErr(stripeConnectErrorMessage(e));
+		      })
+	      .finally(function(){
+	        stripeConnectBusy = false;
+	        setStripeConnectBusy(false);
+	      });
 		  };
 
 	  function installBillingFirstPaintWrappers(){
@@ -31352,6 +31473,7 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
 		    if(!token() || !canLoadExpertBilling()) return;
 		    try {
 		      renderDashboardBillingShell();
+		      renderBillingManagement(readBillingSnapshot());
 		      var d = await loadBilling();
 		      renderBillingManagement(d);
 		    } catch(e) {}

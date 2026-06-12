@@ -48992,6 +48992,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   var PROD_API = 'https://ownlybiz-backend-production.up.railway.app';
   var state = { status:null, room:null, publicRoom:null };
   var media = { ws:null, roomId:'', role:'client', participant:null, participants:[], localStream:null, peers:{}, ice:null, started:false };
+  var authRetryCount = 0;
 
   function apiBase(){
     return String(window.OWNLYBIZ_API_URL || window.OWNLY_API || window.API_BASE || PROD_API).replace(/\/+$/,'');
@@ -49011,6 +49012,14 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   function currentUser(){
     try { return JSON.parse(sessionStorage.getItem('ob_u') || localStorage.getItem('ob_u') || 'null'); }
     catch(e) { return null; }
+  }
+  function isExpertDashRoute(){
+    return /^\/dash(?:\/|$)/.test(location.pathname || '');
+  }
+  function scheduleAuthRetry(){
+    if(!isExpertDashRoute() || authRetryCount >= 10) return;
+    authRetryCount += 1;
+    setTimeout(function(){ loadStatus(true); }, Math.min(10000, 700 + authRetryCount * 800));
   }
   function headers(){
     var h = {'Content-Type':'application/json'};
@@ -49336,11 +49345,17 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   }
 
   function loadStatus(force){
+    if(!isExpertDashRoute()) return Promise.resolve(null);
     ensurePanel();
     installExpertNav();
     patchNav();
     var user = currentUser();
-    if(!user || user.role !== 'expert') return Promise.resolve(null);
+    if(!user) {
+      scheduleAuthRetry();
+      return Promise.resolve(null);
+    }
+    if(user.role !== 'expert') return Promise.resolve(null);
+    authRetryCount = 0;
     if(state.status && !force) {
       renderDashboard(state.status);
       return Promise.resolve(state.status);
@@ -50030,8 +50045,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     if(bootPublicRoute()) return;
     bootSiteEvents();
     [900, 2500, 5000].forEach(function(ms){ setTimeout(bootSiteEvents, ms); });
-    setTimeout(function(){ loadStatus(false); }, 600);
-    setTimeout(function(){ loadStatus(false); }, 2200);
+    [600, 2200, 4800, 8000].forEach(function(ms){ setTimeout(function(){ loadStatus(false); }, ms); });
   }
 
   if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
@@ -50039,6 +50053,13 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   window.addEventListener('beforeunload', function(){
     if(media.ws && media.roomId) sendWs({type:'group_leave', room_id:media.roomId});
     resetMedia();
+  });
+  window.addEventListener('storage', function(e){
+    if(e && e.key && ['ob_t','ob_u','ob_client_token'].indexOf(e.key) < 0) return;
+    setTimeout(function(){ loadStatus(true); }, 120);
+  });
+  document.addEventListener('visibilitychange', function(){
+    if(!document.hidden) setTimeout(function(){ loadStatus(true); }, 120);
   });
 })();
 </script>
@@ -55164,6 +55185,179 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
       '<div style="display:flex;gap:10px;align-items:center;margin-top:12px;flex-wrap:wrap;"><button class="admin-action-btn" type="button" onclick="obAdminSaveExpertAiChat(&quot;' + attr(id) + '&quot;)">Save AI mode</button><span id="ob-ai-chat-save-status" style="font-size:12px;color:rgba(246,241,233,.55);"></span></div>' +
     '</div>';
   }
+  function money(value, currency){
+    var n = Number(value || 0);
+    if(!Number.isFinite(n)) n = 0;
+    var code = String(currency || 'usd').toUpperCase();
+    try { return n.toLocaleString(undefined, {style:'currency', currency:code}); }
+    catch(e) { return '$' + n.toFixed(2); }
+  }
+  function groupTierOptions(selected, tiers){
+    var list = Array.isArray(tiers) && tiers.length ? tiers : [
+      {id:'group_10', label:'Group Sessions 10', capacity_limit:10},
+      {id:'group_50', label:'Group Sessions 50', capacity_limit:50},
+      {id:'group_100', label:'Group Sessions 100', capacity_limit:100}
+    ];
+    return list.map(function(t){
+      var id = t.id || t.capacity_tier || 'group_10';
+      var label = t.label || ('Up to ' + (t.capacity_limit || '') + ' clients');
+      return '<option value="' + attr(id) + '" ' + (selected === id ? 'selected' : '') + '>' + esc(label) + '</option>';
+    }).join('');
+  }
+  function groupStatusBadge(status){
+    status = String(status || 'draft').toLowerCase();
+    var color = status === 'paid' ? '#22c55e' : (status === 'cancelled' ? '#f87171' : (status === 'sent' ? '#38bdf8' : '#f59e0b'));
+    return '<span style="font-size:11px;font-weight:800;color:' + color + ';">' + esc(status.toUpperCase()) + '</span>';
+  }
+  function groupRequestRows(id, requests){
+    requests = requests || [];
+    if(!requests.length) return '<div style="font-size:12px;color:rgba(246,241,233,.5);margin-top:10px;">No group-session payment requests yet.</div>';
+    return '<div style="overflow:auto;margin-top:12px;"><table class="experts-table" style="width:100%;"><thead><tr><th>Tier</th><th>Amount</th><th>Status</th><th>Checkout</th><th>Actions</th></tr></thead><tbody>' +
+      requests.slice(0,8).map(function(r){
+        var checkout = r.checkout_url
+          ? '<a href="' + attr(r.checkout_url) + '" target="_blank" rel="noopener" style="color:#c8ff3d;">Open</a> <button class="admin-action-btn" style="padding:6px 9px;font-size:11px;" type="button" onclick="obAdminCopyText(&quot;' + attr(r.checkout_url) + '&quot;)">Copy</button>'
+          : '-';
+        var actions = String(r.status || '').toLowerCase() === 'paid'
+          ? '<button class="admin-action-btn" style="padding:6px 9px;font-size:11px;" type="button" onclick="obAdminApplyPaidGroupTier(&quot;' + attr(id) + '&quot;,&quot;' + attr(r.capacity_tier || 'group_10') + '&quot;,&quot;' + attr(r.id) + '&quot;)">Enable this tier</button>'
+          : '<button class="admin-action-btn" style="padding:6px 9px;font-size:11px;" type="button" onclick="obAdminMarkGroupRequestPaid(&quot;' + attr(id) + '&quot;,&quot;' + attr(r.id) + '&quot;)">Mark paid</button> <button class="admin-action-btn danger" style="padding:6px 9px;font-size:11px;" type="button" onclick="obAdminCancelGroupRequest(&quot;' + attr(id) + '&quot;,&quot;' + attr(r.id) + '&quot;)">Cancel</button>';
+        return '<tr><td>' + esc((r.capacity_limit || '') + ' clients') + '</td><td>' + esc(money(r.amount || 0, r.currency || 'usd')) + '</td><td>' + groupStatusBadge(r.status) + '</td><td>' + checkout + '</td><td>' + actions + '</td></tr>';
+      }).join('') + '</tbody></table></div>';
+  }
+  function groupCardHtml(id, group){
+    group = group || {};
+    var ent = group.entitlement || {};
+    var requests = group.payment_requests || [];
+    var tiers = group.tiers || [];
+    var enabled = Number(ent.enabled || 0) === 1;
+    var tier = ent.capacity_tier || 'group_10';
+    return '<div class="admin-card" id="ob-admin-group-sessions-card" style="padding:18px;margin-top:18px;border-color:' + (enabled ? 'rgba(34,197,94,.26)' : 'rgba(255,255,255,.08)') + ';">'
+      + '<div class="admin-card-title">Group Video Sessions <span class="admin-card-title-sub">Admin-only paid capacity feature</span></div>'
+      + '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px;align-items:end;">'
+      +   '<label style="font-size:13px;color:rgba(246,241,233,.75);display:flex;gap:8px;align-items:center;"><input id="ob-group-enabled" type="checkbox" ' + (enabled ? 'checked' : '') + '> Enable Group Sessions</label>'
+      +   '<label style="font-size:12px;color:rgba(246,241,233,.55);">Capacity<select id="ob-group-tier" class="admin-input" style="margin-top:6px;width:100%;">' + groupTierOptions(tier, tiers) + '</select></label>'
+      +   '<div style="font-size:12px;color:rgba(246,241,233,.55);line-height:1.5;">This is separate from private chat, voice, and video. Admin controls access and maximum client capacity.</div>'
+      + '</div>'
+      + '<label style="display:block;font-size:12px;color:rgba(246,241,233,.55);margin-top:14px;">Admin note<textarea id="ob-group-admin-note" class="admin-input" style="width:100%;min-height:88px;margin-top:7px;resize:vertical;">' + esc(ent.admin_note || '') + '</textarea></label>'
+      + '<div style="display:flex;gap:10px;align-items:center;margin-top:12px;flex-wrap:wrap;"><button class="admin-action-btn" type="button" onclick="obAdminSaveGroupSessions(&quot;' + attr(id) + '&quot;)">Save group access</button><span id="ob-group-save-status" style="font-size:12px;color:rgba(246,241,233,.55);">' + (enabled ? 'Enabled: up to ' + esc(ent.capacity_limit || 10) + ' clients' : 'Disabled') + '</span></div>'
+      + '<div style="margin-top:18px;padding-top:16px;border-top:1px solid rgba(246,241,233,.1);">'
+      +   '<div style="font-size:13px;font-weight:800;color:rgba(246,241,233,.88);margin-bottom:10px;">Payment request</div>'
+      +   '<div style="display:grid;grid-template-columns:160px 110px minmax(180px,1fr) auto;gap:10px;align-items:end;">'
+      +     '<label style="font-size:12px;color:rgba(246,241,233,.55);">Amount<input id="ob-group-request-amount" class="admin-input" type="number" min="1" step="1" placeholder="199" style="width:100%;margin-top:6px;"></label>'
+      +     '<label style="font-size:12px;color:rgba(246,241,233,.55);">Currency<input id="ob-group-request-currency" class="admin-input" value="usd" style="width:100%;margin-top:6px;"></label>'
+      +     '<label style="font-size:12px;color:rgba(246,241,233,.55);">Note<input id="ob-group-request-note" class="admin-input" placeholder="Optional internal note" style="width:100%;margin-top:6px;"></label>'
+      +     '<button class="admin-action-btn" type="button" onclick="obAdminCreateGroupRequest(&quot;' + attr(id) + '&quot;)">Create request</button>'
+      +   '</div>'
+      +   '<div id="ob-group-request-status" style="font-size:12px;color:rgba(246,241,233,.55);margin-top:8px;"></div>'
+      +   groupRequestRows(id, requests)
+      + '</div>'
+      + '</div>';
+  }
+  function renderGroupControls(id, group){
+    var root = content();
+    if(!root) return;
+    Array.prototype.slice.call(root.querySelectorAll('.admin-card')).forEach(function(card){
+      if(card.id === 'ob-admin-group-sessions-card') return;
+      var title = card.querySelector && card.querySelector('.admin-card-title');
+      if(title && /group video sessions/i.test(title.textContent || '')) card.remove();
+    });
+    var html = groupCardHtml(id, group || {});
+    var existing = document.getElementById('ob-admin-group-sessions-card');
+    if(existing) {
+      existing.outerHTML = html;
+    } else {
+      var cards = Array.prototype.slice.call(root.querySelectorAll('.admin-card'));
+      var stripe = cards.find(function(card){ return /stripe mode/i.test(card.textContent || ''); });
+      var ai = document.getElementById('ob-admin-ai-chat-visible-card');
+      var od = document.getElementById('ob-admin-on-demand-card');
+      if(stripe && stripe.parentNode) stripe.insertAdjacentHTML('afterend', html);
+      else if(ai && ai.parentNode) ai.insertAdjacentHTML('beforebegin', html);
+      else if(od && od.parentNode) od.insertAdjacentHTML('beforebegin', html);
+      else {
+        var anchor = findRateRow(root);
+        if(anchor && anchor.parentNode) anchor.insertAdjacentHTML('afterend', html);
+        else root.insertAdjacentHTML('afterbegin', html);
+      }
+    }
+    installGroupSaveFallback();
+  }
+  function ensureGroupCard(id){
+    if(!id) return Promise.resolve(null);
+    return api('/admin/experts/' + encodeURIComponent(id) + '/group-sessions').then(function(data){
+      renderGroupControls(id, data || {});
+      return data;
+    }).catch(function(err){
+      console.warn('[AdminExpertGroupSessions]', err && err.message ? err.message : err);
+      return null;
+    });
+  }
+  function installGroupSaveFallback(){
+    if(typeof window.obAdminCopyText !== 'function'){
+      window.obAdminCopyText = function(text){
+        text = String(text || '');
+        if(navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(function(){ notify('Copied checkout link.', 'ok'); }).catch(function(){ notify(text, 'ok'); });
+        else notify(text, 'ok');
+      };
+    }
+    if(typeof window.obAdminSaveGroupSessions !== 'function'){
+      window.obAdminSaveGroupSessions = function(id){
+        var status = document.getElementById('ob-group-save-status');
+        if(status) status.textContent = 'Saving...';
+        api('/admin/experts/' + encodeURIComponent(id) + '/group-sessions', {method:'PUT', body:{
+          enabled: !!((document.getElementById('ob-group-enabled') || {}).checked),
+          capacity_tier: (document.getElementById('ob-group-tier') || {}).value || 'group_10',
+          admin_note: (document.getElementById('ob-group-admin-note') || {}).value || ''
+        }}).then(function(d){
+          if(status) status.textContent = d.entitlement && d.entitlement.enabled ? ('Enabled: up to ' + (d.entitlement.capacity_limit || 10) + ' clients') : 'Disabled';
+          notify('Group session access saved.', 'ok');
+          return ensureGroupCard(id);
+        }).catch(function(err){ if(status) status.textContent = err.message; notify(err.message, 'err'); });
+      };
+    }
+    if(typeof window.obAdminApplyPaidGroupTier !== 'function'){
+      window.obAdminApplyPaidGroupTier = function(id, tier, requestId){
+        api('/admin/experts/' + encodeURIComponent(id) + '/group-sessions', {method:'PUT', body:{
+          enabled:true,
+          capacity_tier:tier || 'group_10',
+          current_request_id:requestId || '',
+          admin_note:(document.getElementById('ob-group-admin-note') || {}).value || 'Enabled from paid group-session request.'
+        }}).then(function(){ notify('Paid group tier enabled.', 'ok'); return ensureGroupCard(id); })
+          .catch(function(err){ notify(err.message, 'err'); });
+      };
+    }
+    if(typeof window.obAdminCreateGroupRequest !== 'function'){
+      window.obAdminCreateGroupRequest = function(id){
+        var status = document.getElementById('ob-group-request-status');
+        if(status) status.textContent = 'Creating Stripe Checkout request...';
+        api('/admin/experts/' + encodeURIComponent(id) + '/group-sessions/payment-request', {method:'POST', body:{
+          capacity_tier:(document.getElementById('ob-group-tier') || {}).value || 'group_10',
+          amount:(document.getElementById('ob-group-request-amount') || {}).value || '',
+          currency:(document.getElementById('ob-group-request-currency') || {}).value || 'usd',
+          note:(document.getElementById('ob-group-request-note') || {}).value || ''
+        }}).then(function(d){
+          var url = d.checkout_url || (d.request && d.request.checkout_url) || '';
+          if(status) status.innerHTML = url ? 'Checkout link created: <a href="' + attr(url) + '" target="_blank" rel="noopener" style="color:#c8ff3d;">open</a>' : 'Manual payment request created.';
+          notify('Group-session payment request created.', 'ok');
+          return ensureGroupCard(id);
+        }).catch(function(err){ if(status) status.textContent = err.message; notify(err.message, 'err'); });
+      };
+    }
+    if(typeof window.obAdminMarkGroupRequestPaid !== 'function'){
+      window.obAdminMarkGroupRequestPaid = function(expertId, requestId){
+        api('/admin/group-session-payment-requests/' + encodeURIComponent(requestId) + '/mark-paid', {method:'POST'}).then(function(){
+          notify('Payment request marked paid. Enable the paid tier when ready.', 'ok');
+          return ensureGroupCard(expertId);
+        }).catch(function(err){ notify(err.message, 'err'); });
+      };
+    }
+    if(typeof window.obAdminCancelGroupRequest !== 'function'){
+      window.obAdminCancelGroupRequest = function(expertId, requestId){
+        api('/admin/group-session-payment-requests/' + encodeURIComponent(requestId) + '/cancel', {method:'POST'}).then(function(){
+          notify('Payment request cancelled.', 'ok');
+          return ensureGroupCard(expertId);
+        }).catch(function(err){ notify(err.message, 'err'); });
+      };
+    }
+  }
   function installAiSaveFallback(){
     if(typeof window.obAdminSaveExpertAiChat === 'function') return;
     window.obAdminSaveExpertAiChat = function(id){
@@ -55213,11 +55407,13 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     var text = String(root.textContent || '').toLowerCase();
     if(text.indexOf('ai chat') < 0 && text.indexOf('chat ai') < 0 && text.indexOf('total sessions') < 0) return;
     api('/admin/experts/' + encodeURIComponent(id) + '/profile').then(function(data){
+      ensureGroupCard(id);
       renderAiControls(id, data.ai_chat || {});
       if(typeof window.obAdminInjectOnDemand === 'function') window.obAdminInjectOnDemand(id);
-      [250,900,1700].forEach(function(ms){ setTimeout(placeOnDemandCard, ms); });
+      [250,900,1700].forEach(function(ms){ setTimeout(function(){ ensureGroupCard(id); placeOnDemandCard(); }, ms); });
     }).catch(function(err){
       console.warn('[AdminExpertControls]', err && err.message ? err.message : err);
+      ensureGroupCard(id);
       placeOnDemandCard();
     });
   }
@@ -55228,7 +55424,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     if(!panel) return;
     observerInstalled = true;
     new MutationObserver(function(){
-      if(document.getElementById('ob-admin-ai-chat-visible-card') && document.getElementById('ob-admin-on-demand-card')) return;
+      if(document.getElementById('ob-admin-ai-chat-visible-card') && document.getElementById('ob-admin-on-demand-card') && document.getElementById('ob-admin-group-sessions-card')) return;
       clearTimeout(observerTimer);
       observerTimer = setTimeout(function(){
         var id = idFromOpenDetail();

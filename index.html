@@ -14541,8 +14541,8 @@ async function savePaymentConfig() {
     var banner = document.createElement('div');
     banner.id = 'admin-view-expert-banner';
     banner.style.cssText = 'background:linear-gradient(90deg,rgba(196,98,45,.2),rgba(196,98,45,.08));border-bottom:1px solid rgba(196,98,45,.3);padding:10px 20px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;';
-    banner.innerHTML = '<span style="font-size:13px;font-weight:600;color:var(--terra);">👁 Viewing <strong>'+ (name||'Expert').replace(/</g,'&lt;') + '</strong>\'s dashboard</span>' +
-      '<button onclick="window._adminViewingExpertId=null;window._adminViewingExpertName=null;window._adminViewingExpertSlug=null;_hideAdminViewBanner();if(typeof switchView===\'function\') switchView(6);" style="background:rgba(255,255,255,.1);color:rgba(246,241,233,.9);border:1px solid rgba(255,255,255,.2);padding:6px 14px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;">← Back to Admin</button>';
+    banner.innerHTML = '<span style="font-size:13px;font-weight:600;color:var(--terra);">Admin preview (read-only): viewing <strong>'+ (name||'Expert').replace(/</g,'&lt;') + '</strong>\'s dashboard</span>' +
+      '<button onclick="window._adminViewingExpertId=null;window._adminViewingExpertName=null;window._adminViewingExpertSlug=null;_hideAdminViewBanner();if(typeof switchView===\'function\') switchView(6);" style="background:rgba(255,255,255,.1);color:rgba(246,241,233,.9);border:1px solid rgba(255,255,255,.2);padding:6px 14px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;">Back to Admin</button>';
     main.insertBefore(banner, main.firstChild);
   }
   function _hideAdminViewBanner() {
@@ -14806,7 +14806,10 @@ async function savePaymentConfig() {
   async function loadAnalytics() {
     const panel=$('db-panel-analytics'); if(!panel) return;
     try {
-      const d=await api('GET','/experts/me/analytics?period=30');
+      const analyticsPath = window._adminViewingExpertId
+        ? '/admin/experts/' + encodeURIComponent(window._adminViewingExpertId) + '/analytics?period=30'
+        : '/experts/me/analytics?period=30';
+      const d=await api('GET', analyticsPath);
       _renderBarChart($('big-revenue-chart'), d.daily||[], 'revenue');
       // Channel bars
       if(d.by_channel?.length){
@@ -43739,10 +43742,13 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
 	  }
 
   function renderExpertAnalyticsTrust(){
-    var panel = document.getElementById('db-panel-analytics');
-    if(!panel || !panel.classList.contains('active')) return;
-    if(role() !== 'expert' && !window._adminViewingExpertId) return;
-    api('/api/experts/me/analytics?period=30').then(function(data){
+	    var panel = document.getElementById('db-panel-analytics');
+	    if(!panel || !panel.classList.contains('active')) return;
+	    if(role() !== 'expert' && !window._adminViewingExpertId) return;
+	    var analyticsPath = window._adminViewingExpertId
+	      ? '/api/admin/experts/' + encodeURIComponent(window._adminViewingExpertId) + '/analytics?period=30'
+	      : '/api/experts/me/analytics?period=30';
+	    api(analyticsPath).then(function(data){
       var daily = data.daily || [];
       var channels = data.by_channel || [];
       var topClients = data.top_clients || [];
@@ -55696,6 +55702,93 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
   if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
   else boot();
   [500,1400,2800,5200].forEach(function(ms){ setTimeout(boot, ms); });
+})();
+</script>
+<script id="ob-admin-expert-preview-readonly-20260612">
+(function(){
+  'use strict';
+  if(window.__obAdminExpertPreviewReadonly20260612) return;
+  window.__obAdminExpertPreviewReadonly20260612 = true;
+  var nativeFetch = window.fetch && window.fetch.bind(window);
+  if(!nativeFetch) return;
+
+  function role(){
+    try {
+      var raw = sessionStorage.getItem('ob_u') || localStorage.getItem('ob_u') || '{}';
+      return String((JSON.parse(raw) || {}).role || '').toLowerCase();
+    } catch(e) { return ''; }
+  }
+  function query(){
+    try { return new URLSearchParams(location.search || ''); } catch(e) { return new URLSearchParams(); }
+  }
+  function dashSlug(){
+    var match = String(location.pathname || '').match(/^\/dash\/([^/?#]+)/);
+    return match ? decodeURIComponent(match[1]) : '';
+  }
+  function storedCtx(){
+    try { return JSON.parse(localStorage.getItem('ob_admin_view_expert') || '{}') || {}; }
+    catch(e) { return {}; }
+  }
+  function isAdminPreview(){
+    if(role() !== 'admin') return false;
+    if(String(location.pathname || '').indexOf('/dash/') !== 0) return false;
+    var params = query();
+    var slug = dashSlug();
+    var stored = storedCtx();
+    var storedMatches = !!(stored && stored.id && (!stored.slug || !slug || stored.slug === slug));
+    return params.get('admin') === '1' || !!window._adminViewingExpertId || !!params.get('expertId') || storedMatches;
+  }
+  function readUrl(input){
+    try {
+      if(typeof input === 'string') return new URL(input, location.origin);
+      if(input && input.url) return new URL(input.url, location.origin);
+    } catch(e) {}
+    return null;
+  }
+  function readMethod(input, init){
+    var method = init && init.method;
+    if(!method && input && typeof input.method === 'string') method = input.method;
+    return String(method || 'GET').toUpperCase();
+  }
+  function isOwnlyApi(url){
+    if(!url || String(url.pathname || '').indexOf('/api/') !== 0) return false;
+    var host = String(url.hostname || '').toLowerCase();
+    return host === String(location.hostname || '').toLowerCase() || host === 'ownlybiz-backend-production.up.railway.app';
+  }
+  function jsonResponse(status, payload){
+    return Promise.resolve(new Response(JSON.stringify(payload || {}), {
+      status: status,
+      headers: {'Content-Type':'application/json', 'X-Ownlybiz-Admin-Preview':'read-only'}
+    }));
+  }
+  window.fetch = function(input, init){
+    var url = readUrl(input);
+    var method = readMethod(input, init);
+    if(isAdminPreview() && isOwnlyApi(url) && ['GET','HEAD','OPTIONS'].indexOf(method) < 0){
+      return jsonResponse(403, {
+        success: false,
+        error: 'Admin preview is read-only. Return to Admin to make changes.'
+      });
+    }
+    return nativeFetch(input, init);
+  };
+
+  function ensureBanner(){
+    if(!isAdminPreview()) return;
+    document.documentElement.setAttribute('data-ob-admin-expert-preview', 'read-only');
+    if(document.getElementById('admin-view-expert-banner') || document.getElementById('ob-admin-preview-readonly-banner')) return;
+    var host = document.querySelector('#view-3 .db-main') || document.querySelector('#view-3');
+    if(!host) return;
+    var banner = document.createElement('div');
+    banner.id = 'ob-admin-preview-readonly-banner';
+    banner.style.cssText = 'background:linear-gradient(90deg,rgba(196,98,45,.18),rgba(196,98,45,.07));border-bottom:1px solid rgba(196,98,45,.28);padding:10px 20px;color:var(--terra,#c2622d);font-size:13px;font-weight:700;';
+    banner.textContent = 'Admin preview (read-only): showing this expert dashboard with admin access preserved.';
+    host.insertBefore(banner, host.firstChild);
+  }
+  function boot(){ try { ensureBanner(); } catch(e) {} }
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
+  else boot();
+  [400, 1200, 2600, 5200].forEach(function(ms){ setTimeout(boot, ms); });
 })();
 </script>
 	</html>

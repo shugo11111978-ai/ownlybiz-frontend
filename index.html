@@ -17947,6 +17947,44 @@ function _adminPath(suffix) {
 
 // --- Clean single loadExpertWebsite (replaces all previous wrappers) ---
 window.__obPublicExpertLoadState = window.__obPublicExpertLoadState || { inFlight:{}, recent:{} };
+window.__obPublicSlugBackoffState = window.__obPublicSlugBackoffState || { blocked:{} };
+(function(){
+  if(window.obPublicSlugBackoff) return;
+  var state = window.__obPublicSlugBackoffState;
+  function cleanSlug(slug){
+    slug = String(slug || '').trim().toLowerCase();
+    return /^[a-z0-9][a-z0-9-]{0,80}$/i.test(slug) ? slug : '';
+  }
+  function key(kind, slug){ return String(kind || 'expert') + ':' + cleanSlug(slug); }
+  function statusFor(reason){ return reason === 'not_found' ? 404 : 429; }
+  window.obPublicSlugBackoff = {
+    blocked:function(kind, slug){
+      var k = key(kind, slug);
+      if(!k || !cleanSlug(slug)) return false;
+      var row = state.blocked[k];
+      if(!row) return false;
+      if(Date.now() > row.until){ delete state.blocked[k]; return false; }
+      return row;
+    },
+    mark:function(kind, slug, reason, ms, body){
+      var clean = cleanSlug(slug);
+      if(!clean) return null;
+      var k = key(kind, clean);
+      var ttl = Number(ms || 0) || (reason === 'not_found' ? 5*60*1000 : 2*60*1000);
+      state.blocked[k] = {
+        until: Date.now() + ttl,
+        reason: reason || 'rate_limited',
+        status: statusFor(reason || 'rate_limited'),
+        body: body || null
+      };
+      return state.blocked[k];
+    },
+    clear:function(kind, slug){
+      var clean = cleanSlug(slug);
+      if(clean) delete state.blocked[key(kind, clean)];
+    }
+  };
+})();
 (function(){
   if(window.__obPublicExpertFetchCoalescer || typeof window.fetch !== 'function') return;
   window.__obPublicExpertFetchCoalescer = true;
@@ -17954,6 +17992,8 @@ window.__obPublicExpertLoadState = window.__obPublicExpertLoadState || { inFligh
   var inFlight = {};
   var recent = {};
   var maxAgeMs = 2800;
+  var negativeMaxAgeMs = 2*60*1000;
+  var reserved = {me:1, rates:1, favicon:1, 'platform-fees':1, packages:1, status:1, stripe:1};
   function headerValue(headers, name){
     name = String(name || '').toLowerCase();
     if(!headers) return '';
@@ -17963,26 +18003,37 @@ window.__obPublicExpertLoadState = window.__obPublicExpertLoadState || { inFligh
     }
     return '';
   }
-  function requestKey(input, init){
+  function requestInfo(input, init){
     var method = String((init && init.method) || (input && input.method) || 'GET').toUpperCase();
-    if(method !== 'GET') return '';
+    if(method !== 'GET') return null;
     var raw = typeof input === 'string' ? input : (input && input.url ? input.url : '');
-    if(!raw) return '';
+    if(!raw) return null;
     var url;
-    try { url = new URL(raw, location.href); } catch(e) { return ''; }
+    try { url = new URL(raw, location.href); } catch(e) { return null; }
     var match = url.pathname.match(/\/api\/experts\/([^/?#]+)$/);
-    if(!match || !match[1] || /^(me|rates)$/i.test(match[1])) return '';
+    var slug = match && match[1] ? String(match[1]).toLowerCase() : '';
+    if(!slug || reserved[slug] || !/^[a-z0-9][a-z0-9-]{0,80}$/i.test(slug)) return null;
     var auth = headerValue(init && init.headers, 'authorization') || headerValue(input && input.headers, 'authorization');
-    return url.origin + url.pathname + '|auth:' + (auth ? '1:' + auth.slice(0, 16) : '0');
+    return { key:url.origin + url.pathname + '|auth:' + (auth ? '1:' + auth.slice(0, 16) : '0'), slug:slug };
   }
   function responseFromRecord(record){
     return new Response(record.body, {status:record.status, statusText:record.statusText, headers:record.headers});
   }
   window.fetch = function(input, init){
-    var key = requestKey(input, init);
-    if(!key) return nativeFetch.apply(this, arguments);
+    var info = requestInfo(input, init);
+    if(!info) return nativeFetch.apply(this, arguments);
+    var key = info.key;
     var now = Date.now();
     var cached = recent[key];
+    var blocked = window.obPublicSlugBackoff && window.obPublicSlugBackoff.blocked('expert', info.slug);
+    if(blocked && cached && cached.record && (cached.record.status === 404 || cached.record.status === 429) && now - cached.at < negativeMaxAgeMs) return Promise.resolve(responseFromRecord(cached.record));
+    if(blocked && !cached) {
+      return Promise.resolve(new Response(JSON.stringify(blocked.body || {error: blocked.status === 404 ? 'Expert not found' : 'Too many requests'}), {
+        status:blocked.status || 429,
+        statusText:blocked.status === 404 ? 'Not Found' : 'Too Many Requests',
+        headers:{'Content-Type':'application/json'}
+      }));
+    }
     if(cached && now - cached.at < maxAgeMs) return Promise.resolve(responseFromRecord(cached.record));
     if(inFlight[key]) return inFlight[key].then(responseFromRecord);
     inFlight[key] = nativeFetch.apply(this, arguments).then(function(response){
@@ -17994,6 +18045,15 @@ window.__obPublicExpertLoadState = window.__obPublicExpertLoadState || { inFligh
           headers: Array.from(response.headers.entries())
         };
         recent[key] = {at:Date.now(), record:record};
+        if(response.status === 404 || response.status === 429) {
+          try {
+            window.obPublicSlugBackoff.mark('expert', info.slug, response.status === 404 ? 'not_found' : 'rate_limited', response.status === 404 ? 5*60*1000 : 2*60*1000, JSON.parse(body || '{}'));
+          } catch(e) {
+            window.obPublicSlugBackoff.mark('expert', info.slug, response.status === 404 ? 'not_found' : 'rate_limited');
+          }
+        } else if(response.ok) {
+          window.obPublicSlugBackoff.clear('expert', info.slug);
+        }
         return record;
       });
     }).finally(function(){ delete inFlight[key]; });
@@ -18025,8 +18085,12 @@ window.loadExpertWebsite = function(slug) {
     if(typeof window._markRouteReady === 'function') window._markRouteReady('public');
     return _recent.promise;
   }
+  if(window.obPublicSlugBackoff && window.obPublicSlugBackoff.blocked('expert', slug)) {
+    if(typeof window._markRouteReady === 'function') window._markRouteReady('public');
+    return Promise.resolve(null);
+  }
   var _loadPromise = fetch('https://ownlybiz-backend-production.up.railway.app/api/experts/' + slug, _mainPublicExpertFetchOpts)
-    .then(function(r){ return r.json(); })
+    .then(function(r){ return r.json().catch(function(){ return {}; }).then(function(d){ if(!r.ok){ var err = new Error(d.error || d.message || ('HTTP ' + r.status)); err.status = r.status; err.body = d; throw err; } return d; }); })
     .then(function(d){
       var e = d.expert || d;
       if(!e || !e.name) {
@@ -18049,8 +18113,12 @@ window.loadExpertWebsite = function(slug) {
       _refreshPublicPage(e);
       if(typeof window._markRouteReady === 'function') window._markRouteReady('public');
       _loadState.recent[_loadKey] = { at:Date.now(), promise:_loadPromise };
+      if(window.obPublicSlugBackoff) window.obPublicSlugBackoff.clear('expert', slug);
       return e;
-    }).catch(function(){
+    }).catch(function(err){
+      if(window.obPublicSlugBackoff && (err && (err.status === 404 || err.status === 429))) {
+        window.obPublicSlugBackoff.mark('expert', slug, err.status === 404 ? 'not_found' : 'rate_limited', err.status === 404 ? 5*60*1000 : 2*60*1000, err.body || null);
+      }
       if(typeof window._markRouteReady === 'function') window._markRouteReady('public');
     }).finally(function(){
       delete _loadState.inFlight[_loadKey];
@@ -54101,7 +54169,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     var h = {'Content-Type':'application/json'};
     if(token()) h.Authorization = 'Bearer ' + token();
     return fetch(base() + path, {method:opts.method || 'GET', headers:h, body:opts.body ? JSON.stringify(opts.body) : undefined})
-      .then(function(r){ return r.json().catch(function(){ return {}; }).then(function(d){ if(!r.ok) throw new Error(d.error || d.message || ('HTTP ' + r.status)); return d; }); });
+      .then(function(r){ return r.json().catch(function(){ return {}; }).then(function(d){ if(!r.ok){ var err = new Error(d.error || d.message || ('HTTP ' + r.status)); err.status = r.status; err.body = d; throw err; } return d; }); });
   }
   function authApi(path, body){
     return fetch(base() + path, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body || {})})
@@ -54968,6 +55036,11 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     var slug = expertSlug();
     if(!slug) { markPublicOnDemandReady(); return; }
     state.publicSlug = slug;
+    if(window.obPublicSlugBackoff && window.obPublicSlugBackoff.blocked('onDemand', slug)) {
+      confirmCheckoutFromQuery(0);
+      markPublicOnDemandReady();
+      return;
+    }
     if(state.publicConfig && state.publicLoadedSlug === slug) {
       injectPublicCard(state.publicConfig);
       confirmCheckoutFromQuery(0);
@@ -54980,10 +55053,18 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
       state.publicLoadInFlightSlug = '';
       state.publicConfig = config;
       state.publicLoadedSlug = slug;
+      if(window.obPublicSlugBackoff) window.obPublicSlugBackoff.clear('onDemand', slug);
       injectPublicCard(config);
       confirmCheckoutFromQuery(0);
       markPublicOnDemandReady();
-    }).catch(function(){ state.publicLoadInFlightSlug = ''; confirmCheckoutFromQuery(0); markPublicOnDemandReady(); });
+    }).catch(function(err){
+      state.publicLoadInFlightSlug = '';
+      if(window.obPublicSlugBackoff && err && (err.status === 404 || err.status === 429 || /too many requests|expert not found/i.test(err.message || ''))) {
+        window.obPublicSlugBackoff.mark('onDemand', slug, err.status === 404 ? 'not_found' : 'rate_limited', err.status === 404 ? 5*60*1000 : 2*60*1000, err.body || null);
+      }
+      confirmCheckoutFromQuery(0);
+      markPublicOnDemandReady();
+    });
   }
   function installPublic(){
     if(state.publicInstalled) {
@@ -55262,6 +55343,10 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     slug = expertSlug(slug);
     if(!slug) return Promise.resolve(false);
     if(publicGate.allowed[slug]) return Promise.resolve(true);
+    if(window.obPublicSlugBackoff && window.obPublicSlugBackoff.blocked('expert', slug)) {
+      renderPublicGate(slug, 'unavailable');
+      return Promise.resolve(false);
+    }
     if(publicGate.blocked[slug]) {
       renderPublicGate(slug, 'unavailable');
       return Promise.resolve(false);
@@ -55272,18 +55357,22 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     publicGate.inFlight[slug] = Promise.race([fetch(apiBase() + '/api/experts/' + encodeURIComponent(slug), {cache:'no-store'}), timeout])
       .then(function(response){
         return response.json().catch(function(){ return {}; }).then(function(body){
-          if(!response.ok || body.error) throw new Error(body.error || 'Expert site is not published yet');
+          if(!response.ok || body.error) { var err = new Error(body.error || 'Expert site is not published yet'); err.status = response.status; err.body = body; throw err; }
           var expert = body.expert || body;
           if(!expert || !expert.slug || String(expert.slug).toLowerCase() !== slug) throw new Error('Expert site unavailable');
           publicGate.allowed[slug] = true;
           publicGate.blocked[slug] = false;
           publicGate.payload[slug] = expert;
+          if(window.obPublicSlugBackoff) window.obPublicSlugBackoff.clear('expert', slug);
           return true;
         });
       })
-      .catch(function(){
+      .catch(function(err){
         publicGate.allowed[slug] = false;
-        publicGate.blocked[slug] = true;
+        publicGate.blocked[slug] = !(err && err.status === 429);
+        if(window.obPublicSlugBackoff && err && (err.status === 404 || err.status === 429 || /too many requests|not found|not published|unavailable/i.test(err.message || ''))) {
+          window.obPublicSlugBackoff.mark('expert', slug, err.status === 404 ? 'not_found' : 'rate_limited', err.status === 404 ? 5*60*1000 : 2*60*1000, err.body || null);
+        }
         renderPublicGate(slug, 'unavailable');
         return false;
       })
@@ -55371,6 +55460,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
         if(!expert) return;
         publicGate.payload[slug] = expert;
         if(String(expert.slug || '').toLowerCase() === slug) publicGate.allowed[slug] = true;
+        if(window.obPublicSlugBackoff) window.obPublicSlugBackoff.clear('expert', slug);
         window._currentExpert = Object.assign(window._currentExpert || {}, expert);
         syncPublicBookingBlock(expert);
       })

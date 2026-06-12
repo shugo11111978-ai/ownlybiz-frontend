@@ -55750,33 +55750,90 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     if(!method && input && typeof input.method === 'string') method = input.method;
     return String(method || 'GET').toUpperCase();
   }
-  function isOwnlyApi(url){
-    if(!url || String(url.pathname || '').indexOf('/api/') !== 0) return false;
-    var host = String(url.hostname || '').toLowerCase();
-    return host === String(location.hostname || '').toLowerCase() || host === 'ownlybiz-backend-production.up.railway.app';
-  }
-  function jsonResponse(status, payload){
-    return Promise.resolve(new Response(JSON.stringify(payload || {}), {
-      status: status,
-      headers: {'Content-Type':'application/json', 'X-Ownlybiz-Admin-Preview':'read-only'}
-    }));
-  }
-  window.fetch = function(input, init){
-    var url = readUrl(input);
-    var method = readMethod(input, init);
-    if(isAdminPreview() && isOwnlyApi(url) && ['GET','HEAD','OPTIONS'].indexOf(method) < 0){
-      return jsonResponse(403, {
-        success: false,
-        error: 'Admin preview is read-only. Return to Admin to make changes.'
-      });
-    }
-    return nativeFetch(input, init);
-  };
+	  function isOwnlyApi(url){
+	    if(!url || String(url.pathname || '').indexOf('/api/') !== 0) return false;
+	    var host = String(url.hostname || '').toLowerCase();
+	    return host === String(location.hostname || '').toLowerCase() || host === 'ownlybiz-backend-production.up.railway.app';
+	  }
+	  function apiBaseForRewrite(){
+	    return String(window.OWNLYBIZ_API_URL || window._OB_BACKEND || 'https://ownlybiz-backend-production.up.railway.app').replace(/\/+$/,'');
+	  }
+	  function adminPreviewContext(){
+	    var params = query();
+	    var slug = dashSlug();
+	    var stored = storedCtx();
+	    var storedMatches = !!(stored && stored.id && (!stored.slug || !slug || stored.slug === slug));
+	    var id = window._adminViewingExpertId || params.get('expertId') || (storedMatches ? stored.id : '');
+	    if(id) window._adminViewingExpertId = id;
+	    if(!window._adminViewingExpertSlug && (storedMatches && stored.slug || slug)) window._adminViewingExpertSlug = storedMatches && stored.slug || slug;
+	    if(!window._adminViewingExpertName && storedMatches && stored.name) window._adminViewingExpertName = stored.name;
+	    return {id:id, slug:window._adminViewingExpertSlug || slug || (storedMatches && stored.slug) || ''};
+	  }
+	  function adminReadPath(url){
+	    var ctx = adminPreviewContext();
+	    if(!ctx.id || !url || String(url.pathname || '').indexOf('/api/admin/') === 0) return '';
+	    var id = encodeURIComponent(ctx.id);
+	    var path = String(url.pathname || '');
+	    var search = url.search || '';
+	    var map = {
+	      '/api/auth/me': '/api/admin/experts/' + id + '/profile',
+	      '/api/experts/me/dashboard': '/api/admin/experts/' + id + '/dashboard',
+	      '/api/billing/me': '/api/admin/experts/' + id + '/billing',
+	      '/api/experts/rates': '/api/admin/experts/' + id + '/rates',
+	      '/api/experts/me/availability': '/api/admin/experts/' + id + '/availability',
+	      '/api/experts/stripe/status': '/api/admin/experts/' + id + '/stripe/status',
+	      '/api/experts/me/clients': '/api/admin/experts/' + id + '/clients',
+	      '/api/experts/me/packages': '/api/admin/experts/' + id + '/packages'
+	    };
+	    return map[path] ? apiBaseForRewrite() + map[path] + search : '';
+	  }
+	  function initFromRequest(input, init){
+	    if(!input || typeof Request === 'undefined' || !(input instanceof Request)) return init;
+	    return Object.assign({
+	      method: input.method,
+	      headers: input.headers,
+	      credentials: input.credentials,
+	      cache: input.cache,
+	      mode: input.mode,
+	      redirect: input.redirect,
+	      referrer: input.referrer,
+	      referrerPolicy: input.referrerPolicy,
+	      integrity: input.integrity,
+	      keepalive: input.keepalive,
+	      signal: input.signal
+	    }, init || {});
+	  }
+	  function jsonResponse(status, payload){
+	    return Promise.resolve(new Response(JSON.stringify(payload || {}), {
+	      status: status,
+	      headers: {'Content-Type':'application/json', 'X-Ownlybiz-Admin-Preview':'read-only'}
+	    }));
+	  }
+	  window.fetch = function(input, init){
+	    var url = readUrl(input);
+	    var method = readMethod(input, init);
+	    if(isAdminPreview() && isOwnlyApi(url) && ['GET','HEAD','OPTIONS'].indexOf(method) >= 0){
+	      var adminPath = adminReadPath(url);
+	      if(adminPath) return nativeFetch(adminPath, initFromRequest(input, init));
+	    }
+	    if(isAdminPreview() && isOwnlyApi(url) && ['GET','HEAD','OPTIONS'].indexOf(method) < 0){
+	      return jsonResponse(403, {
+	        success: false,
+	        error: 'Admin preview is read-only. Return to Admin to make changes.'
+	      });
+	    }
+	    return nativeFetch(input, init);
+	  };
 
-  function ensureBanner(){
-    if(!isAdminPreview()) return;
-    document.documentElement.setAttribute('data-ob-admin-expert-preview', 'read-only');
-    if(document.getElementById('admin-view-expert-banner') || document.getElementById('ob-admin-preview-readonly-banner')) return;
+	  function ensureBanner(){
+	    if(!isAdminPreview()) return;
+	    document.documentElement.setAttribute('data-ob-admin-expert-preview', 'read-only');
+	    if(document.getElementById('admin-view-expert-banner')) {
+	      var fallback = document.getElementById('ob-admin-preview-readonly-banner');
+	      if(fallback) fallback.remove();
+	      return;
+	    }
+	    if(document.getElementById('ob-admin-preview-readonly-banner')) return;
     var host = document.querySelector('#view-3 .db-main') || document.querySelector('#view-3');
     if(!host) return;
     var banner = document.createElement('div');

@@ -17947,16 +17947,19 @@ function _adminPath(suffix) {
 
 // --- Clean single loadExpertWebsite (replaces all previous wrappers) ---
 window.__obPublicExpertLoadState = window.__obPublicExpertLoadState || { inFlight:{}, recent:{} };
-window.__obPublicSlugBackoffState = window.__obPublicSlugBackoffState || { blocked:{} };
+window.__obPublicSlugBackoffState = window.__obPublicSlugBackoffState || { blocked:{}, retryTimers:{} };
 (function(){
   if(window.obPublicSlugBackoff) return;
   var state = window.__obPublicSlugBackoffState;
+  state.blocked = state.blocked || {};
+  state.retryTimers = state.retryTimers || {};
   function cleanSlug(slug){
     slug = String(slug || '').trim().toLowerCase();
     return /^[a-z0-9][a-z0-9-]{0,80}$/i.test(slug) ? slug : '';
   }
   function key(kind, slug){ return String(kind || 'expert') + ':' + cleanSlug(slug); }
   function statusFor(reason){ return reason === 'not_found' ? 404 : 429; }
+  function ttlFor(reason, ms){ return Number(ms || 0) || (reason === 'not_found' ? 5*60*1000 : 5*1000); }
   window.obPublicSlugBackoff = {
     blocked:function(kind, slug){
       var k = key(kind, slug);
@@ -17966,25 +17969,40 @@ window.__obPublicSlugBackoffState = window.__obPublicSlugBackoffState || { block
       if(Date.now() > row.until){ delete state.blocked[k]; return false; }
       return row;
     },
-    mark:function(kind, slug, reason, ms, body){
-      var clean = cleanSlug(slug);
-      if(!clean) return null;
-      var k = key(kind, clean);
-      var ttl = Number(ms || 0) || (reason === 'not_found' ? 5*60*1000 : 2*60*1000);
-      state.blocked[k] = {
-        until: Date.now() + ttl,
-        reason: reason || 'rate_limited',
-        status: statusFor(reason || 'rate_limited'),
-        body: body || null
-      };
-      return state.blocked[k];
-    },
-    clear:function(kind, slug){
-      var clean = cleanSlug(slug);
-      if(clean) delete state.blocked[key(kind, clean)];
-    }
-  };
-})();
+	    mark:function(kind, slug, reason, ms, body){
+	      var clean = cleanSlug(slug);
+	      if(!clean) return null;
+	      var k = key(kind, clean);
+	      var normalizedReason = reason || 'rate_limited';
+	      var existing = state.blocked[k];
+	      if(normalizedReason !== 'not_found' && existing && existing.status === 429 && Date.now() < existing.until) {
+	        if(body && !existing.body) existing.body = body;
+	        return existing;
+	      }
+	      var ttl = ttlFor(reason, ms);
+	      state.blocked[k] = {
+	        until: Date.now() + ttl,
+	        reason: normalizedReason,
+	        status: statusFor(normalizedReason),
+	        body: body || null
+	      };
+	      return state.blocked[k];
+	    },
+	    clear:function(kind, slug){
+	      var clean = cleanSlug(slug);
+	      if(clean) delete state.blocked[key(kind, clean)];
+	    },
+	    retry:function(slug, ms){
+	      var clean = cleanSlug(slug);
+	      if(!clean || state.retryTimers[clean]) return;
+	      var wait = Math.max(1000, Math.min(Number(ms || 0) || 2500, 15000));
+	      state.retryTimers[clean] = setTimeout(function(){
+	        delete state.retryTimers[clean];
+	        if(typeof window.loadExpertWebsite === 'function') window.loadExpertWebsite(clean);
+	      }, wait);
+	    }
+	  };
+	})();
 (function(){
   if(window.__obPublicExpertFetchCoalescer || typeof window.fetch !== 'function') return;
   window.__obPublicExpertFetchCoalescer = true;
@@ -18047,7 +18065,7 @@ window.__obPublicSlugBackoffState = window.__obPublicSlugBackoffState || { block
         recent[key] = {at:Date.now(), record:record};
         if(response.status === 404 || response.status === 429) {
           try {
-            window.obPublicSlugBackoff.mark('expert', info.slug, response.status === 404 ? 'not_found' : 'rate_limited', response.status === 404 ? 5*60*1000 : 2*60*1000, JSON.parse(body || '{}'));
+	            window.obPublicSlugBackoff.mark('expert', info.slug, response.status === 404 ? 'not_found' : 'rate_limited', response.status === 404 ? 5*60*1000 : 5*1000, JSON.parse(body || '{}'));
           } catch(e) {
             window.obPublicSlugBackoff.mark('expert', info.slug, response.status === 404 ? 'not_found' : 'rate_limited');
           }
@@ -18085,10 +18103,18 @@ window.loadExpertWebsite = function(slug) {
     if(typeof window._markRouteReady === 'function') window._markRouteReady('public');
     return _recent.promise;
   }
-  if(window.obPublicSlugBackoff && window.obPublicSlugBackoff.blocked('expert', slug)) {
-    if(typeof window._markRouteReady === 'function') window._markRouteReady('public');
-    return Promise.resolve(null);
-  }
+	  var _blocked = window.obPublicSlugBackoff && window.obPublicSlugBackoff.blocked('expert', slug);
+	  if(_blocked) {
+	    if(_blocked.status === 404) {
+	      if(typeof window._markRouteReady === 'function') window._markRouteReady('public');
+	    } else {
+	      if(typeof window._markRouteLoading === 'function') window._markRouteLoading('public');
+	      if(window.obPublicSlugBackoff && typeof window.obPublicSlugBackoff.retry === 'function') {
+	        window.obPublicSlugBackoff.retry(slug, Math.max(1000, (_blocked.until || Date.now()) - Date.now() + 250));
+	      }
+	    }
+	    return Promise.resolve(null);
+	  }
   var _loadPromise = fetch('https://victorious-wisdom-production-a6b0.up.railway.app/api/experts/' + slug, _mainPublicExpertFetchOpts)
     .then(function(r){ return r.json().catch(function(){ return {}; }).then(function(d){ if(!r.ok){ var err = new Error(d.error || d.message || ('HTTP ' + r.status)); err.status = r.status; err.body = d; throw err; } return d; }); })
     .then(function(d){
@@ -18115,12 +18141,20 @@ window.loadExpertWebsite = function(slug) {
       _loadState.recent[_loadKey] = { at:Date.now(), promise:_loadPromise };
       if(window.obPublicSlugBackoff) window.obPublicSlugBackoff.clear('expert', slug);
       return e;
-    }).catch(function(err){
-      if(window.obPublicSlugBackoff && (err && (err.status === 404 || err.status === 429))) {
-        window.obPublicSlugBackoff.mark('expert', slug, err.status === 404 ? 'not_found' : 'rate_limited', err.status === 404 ? 5*60*1000 : 2*60*1000, err.body || null);
-      }
-      if(typeof window._markRouteReady === 'function') window._markRouteReady('public');
-    }).finally(function(){
+	    }).catch(function(err){
+	      if(window.obPublicSlugBackoff && err && err.status === 404) {
+	        window.obPublicSlugBackoff.mark('expert', slug, 'not_found', 5*60*1000, err.body || null);
+	        if(typeof window._markRouteReady === 'function') window._markRouteReady('public');
+	        return;
+	      }
+	      if(window.obPublicSlugBackoff && err && err.status === 429) {
+	        var row = window.obPublicSlugBackoff.mark('expert', slug, 'rate_limited', 5*1000, err.body || null);
+	        if(typeof window._markRouteLoading === 'function') window._markRouteLoading('public');
+	        if(typeof window.obPublicSlugBackoff.retry === 'function') window.obPublicSlugBackoff.retry(slug, Math.max(1000, (row && row.until ? row.until - Date.now() : 2500) + 250));
+	        return;
+	      }
+	      if(typeof window._markRouteLoading === 'function') window._markRouteLoading('public');
+	    }).finally(function(){
       delete _loadState.inFlight[_loadKey];
     });
   _loadState.inFlight[_loadKey] = _loadPromise;
@@ -34770,22 +34804,39 @@ body:has(#view-2.active) .privacy-consent.active{
       '</div>';
     if(typeof window._markRouteReady === 'function') window._markRouteReady('public');
   }
-  function verifyPublicExpertAvailability(slug){
-    slug = publicExpertSlug(slug);
-    if(!slug) return;
-    var api = window.OWNLY_API || window.OWNLYBIZ_API_URL || '';
-    if(!api) return;
-    fetch(api.replace(/\/+$/,'') + '/api/experts/' + encodeURIComponent(slug), {cache:'no-store'})
-      .then(function(r){
-        if(!r.ok) throw new Error('unavailable');
-        return r.json();
-      })
-      .then(function(d){
-        var e = d && (d.expert || d);
-        if(!e || !e.slug) throw new Error('unavailable');
-      })
-      .catch(function(){ showExpertUnavailable(slug); });
-  }
+	  function verifyPublicExpertAvailability(slug){
+	    slug = publicExpertSlug(slug);
+	    if(!slug) return;
+	    var api = window.OWNLY_API || window.OWNLYBIZ_API_URL || '';
+	    if(!api) return;
+	    fetch(api.replace(/\/+$/,'') + '/api/experts/' + encodeURIComponent(slug), {cache:'no-store'})
+	      .then(function(r){
+	        return r.json().catch(function(){ return {}; }).then(function(body){
+	          if(!r.ok || body.error) {
+	            var err = new Error((body && (body.error || body.message)) || 'unavailable');
+	            err.status = r.status;
+	            err.body = body;
+	            throw err;
+	          }
+	          return body;
+	        });
+	      })
+	      .then(function(d){
+	        var e = d && (d.expert || d);
+	        if(!e || !e.slug) throw new Error('unavailable');
+	      })
+	      .catch(function(err){
+	        if(err && (err.status === 404 || err.status === 403 || err.status === 410)) {
+	          showExpertUnavailable(slug);
+	          return;
+	        }
+	        if(window.obPublicSlugBackoff && err && err.status === 429) {
+	          var row = window.obPublicSlugBackoff.mark('expert', slug, 'rate_limited', 5*1000, err.body || null);
+	          if(typeof window.obPublicSlugBackoff.retry === 'function') window.obPublicSlugBackoff.retry(slug, Math.max(1000, (row && row.until ? row.until - Date.now() : 2500) + 250));
+	        }
+	        if(typeof window._markRouteLoading === 'function') window._markRouteLoading('public');
+	      });
+	  }
   function verifyCurrentPublicExpertRoute(){
     var slug = publicExpertSlug();
     if(slug && document.getElementById('view-4')) verifyPublicExpertAvailability(slug);
@@ -52379,7 +52430,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
   function analyticsHtml(){
     var a=state.analytics||{}, s=a.summary||{};
     return '<div class="ob-ec-v1-grid">'+stat('Sent 30 days',s.sent_30d)+stat('Queued',s.queued)+stat('Opens 30 days',s.opens_30d)+stat('Clicks 30 days',s.clicks_30d)+stat('Consent rate',String(s.consent_rate||0)+'%')+stat('Suppressed',s.suppressed)+'</div>'
-      +'<div class="ob-ec-v1-two"><div class="ob-ec-v1-box"><h3>Top campaigns</h3>'+analyticsTable(['Campaign','Status','Sent','Opens','Clicks'],(a.top_campaigns||[]).map(function(c){return [c.name||c.subject||'Campaign',c.status||'draft',fmt(c.sent),fmt(c.opens),fmt(c.clicks)];}),'No campaign delivery data yet.')+'</div>'
+      +'<div class="ob-ec-v1-two"><div class="ob-ec-v1-box"><h3>Top campaigns</h3>'+analyticsTable(['Campaign','Status','Sent','Failed','Opens','Clicks'],(a.top_campaigns||[]).map(function(c){return [c.name||c.subject||'Campaign',c.status||'draft',fmt(c.sent),fmt(c.failed),fmt(c.opens),fmt(c.clicks)];}),'No campaign delivery data yet.')+'</div>'
       +'<div><div class="ob-ec-v1-box"><h3>Email events</h3>'+analyticsTable(['Event','Count'],(a.email_events||[]).map(function(e){return [e.event_type,fmt(e.count)];}),'No tracked email events yet.')+'</div><div class="ob-ec-v1-box"><h3>Website events</h3>'+analyticsTable(['Event','Count'],(a.site_events||[]).map(function(e){return [e.event_type,fmt(e.count)];}),'No website events in this window yet.')+'</div></div></div>';
   }
   function listOptions(current){
@@ -52820,8 +52871,8 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
   if(window.__ownlybizAdminEmailCenter20260601) return;
   window.__ownlybizAdminEmailCenter20260601 = true;
   var BASE = String(window.OWNLYBIZ_API_URL || window._OB_BACKEND || 'https://victorious-wisdom-production-a6b0.up.railway.app').replace(/\/+$/,'');
-  var state = { tab:'campaigns', loading:false, overview:null, status:'', draft:null, campaign:null, importPreview:null, file:null, importListName:'', importConsent:'', importConfirmed:false, importBusy:false, manualText:'', manualListMode:'new', manualListId:'', manualListName:'', manualConsent:'', manualConfirmed:false, manualPreview:null, manualBusy:false, testTo:'', audience:'uploaded_all', list_id:'', target:'audience', cycle_key:'admin_newsletter', journey_id:'', journey_step_id:'', journeyBusy:false, link_key:'auto', aiBusy:false, imageBusy:false, aiPrompt:'', aiCtaLabel:'', aiCtaUrl:'', aiGenerateImage:false, aiImagePrompt:'', layoutKey:'platform_update', sendReview:null, sendingBusy:false, sendMode:'now', scheduleDays:0, scheduleTime:'09:00', scheduleTimezone:(Intl.DateTimeFormat().resolvedOptions().timeZone||'UTC'), platformAudience:null, platformAudienceMeta:null, platformAudienceLoading:false, platformAudienceRole:'expert', platformAudienceStatus:'all', platformAudienceSearch:'', platformAudienceLimit:10, platformAudienceOffset:0, contactListId:'', contacts:null, contactsMeta:null, contactsLoading:false, contactLimit:10, contactOffset:0, contactSearch:'', contactStatus:'all', selectedContacts:{}, bulkAction:'', bulkListId:'' };
-  var tabs = [['campaigns','Campaigns'],['campaign','Builder'],['platform','Platform Audiences'],['uploads','Lists & Uploads'],['analytics','Analytics'],['map','Flow Map'],['core','Core Scenarios'],['marketing','Marketing Cycles']];
+  var state = { tab:'campaigns', loading:false, overview:null, status:'', draft:null, campaign:null, importPreview:null, file:null, importListName:'', importConsent:'', importConfirmed:false, importBusy:false, manualText:'', manualListMode:'new', manualListId:'', manualListName:'', manualConsent:'', manualConfirmed:false, manualPreview:null, manualBusy:false, testTo:'', audience:'uploaded_all', list_id:'', target:'audience', cycle_key:'admin_newsletter', journey_id:'', journey_step_id:'', journeyBusy:false, link_key:'auto', aiBusy:false, imageBusy:false, aiPrompt:'', aiAudienceNote:'', aiWordCount:'medium', aiCustomWords:160, aiCtaLabel:'', aiCtaUrl:'', aiGenerateImage:false, aiImagePrompt:'', aiJourneyBusy:false, aiJourneyPrompt:'', aiJourneyAudience:'experts_marketing', aiJourneyStepCount:3, aiJourneyGenerateImages:false, aiJourneyDraft:null, layoutKey:'platform_update', sendReview:null, sendingBusy:false, sendMode:'now', scheduleDays:0, scheduleTime:'09:00', scheduleTimezone:(Intl.DateTimeFormat().resolvedOptions().timeZone||'UTC'), platformAudience:null, platformAudienceMeta:null, platformAudienceLoading:false, platformAudienceRole:'expert', platformAudienceStatus:'all', platformAudienceSearch:'', platformAudienceLimit:10, platformAudienceOffset:0, contactListId:'', contacts:null, contactsMeta:null, contactsLoading:false, contactLimit:10, contactOffset:0, contactSearch:'', contactStatus:'all', selectedContacts:{}, bulkAction:'', bulkListId:'', settings:null, settingsLoading:false, settingsStatus:'' };
+  var tabs = [['campaigns','Campaigns'],['campaign','Builder'],['platform','Platform Audiences'],['uploads','Lists & Uploads'],['analytics','Analytics'],['map','Flow Map'],['core','Core Scenarios'],['marketing','Marketing Cycles'],['log','Send Log'],['settings','Settings']];
   var ADMIN_TZ_OPTIONS = [
     ['UTC','UTC'],
     ['America/Los_Angeles','Pacific Time (PST/PDT)'],
@@ -52845,6 +52896,12 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     var headers={'Content-Type':'application/json'};
     var t=tok(); if(t) headers.Authorization='Bearer '+t;
     return fetch(BASE+'/api/admin/email-center'+path,{method:opts.method||'GET',headers:headers,cache:'no-store',body:opts.body?JSON.stringify(opts.body):undefined}).then(function(r){return r.json().catch(function(){return {};}).then(function(d){if(!r.ok||d.success===false) throw new Error(d.error||'Admin Email Center request failed'); return d;});});
+  }
+  function settingsApi(path, opts){
+    opts=opts||{};
+    var headers={'Content-Type':'application/json'};
+    var t=tok(); if(t) headers.Authorization='Bearer '+t;
+    return fetch(BASE+'/api/admin/settings'+(path||''),{method:opts.method||'GET',headers:headers,cache:'no-store',body:opts.body?JSON.stringify(opts.body):undefined}).then(function(r){return r.json().catch(function(){return {};}).then(function(d){if(!r.ok||d.success===false||d.ok===false) throw new Error(d.error||'Admin settings request failed'); return d;});});
   }
   function ensureNav(){
     var side = document.querySelector('#view-6 .admin-sidebar') || document.querySelector('#view-6 .admin-nav') || document.querySelector('.admin-sidebar');
@@ -52941,6 +52998,38 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
   function validLayout(value){ var key=String(value||'platform_update'); return campaignLayouts().some(function(l){return l.key===key;}) ? key : 'platform_update'; }
   function layoutOptions(current){ current=validLayout(current||state.layoutKey); return campaignLayouts().map(function(l){ return '<option value="'+esc(l.key)+'" '+(l.key===current?'selected':'')+'>'+esc(l.label||l.key)+'</option>'; }).join(''); }
   function selectedLayout(){ var el=$('ob-admin-campaign-layout'); return validLayout(el ? el.value : (state.layoutKey || state.draft && state.draft.layout_key)); }
+  function wordCountOptions(current){
+    current=String(current||state.aiWordCount||'medium');
+    return '<option value="short" '+(current==='short'?'selected':'')+'>Short · about 90 words</option>'
+      + '<option value="medium" '+(current==='medium'?'selected':'')+'>Medium · about 160 words</option>'
+      + '<option value="long" '+(current==='long'?'selected':'')+'>Long · about 280 words</option>'
+      + '<option value="custom" '+(current==='custom'?'selected':'')+'>Custom word count</option>';
+  }
+  function selectedAiWordCount(){ var el=$('ob-admin-ai-word-count'); return el ? el.value : (state.aiWordCount||'medium'); }
+  function selectedAiCustomWords(){
+    var el=$('ob-admin-ai-custom-words');
+    var n=Number(el&&el.value || state.aiCustomWords || 160);
+    return Math.max(40, Math.min(700, n || 160));
+  }
+  function selectedAudienceLabel(){
+    var note=val('ob-admin-ai-audience-note');
+    if(note) return note;
+    var el=$('ob-admin-campaign-audience');
+    if(el && el.options && el.selectedIndex >= 0) return el.options[el.selectedIndex].text || el.value;
+    return state.audience || 'Selected Ownlybiz audience';
+  }
+  function aiJourneyStepCount(){
+    var el=$('ob-admin-ai-journey-step-count');
+    var n=Number(el&&el.value || state.aiJourneyStepCount || 3);
+    return Math.max(2, Math.min(7, n || 3));
+  }
+  function selectedAiJourneyAudience(){ var el=$('ob-admin-ai-journey-audience'); return el ? el.value : (state.aiJourneyAudience || 'experts_marketing'); }
+  function selectedAiJourneyWordCount(){ var el=$('ob-admin-ai-journey-word-count'); return el ? el.value : (state.aiWordCount || 'medium'); }
+  function selectedAiJourneyCustomWords(){
+    var el=$('ob-admin-ai-journey-custom-words');
+    var n=Number(el&&el.value || state.aiCustomWords || 160);
+    return Math.max(40, Math.min(700, n || 160));
+  }
   function imageProgressHtml(){
     if(!state.imageBusy) return '';
     return '<div class="ob-admin-ec-progress" role="status" aria-live="polite"><div><strong>Generating campaign image...</strong><em>Creating a landscape email-safe Ownlybiz visual with safe margins.</em></div><div class="ob-admin-ec-progress-bar" aria-hidden="true"><span></span></div></div>';
@@ -53030,10 +53119,16 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     return out.join('');
   }
   function bodyHtmlFromPlain(text){ return String(text||'').split(/\n{2,}/).map(function(part){ part=part.trim(); return part ? '<p>'+esc(part).replace(/\n/g,'<br>')+'</p>' : ''; }).join(''); }
+  function plainFromHtml(html){ return String(html||'').replace(/<br\s*\/?>/gi,'\n').replace(/<\/p>/gi,'\n\n').replace(/<li[^>]*>/gi,'- ').replace(/<\/li>/gi,'\n').replace(/<[^>]+>/g,' ').replace(/[ \t]+\n/g,'\n').replace(/\n{3,}/g,'\n\n').replace(/[ \t]+/g,' ').trim(); }
   function htmlAttr(v){ return esc(v).replace(/`/g,'&#96;'); }
   function jsArg(v){ return String(v == null ? '' : v).replace(/\r?\n/g,' ').replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
   function campaignPayload(){
     var draft=state.draft||{};
+    var bodyEl=$('ob-admin-draft-body');
+    var previousText=draft.body_text || plainFromHtml(draft.body_html||'');
+    var bodyText=bodyEl ? bodyEl.value : previousText;
+    var bodyEdited=!!bodyEl && bodyText !== previousText;
+    var bodyHtml=bodyEdited ? bodyHtmlFromPlain(bodyText) : (draft.body_html || bodyHtmlFromPlain(bodyText));
     return {
       id: state.campaign && state.campaign.id || '',
       name: val('ob-admin-campaign-name') || val('ob-admin-draft-subject') || draft.subject || 'Ownlybiz update',
@@ -53046,8 +53141,8 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
       preheader: val('ob-admin-draft-preheader') || draft.preheader || '',
       eyebrow: val('ob-admin-draft-eyebrow') || draft.eyebrow || 'Ownlybiz update',
       title: val('ob-admin-draft-title') || draft.title || '',
-      body_text: val('ob-admin-draft-body') || draft.body_text || '',
-      body_html: bodyHtmlFromPlain(val('ob-admin-draft-body') || draft.body_text || ''),
+      body_text: bodyText || '',
+      body_html: bodyHtml || '',
       cta_label: val('ob-admin-draft-cta-label') || draft.cta_label || '',
       cta_url: val('ob-admin-draft-cta-url') || draft.cta_url || '',
       link_key: selectedDraftLinkKey(),
@@ -53088,6 +53183,8 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     if(state.tab==='analytics') return analyticsHtml();
     if(state.tab==='core') return scenariosHtml('core');
     if(state.tab==='marketing') return scenariosHtml('marketing');
+    if(state.tab==='log') return sendLogHtml();
+    if(state.tab==='settings') return settingsHtml();
     return mapHtml();
   }
   function mapHtml(){
@@ -53098,9 +53195,37 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
   function fId(key,field){ return 'ob-admin-ec-'+safeId(key)+'-'+field; }
   function val(id){ var el=$(id); return el ? el.value : ''; }
   function field(key,field,label,value,area){ return '<label>'+esc(label)+(area?'<textarea id="'+fId(key,field)+'">'+esc(value||'')+'</textarea>':'<input id="'+fId(key,field)+'" value="'+esc(value||'')+'">')+'</label>'; }
+  function audienceGroupKey(value){
+    var key=String(value||'').toLowerCase();
+    if(key.indexOf('admin')>-1 || key.indexOf('platform')>-1) return 'admin';
+    if(key.indexOf('expert')>-1) return 'expert';
+    if(key.indexOf('client')>-1 || key.indexOf('customer')>-1) return 'client';
+    return 'other';
+  }
+  function audienceLabel(value){
+    var key=audienceGroupKey(value);
+    if(key==='admin') return 'Admin';
+    if(key==='expert') return 'Expert';
+    if(key==='client') return 'Client';
+    return value || 'Other';
+  }
+  function coreScenariosGroupedHtml(list){
+    var groups=[
+      ['admin','Admin','Alerts sent to platform admins for signups, approvals, and support.'],
+      ['expert','Expert','Account, onboarding, approval, and practice emails sent to experts.'],
+      ['client','Client','Client account, booking, receipt, and session emails.']
+    ];
+    var known={admin:1,expert:1,client:1};
+    var html=groups.map(function(group){
+      var items=list.filter(function(s){ return audienceGroupKey(s.audience)===group[0]; });
+      return '<div class="ob-admin-ec-box"><h3>'+esc(group[1])+'</h3><div class="ob-admin-ec-small">'+esc(group[2])+'</div></div>'+(items.length?items.map(card).join(''):'<div class="ob-admin-ec-empty">No '+esc(group[1]).toLowerCase()+' core scenarios yet.</div>');
+    }).join('');
+    var other=list.filter(function(s){ return !known[audienceGroupKey(s.audience)]; });
+    return html+(other.length?'<div class="ob-admin-ec-box"><h3>Other</h3><div class="ob-admin-ec-small">Scenarios with a custom recipient group.</div></div>'+other.map(card).join(''):'');
+  }
   function card(s){
     var f=s.fields||{};
-    return '<details class="ob-admin-ec-box" '+(s.key==='client_session_receipt'?'open':'')+'><summary style="cursor:pointer;display:flex;justify-content:space-between;gap:12px;align-items:center"><span><strong>'+esc(s.name||s.key)+'</strong><span class="ob-admin-ec-small" style="display:block">'+esc(s.category||'')+' · '+esc(sender(s.sender))+' · '+esc(s.audience||'')+'</span></span><span class="ob-admin-ec-badge '+(s.enabled?'ready':'')+'">'+esc(s.enabled?'On':'Off')+'</span></summary><div class="ob-admin-ec-form" style="margin-top:12px">'
+    return '<details class="ob-admin-ec-box" '+(s.key==='client_session_receipt'?'open':'')+'><summary style="cursor:pointer;display:flex;justify-content:space-between;gap:12px;align-items:center"><span><strong>'+esc(s.name||s.key)+'</strong><span class="ob-admin-ec-small" style="display:block">'+esc(s.category||'')+' · '+esc(sender(s.sender))+' · '+esc(audienceLabel(s.audience))+'</span></span><span class="ob-admin-ec-badge '+(s.enabled?'ready':'')+'">'+esc(s.enabled?'On':'Off')+'</span></summary><div class="ob-admin-ec-form" style="margin-top:12px">'
       +'<label style="display:flex;grid-template-columns:none;gap:9px;align-items:center;text-transform:none;letter-spacing:0;font-size:13px"><input id="'+fId(s.key,'enabled')+'" type="checkbox" '+(s.enabled?'checked':'')+' style="width:18px;min-height:18px"> Enabled</label>'
       +field(s.key,'subject','Subject',f.subject)+field(s.key,'preheader','Preheader',f.preheader)+field(s.key,'eyebrow','Eyebrow',f.eyebrow)+field(s.key,'title','Title',f.title)+field(s.key,'subtitle','Header subtitle',f.subtitle)+field(s.key,'image_url','Email image URL',f.image_url)+field(s.key,'body_html','Body HTML',f.body_html,true)+field(s.key,'cta_label','CTA label',f.cta_label)+field(s.key,'cta_url','CTA URL',f.cta_url)+field(s.key,'footer_text','Footer text',f.footer_text,true)
       +'<div class="ob-admin-ec-actions"><button class="ob-admin-ec-btn primary" type="button" onclick="window.OBAdminEmailCenter.saveScenario(\''+esc(s.key)+'\')">Save cycle</button></div></div></details>';
@@ -53153,10 +53278,32 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
       + '<div class="ob-admin-ec-table-wrap"><table class="ob-admin-ec-table"><thead><tr><th>Step</th><th>Timing</th><th>Campaign</th><th>Action</th></tr></thead><tbody>'+(steps.length?steps.map(function(step){return journeyStepRow(j,step);}).join(''):'<tr><td colspan="4">No steps yet.</td></tr>')+'</tbody></table></div>'
       + '<div class="ob-admin-ec-actions"><button class="ob-admin-ec-btn" type="button" onclick="window.OBAdminEmailCenter.addJourneyStep(\''+jsArg(j.id)+'\')">+ Add step</button><button class="ob-admin-ec-btn primary" type="button" onclick="window.OBAdminEmailCenter.saveJourney(\''+jsArg(j.id)+'\')">Save journey</button><button class="ob-admin-ec-btn" type="button" onclick="window.OBAdminEmailCenter.setJourneyStatus(\''+jsArg(j.id)+'\',\''+nextStatus+'\')">'+esc(j.status==='active'?'Pause journey':'Activate journey')+'</button></div></div></details>';
   }
+  function aiJourneyTimingLabel(step){
+    if(step && step.schedule && step.schedule.label) return step.schedule.label;
+    if(!step || Number(step.delay_minutes||0)===0) return 'At trigger';
+    return fmt(step.delay_minutes||0)+' min';
+  }
+  function aiJourneyPreviewHtml(){
+    var j=state.aiJourneyDraft||null;
+    if(!j) return '<div class="ob-admin-ec-empty">Generate an AI journey draft to preview the timing, subject, copy, and image plan for each step.</div>';
+    var steps=j.steps||[];
+    return '<div class="ob-admin-ec-box"><h3>'+esc(j.name||'AI marketing journey')+'</h3><div class="ob-admin-ec-small">'+esc(j.description||'')+'</div><div class="ob-admin-ec-small" style="margin-top:6px">Trigger: '+esc(j.trigger_event||'manual')+' · Audience: '+esc(j.audience_key||'selected audience')+' · '+fmt(steps.length)+' steps</div>'
+      + '<div class="ob-admin-ec-table-wrap" style="margin-top:10px"><table class="ob-admin-ec-table"><thead><tr><th>Step</th><th>Timing</th><th>Subject</th><th>Image</th></tr></thead><tbody>'+(steps.length?steps.map(function(step,i){return '<tr><td><strong>'+esc(step.label||('Step '+(i+1)))+'</strong></td><td>'+esc(aiJourneyTimingLabel(step))+'</td><td><strong>'+esc(step.subject||'')+'</strong><div class="ob-admin-ec-small">'+esc(step.preheader||'')+'</div><div class="ob-admin-ec-small">'+esc((step.body_text||'').slice(0,220))+'</div></td><td>'+esc(step.image_url?'Generated image':(step.image_prompt?'Planned':'Text only'))+'</td></tr>';}).join(''):'<tr><td colspan="4">No steps returned.</td></tr>')+'</tbody></table></div>'
+      + '<div class="ob-admin-ec-actions"><button class="ob-admin-ec-btn primary" type="button" '+(state.aiJourneyBusy?'disabled':'')+' onclick="window.OBAdminEmailCenter.saveAiJourney()">Save AI journey as drafts</button></div></div>';
+  }
+  function aiJourneyBoxHtml(){
+    return '<div class="ob-admin-ec-box"><h3>AI journey builder</h3><div class="ob-admin-ec-form">'
+      + '<label>Audience<select id="ob-admin-ai-journey-audience" onchange="window.OBAdminEmailCenter.setAiJourneyAudience(this.value)">'+audienceOptions(state.aiJourneyAudience||'experts_marketing')+'</select></label>'
+      + '<div class="ob-admin-ec-grid"><label>Steps<input id="ob-admin-ai-journey-step-count" value="'+esc(state.aiJourneyStepCount||3)+'" inputmode="numeric"></label><label>Words per step<select id="ob-admin-ai-journey-word-count">'+wordCountOptions(state.aiWordCount||'medium')+'</select></label><label>Custom words<input id="ob-admin-ai-journey-custom-words" value="'+esc(state.aiCustomWords||160)+'" inputmode="numeric"></label></div>'
+      + '<label>Journey prompt<textarea id="ob-admin-ai-journey-prompt" placeholder="Example: Build a 4-step activation journey for new approved experts who need to publish, set rates, and promote their Ownlybiz page.">'+esc(state.aiJourneyPrompt||'')+'</textarea></label>'
+      + '<label class="ob-admin-ec-check" style="text-transform:none;letter-spacing:0;font-weight:700"><input id="ob-admin-ai-journey-images" type="checkbox" '+(state.aiJourneyGenerateImages?'checked':'')+'> Generate images for every step</label>'
+      + '<div class="ob-admin-ec-actions"><button class="ob-admin-ec-btn primary" type="button" '+(state.aiJourneyBusy?'disabled':'')+' onclick="window.OBAdminEmailCenter.generateAiJourney()">'+esc(state.aiJourneyBusy?'Generating...':'Generate AI journey')+'</button></div>'
+      + '<div class="ob-admin-ec-small">This creates draft journey content only. Saving creates draft campaigns and a draft journey; it does not activate or send.</div></div></div>'+aiJourneyPreviewHtml();
+  }
   function marketingJourneysHtml(){
     var js=journeys();
     var marketing=marketingScenarios();
-    var createBox='<div class="ob-admin-ec-box"><h3>Create marketing journey</h3><div class="ob-admin-ec-small">Start from a common user journey, then adjust the trigger, delays, audience, and assigned campaigns.</div></div>'+journeyPresetCards();
+    var createBox=aiJourneyBoxHtml()+'<div class="ob-admin-ec-box"><h3>Create marketing journey</h3><div class="ob-admin-ec-small">Start from a common user journey, then adjust the trigger, delays, audience, and assigned campaigns.</div></div>'+journeyPresetCards();
     var journeyList=js.length?js.map(journeyCard).join(''):'<div class="ob-admin-ec-empty">No marketing journeys yet. Create one from a preset, then assign campaigns to its steps.</div>';
     var legacyBox='<div class="ob-admin-ec-box"><h3>Marketing templates</h3><div class="ob-admin-ec-small">These are marketing-oriented templates only. Required account, password, receipt, and security emails stay in Core Scenarios.</div></div>'+(marketing.length?marketing.map(card).join(''):'<div class="ob-admin-ec-empty">No marketing templates yet.</div>');
     return '<div class="ob-admin-ec-grid"><div>'+createBox+'<div class="ob-admin-ec-box"><h3>Journey builder</h3><div class="ob-admin-ec-small">Each journey is a trigger plus timed steps. Build campaigns in Campaign Builder, save them, then assign them here.</div></div>'+journeyList+'</div><div>'+legacyBox+'</div></div>';
@@ -53170,7 +53317,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
       ? 'Newsletter, bulk, and custom marketing-oriented cycles. These require opt-in and unsubscribe handling.'
       : 'Transactional/account safety cycles such as verification, password reset, receipts, onboarding, and account notices.';
     var createBox = marketing ? '<div class="ob-admin-ec-box"><h3>Create marketing cycle</h3><div class="ob-admin-ec-form"><label>Name<input id="ob-admin-new-name" placeholder="Partner announcement"></label><label>Audience<select id="ob-admin-new-audience"><option value="expert">Experts</option><option value="client">Clients</option></select></label><input id="ob-admin-new-type" type="hidden" value="marketing"><button class="ob-admin-ec-btn primary" type="button" onclick="window.OBAdminEmailCenter.createScenario()">Create marketing cycle</button><div class="ob-admin-ec-small">New cycles created here are marketing cycles, so opt-in, unsubscribe, and suppression rules apply.</div></div></div>' : '<div class="ob-admin-ec-box"><h3>Protected core cycles</h3><div class="ob-admin-ec-small">Use these carefully. Campaign Builder cannot overwrite these required transactional cycles.</div></div>';
-    return '<div class="ob-admin-ec-grid"><div><div class="ob-admin-ec-box"><h3>'+esc(title)+'</h3><div class="ob-admin-ec-small">'+esc(note)+'</div></div>'+(list.length?list.map(card).join(''):'<div class="ob-admin-ec-empty">No cycles in this group.</div>')+'</div><div>'+createBox+mapHtml()+'</div></div>';
+    return '<div class="ob-admin-ec-grid"><div><div class="ob-admin-ec-box"><h3>'+esc(title)+'</h3><div class="ob-admin-ec-small">'+esc(note)+'</div></div>'+(marketing?(list.length?list.map(card).join(''):'<div class="ob-admin-ec-empty">No cycles in this group.</div>'):coreScenariosGroupedHtml(list))+'</div><div>'+createBox+mapHtml()+'</div></div>';
   }
   function audienceOptions(currentValue){
     var items=audiences();
@@ -53235,7 +53382,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
       + '<label>Subject<input id="ob-admin-draft-subject" value="'+esc(d.subject||'')+'"></label>'
       + '<label>Preview text<input id="ob-admin-draft-preheader" value="'+esc(d.preheader||'')+'"></label>'
       + '<div class="ob-admin-ec-grid"><label>Eyebrow<input id="ob-admin-draft-eyebrow" value="'+esc(d.eyebrow||'Ownlybiz update')+'"></label><label>Headline<input id="ob-admin-draft-title" value="'+esc(d.title||'')+'"></label></div>'
-      + '<label>Email message<textarea id="ob-admin-draft-body">'+esc(d.body_text||'')+'</textarea></label>'
+      + '<label>Email message<textarea id="ob-admin-draft-body">'+esc(d.body_text||plainFromHtml(d.body_html||''))+'</textarea></label>'
       + '<label>Button link picker<select id="ob-admin-draft-link-key" onchange="window.OBAdminEmailCenter.setDraftLink(this.value)">'+linkOptions(draftLinkKey)+'</select></label>'
       + '<div class="ob-admin-ec-grid"><label>Button text<input id="ob-admin-draft-cta-label" value="'+esc(d.cta_label||'')+'"></label><label>Button link<input id="ob-admin-draft-cta-url" value="'+esc(d.cta_url||'')+'" placeholder="Choose from picker or enter a reviewed custom URL"></label></div>'+linkWarning
       + '<div class="ob-admin-ec-grid"><label>Email image URL<input id="ob-admin-draft-image-url" value="'+esc(d.image_url||'')+'" placeholder="Generated image URL or reviewed hosted image"></label><label>Image alt text (not shown)<input id="ob-admin-draft-image-alt" value="'+esc(d.image_alt||'')+'"></label></div>'
@@ -53285,12 +53432,14 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
       + '<div class="ob-admin-ec-grid"><div><div class="ob-admin-ec-box"><h3>1. Choose audience and prompt AI</h3><div class="ob-admin-ec-form">'
       + '<label>Use draft for<select id="ob-admin-campaign-target" onchange="window.OBAdminEmailCenter.setTarget(this.value)"><option value="audience" '+(target==='audience'?'selected':'')+'>Send to audience or list</option><option value="cycle" '+(target==='cycle'?'selected':'')+'>Assign to marketing journey step</option></select></label>'+audienceSelect+journeySelect
       + '<label>Email layout<select id="ob-admin-campaign-layout" onchange="window.OBAdminEmailCenter.setLayout(this.value)">'+layoutOptions(state.layoutKey||state.draft&&state.draft.layout_key)+'</select></label>'
-      + '<label>Prompt<textarea id="ob-admin-ai-prompt" placeholder="Example: Give potential expert customers the top Ownlybiz selling points and invite them to explore the platform.">'+esc(state.aiPrompt||'')+'</textarea></label>'
+      + '<label>Audience note<input id="ob-admin-ai-audience-note" value="'+esc(state.aiAudienceNote||'')+'" placeholder="Optional: describe who this is for if the audience selector is not enough"></label>'
+      + '<div class="ob-admin-ec-grid"><label>Word count<select id="ob-admin-ai-word-count" onchange="window.OBAdminEmailCenter.setAiWordCount(this.value)">'+wordCountOptions(state.aiWordCount)+'</select></label><label>Custom words<input id="ob-admin-ai-custom-words" value="'+esc(state.aiCustomWords||160)+'" inputmode="numeric" placeholder="160"></label></div>'
+      + '<label>Prompt<textarea id="ob-admin-ai-prompt" placeholder="Optional. Leave blank and use Suggest email for an audience-aware recommendation.">'+esc(state.aiPrompt||'')+'</textarea></label>'
       + '<label>Button link picker<select id="ob-admin-ai-link-key" onchange="window.OBAdminEmailCenter.setLink(this.value)">'+linkOptions(currentLink)+'</select></label>'
       + '<div class="ob-admin-ec-grid"><label>Button text<input id="ob-admin-ai-cta-label" value="'+esc(state.aiCtaLabel||'')+'" placeholder="Explore Ownlybiz"></label><label>Button link<input id="ob-admin-ai-cta-url" value="'+esc(ctaUrl)+'" placeholder="'+esc(currentLink==='auto'?'AI will choose a verified Ownlybiz page':'Choose from picker or enter a reviewed custom URL')+'"></label></div>'
-      + '<label class="ob-admin-ec-check" style="text-transform:none;letter-spacing:0;font-weight:700"><input id="ob-admin-ai-generate-image" type="checkbox" '+(state.aiGenerateImage?'checked':'')+'> Add an AI image when the prompt asks for a visual</label>'
+      + '<label class="ob-admin-ec-check" style="text-transform:none;letter-spacing:0;font-weight:700"><input id="ob-admin-ai-generate-image" type="checkbox" '+(state.aiGenerateImage?'checked':'')+'> Include an AI image with suggestion/full generation</label>'
       + '<label>Image request<textarea id="ob-admin-ai-image-prompt" placeholder="Optional: describe the banner/photo/visual you want in this email.">'+esc(state.aiImagePrompt||'')+'</textarea></label>'
-      + '<button class="ob-admin-ec-btn primary" type="button" '+(state.aiBusy?'disabled':'')+' onclick="window.OBAdminEmailCenter.generateAi()">'+esc(state.aiBusy?'Generating...':'Generate email')+'</button>'+aiProgressHtml()
+      + '<div class="ob-admin-ec-actions"><button class="ob-admin-ec-btn primary" type="button" '+(state.aiBusy?'disabled':'')+' onclick="window.OBAdminEmailCenter.generateAi(\'suggestion\')">'+esc(state.aiBusy?'Generating...':'Suggest email')+'</button><button class="ob-admin-ec-btn" type="button" '+(state.aiBusy?'disabled':'')+' onclick="window.OBAdminEmailCenter.generateAi(\'text\')">Regenerate text only</button><button class="ob-admin-ec-btn" type="button" '+(state.aiBusy?'disabled':'')+' onclick="window.OBAdminEmailCenter.generateAi(\'full\')">Generate text + image</button></div>'+aiProgressHtml()
       + '<div class="ob-admin-ec-small">'+esc(target==='cycle'?'The AI creates a draft only. Nothing is sent; assigning saves a campaign draft and attaches it to the selected journey step.':'The AI creates a draft only. Nothing is sent until you review and click Send campaign.')+'</div></div></div>'
       + '<div class="ob-admin-ec-box"><h3>2. Edit and approve</h3>'+draftFields()+'</div></div><div>'+previewCard()+'</div></div>';
   }
@@ -53429,10 +53578,71 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
   function analyticsHtml(){
     var a=platform().analytics||{}, t=a.totals||{};
     return '<div class="ob-admin-ec-kpis">'+stat('Sent',t.sent)+stat('Opens',t.opens)+stat('Clicks',t.clicks)+stat('Unsubscribes',t.unsubscribes)+stat('Open rate',String(t.open_rate||0)+'%')+stat('Click rate',String(t.click_rate||0)+'%')+'</div>'
-      + '<div class="ob-admin-ec-grid"><div class="ob-admin-ec-box"><h3>Campaigns</h3><table class="ob-admin-ec-table"><thead><tr><th>Campaign</th><th>Status</th><th>Sent</th><th>Failed</th></tr></thead><tbody>'+campaigns().map(function(c){return '<tr><td>'+esc(c.name||c.subject)+'</td><td>'+esc(c.status||'draft')+'</td><td>'+fmt(c.sent_count||0)+'</td><td>'+fmt(c.failed_count||0)+'</td></tr>';}).join('')+'</tbody></table></div>'
-      + '<div class="ob-admin-ec-box"><h3>Recent activity</h3><table class="ob-admin-ec-table"><thead><tr><th>Recipient</th><th>Subject</th><th>Status</th></tr></thead><tbody>'+(a.recent_sends||[]).map(function(s){return '<tr><td>'+esc(s.recipient_email)+'</td><td>'+esc(s.subject)+'</td><td>'+esc(s.status)+(s.error_message?'<div class="ob-admin-ec-small">'+esc(s.error_message)+'</div>':'')+'</td></tr>';}).join('')+'</tbody></table></div></div>';
+      + '<div class="ob-admin-ec-box"><h3>Campaigns</h3><table class="ob-admin-ec-table"><thead><tr><th>Campaign</th><th>Status</th><th>Sent</th><th>Opens</th><th>Failed</th></tr></thead><tbody>'+campaigns().map(function(c){return '<tr><td>'+esc(c.name||c.subject)+'</td><td>'+esc(c.status||'draft')+'</td><td>'+fmt(c.sent_count||0)+'</td><td>'+fmt(c.open_count||c.opens||0)+'</td><td>'+fmt(c.failed_count||0)+'</td></tr>';}).join('')+'</tbody></table></div>';
+  }
+  function sendLogHtml(){
+    var a=platform().analytics||{};
+    var sends=a.recent_sends||[];
+    return '<div class="ob-admin-ec-box"><h3>Send Log</h3><table class="ob-admin-ec-table"><thead><tr><th>Recipient</th><th>Subject</th><th>Status</th><th>When</th><th>Error</th></tr></thead><tbody>'+(sends.length?sends.map(function(s){return '<tr><td>'+esc(s.recipient_email)+'</td><td>'+esc(s.subject)+'</td><td>'+esc(s.status)+'</td><td>'+esc(timeText(s.sent_at||s.created_at))+'</td><td>'+esc(s.error_message||'')+'</td></tr>';}).join(''):'<tr><td colspan="5">No send activity yet.</td></tr>')+'</tbody></table></div>';
+  }
+  function settingsValue(key, fallback){
+    var s=state.settings||{};
+    var value=s[key];
+    if(value===undefined || value===null) return fallback||'';
+    return value;
+  }
+  function providerOptions(current){
+    return ['off','resend','postmark','sendgrid','mailgun','smtp'].map(function(p){
+      var label=p==='off'?'Off':(p==='smtp'?'SMTP':p.charAt(0).toUpperCase()+p.slice(1));
+      return '<option value="'+esc(p)+'" '+(String(current||'')===p?'selected':'')+'>'+esc(label)+'</option>';
+    }).join('');
+  }
+  function settingsHtml(){
+    var s=state.settings||{};
+    var configured=!!(s.platform_email_configured || String(s.platform_email_status||'')==='configured');
+    var provider=String(settingsValue('platform_email_provider','resend')||'resend').toLowerCase();
+    if(state.settingsLoading && !state.settings) return '<div class="ob-admin-ec-empty">Loading email settings...</div>';
+    return '<div class="ob-admin-ec-grid"><div><div class="ob-admin-ec-box"><h3>Platform email provider</h3><div class="ob-admin-ec-small">These settings control platform-owned admin, signup, receipt, and account emails. Saved secrets stay masked.</div><div class="ob-admin-ec-form" style="margin-top:12px">'
+      + '<label>Provider<select id="ob-admin-email-provider">'+providerOptions(provider)+'</select></label>'
+      + '<label>From name<input id="ob-admin-email-from-name" value="'+esc(settingsValue('platform_email_from_name','Ownlybiz'))+'"></label>'
+      + '<label>From email<input id="ob-admin-email-from-address" value="'+esc(settingsValue('platform_email_from_address',''))+'"></label>'
+      + '<label>Reply-to email<input id="ob-admin-email-reply-to" value="'+esc(settingsValue('platform_email_reply_to',''))+'"></label>'
+      + '<label>Default test recipient<input id="ob-admin-email-test-to" value="'+esc(settingsValue('platform_email_test_to',''))+'"></label>'
+      + '<label>API key<input id="ob-admin-email-api-key" type="password" placeholder="'+esc(settingsValue('platform_email_api_key','Leave blank to keep saved key'))+'"></label>'
+      + '<label>Mailgun domain<input id="ob-admin-email-mailgun-domain" value="'+esc(settingsValue('platform_email_mailgun_domain',''))+'"></label>'
+      + '<label>SMTP host<input id="ob-admin-email-smtp-host" value="'+esc(settingsValue('smtp_host',''))+'"></label>'
+      + '<label>SMTP port<input id="ob-admin-email-smtp-port" value="'+esc(settingsValue('smtp_port','587'))+'"></label>'
+      + '<label>SMTP user<input id="ob-admin-email-smtp-user" value="'+esc(settingsValue('smtp_user',''))+'"></label>'
+      + '<label>SMTP password<input id="ob-admin-email-smtp-pass" type="password" placeholder="'+esc(settingsValue('smtp_pass','Leave blank to keep saved password'))+'"></label>'
+      + '<label>SMTP from email<input id="ob-admin-email-smtp-from" value="'+esc(settingsValue('smtp_from_email',''))+'"></label>'
+      + '<div class="ob-admin-ec-actions"><button class="ob-admin-ec-btn primary" type="button" onclick="window.OBAdminEmailCenter.saveSettings()">Save settings</button><button class="ob-admin-ec-btn" type="button" onclick="window.OBAdminEmailCenter.testSettings()">Send test email</button></div></div></div></div>'
+      + '<div><div class="ob-admin-ec-box"><h3>Status</h3><span class="ob-admin-ec-badge '+(configured?'ready':'')+'">'+esc(configured?'Configured':'Not configured')+'</span><div class="ob-admin-ec-small" style="margin-top:10px">Provider: '+esc(provider.toUpperCase())+'</div><div class="ob-admin-ec-small" style="margin-top:8px">Admin notification scenarios use this provider and appear in Core Scenarios under Admin.</div><div class="ob-admin-ec-actions" style="margin-top:12px"><button class="ob-admin-ec-btn" type="button" onclick="window.OBAdminEmailCenter.open(\'core\')">Open Core Scenarios</button><button class="ob-admin-ec-btn" type="button" onclick="window.OBAdminEmailCenter.open(\'log\')">Open Send Log</button></div></div><div class="ob-admin-ec-box"><h3>Last settings action</h3><div class="ob-admin-ec-small">'+esc(state.settingsStatus || state.status || 'No recent settings action.')+'</div></div></div></div>';
+  }
+  function readSettingsPayload(){
+    var body={
+      platform_email_provider: val('ob-admin-email-provider') || 'resend',
+      platform_email_from_name: val('ob-admin-email-from-name'),
+      platform_email_from_address: val('ob-admin-email-from-address'),
+      platform_email_reply_to: val('ob-admin-email-reply-to'),
+      platform_email_test_to: val('ob-admin-email-test-to'),
+      platform_email_mailgun_domain: val('ob-admin-email-mailgun-domain'),
+      smtp_host: val('ob-admin-email-smtp-host'),
+      smtp_port: val('ob-admin-email-smtp-port'),
+      smtp_user: val('ob-admin-email-smtp-user'),
+      smtp_from_email: val('ob-admin-email-smtp-from')
+    };
+    var apiKey=String(val('ob-admin-email-api-key')||'').trim();
+    var smtpPass=String(val('ob-admin-email-smtp-pass')||'').trim();
+    if(apiKey) body.platform_email_api_key=apiKey;
+    if(smtpPass) body.smtp_pass=smtpPass;
+    return body;
   }
   function load(){ state.loading=true; render(); return api('/overview').then(function(d){ state.overview=d.overview||{}; }).catch(function(e){ state.status=e.message; }).finally(function(){ state.loading=false; render(); }); }
+  function loadSettings(){
+    state.settingsLoading=true;
+    render();
+    return settingsApi('').then(function(d){ state.settings=d.settings||{}; state.settingsStatus=''; }).catch(function(e){ state.settingsStatus=e.message; state.status=e.message; }).finally(function(){ state.settingsLoading=false; render(); });
+  }
   function loadContacts(listId){
     state.contactsLoading=true;
     if(listId !== undefined) state.contactListId=listId||'';
@@ -53461,7 +53671,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     }).catch(function(e){ state.status=e.message; }).finally(function(){ state.platformAudienceLoading=false; render(); });
   }
   function loadAndMaybeContacts(){
-    return load().then(function(){ if(state.tab==='uploads') return loadContacts(state.contactListId); if(state.tab==='platform') return loadPlatformAudience(); });
+    return load().then(function(){ if(state.tab==='uploads') return loadContacts(state.contactListId); if(state.tab==='platform') return loadPlatformAudience(); if(state.tab==='settings') return loadSettings(); });
   }
   function openFromNav(el, ev){
     if(ev && typeof ev.preventDefault === 'function') ev.preventDefault();
@@ -53481,6 +53691,24 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
   window.OBAdminEmailCenter={
     show:showPanel,
     open:function(tab){ state.tab=tab||'map'; loadAndMaybeContacts(); },
+    saveSettings:function(){
+      var body=readSettingsPayload();
+      state.settingsStatus='Saving settings...';
+      render();
+      settingsApi('',{method:'PUT',body:body}).then(function(){
+        state.settingsStatus='Settings saved.';
+        return loadSettings();
+      }).catch(function(e){ state.settingsStatus=e.message; state.status=e.message; render(); });
+    },
+    testSettings:function(){
+      var to=val('ob-admin-email-test-to') || (state.settings&&state.settings.platform_email_test_to) || '';
+      state.settingsStatus='Sending test email...';
+      render();
+      settingsApi('/test-email',{method:'POST',body:{to:to}}).then(function(){
+        state.settingsStatus='Test email sent.';
+        render();
+      }).catch(function(e){ state.settingsStatus=e.message; state.status=e.message; render(); });
+    },
     setPlatformAudienceRole:function(value){ state.platformAudienceRole=value||'expert'; state.platformAudienceOffset=0; loadPlatformAudience(); },
     setPlatformAudienceStatus:function(value){ state.platformAudienceStatus=value||'all'; state.platformAudienceOffset=0; loadPlatformAudience(); },
     setPlatformAudienceSearch:function(value){ state.platformAudienceSearch=value||''; },
@@ -53519,6 +53747,9 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
       state.link_key='auto';
       state.aiBusy=false;
       state.aiPrompt='';
+      state.aiAudienceNote='';
+      state.aiWordCount='medium';
+      state.aiCustomWords=160;
       state.aiCtaLabel='';
       state.aiCtaUrl='';
       state.aiGenerateImage=false;
@@ -53527,6 +53758,10 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
       state.sendReview=null;
       state.sendMode='now';
       state.status='New campaign ready. Choose an audience, prompt AI, then save the draft.';
+      render();
+    },
+    setAiWordCount:function(value){
+      state.aiWordCount=value||'medium';
       render();
     },
     setLink:function(value){
@@ -53556,6 +53791,9 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
       state.link_key=d.link_key || a.link_key || 'auto';
       state.aiBusy=false;
       state.aiPrompt='';
+      state.aiAudienceNote='';
+      state.aiWordCount=d.word_goal&&d.word_goal.key||state.aiWordCount||'medium';
+      state.aiCustomWords=d.word_goal&&d.word_goal.words||state.aiCustomWords||160;
       state.aiCtaLabel=d.cta_label||'';
       state.aiCtaUrl=d.cta_url||'';
       state.aiGenerateImage=!!d.image_prompt;
@@ -53675,30 +53913,87 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
       if(status==='active' && !confirm('Activate this marketing journey? Only use this after every step, audience, and campaign assignment is reviewed.')) return;
       api('/journeys/'+encodeURIComponent(id)+'/status',{method:'POST',body:{status:status}}).then(function(){state.status=status==='active'?'Journey activated.':'Journey paused.'; load();}).catch(function(e){state.status=e.message; render();});
     },
-    generateAi:function(){
+    setAiJourneyAudience:function(value){
+      state.aiJourneyAudience=value||'experts_marketing';
+    },
+    generateAiJourney:function(){
+      if(state.aiJourneyBusy) return;
+      var audienceValue=selectedAiJourneyAudience();
+      var audienceEl=$('ob-admin-ai-journey-audience');
+      var audienceLabel=audienceEl&&audienceEl.options&&audienceEl.selectedIndex>=0 ? audienceEl.options[audienceEl.selectedIndex].text : audienceValue;
+      state.aiJourneyPrompt=val('ob-admin-ai-journey-prompt')||'';
+      state.aiJourneyAudience=audienceValue;
+      state.aiJourneyStepCount=aiJourneyStepCount();
+      state.aiJourneyGenerateImages=!!(($('ob-admin-ai-journey-images')||{}).checked);
+      state.aiWordCount=selectedAiJourneyWordCount();
+      state.aiCustomWords=selectedAiJourneyCustomWords();
+      state.aiJourneyBusy=true;
+      state.status='Generating AI marketing journey draft...';
+      render();
+      api('/ai/generate',{method:'POST',body:{kind:'journey',prompt:state.aiJourneyPrompt,audience:audienceKey(audienceValue),audience_label:audienceLabel,list_id:audienceListId(audienceValue),step_count:state.aiJourneyStepCount,word_count:state.aiWordCount,custom_words:state.aiCustomWords,generate_images:state.aiJourneyGenerateImages,layout_key:state.layoutKey||'platform_update'}}).then(function(d){
+        state.aiJourneyDraft=d.journey||d.draft||null;
+        state.status='AI journey draft generated. Review the steps before saving as drafts.';
+      }).catch(function(e){
+        state.status=e.message;
+      }).finally(function(){
+        state.aiJourneyBusy=false;
+        render();
+      });
+    },
+    saveAiJourney:function(){
+      if(!state.aiJourneyDraft){ state.status='Generate an AI journey draft first.'; render(); return; }
+      state.aiJourneyBusy=true;
+      state.status='Saving AI journey drafts...';
+      render();
+      api('/journeys/ai-save',{method:'POST',body:{journey:state.aiJourneyDraft}}).then(function(d){
+        state.aiJourneyDraft=null;
+        state.status='AI journey saved as draft campaigns and a draft journey. No emails were sent.';
+        state.journey_id=d.journey&&d.journey.id||state.journey_id;
+        return load();
+      }).catch(function(e){
+        state.status=e.message;
+      }).finally(function(){
+        state.aiJourneyBusy=false;
+        render();
+      });
+    },
+    generateAi:function(mode){
       if(state.aiBusy) return;
+      mode=mode||'full';
       var audienceValue=selectedAudience();
+      var textOnly=mode==='text';
       state.layoutKey=selectedLayout();
-      var body={target_type:selectedTarget(),audience:audienceKey(audienceValue),list_id:audienceListId(audienceValue),scenario_key:selectedCycle(),journey_id:selectedJourney(),journey_step_id:selectedJourneyStep(),layout_key:state.layoutKey,prompt:val('ob-admin-ai-prompt'),cta_label:val('ob-admin-ai-cta-label'),cta_url:val('ob-admin-ai-cta-url'),link_key:selectedLinkKey(),generate_image:!!(($('ob-admin-ai-generate-image')||{}).checked),image_prompt:val('ob-admin-ai-image-prompt')};
+      var existing=state.draft||{};
+      var body={target_type:selectedTarget(),audience:audienceKey(audienceValue),audience_label:selectedAudienceLabel(),list_id:audienceListId(audienceValue),scenario_key:selectedCycle(),journey_id:selectedJourney(),journey_step_id:selectedJourneyStep(),layout_key:state.layoutKey,prompt:val('ob-admin-ai-prompt'),word_count:selectedAiWordCount(),custom_words:selectedAiCustomWords(),cta_label:val('ob-admin-ai-cta-label'),cta_url:val('ob-admin-ai-cta-url'),link_key:selectedLinkKey(),generate_image:textOnly?false:(mode==='full'?true:!!(($('ob-admin-ai-generate-image')||{}).checked)),text_only:textOnly,skip_image:textOnly,image_prompt:val('ob-admin-ai-image-prompt'),image_url:existing.image_url||'',image_alt:existing.image_alt||''};
       state.aiPrompt=body.prompt||'';
+      state.aiAudienceNote=val('ob-admin-ai-audience-note')||'';
+      state.aiWordCount=body.word_count||'medium';
+      state.aiCustomWords=body.custom_words||160;
       state.aiCtaLabel=body.cta_label||'';
       state.aiCtaUrl=body.cta_url||'';
       state.aiGenerateImage=!!body.generate_image;
       state.aiImagePrompt=body.image_prompt||'';
       state.link_key=body.link_key||'auto';
       state.aiBusy=true;
-      state.status='Generating email draft...';
+      state.status=mode==='suggestion'?'Generating an audience-aware suggestion...':(textOnly?'Regenerating text only...':'Generating email draft and image...');
       render();
       api('/ai/generate',{method:'POST',body:body}).then(function(d){
-        state.draft=d.draft||d;
+        var generated=d.draft||d;
+        if(textOnly){
+          generated.image_url=existing.image_url||generated.image_url||'';
+          generated.image_alt=existing.image_alt||generated.image_alt||'';
+          generated.image_prompt=existing.image_prompt||generated.image_prompt||body.image_prompt||'';
+          generated.image_note=existing.image_note||generated.image_note||'';
+        }
+        state.draft=generated;
         state.preview=d.preview||null;
         state.link_key=(state.draft&&state.draft.link_key)||state.link_key||'auto';
         state.layoutKey=validLayout((state.draft&&state.draft.layout_key)||state.layoutKey);
         state.aiCtaLabel=(state.draft&&state.draft.cta_label)||state.aiCtaLabel||'';
         state.aiCtaUrl=(state.draft&&state.draft.cta_url)||state.aiCtaUrl||'';
         state.aiImagePrompt=(state.draft&&state.draft.image_prompt)||state.aiImagePrompt||'';
-        state.aiGenerateImage=!!state.aiImagePrompt;
-        state.status='Draft generated. Review the preview before sending.';
+        state.aiGenerateImage=!!state.aiImagePrompt && !textOnly;
+        state.status=textOnly?'Text regenerated. Existing image was kept.':(mode==='suggestion'?'Suggested email generated. Review the strategy and preview.':'Draft generated. Review the preview before sending.');
       }).catch(function(e){
         state.status=e.message;
       }).finally(function(){
@@ -54056,15 +54351,18 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
 	    window._customDomainPending = true;
 	    lookupPromise = fetch(BASE + '/api/domains/lookup?domain=' + encodeURIComponent(host()), {cache:'no-store'})
 	      .then(function(r){ return r.json(); })
-	      .then(function(d){
-	        var slug = validSlug(d && (d.slug || d.expert_slug || (d.expert && d.expert.slug)));
-	        window._customDomainPending = false;
-	        return slug ? storeSlug(slug) : '';
-	      })
-	      .catch(function(){
-	        window._customDomainPending = false;
-	        return '';
-	      });
+		      .then(function(d){
+		        var slug = validSlug(d && (d.slug || d.expert_slug || (d.expert && d.expert.slug)));
+		        window._customDomainPending = false;
+		        window._customDomainLookupFailedAt = 0;
+		        return slug ? storeSlug(slug) : '';
+		      })
+		      .catch(function(){
+		        window._customDomainPending = false;
+		        window._customDomainLookupFailedAt = Date.now();
+		        lookupPromise = null;
+		        return '';
+		      });
 	    return lookupPromise;
 	  }
 	  function showRequestedPage(){
@@ -54105,13 +54403,20 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
 	      }
 	      if(typeof window._markRouteLoading === 'function') window._markRouteLoading('public');
 	      lookupDomainSlug().then(function(found){
-	        if(found) {
-	          previousLoad.call(window, found);
-	          scheduleRequestedPage();
-	        } else if(typeof window._markRouteReady === 'function') {
-	          window._markRouteReady('public');
-	        }
-	      });
+		        if(found) {
+		          previousLoad.call(window, found);
+		          scheduleRequestedPage();
+		        } else if(customDomainHost()) {
+		          if(typeof window._markRouteLoading === 'function') window._markRouteLoading('public');
+		          setTimeout(function(){
+		            if(!resolvePublicExpertSlug()) lookupDomainSlug().then(function(retrySlug){
+		              if(retrySlug) previousLoad.call(window, retrySlug);
+		            });
+		          }, 2500);
+		        } else if(typeof window._markRouteReady === 'function') {
+		          window._markRouteReady('public');
+		        }
+		      });
 	    };
 	  }
 
@@ -55145,7 +55450,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     }).catch(function(err){
       state.publicLoadInFlightSlug = '';
       if(window.obPublicSlugBackoff && err && (err.status === 404 || err.status === 429 || /too many requests|expert not found/i.test(err.message || ''))) {
-        window.obPublicSlugBackoff.mark('onDemand', slug, err.status === 404 ? 'not_found' : 'rate_limited', err.status === 404 ? 5*60*1000 : 2*60*1000, err.body || null);
+	        window.obPublicSlugBackoff.mark('onDemand', slug, err.status === 404 ? 'not_found' : 'rate_limited', err.status === 404 ? 5*60*1000 : 5*1000, err.body || null);
       }
       confirmCheckoutFromQuery(0);
       markPublicOnDemandReady();
@@ -55592,21 +55897,40 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     if(typeof window._markRouteReady === 'function' && !loading) window._markRouteReady('public');
     else if(typeof window._markRouteLoading === 'function' && loading) window._markRouteLoading('public');
   }
-  function hasRenderedExpertShell(){
-    var title = String(document.title || '');
-    var text = String(document.body && document.body.innerText || '');
-    if(/This expert site is not available yet|Checking this expert site/i.test(text)) return false;
-    if(/Independent Expert|Ownlybiz - Own your expertise/i.test(title)) return false;
-    return /Client Growth Consultant|\$\d+(?:\.\d{2})?\/min|Start Session|Book a Session|How I Can Help/i.test(text);
-  }
-  function verifyOwnlybizSubdomain(slug){
-    slug = expertSlug(slug);
-    if(!slug) return Promise.resolve(false);
-    if(publicGate.allowed[slug]) return Promise.resolve(true);
-    if(window.obPublicSlugBackoff && window.obPublicSlugBackoff.blocked('expert', slug)) {
-      renderPublicGate(slug, 'unavailable');
-      return Promise.resolve(false);
-    }
+	  function hasRenderedExpertShell(){
+	    var title = String(document.title || '');
+	    var text = String(document.body && document.body.innerText || '');
+	    if(/This expert site is not available yet|Checking this expert site/i.test(text)) return false;
+	    if(/Independent Expert|Ownlybiz - Own your expertise/i.test(title)) return false;
+	    return /Client Growth Consultant|\$\d+(?:\.\d{2})?\/min|Start Session|Book a Session|How I Can Help/i.test(text);
+	  }
+	  function schedulePublicGateRetry(slug, delay){
+	    slug = expertSlug(slug);
+	    if(!slug) return;
+	    if(window.obPublicSlugBackoff && typeof window.obPublicSlugBackoff.retry === 'function') {
+	      window.obPublicSlugBackoff.retry(slug, delay || 2500);
+	    }
+	    setTimeout(function(){ verifyOwnlybizSubdomain(slug); }, Math.max(1000, Math.min(Number(delay || 2500), 15000)));
+	  }
+	  function temporaryPublicGateError(err){
+	    if(!err) return true;
+	    if(err.status === 429 || err.status === 0 || err.name === 'AbortError') return true;
+	    return /too many requests|timed out|network|failed to fetch/i.test(String(err.message || ''));
+	  }
+	  function verifyOwnlybizSubdomain(slug){
+	    slug = expertSlug(slug);
+	    if(!slug) return Promise.resolve(false);
+	    if(publicGate.allowed[slug]) return Promise.resolve(true);
+	    var blocked = window.obPublicSlugBackoff && window.obPublicSlugBackoff.blocked('expert', slug);
+	    if(blocked && blocked.status === 429) {
+	      renderPublicGate(slug, 'loading');
+	      schedulePublicGateRetry(slug, Math.max(1000, (blocked.until || Date.now()) - Date.now() + 250));
+	      return Promise.resolve(false);
+	    }
+	    if(blocked) {
+	      renderPublicGate(slug, 'unavailable');
+	      return Promise.resolve(false);
+	    }
     if(publicGate.blocked[slug]) {
       renderPublicGate(slug, 'unavailable');
       return Promise.resolve(false);
@@ -55626,15 +55950,22 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
           if(window.obPublicSlugBackoff) window.obPublicSlugBackoff.clear('expert', slug);
           return true;
         });
-      })
-      .catch(function(err){
-        publicGate.allowed[slug] = false;
-        publicGate.blocked[slug] = !(err && err.status === 429);
-        if(window.obPublicSlugBackoff && err && (err.status === 404 || err.status === 429 || /too many requests|not found|not published|unavailable/i.test(err.message || ''))) {
-          window.obPublicSlugBackoff.mark('expert', slug, err.status === 404 ? 'not_found' : 'rate_limited', err.status === 404 ? 5*60*1000 : 2*60*1000, err.body || null);
-        }
-        renderPublicGate(slug, 'unavailable');
-        return false;
+	      })
+	      .catch(function(err){
+	        publicGate.allowed[slug] = false;
+	        if(temporaryPublicGateError(err)) {
+	          publicGate.blocked[slug] = false;
+	          var row = window.obPublicSlugBackoff && window.obPublicSlugBackoff.mark('expert', slug, 'rate_limited', 5*1000, err && err.body || null);
+	          renderPublicGate(slug, 'loading');
+	          schedulePublicGateRetry(slug, Math.max(1000, (row && row.until ? row.until - Date.now() : 2500) + 250));
+	          return false;
+	        }
+	        publicGate.blocked[slug] = true;
+	        if(window.obPublicSlugBackoff && err && (err.status === 404 || /not found|not published|unavailable/i.test(err.message || ''))) {
+	          window.obPublicSlugBackoff.mark('expert', slug, 'not_found', 5*60*1000, err.body || null);
+	        }
+	        renderPublicGate(slug, 'unavailable');
+	        return false;
       })
       .finally(function(){
         publicGate.pending[slug] = false;
@@ -55751,14 +56082,18 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     }
     var oldApply = window._applyExpertWebsite;
     if(typeof oldApply === 'function' && !oldApply.__obHighRiskSubdomainGate){
-      var guardedApply = function(data){
-        var hostSlug = ownlybizSubdomainSlug();
-        if(hostSlug){
-          var dataSlug = expertSlug((data && (data.slug || (data.expert && data.expert.slug))) || '');
-          if(publicGate.blocked[hostSlug] || publicGate.pending[hostSlug] || !publicGate.allowed[hostSlug] || (dataSlug && dataSlug !== hostSlug)){
-            return undefined;
-          }
-        }
+	      var guardedApply = function(data){
+	        var hostSlug = ownlybizSubdomainSlug();
+	        if(hostSlug){
+	          var dataSlug = expertSlug((data && (data.slug || (data.expert && data.expert.slug))) || '');
+	          if(dataSlug === hostSlug) {
+	            publicGate.allowed[hostSlug] = true;
+	            publicGate.blocked[hostSlug] = false;
+	            publicGate.payload[hostSlug] = (data && data.expert) || data;
+	          } else if(publicGate.blocked[hostSlug] || publicGate.pending[hostSlug] || !publicGate.allowed[hostSlug] || (dataSlug && dataSlug !== hostSlug)){
+	            return undefined;
+	          }
+	        }
         var result = oldApply.apply(this, arguments);
         syncPublicBookingBlock(data);
         return result;
@@ -55956,6 +56291,43 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
   if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
   else boot();
   [500,1400,2800,5200].forEach(function(ms){ setTimeout(boot, ms); });
+})();
+</script>
+<script id="ownlybiz-admin-expert-query-open-js">
+(function(){
+  'use strict';
+  if(window.__ownlybizAdminExpertQueryOpen20260612) return;
+  window.__ownlybizAdminExpertQueryOpen20260612 = true;
+  function notify(message){
+    try {
+      if(typeof window.toastMsg === 'function') window.toastMsg(message);
+      else if(typeof window.notify === 'function') window.notify(message, 'ok');
+    } catch(e) {}
+  }
+  function tryOpen(){
+    try {
+      var path = String(location.pathname || '');
+      if(path.indexOf('/admin') !== 0) return;
+      var params = new URLSearchParams(location.search || '');
+      var id = params.get('expertId') || params.get('expert_id') || params.get('expert') || '';
+      if(!id) return;
+      var action = params.get('action') || '';
+      var marker = id + ':' + action;
+      if(window.__ownlybizAdminExpertQueryOpened === marker) return;
+      var opener = window.obAdminOpenExpertDetail || window.adminViewExpertDashboard;
+      if(typeof opener !== 'function') return;
+      window.__ownlybizAdminExpertQueryOpened = marker;
+      if(typeof window.switchView === 'function') {
+        try { window.switchView(6); } catch(e) {}
+      }
+      opener(id);
+      if(action === 'approve') notify('Review this Starter expert before approving.');
+      if(action === 'decline') notify('Review this Starter expert before declining or suspending.');
+    } catch(e) {}
+  }
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', tryOpen);
+  else tryOpen();
+  [700,1600,3000,5200].forEach(function(ms){ setTimeout(tryOpen, ms); });
 })();
 </script>
 	</html>

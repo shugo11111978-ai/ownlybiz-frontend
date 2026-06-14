@@ -18,6 +18,7 @@ const PUBLIC_FIRST_PAINT_SLUGS = new Set(['lunapsychics2']);
 
 let cachedIndex = null;
 let cachedBlogPosts = null;
+const publicExpertProfileCache = new Map();
 
 function readIndex() {
   if (!cachedIndex || process.env.NODE_ENV !== 'production') {
@@ -340,6 +341,23 @@ async function fetchJson(url, timeoutMs = 1800) {
   }
 }
 
+async function fetchCachedPublicExpert(url, timeoutMs = 1800, ttlMs = 30000) {
+  const now = Date.now();
+  const cached = publicExpertProfileCache.get(url);
+  if (cached && cached.expiresAt > now) return cached.value;
+  const value = await fetchJson(url, timeoutMs);
+  if (value) {
+    publicExpertProfileCache.set(url, {
+      value,
+      expiresAt: now + ttlMs,
+      staleUntil: now + Math.max(ttlMs * 4, 120000),
+    });
+    return value;
+  }
+  if (cached && cached.staleUntil > now) return cached.value;
+  return null;
+}
+
 async function resolveExpert(req, host) {
   const route = routeFromRequest(req, host);
   let slug = route.slug;
@@ -350,7 +368,9 @@ async function resolveExpert(req, host) {
   }
   if (!slug) return null;
 
-  const profile = await fetchJson(`${BACKEND}/api/experts/${encodeURIComponent(slug)}`);
+  const profileUrl = `${BACKEND}/api/experts/${encodeURIComponent(slug)}`;
+  const profileTtl = PUBLIC_FIRST_PAINT_SLUGS.has(slug) ? 300000 : 30000;
+  const profile = await fetchCachedPublicExpert(profileUrl, 1800, profileTtl);
   const expert = profile && (profile.expert || profile);
   if (!expert || !(expert.name || expert.slug)) return { slug, route: { ...route, slug } };
   return { slug, route: { ...route, slug }, expert, profile };
@@ -538,8 +558,12 @@ function publicFirstPaintShell(expertResult, req) {
   const page = publicFirstPaintPage(req, expertResult.route);
   const isBook = page === 'book';
   const name = clean(expert.name, 'Expert');
-  const title = clean(expert.title || wc.hero_tagline, 'Expert');
-  const logo = whiteLabelAssetUrl(wc.logo_image || wc.profile_image || expert.logo_url || expert.avatar_url || '', 'https://ownlybiz.com');
+  const title = clean(expert.title || expert.category || expert.specialty || expert.tagline || expert.subtitle, 'Expert');
+  const logo = whiteLabelAssetUrl(wc.logo_image || expert.logo_url || wc.profile_image || expert.avatar_url || '', 'https://ownlybiz.com');
+  const profileImage = whiteLabelAssetUrl(
+    expert.photo_url || expert.profile_photo || expert.avatar_url || expert.image_url || expert.photo || expert.photoUrl || wc.profile_image || expert.logo_url || wc.logo_image || '',
+    'https://ownlybiz.com'
+  );
   const bg = safeHex(tokens.background, wc.site_mode === 'dark' ? '#101112' : '#f7f1e8');
   const surface = safeHex(tokens.surface, wc.site_mode === 'dark' ? '#1c1a18' : '#fffdf8');
   const text = safeHex(tokens.text, wc.site_mode === 'dark' ? '#f8f3ea' : '#241a15');
@@ -562,9 +586,14 @@ function publicFirstPaintShell(expertResult, req) {
   const rating = Number(expert.avg_rating) > 0
     ? `${Number(expert.avg_rating).toFixed(1)} star${Number(expert.review_count) ? ` &middot; ${Number(expert.review_count)} ratings` : ''}`
     : 'New expert';
-  const image = logo
-    ? `<img src="${esc(logo)}" alt="" loading="eager" decoding="async">`
+  const image = profileImage
+    ? `<img src="${esc(profileImage)}" alt="" loading="eager" decoding="async">`
     : `<span>${initials(name)}</span>`;
+  const unavailableCard = `
+        <div class="ob-pfp-unavailable">
+          <strong>Sessions are not available yet</strong>
+          <span>This expert is not accepting paid sessions yet. Please check back later.</span>
+        </div>`;
   const hero = isBook
     ? `
       <section class="ob-pfp-profile">
@@ -578,7 +607,7 @@ function publicFirstPaintShell(expertResult, req) {
       <section class="ob-pfp-book">
         <h1>How would you like to connect?</h1>
         <p>Start now, send a private written question, or reserve time for later.</p>
-        <div class="ob-pfp-card">
+        ${!paid ? unavailableCard : `<div class="ob-pfp-card">
           <div class="ob-pfp-row ob-pfp-chat">
             <div><strong>Chat with ${esc(name)} now</strong><span>Private live text session</span></div>
             <div class="ob-pfp-price">${esc(money(expert.rate_chat || expert.chat_pm, '$3.50/min'))}</div>
@@ -593,7 +622,7 @@ function publicFirstPaintShell(expertResult, req) {
             <div><strong>Book a live session</strong><span>${esc(disabledCopy)}</span></div>
             <em>Schedule</em>
           </div>
-        </div>
+        </div>`}
       </section>`
     : `
       <section class="ob-pfp-hero">
@@ -626,6 +655,9 @@ html.ob-public-first-paint.ob-public-loading #view-4{visibility:visible!importan
 #ob-public-first-paint-shell .ob-pfp-rating{margin-top:8px;color:${accent};font-size:14px;font-weight:900}
 #ob-public-first-paint-shell .ob-pfp-rating span{color:${text};margin-left:6px}
 #ob-public-first-paint-shell .ob-pfp-card{margin-top:18px;background:${surface};border:1px solid ${border};border-radius:18px;padding:14px;box-shadow:0 24px 80px rgba(0,0,0,.22)}
+#ob-public-first-paint-shell .ob-pfp-unavailable{margin-top:18px;background:${surface};border:1px solid ${border};border-radius:18px;padding:26px 22px;text-align:center;box-shadow:0 24px 80px rgba(0,0,0,.18)}
+#ob-public-first-paint-shell .ob-pfp-unavailable strong{font-size:clamp(28px,7vw,44px);line-height:1.12;font-weight:500}
+#ob-public-first-paint-shell .ob-pfp-unavailable span{display:block;color:${muted};font-size:clamp(16px,4vw,23px);line-height:1.55;margin:18px auto 0;max-width:560px}
 #ob-public-first-paint-shell .ob-pfp-row{display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:12px;border:1px solid ${border};border-radius:12px;padding:14px 16px;margin-bottom:10px;background:rgba(255,255,255,.03)}
 #ob-public-first-paint-shell .ob-pfp-row:last-child{margin-bottom:0;grid-template-columns:auto minmax(0,1fr) auto}
 #ob-public-first-paint-shell strong{display:block;color:${text};font-size:16px}

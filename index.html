@@ -4248,6 +4248,8 @@ body{font-feature-settings:"ss01","cv11";background:
     }
   }
   var initialPublicSlug = routeKind === 'public' ? preloadedPublicSlug() : '';
+  var publicFirstPaintSlug = window.__OB_PUBLIC_FIRST_PAINT__ && window.__OB_PUBLIC_FIRST_PAINT__.slug ? String(window.__OB_PUBLIC_FIRST_PAINT__.slug) : '';
+  var publicFirstPaint = routeKind === 'public' && initialPublicSlug && publicFirstPaintSlug === initialPublicSlug;
   if(initialPublicSlug){
     window._browseExpert = initialPublicSlug;
     window._currentExpertSlug = initialPublicSlug;
@@ -4255,6 +4257,7 @@ body{font-feature-settings:"ss01","cv11";background:
   }
   if(routeKind==='public') {
     document.documentElement.classList.add('ob-public-shell-guard');
+    if(publicFirstPaint) document.documentElement.classList.add('ob-public-first-paint');
     applyPublicShellTone();
   }
   function hasPublicExpertPayload(){
@@ -4270,17 +4273,77 @@ body{font-feature-settings:"ss01","cv11";background:
     document.documentElement.classList.add('ob-public-loaded');
     if(document.body) document.body.classList.add('ownly-ready');
   }
+  window.__obReleasePublicFirstPaintShell = function(){
+    var shell = document.getElementById('ob-public-first-paint-shell');
+    if(!shell || shell.dataset.obRemoving === '1' || shell.dataset.obWaiting === '1') return;
+    shell.dataset.obWaiting = '1';
+    var attempts = 0;
+    function ready(){
+      var view = document.getElementById('view-4');
+      var expert = window._currentExpert || {};
+      var name = String(expert.name || expert.display_name || '').trim();
+      var bodyText = String(document.body && document.body.innerText || '');
+      var bookRoot = document.querySelector('#view-4 #ep-book');
+      var bookLayout = document.getElementById('booking-main-layout');
+      var isBookPage = /\/book(?:$|\?)/i.test(location.pathname || '');
+      if(isBookPage && bookRoot) {
+        var bookReady = bookRoot.classList.contains('ob-book-od-ready') || (bookLayout && bookLayout.dataset.obBookingBlocked === '1');
+        if(!bookReady) return false;
+      }
+      return !!(view && view.classList.contains('active') && name && bodyText.indexOf(name) >= 0);
+    }
+    function remove(){
+      shell.dataset.obRemoving = '1';
+      shell.classList.add('is-hiding');
+      setTimeout(function(){
+        if(shell && shell.parentNode) shell.parentNode.removeChild(shell);
+        document.documentElement.classList.remove('ob-public-first-paint');
+      }, 180);
+    }
+    function wait(){
+      if(ready()) remove();
+      else if(attempts++ < 120) setTimeout(wait, 100);
+      else shell.dataset.obWaiting = '';
+    }
+    wait();
+  };
+  if(publicFirstPaint) {
+    setTimeout(function(){
+      if(window.__obReleasePublicFirstPaintShell) window.__obReleasePublicFirstPaintShell();
+    }, 200);
+    setTimeout(function(){
+      if(window.__obReleasePublicFirstPaintShell) window.__obReleasePublicFirstPaintShell();
+    }, 1800);
+    document.addEventListener('DOMContentLoaded', function(){
+      if(window.__obReleasePublicFirstPaintShell) window.__obReleasePublicFirstPaintShell();
+    });
+    window.addEventListener('load', function(){
+      if(window.__obReleasePublicFirstPaintShell) window.__obReleasePublicFirstPaintShell();
+    });
+  }
   function shouldHoldPublicReady(kind){
-    return routeKind==='public' && (kind==='public' || !kind) && !hasPublicExpertPayload() && !window._obAllowPublicShellReady;
+    return routeKind==='public' && (kind==='public' || !kind) && !publicFirstPaint && !hasPublicExpertPayload() && !window._obAllowPublicShellReady;
   }
   if(routeKind){
-    document.documentElement.classList.add('ob-route-loading');
-    document.documentElement.classList.add('ob-'+routeKind+'-loading');
+    if(publicFirstPaint) {
+      document.documentElement.classList.add('ob-public-loaded');
+    } else {
+      document.documentElement.classList.add('ob-route-loading');
+      document.documentElement.classList.add('ob-'+routeKind+'-loading');
+    }
   }
   window._markRouteLoading=function(kind){
     kind=kind||routeKind||'';
+    if(routeKind==='public' && kind==='public' && publicFirstPaint && !hasPublicExpertPayload()){
+      document.documentElement.classList.add('ob-public-shell-guard');
+      document.documentElement.classList.remove('ob-route-loading');
+      document.documentElement.classList.remove('ob-public-loading');
+      if(document.body) document.body.classList.add('ownly-ready');
+      return;
+    }
     if(routeKind==='public' && kind==='public' && hasPublicExpertPayload()){
       releasePublicRoute();
+      if(publicFirstPaint && window.__obReleasePublicFirstPaintShell) window.__obReleasePublicFirstPaintShell();
       return;
     }
     document.documentElement.classList.add('ob-route-loading');
@@ -4304,6 +4367,7 @@ body{font-feature-settings:"ss01","cv11";background:
     }
     if(routeKind==='public' && (kind==='public' || !kind)) document.documentElement.classList.add('ob-public-loaded');
     if(document.body) document.body.classList.add('ownly-ready');
+    if(routeKind==='public' && publicFirstPaint && hasPublicExpertPayload() && window.__obReleasePublicFirstPaintShell) window.__obReleasePublicFirstPaintShell();
   };
   window.obRouteReady=function(kind){ if(window._markRouteReady) window._markRouteReady(kind); };
   setTimeout(function(){ if(window.obRouteReady) window.obRouteReady(routeKind); }, routeKind ? 8000 : 1800);
@@ -56410,6 +56474,8 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     var bookPageActive = /\/book(?:$|\?)/i.test(location.pathname || '') || (bookLayout && bookLayout.offsetParent !== null);
     if(bookLayout && bookPageActive && !bookLayout.dataset.obBookingBlocked){
       bookLayout.dataset.obBookingBlocked = '1';
+      var bookRoot = document.querySelector('#view-4 #ep-book');
+      if(bookRoot) bookRoot.classList.add('ob-book-od-ready');
       bookLayout.innerHTML =
         '<div style="background:#FFFDF8;border:1px solid #E1D6C8;border-radius:8px;padding:28px;text-align:center;color:#241A15;max-width:560px;margin:0 auto;">' +
           '<div style="font-family:var(--font-head);font-size:28px;line-height:1.12;margin-bottom:10px;">Sessions are not available yet</div>' +
@@ -56739,6 +56805,11 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     var expert = payload.expert || {};
     return validSlug(payload.slug || expert.slug || '');
   }
+  function publicFirstPaintActive(){
+    var fp = window.__OB_PUBLIC_FIRST_PAINT__ || {};
+    var slug = preloadedPublicSlug();
+    return !!(slug && fp.slug && String(fp.slug) === slug && document.getElementById('ob-public-first-paint-shell'));
+  }
   function hasExpertPayload(){
     var e = window._currentExpert || {};
     return !!((e.slug || e.name || e.display_name || e.user_id || e.id) && !window._customDomainPending);
@@ -56769,6 +56840,14 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
         document.documentElement.classList.remove('ob-route-loading');
       }
       document.documentElement.classList.add('ob-public-loaded');
+      if(document.body) document.body.classList.add('ownly-ready');
+      if(publicFirstPaintActive() && window.__obReleasePublicFirstPaintShell) window.__obReleasePublicFirstPaintShell();
+      return;
+    }
+    if(publicFirstPaintActive()){
+      document.documentElement.classList.add('ob-public-loaded');
+      document.documentElement.classList.remove('ob-route-loading');
+      document.documentElement.classList.remove('ob-public-loading');
       if(document.body) document.body.classList.add('ownly-ready');
       return;
     }

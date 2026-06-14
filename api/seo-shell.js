@@ -14,6 +14,7 @@ const CUSTOM_DOMAIN_SLUG_FALLBACKS = {
   'lunapsychics.com': 'liranprodtest',
   'www.lunapsychics.com': 'liranprodtest',
 };
+const PUBLIC_FIRST_PAINT_SLUGS = new Set(['lunapsychics2']);
 
 let cachedIndex = null;
 let cachedBlogPosts = null;
@@ -485,9 +486,172 @@ function injectPublicExpertPreload(html, expertResult, host) {
     routeKind: expertResult && expertResult.route && expertResult.route.kind || '',
     expert: preloadedExpert,
   };
-  const script = `<script id="ob-public-expert-preload">window.__OB_PRELOADED_EXPERT__=${safeScriptJson(payload)};</script>`;
+  const firstPaint = PUBLIC_FIRST_PAINT_SLUGS.has(payload.slug)
+    ? `window.__OB_PUBLIC_FIRST_PAINT__={slug:${safeScriptJson(payload.slug)}};`
+    : '';
+  const script = `<script id="ob-public-expert-preload">${firstPaint}window.__OB_PRELOADED_EXPERT__=${safeScriptJson(payload)};</script>`;
   if (/<head[^>]*>/i.test(html)) return html.replace(/<head([^>]*)>/i, `<head$1>\n${script}`);
   return /<\/head>/i.test(html) ? html.replace(/<\/head>/i, `${script}\n</head>`) : `${script}\n${html}`;
+}
+
+function addHtmlClass(html, className) {
+  return html.replace(/<html\b([^>]*)>/i, (match, attrs) => {
+    const classMatch = attrs.match(/\sclass=(["'])(.*?)\1/i);
+    if (classMatch) {
+      const current = classMatch[2].split(/\s+/).filter(Boolean);
+      if (!current.includes(className)) current.push(className);
+      return match.replace(classMatch[0], ` class="${esc(current.join(' '))}"`);
+    }
+    return `<html${attrs} class="${esc(className)}">`;
+  });
+}
+
+function publicFirstPaintPage(req, route) {
+  const parts = pathOnly(req).replace(/^\/+|\/+$/g, '').split('/').filter(Boolean);
+  if (route && route.kind === 'platform-path') parts.shift();
+  return (parts[0] || 'home').toLowerCase();
+}
+
+function money(value, fallback) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount) || amount <= 0) return fallback || '';
+  return `$${amount.toFixed(2).replace(/\.00$/, '')}/min`;
+}
+
+function initials(name) {
+  const parts = clean(name, 'Expert').split(/\s+/).filter(Boolean);
+  return esc((parts[0] && parts[0][0] || 'E') + (parts[1] && parts[1][0] || ''));
+}
+
+function safeHex(value, fallback) {
+  const color = clean(value);
+  return /^#[0-9a-f]{3,8}$/i.test(color) ? color : fallback;
+}
+
+function publicFirstPaintShell(expertResult, req) {
+  const expert = expertResult && expertResult.expert;
+  const slug = clean(expert && (expert.slug || expertResult.slug));
+  if (!PUBLIC_FIRST_PAINT_SLUGS.has(slug) || !expert || !(expert.name || expert.slug)) return '';
+
+  const wc = websiteContent(expert);
+  const tokens = wc.design_tokens || {};
+  const page = publicFirstPaintPage(req, expertResult.route);
+  const isBook = page === 'book';
+  const name = clean(expert.name, 'Expert');
+  const title = clean(expert.title || wc.hero_tagline, 'Expert');
+  const logo = whiteLabelAssetUrl(wc.logo_image || wc.profile_image || expert.logo_url || expert.avatar_url || '', 'https://ownlybiz.com');
+  const bg = safeHex(tokens.background, wc.site_mode === 'dark' ? '#101112' : '#f7f1e8');
+  const surface = safeHex(tokens.surface, wc.site_mode === 'dark' ? '#1c1a18' : '#fffdf8');
+  const text = safeHex(tokens.text, wc.site_mode === 'dark' ? '#f8f3ea' : '#241a15');
+  const accent = safeHex(tokens.accent || expert.theme_color, '#b38b59');
+  const action = safeHex(tokens.action, accent);
+  const status = safeHex(tokens.status, '#b7f36b');
+  const muted = wc.site_mode === 'dark' ? 'rgba(248,243,234,.72)' : '#6b5b4f';
+  const border = wc.site_mode === 'dark' ? 'rgba(248,243,234,.14)' : 'rgba(36,26,21,.12)';
+  const online = Number(expert.is_online) === 1 || expert.is_online === true;
+  const paid = ![false, 0, '0', 'false', 'off', 'no'].includes(expert.payments_enabled);
+  const statusText = 'EXPERT SITE';
+  const disabledCopy = !paid
+    ? 'This expert is not accepting paid sessions yet.'
+    : online
+      ? 'The live page is almost ready.'
+      : `${name} is offline right now.`;
+  const chatLabel = paid && online && ![false, 0, '0'].includes(expert.chat_enabled) ? 'Start soon' : 'Unavailable now';
+  const voiceLabel = paid && online && ![false, 0, '0'].includes(expert.voice_enabled) ? 'Available soon' : 'Unavailable now';
+  const videoLabel = paid && online && ![false, 0, '0'].includes(expert.video_enabled) ? 'Available soon' : 'Unavailable now';
+  const rating = Number(expert.avg_rating) > 0
+    ? `${Number(expert.avg_rating).toFixed(1)} star${Number(expert.review_count) ? ` &middot; ${Number(expert.review_count)} ratings` : ''}`
+    : 'New expert';
+  const image = logo
+    ? `<img src="${esc(logo)}" alt="" loading="eager" decoding="async">`
+    : `<span>${initials(name)}</span>`;
+  const hero = isBook
+    ? `
+      <section class="ob-pfp-profile">
+        <div class="ob-pfp-avatar">${image}</div>
+        <div>
+          <h2>${esc(name)}</h2>
+          <p>${esc(title)}</p>
+          <div class="ob-pfp-rating">★★★★★ <span>${rating}</span></div>
+        </div>
+      </section>
+      <section class="ob-pfp-book">
+        <h1>How would you like to connect?</h1>
+        <p>Start now, send a private written question, or reserve time for later.</p>
+        <div class="ob-pfp-card">
+          <div class="ob-pfp-row ob-pfp-chat">
+            <div><strong>Chat with ${esc(name)} now</strong><span>Private live text session</span></div>
+            <div class="ob-pfp-price">${esc(money(expert.rate_chat || expert.chat_pm, '$3.50/min'))}</div>
+            <button type="button" disabled>${esc(chatLabel)}</button>
+          </div>
+          <div class="ob-pfp-grid">
+            <div><strong>Call</strong><span>${esc(voiceLabel)}</span></div>
+            <div><strong>Video</strong><span>${esc(videoLabel)}</span></div>
+          </div>
+          <div class="ob-pfp-row">
+            <div class="ob-pfp-cal">CAL</div>
+            <div><strong>Book a live session</strong><span>${esc(disabledCopy)}</span></div>
+            <em>Schedule</em>
+          </div>
+        </div>
+      </section>`
+    : `
+      <section class="ob-pfp-hero">
+        <div class="ob-pfp-avatar large">${image}</div>
+        <h1>${esc(name)}</h1>
+        <p>${esc(wc.hero_tagline || expert.hero_tagline || title)}</p>
+      </section>`;
+  return `
+<style id="ob-public-first-paint-style">
+html.ob-public-first-paint body,
+html.ob-public-first-paint.ob-route-loading body{opacity:1!important;background:${bg}!important}
+html.ob-public-first-paint.ob-public-shell-guard.ob-public-loading:before{display:none!important}
+html.ob-public-first-paint.ob-public-shell-guard.ob-public-loading #views-container,
+html.ob-public-first-paint.ob-public-loading #view-4{visibility:visible!important}
+#ob-public-first-paint-shell{position:relative;z-index:2147483645;min-height:100vh;background:${bg};color:${text};font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+#ob-public-first-paint-shell *{box-sizing:border-box}
+#ob-public-first-paint-shell .ob-pfp-nav{height:76px;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 22px;border-bottom:1px solid ${border};background:${bg}}
+#ob-public-first-paint-shell .ob-pfp-brand{display:flex;align-items:center;gap:10px;min-width:0;font-weight:900}
+#ob-public-first-paint-shell .ob-pfp-brand img{width:32px;height:32px;border-radius:8px;object-fit:cover}
+#ob-public-first-paint-shell .ob-pfp-brand span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#ob-public-first-paint-shell .ob-pfp-pill{border:1px solid ${border};border-radius:999px;padding:6px 10px;color:${status};font-size:12px;font-weight:900}
+#ob-public-first-paint-shell main{max-width:760px;margin:0 auto;padding:34px 22px 80px}
+#ob-public-first-paint-shell .ob-pfp-profile{display:flex;gap:16px;align-items:center;margin-bottom:18px}
+#ob-public-first-paint-shell .ob-pfp-avatar{width:76px;height:76px;border-radius:16px;overflow:hidden;background:${surface};border:1px solid ${accent};display:flex;align-items:center;justify-content:center;color:${text};font-weight:900;font-size:22px;flex:0 0 auto}
+#ob-public-first-paint-shell .ob-pfp-avatar.large{width:132px;height:132px;margin:0 auto 18px;border-radius:22px;font-size:34px}
+#ob-public-first-paint-shell .ob-pfp-avatar img{width:100%;height:100%;object-fit:cover}
+#ob-public-first-paint-shell h1{font-size:clamp(32px,7vw,48px);line-height:1.08;margin:8px 0 10px;letter-spacing:0;font-weight:500}
+#ob-public-first-paint-shell h2{font-size:26px;line-height:1.1;margin:0 0 4px;letter-spacing:0}
+#ob-public-first-paint-shell p{margin:0;color:${muted};line-height:1.55}
+#ob-public-first-paint-shell .ob-pfp-rating{margin-top:8px;color:${accent};font-size:14px;font-weight:900}
+#ob-public-first-paint-shell .ob-pfp-rating span{color:${text};margin-left:6px}
+#ob-public-first-paint-shell .ob-pfp-card{margin-top:18px;background:${surface};border:1px solid ${border};border-radius:18px;padding:14px;box-shadow:0 24px 80px rgba(0,0,0,.22)}
+#ob-public-first-paint-shell .ob-pfp-row{display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:12px;border:1px solid ${border};border-radius:12px;padding:14px 16px;margin-bottom:10px;background:rgba(255,255,255,.03)}
+#ob-public-first-paint-shell .ob-pfp-row:last-child{margin-bottom:0;grid-template-columns:auto minmax(0,1fr) auto}
+#ob-public-first-paint-shell strong{display:block;color:${text};font-size:16px}
+#ob-public-first-paint-shell .ob-pfp-row span,#ob-public-first-paint-shell .ob-pfp-grid span{display:block;color:${muted};font-size:13px;margin-top:4px}
+#ob-public-first-paint-shell .ob-pfp-price{font-weight:900;color:${text};white-space:nowrap}
+#ob-public-first-paint-shell button{border:0;border-radius:999px;background:${action};color:${bg};font-weight:900;min-width:130px;padding:11px 18px;opacity:.82}
+#ob-public-first-paint-shell .ob-pfp-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px}
+#ob-public-first-paint-shell .ob-pfp-grid>div{border:1px solid ${border};border-radius:12px;padding:13px 16px;background:rgba(255,255,255,.025)}
+#ob-public-first-paint-shell .ob-pfp-cal{width:38px;height:38px;border-radius:999px;background:${accent};color:${bg};display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:900}
+#ob-public-first-paint-shell em{font-style:normal;color:${status};font-size:13px;font-weight:900}
+#ob-public-first-paint-shell .ob-pfp-hero{text-align:center;padding-top:30px}
+#ob-public-first-paint-shell.is-hiding{opacity:0;transition:opacity .16s ease}
+@media(max-width:620px){#ob-public-first-paint-shell .ob-pfp-nav{height:70px;padding:12px 16px}#ob-public-first-paint-shell main{padding:28px 16px 64px}#ob-public-first-paint-shell .ob-pfp-row{grid-template-columns:minmax(0,1fr);align-items:start}#ob-public-first-paint-shell button{width:100%}}
+</style>
+<div id="ob-public-first-paint-shell" data-slug="${esc(slug)}" aria-live="polite">
+  <nav class="ob-pfp-nav"><div class="ob-pfp-brand">${logo ? `<img src="${esc(logo)}" alt="">` : ''}<span>${esc(name)}</span></div><div class="ob-pfp-pill">${statusText}</div></nav>
+  <main>${hero}</main>
+</div>`;
+}
+
+function injectPublicFirstPaintShell(html, expertResult, req) {
+  const shell = publicFirstPaintShell(expertResult, req);
+  if (!shell) return html;
+  html = addHtmlClass(html, 'ob-public-first-paint');
+  if (/<body([^>]*)>/i.test(html)) return html.replace(/<body([^>]*)>/i, `<body$1>\n${shell}`);
+  return shell + html;
 }
 
 function websiteContent(expert) {
@@ -586,6 +750,7 @@ module.exports = async function handler(req, res) {
   if (isExpert) {
     html = whiteLabelExpertShell(html);
     html = injectPublicExpertPreload(html, expertResult, host);
+    html = injectPublicFirstPaintShell(html, expertResult, req);
     const primaryDomain = primaryDomainFromExpert(expert);
     const hostedOwnlybizCopy = route && (route.kind === 'subdomain' || route.kind === 'platform-path');
     const expertCanonical = primaryDomain

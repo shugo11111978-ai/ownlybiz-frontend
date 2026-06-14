@@ -4192,7 +4192,7 @@ body{font-feature-settings:"ss01","cv11";background:
 }
 
 </style>
-<style>body{opacity:0}body.ownly-ready{opacity:1;transition:opacity .15s ease}html.ob-route-loading body{opacity:0!important}html.ob-public-shell-guard #view-1{display:none!important;visibility:hidden!important}html.ob-public-shell-guard.ob-public-loading body{opacity:1!important}html.ob-public-shell-guard.ob-public-loading #views-container{visibility:hidden!important}html.ob-public-shell-guard.ob-public-loading:before{content:'Loading expert site';position:fixed;inset:0;z-index:2147483646;display:flex;align-items:center;justify-content:center;background:#0B0908;color:#F7F1E8;font:800 15px/1.4 system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;letter-spacing:.01em}html.ob-public-loading #view-4,html.ob-dashboard-loading #view-3,html.ob-admin-loading #view-6{visibility:hidden}.coming-soon-badge{position:absolute;top:8px;right:8px;background:#ef4444;color:white;font-size:9px;font-weight:700;padding:2px 7px;border-radius:6px;text-transform:uppercase;letter-spacing:.5px;pointer-events:none;z-index:2;}
+<style>body{opacity:0}body.ownly-ready{opacity:1;transition:opacity .15s ease}html.ob-route-loading body{opacity:0!important}html.ob-public-shell-guard #view-1{display:none!important;visibility:hidden!important}html.ob-public-shell-guard.ob-public-loading body{opacity:1!important}html.ob-public-shell-guard.ob-public-loading #views-container{visibility:hidden!important}html.ob-public-shell-guard.ob-public-loading:before{content:'';position:fixed;inset:0;z-index:2147483646;display:block;background:#0B0908}html.ob-public-loading #view-4,html.ob-dashboard-loading #view-3,html.ob-admin-loading #view-6{visibility:hidden}.coming-soon-badge{position:absolute;top:8px;right:8px;background:#ef4444;color:white;font-size:9px;font-weight:700;padding:2px 7px;border-radius:6px;text-transform:uppercase;letter-spacing:.5px;pointer-events:none;z-index:2;}
 .stype-btn.disabled-channel{opacity:.45;pointer-events:none;position:relative;}
 .sso-btn.coming-soon{opacity:.5;pointer-events:none;position:relative;}
 .session-start-mode{display:none!important;}
@@ -4217,9 +4217,22 @@ body{font-feature-settings:"ss01","cv11";background:
 	  var isDashboardRoute=firstPath==='dash';
 	  var isAdminRoute=firstPath==='admin';
 	  var isCustomDomain=!!host && host !== 'ownlybiz.com' && host !== 'www.ownlybiz.com' && host !== 'localhost' && host !== '127.0.0.1' && host.indexOf('vercel.app') < 0;
-	  var isExpertSubdomain=/^[^.]+\.ownlybiz\.com$/i.test(host) && !/^www\.ownlybiz\.com$/i.test(host);
-	  var isPublicExpertRoute=!isLegalRoute && !isDashboardRoute && !isAdminRoute && (q.has('expert') || (firstPath && reserved.indexOf(firstPath)===-1) || isCustomDomain || isExpertSubdomain);
+  var isExpertSubdomain=/^[^.]+\.ownlybiz\.com$/i.test(host) && !/^www\.ownlybiz\.com$/i.test(host);
+  var isPublicExpertRoute=!isLegalRoute && !isDashboardRoute && !isAdminRoute && (q.has('expert') || (firstPath && reserved.indexOf(firstPath)===-1) || isCustomDomain || isExpertSubdomain);
   var routeKind=isDashboardRoute?'dashboard':(isAdminRoute?'admin':(isPublicExpertRoute?'public':''));
+  function preloadedPublicSlug(){
+    var payload = window.__OB_PRELOADED_EXPERT__ || {};
+    var expert = payload.expert || {};
+    var slug = payload.slug || expert.slug || '';
+    slug = String(slug || '').trim();
+    return /^[a-z0-9][a-z0-9-]{1,62}$/i.test(slug) ? slug : '';
+  }
+  var initialPublicSlug = routeKind === 'public' ? preloadedPublicSlug() : '';
+  if(initialPublicSlug){
+    window._browseExpert = initialPublicSlug;
+    window._currentExpertSlug = initialPublicSlug;
+    window._customDomainPending = false;
+  }
   if(routeKind==='public') document.documentElement.classList.add('ob-public-shell-guard');
   function hasPublicExpertPayload(){
     var e=window._currentExpert||{};
@@ -18226,6 +18239,37 @@ window.__obPublicSlugBackoffState = window.__obPublicSlugBackoffState || { block
     return inFlight[key].then(responseFromRecord);
   };
 })();
+function obPublicPreloadedExpert(slug) {
+  var payload = window.__OB_PRELOADED_EXPERT__ || {};
+  var expert = payload.expert || null;
+  if(!expert || !expert.name) return null;
+  var wanted = String(slug || payload.slug || '').trim().toLowerCase();
+  var loadedSlug = String(payload.slug || expert.slug || '').trim().toLowerCase();
+  if(wanted && loadedSlug && wanted !== loadedSlug) return null;
+  var copy = Object.assign({}, expert);
+  if(Array.isArray(payload.packages) && !Array.isArray(copy.packages)) copy.packages = payload.packages;
+  return copy;
+}
+function obApplyPublicExpertPayload(e, slug, source) {
+  if(!e || !e.name) return null;
+  e.chat_pm  = e.chat_pm  || e.rate_chat  || 0;
+  e.voice_pm = e.voice_pm || e.rate_voice || 0;
+  e.video_pm = e.video_pm || e.rate_video || 0;
+  e.chat_free_min = e.chat_free_min || e.free_minutes || 0;
+  if(source && Array.isArray(source.packages)) e.packages = source.packages;
+  if(!Array.isArray(e.packages)) e.packages = [];
+  window._currentExpert = e;
+  window._currentExpertId = e.user_id || e.id;
+  window._currentExpertSlug = e.slug || slug;
+  window.__obPublicExpertPayloadApplied = true;
+  window.__obPublicExpertPayloadAppliedSlug = window._currentExpertSlug || slug;
+  if(typeof setExpertOnlineStatus === 'function') setExpertOnlineStatus(!!e.is_online);
+  if(typeof window._applyExpertWebsite === 'function') window._applyExpertWebsite(e);
+  if(typeof window._refreshPublicPage === 'function') window._refreshPublicPage(e);
+  else if(typeof _refreshPublicPage === 'function') _refreshPublicPage(e);
+  if(typeof window._markRouteReady === 'function') window._markRouteReady('public');
+  return e;
+}
 window.loadExpertWebsite = function(slug) {
   slug = slug || window._browseExpert || 'expert-slug';
   slug = (slug == null ? '' : String(slug).trim());
@@ -18246,6 +18290,10 @@ window.loadExpertWebsite = function(slug) {
   var _loadState = window.__obPublicExpertLoadState;
   var _recent = _loadState.recent[_loadKey];
   var _now = Date.now();
+  var _preloadedExpert = obPublicPreloadedExpert(slug);
+  if(_preloadedExpert && window.__obPublicExpertPayloadAppliedSlug !== (String(_preloadedExpert.slug || slug))) {
+    obApplyPublicExpertPayload(_preloadedExpert, slug, window.__OB_PRELOADED_EXPERT__ || {});
+  }
   if(_loadState.inFlight[_loadKey]) return _loadState.inFlight[_loadKey];
   if(_recent && _now - _recent.at < 1500 && window._currentExpert && (window._currentExpert.slug === slug || window._currentExpertSlug === slug)) {
     if(typeof window._markRouteReady === 'function') window._markRouteReady('public');
@@ -18267,28 +18315,14 @@ window.loadExpertWebsite = function(slug) {
     .then(function(r){ return r.json().catch(function(){ return {}; }).then(function(d){ if(!r.ok){ var err = new Error(d.error || d.message || ('HTTP ' + r.status)); err.status = r.status; err.body = d; throw err; } return d; }); })
     .then(function(d){
       var e = d.expert || d;
-      if(!e || !e.name) {
+      var applied = obApplyPublicExpertPayload(e, slug, d);
+      if(!applied) {
         if(typeof window._markRouteReady === 'function') window._markRouteReady('public');
         return;
       }
-      // e now contains chat_pm, voice_pm, video_pm from expert_rates JOIN (backend fix)
-      // Also has rate_chat, rate_voice, rate_video from expert_profiles
-      // Use expert_rates values if available, fallback to expert_profiles
-      e.chat_pm  = e.chat_pm  || e.rate_chat  || 0;
-      e.voice_pm = e.voice_pm || e.rate_voice || 0;
-      e.video_pm = e.video_pm || e.rate_video || 0;
-      e.chat_free_min = e.chat_free_min || e.free_minutes || 0;
-      e.packages = d.packages || [];
-      window._currentExpert = e;
-      window._currentExpertId = e.user_id || e.id;
-      window._currentExpertSlug = e.slug || slug;
-      setExpertOnlineStatus(!!e.is_online);
-      if(typeof window._applyExpertWebsite === 'function') window._applyExpertWebsite(e);
-      _refreshPublicPage(e);
-      if(typeof window._markRouteReady === 'function') window._markRouteReady('public');
       _loadState.recent[_loadKey] = { at:Date.now(), promise:_loadPromise };
       if(window.obPublicSlugBackoff) window.obPublicSlugBackoff.clear('expert', slug);
-      return e;
+      return applied;
 	    }).catch(function(err){
 	      if(window.obPublicSlugBackoff && err && err.status === 404) {
 	        window.obPublicSlugBackoff.mark('expert', slug, 'not_found', 5*60*1000, err.body || null);
@@ -54513,6 +54547,15 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
 	    if(RESERVED[value] || EXPERT_PAGES[value]) return '';
 	    return /^[a-z0-9][a-z0-9-]{1,62}$/i.test(value) ? value : '';
 	  }
+	  function preloadedPublicExpert(){
+	    var payload = window.__OB_PRELOADED_EXPERT__ || {};
+	    return payload.expert || null;
+	  }
+	  function preloadedPublicSlug(){
+	    var payload = window.__OB_PRELOADED_EXPERT__ || {};
+	    var expert = preloadedPublicExpert() || {};
+	    return validSlug(payload.slug || expert.slug || '');
+	  }
 	  function subdomainSlug(){
 	    var match = host().match(/^([^.]+)\.ownlybiz\.com$/i);
 	    return match && match[1] !== 'www' ? validSlug(match[1]) : '';
@@ -54545,6 +54588,8 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
 	  function resolvePublicExpertSlug(value){
 	    var direct = trustedSlug(value);
 	    if(direct) return direct;
+	    var preloaded = preloadedPublicSlug();
+	    if(preloaded) return preloaded;
 	    var query = new URLSearchParams(location.search || '').get('expert');
 	    if(validSlug(query)) return validSlug(query);
 	    var sub = subdomainSlug();
@@ -54576,6 +54621,8 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
 	    if(String(current.slug || '') === first && !(current.name || current.id || current.user_id)) delete current.slug;
 	  }
 	  function lookupDomainSlug(){
+	    var preloaded = preloadedPublicSlug();
+	    if(preloaded) return Promise.resolve(storeSlug(preloaded));
 	    var existing = resolvePublicExpertSlug();
 	    if(existing) return Promise.resolve(existing);
 	    if(!customDomainHost()) return Promise.resolve('');
@@ -56104,6 +56151,14 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
   function publicView(){
     return document.getElementById('view-4');
   }
+  function preloadedGateExpert(slug){
+    var payload = window.__OB_PRELOADED_EXPERT__ || {};
+    var expert = payload.expert || null;
+    if(!expert || !expert.name) return null;
+    var loadedSlug = expertSlug(payload.slug || expert.slug || '');
+    slug = expertSlug(slug);
+    return loadedSlug && slug && loadedSlug === slug ? expert : null;
+  }
   function activatePublicView(){
     try {
       document.querySelectorAll('.view').forEach(function(view){
@@ -56115,24 +56170,28 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     var view = publicView();
     if(!view) return;
     activatePublicView();
+    var loading = mode === 'loading';
+    if(loading){
+      view.classList.remove('ob-expert-unavailable');
+      if(typeof window._markRouteLoading === 'function') window._markRouteLoading('public');
+      return;
+    }
     view.classList.add('ob-expert-unavailable','ob-site-theme-light');
     view.classList.remove('ob-site-theme-dark');
-    var loading = mode === 'loading';
     view.innerHTML =
       '<main style="min-height:100vh;display:flex;align-items:center;justify-content:center;text-align:center;padding:72px 22px;background:#F7F1E8;color:#241A15;">' +
         '<section style="max-width:540px;background:#FFFDF8;border:1px solid #E1D6C8;border-radius:8px;padding:34px 28px;box-shadow:0 18px 60px rgba(42,28,18,.08);">' +
-          '<div style="font-family:var(--font-head);font-size:32px;line-height:1.1;margin-bottom:12px;">' + (loading ? 'Checking this expert site' : 'This expert site is not available yet') + '</div>' +
-          '<p style="color:#5F554D;line-height:1.65;margin:0 0 22px;">' + (loading ? 'We are confirming whether this expert site is published.' : esc(slug ? 'This expert link is reserved, but it is not published yet.' : 'This expert profile is not published yet.')) + '</p>' +
+          '<div style="font-family:var(--font-head);font-size:32px;line-height:1.1;margin-bottom:12px;">This expert site is not available yet</div>' +
+          '<p style="color:#5F554D;line-height:1.65;margin:0 0 22px;">' + esc(slug ? 'This expert link is reserved, but it is not published yet.' : 'This expert profile is not published yet.') + '</p>' +
           '<a href="/" style="display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:0 18px;border-radius:999px;background:#C4622D;color:white;font-weight:800;text-decoration:none;">Back to home</a>' +
         '</section>' +
       '</main>';
-    if(typeof window._markRouteReady === 'function' && !loading) window._markRouteReady('public');
-    else if(typeof window._markRouteLoading === 'function' && loading) window._markRouteLoading('public');
+    if(typeof window._markRouteReady === 'function') window._markRouteReady('public');
   }
 	  function hasRenderedExpertShell(){
 	    var title = String(document.title || '');
 	    var text = String(document.body && document.body.innerText || '');
-	    if(/This expert site is not available yet|Checking this expert site/i.test(text)) return false;
+	    if(/This expert site is not available yet/i.test(text)) return false;
 	    if(/Independent Expert|Ownlybiz - Own your expertise/i.test(title)) return false;
 	    return /Client Growth Consultant|\$\d+(?:\.\d{2})?\/min|Start Session|Book a Session|How I Can Help/i.test(text);
 	  }
@@ -56152,6 +56211,13 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
 	  function verifyOwnlybizSubdomain(slug){
 	    slug = expertSlug(slug);
 	    if(!slug) return Promise.resolve(false);
+	    var preloaded = preloadedGateExpert(slug);
+	    if(preloaded){
+	      publicGate.allowed[slug] = true;
+	      publicGate.blocked[slug] = false;
+	      publicGate.payload[slug] = preloaded;
+	      return Promise.resolve(true);
+	    }
 	    if(publicGate.allowed[slug]) return Promise.resolve(true);
 	    var blocked = window.obPublicSlugBackoff && window.obPublicSlugBackoff.blocked('expert', slug);
 	    if(blocked && blocked.status === 429) {
@@ -56581,6 +56647,15 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     if(/^[^.]+\.ownlybiz\.com$/i.test(host()) && host() !== 'www.ownlybiz.com') return true;
     return !!host() && !platformHost();
   }
+  function validSlug(value){
+    value = String(value || '').trim();
+    return /^[a-z0-9][a-z0-9-]{1,62}$/i.test(value) ? value : '';
+  }
+  function preloadedPublicSlug(){
+    var payload = window.__OB_PRELOADED_EXPERT__ || {};
+    var expert = payload.expert || {};
+    return validSlug(payload.slug || expert.slug || '');
+  }
   function hasExpertPayload(){
     var e = window._currentExpert || {};
     return !!((e.slug || e.name || e.display_name || e.user_id || e.id) && !window._customDomainPending);
@@ -56588,6 +56663,12 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
   function forceExpertSurface(){
     if(!publicExpertHost()) return;
     document.documentElement.classList.add('ob-public-shell-guard');
+    var slug = preloadedPublicSlug();
+    if(slug && !hasExpertPayload() && typeof window.loadExpertWebsite === 'function'){
+      window._browseExpert = slug;
+      window._currentExpertSlug = slug;
+      try { window.loadExpertWebsite(slug); } catch(e) {}
+    }
     var view4 = document.getElementById('view-4');
     if(typeof window.switchView === 'function' && !(view4 && view4.classList.contains('active'))){
       try { window.switchView(4); } catch(e) {}

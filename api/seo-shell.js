@@ -248,6 +248,12 @@ function slugFromHost(host) {
   return match && match[1] !== 'www' ? match[1] : '';
 }
 
+function cleanExpertSlug(value) {
+  const slug = clean(value).toLowerCase();
+  if (!/^[a-z0-9][a-z0-9-]{1,62}$/.test(slug)) return '';
+  return RESERVED.has(slug) ? '' : slug;
+}
+
 function firstPathSegment(req) {
   const rawPath = String((req.url || '/').split('?')[0] || '/').replace(/^\/+|\/+$/g, '');
   return rawPath.split('/').filter(Boolean)[0] || '';
@@ -263,6 +269,14 @@ function queryOnly(req) {
   return index >= 0 ? url.slice(index) : '';
 }
 
+function queryExpertSlug(req) {
+  try {
+    return cleanExpertSlug(new URLSearchParams(queryOnly(req)).get('expert'));
+  } catch (_) {
+    return '';
+  }
+}
+
 function isLegacyCpanelPath(req) {
   return /^\/cgi-sys(?:\/|$)/i.test(pathOnly(req));
 }
@@ -272,6 +286,10 @@ function routeFromRequest(req, host) {
   if (subdomainSlug) return { kind: 'subdomain', slug: subdomainSlug };
 
   const platform = isPlatformHost(host);
+  if (platform) {
+    const querySlug = queryExpertSlug(req);
+    if (querySlug) return { kind: 'query', slug: querySlug };
+  }
   const first = firstPathSegment(req).toLowerCase();
   if (platform && first && !RESERVED.has(first)) return { kind: 'platform-path', slug: first };
   if (!platform) return { kind: 'custom-domain', slug: '' };
@@ -334,7 +352,7 @@ async function resolveExpert(req, host) {
   const profile = await fetchJson(`${BACKEND}/api/experts/${encodeURIComponent(slug)}`);
   const expert = profile && (profile.expert || profile);
   if (!expert || !(expert.name || expert.slug)) return { slug, route: { ...route, slug } };
-  return { slug, route: { ...route, slug }, expert };
+  return { slug, route: { ...route, slug }, expert, profile };
 }
 
 function expertTitle(expert) {
@@ -407,6 +425,61 @@ function injectSeo(html, seo) {
   return html;
 }
 
+function safeScriptJson(value) {
+  return JSON.stringify(value)
+    .replace(/</g, '\\u003c')
+    .replace(/>/g, '\\u003e')
+    .replace(/&/g, '\\u0026')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029');
+}
+
+const PUBLIC_EXPERT_PRELOAD_FIELDS = [
+  'id', 'user_id', 'slug', 'name', 'display_name', 'title', 'bio', 'about_text',
+  'hero_tagline', 'footer_text', 'credentials', 'theme_color', 'theme_preset',
+  'website_content', 'website_published', 'website_published_at', 'avatar_url',
+  'logo_url', 'og_image_url', 'location', 'language', 'timezone', 'tags',
+  'social_links', 'rate_chat', 'rate_voice', 'rate_video', 'chat_pm', 'voice_pm',
+  'video_pm', 'free_minutes', 'chat_free_min', 'voice_free_min', 'video_free_min',
+  'chat_free_min_available', 'voice_free_min_available',
+  'video_free_min_available', 'free_minutes_available', 'avg_rating',
+  'review_count', 'session_count', 'is_online', 'accept_offline',
+  'payments_enabled', 'chat_enabled', 'voice_enabled', 'video_enabled',
+  'service_pause', 'credit_amounts', 'credit_enabled', 'credit_no_expiration',
+  'packages', 'meta_title', 'meta_description', 'allow_indexing',
+  'primary_domain', 'ga4_id', 'gtm_id', 'meta_pixel_id', 'privacy_notice',
+  'privacy_cookie_banner_enabled', 'privacy_contact_email',
+];
+
+function publicExpertPreloadData(expert, profile) {
+  const preloaded = {};
+  for (const field of PUBLIC_EXPERT_PRELOAD_FIELDS) {
+    if (expert[field] !== undefined) preloaded[field] = expert[field];
+  }
+  if (Array.isArray(profile.packages) && !Array.isArray(preloaded.packages)) {
+    preloaded.packages = profile.packages;
+  }
+  return preloaded;
+}
+
+function injectPublicExpertPreload(html, expertResult, host) {
+  const expert = expertResult && expertResult.expert;
+  if (!expert || !(expert.name || expert.slug)) return html;
+
+  const profile = (expertResult && expertResult.profile) || {};
+  const preloadedExpert = publicExpertPreloadData(expert, profile);
+
+  const payload = {
+    version: 1,
+    slug: clean(expert.slug || expertResult.slug),
+    host: normalizeDomain(host, true),
+    routeKind: expertResult && expertResult.route && expertResult.route.kind || '',
+    expert: preloadedExpert,
+  };
+  const script = `<script id="ob-public-expert-preload">window.__OB_PRELOADED_EXPERT__=${safeScriptJson(payload)};</script>`;
+  return /<\/head>/i.test(html) ? html.replace(/<\/head>/i, `${script}\n</head>`) : `${script}\n${html}`;
+}
+
 function whiteLabelExpertShell(html) {
   return html
     .replace(/<div class="view-panel active" id="view-1">/g, '<div class="view-panel active" id="view-1" data-nosnippet>')
@@ -467,6 +540,7 @@ module.exports = async function handler(req, res) {
   let statusCode = 200;
   if (isExpert) {
     html = whiteLabelExpertShell(html);
+    html = injectPublicExpertPreload(html, expertResult, host);
     const primaryDomain = primaryDomainFromExpert(expert);
     const hostedOwnlybizCopy = route && (route.kind === 'subdomain' || route.kind === 'platform-path');
     const expertCanonical = primaryDomain

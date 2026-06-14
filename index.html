@@ -6715,10 +6715,27 @@ if (!window.toast) {
                 <div id="dtab-content-buy" style="display:none;">
                   <div style="background:var(--cream);border:1px solid var(--gray-200);border-radius:12px;padding:18px 20px;">
                     <div style="font-size:13px;font-weight:700;color:var(--brown);margin-bottom:8px;">Search for a domain</div>
-                    <div style="font-size:12px;color:var(--gray-500);line-height:1.55;margin-bottom:12px;">Ownlybiz can support domain purchase once a registrar/reseller provider is configured. In staging, search is safe and purchase attempts stay gated.</div>
+                    <div style="font-size:12px;color:var(--gray-500);line-height:1.55;margin-bottom:12px;">Search available domains, pay through Ownlybiz, and keep the domain attached to this site. Registration is completed by Ownlybiz after checkout when automatic registration is enabled.</div>
                     <div style="display:flex;gap:8px;flex-wrap:wrap;">
                       <input type="text" class="settings-field-input" value="" id="domain-buy-input" placeholder="yourbrand" style="flex:1;max-width:320px;">
                       <button class="btn btn-primary btn-sm" id="domain-buy-search-btn" onclick="searchDomainToBuy()">Search</button>
+                    </div>
+                    <div style="margin-top:16px;border-top:1px solid var(--gray-200);padding-top:14px;">
+                      <div style="font-size:12px;font-weight:800;color:var(--brown);margin-bottom:10px;">Registration contact</div>
+                      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px;">
+                        <input type="text" class="settings-field-input" id="domain-reg-first" placeholder="First name">
+                        <input type="text" class="settings-field-input" id="domain-reg-last" placeholder="Last name">
+                        <input type="email" class="settings-field-input" id="domain-reg-email" placeholder="Email">
+                        <input type="tel" class="settings-field-input" id="domain-reg-phone" placeholder="+1 555 000 0000">
+                        <input type="text" class="settings-field-input" id="domain-reg-address1" placeholder="Address">
+                        <input type="text" class="settings-field-input" id="domain-reg-city" placeholder="City">
+                        <input type="text" class="settings-field-input" id="domain-reg-state" placeholder="State / region">
+                        <input type="text" class="settings-field-input" id="domain-reg-postal" placeholder="Postal code">
+                        <input type="text" class="settings-field-input" id="domain-reg-country" placeholder="Country code" value="US">
+                      </div>
+                      <label style="display:flex;align-items:center;gap:8px;margin-top:10px;font-size:12px;color:var(--gray-500);">
+                        <input type="checkbox" id="domain-reg-auto-renew" checked style="width:16px;height:16px;"> Auto-renew each year
+                      </label>
                     </div>
                     <div id="domain-buy-msg" style="font-size:12px;margin-top:8px;color:var(--gray-400);"></div>
                     <div id="domain-buy-results" style="display:grid;gap:8px;margin-top:16px;"></div>
@@ -11808,22 +11825,49 @@ function connectDomainAutomatically(){
   });
 }
 
+function readDomainRegistrantContact(){
+  function val(id){ var el=document.getElementById(id); return el ? String(el.value || '').trim() : ''; }
+  return {
+    firstName: val('domain-reg-first'),
+    lastName: val('domain-reg-last'),
+    email: val('domain-reg-email'),
+    phone: val('domain-reg-phone'),
+    address1: val('domain-reg-address1'),
+    city: val('domain-reg-city'),
+    state: val('domain-reg-state'),
+    postalCode: val('domain-reg-postal'),
+    country: (val('domain-reg-country') || 'US').toUpperCase()
+  };
+}
+
+function domainRegistrantContactMissing(contact){
+  var required = ['firstName','lastName','email','phone','address1','city','state','postalCode','country'];
+  return required.filter(function(key){ return !String(contact && contact[key] || '').trim(); });
+}
+
 function renderDomainPurchaseResults(d){
   var box = document.getElementById('domain-buy-results');
   var msg = document.getElementById('domain-buy-msg');
   if(!box) return;
   var rows = d.results || d.suggestions || [];
   if(msg){
-    msg.textContent = d.purchase_enabled ? 'Choose a domain to continue.' : (d.message || 'Search results are shown safely in staging. Purchases require a configured registrar provider.');
+    msg.textContent = d.message || (d.purchase_enabled ? 'Choose an available domain to continue.' : 'Domain checkout is not configured yet.');
     msg.style.color = d.purchase_enabled ? '#16a34a' : '#f59e0b';
   }
   if(!rows.length){ box.innerHTML = '<div style="font-size:12px;color:var(--gray-400);">No domain suggestions returned.</div>'; return; }
   box.innerHTML = rows.map(function(item){
     var price = item.price_label || (item.estimated_price_usd ? '$' + item.estimated_price_usd + '/yr' : 'Price pending');
-    var disabled = d.purchase_enabled ? '' : 'opacity:.65;';
-    return '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;background:white;border:1px solid var(--gray-200);border-radius:10px;padding:12px 14px;' + disabled + '">' +
-      '<div><div style="font-size:14px;font-weight:800;color:var(--brown);">' + domainEsc(item.domain || '') + '</div><div style="font-size:11px;color:var(--gray-400);margin-top:3px;">' + domainEsc(price) + '</div></div>' +
-      '<button type="button" class="btn btn-sm" data-domain-buy="' + domainEsc(item.domain || '') + '" onclick="startDomainPurchase(this.getAttribute(\'data-domain-buy\'))" style="background:white;border:1.5px solid var(--gray-200);color:var(--brown);">Continue</button>' +
+    var available = item.available === true;
+    var unavailable = item.available === false;
+    var checkoutReady = !!(d.purchase_enabled && available && item.checkout_ready);
+    var disabledStyle = checkoutReady ? '' : 'opacity:.65;';
+    var status = available ? 'Available' : (unavailable ? 'Unavailable' : 'Checking');
+    var statusColor = available ? '#16a34a' : (unavailable ? '#ef4444' : '#f59e0b');
+    var buttonAttrs = checkoutReady ? '' : ' disabled';
+    var buttonText = checkoutReady ? 'Buy' : (unavailable ? 'Taken' : 'Not ready');
+    return '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;background:white;border:1px solid var(--gray-200);border-radius:10px;padding:12px 14px;' + disabledStyle + '">' +
+      '<div><div style="font-size:14px;font-weight:800;color:var(--brown);">' + domainEsc(item.domain || '') + '</div><div style="font-size:11px;color:var(--gray-400);margin-top:3px;">' + domainEsc(price) + '</div><div style="font-size:11px;font-weight:800;color:' + statusColor + ';margin-top:3px;">' + status + '</div></div>' +
+      '<button type="button" class="btn btn-sm" data-domain-buy="' + domainEsc(item.domain || '') + '" onclick="startDomainPurchase(this.getAttribute(\'data-domain-buy\'))" style="background:white;border:1.5px solid var(--gray-200);color:var(--brown);"' + buttonAttrs + '>' + buttonText + '</button>' +
     '</div>';
   }).join('');
 }
@@ -11847,16 +11891,24 @@ function searchDomainToBuy(){
 function startDomainPurchase(domain){
   var msg = document.getElementById('domain-buy-msg');
   if(!domain){ return; }
+  var contact = readDomainRegistrantContact();
+  var missing = domainRegistrantContactMissing(contact);
+  if(missing.length){
+    if(msg){ msg.textContent = 'Complete the registration contact before checkout.'; msg.style.color = '#ef4444'; }
+    return;
+  }
+  var autoRenew = !!(document.getElementById('domain-reg-auto-renew') && document.getElementById('domain-reg-auto-renew').checked);
   var BASE = domainApiBase();
   var tok = sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || '';
   if(msg){ msg.textContent = 'Preparing purchase...'; msg.style.color = 'var(--gray-400)'; }
-  fetch(BASE + '/api/domains/purchase/intent', { method:'POST', headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer ' + tok }, body:JSON.stringify({ domain:domain })})
+  fetch(BASE + '/api/domains/purchase/intent', { method:'POST', headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer ' + tok }, body:JSON.stringify({ domain:domain, years:1, auto_renew:autoRenew, contact:contact })})
   .then(function(r){ return r.json().then(function(d){ if(!r.ok) throw d; return d; }); })
   .then(function(d){
-    if(d.checkout_url){ window.open(d.checkout_url, '_blank', 'noopener'); }
+    if(d.checkout_url){ window.location.href = d.checkout_url; return; }
     if(msg){ msg.textContent = d.message || 'Purchase flow prepared.'; msg.style.color = '#16a34a'; }
   }).catch(function(err){
-    if(msg){ msg.textContent = err && err.error || 'Purchase is not configured yet.'; msg.style.color = '#f59e0b'; }
+    var detail = err && err.details && err.details.missing_fields && err.details.missing_fields.length ? ' Missing: ' + err.details.missing_fields.join(', ') + '.' : '';
+    if(msg){ msg.textContent = (err && err.error || 'Purchase is not configured yet.') + detail; msg.style.color = err && err.error ? '#ef4444' : '#f59e0b'; }
   });
 }
 

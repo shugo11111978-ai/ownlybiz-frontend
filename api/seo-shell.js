@@ -3,6 +3,7 @@ const path = require('path');
 
 const BACKEND = (process.env.OWNLYBIZ_API_URL || process.env.OWNLY_API || 'https://ownlybiz-backend-production.up.railway.app').replace(/\/+$/, '');
 const INDEX_PATH = path.join(process.cwd(), 'index.html');
+const BLOG_POSTS_PATH = path.join(process.cwd(), 'data', 'ownlybiz-blog-posts.json');
 const RESERVED = new Set([
   '', 'index.html', 'admin', 'dash', 'signup', 'dashboard', 'login', 'expert',
   'session', 'group', 'connectors', 'settings', 'messages', 'analytics',
@@ -15,6 +16,7 @@ const CUSTOM_DOMAIN_SLUG_FALLBACKS = {
 };
 
 let cachedIndex = null;
+let cachedBlogPosts = null;
 
 function readIndex() {
   if (!cachedIndex || process.env.NODE_ENV !== 'production') {
@@ -39,6 +41,177 @@ function clean(value, fallback = '') {
 function trim(value, max) {
   const text = clean(value);
   return text.length > max ? text.slice(0, max - 1).trim() : text;
+}
+
+function safeDecode(value) {
+  try {
+    return decodeURIComponent(value);
+  } catch (_) {
+    return null;
+  }
+}
+
+function readBlogPosts() {
+  if (!cachedBlogPosts || process.env.NODE_ENV !== 'production') {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(BLOG_POSTS_PATH, 'utf8'));
+      cachedBlogPosts = Array.isArray(parsed) ? parsed : [];
+    } catch (_) {
+      cachedBlogPosts = [];
+    }
+  }
+  return cachedBlogPosts;
+}
+
+function blogSlugFromPath(pathname) {
+  const parts = String(pathname || '/').replace(/^\/+|\/+$/g, '').split('/').filter(Boolean);
+  if (parts[0] !== 'blog' || !parts[1]) return '';
+  const decoded = safeDecode(parts[1]);
+  return decoded == null ? null : decoded;
+}
+
+function isBlogPath(pathname) {
+  const parts = String(pathname || '/').replace(/^\/+|\/+$/g, '').split('/').filter(Boolean);
+  return parts[0] === 'blog';
+}
+
+function blogUrl(post) {
+  return `https://ownlybiz.com/blog/${encodeURIComponent(post.slug)}`;
+}
+
+function renderBlogTags(post) {
+  return (post.tags || []).slice(0, 3).map((tag) => `<span class="ob-blog-tag">${esc(tag)}</span>`).join('');
+}
+
+function renderBlogFeatures(post) {
+  return (post.relatedFeatures || []).map((feature) => `<span class="ob-blog-feature-chip">${esc(feature)}</span>`).join('');
+}
+
+function renderBlogHub(posts) {
+  if (!posts.length) return '<div class="ob-blog-loading">Ownlybiz guides are being prepared.</div>';
+  const featured = posts[0];
+  const rest = posts.slice(1);
+  return [
+    '<div class="ob-blog-hub-grid">',
+      '<article class="ob-blog-featured">',
+        `<a href="${blogUrl(featured).replace('https://ownlybiz.com', '')}"><img class="ob-blog-img" src="${esc(featured.image)}" alt="${esc(featured.imageAlt)}" loading="eager"></a>`,
+        '<div class="ob-blog-featured-body">',
+          `<div class="ob-blog-kicker">${esc(featured.category)} · ${esc(featured.readTime)}</div>`,
+          `<h2 class="ob-blog-title"><a href="${blogUrl(featured).replace('https://ownlybiz.com', '')}">${esc(featured.title)}</a></h2>`,
+          `<p class="ob-blog-excerpt">${esc(featured.summary)}</p>`,
+          `<div class="ob-blog-meta"><span>${esc(featured.date)}</span><span>Ownlybiz Team</span></div>`,
+          `<div class="ob-blog-tag-row" style="margin:18px 0;">${renderBlogTags(featured)}</div>`,
+          `<a class="ob-blog-read" href="${blogUrl(featured).replace('https://ownlybiz.com', '')}">Read guide</a>`,
+        '</div>',
+      '</article>',
+      '<aside class="ob-blog-side-card">',
+        '<h2>Built for expert revenue, not content filler.</h2>',
+        '<p>These guides explain how Ownlybiz helps independent experts publish, sell, deliver, manage, follow up, and improve while keeping AI features framed as reviewed marketing/admin support.</p>',
+        '<div class="ob-blog-side-list">',
+          '<span>Transparent platform fee and expert keep-rate language.</span>',
+          '<span>Stripe-powered checkout with card and wallet flows where available.</span>',
+          '<span>Pay-by-minute, packages, written services, Email Center, domains, analytics, and AI draft tools.</span>',
+        '</div>',
+        '<a class="btn btn-primary btn-sm" href="/features">Explore Ownlybiz</a>',
+      '</aside>',
+    '</div>',
+    '<div class="ob-blog-card-grid">',
+      rest.map((post) => [
+        '<article class="ob-blog-card">',
+          `<a href="${blogUrl(post).replace('https://ownlybiz.com', '')}"><img class="ob-blog-img" src="${esc(post.image)}" alt="${esc(post.imageAlt)}" loading="lazy"></a>`,
+          '<div class="ob-blog-card-body">',
+            `<div class="ob-blog-kicker">${esc(post.category)} · ${esc(post.readTime)}</div>`,
+            `<h2><a href="${blogUrl(post).replace('https://ownlybiz.com', '')}">${esc(post.title)}</a></h2>`,
+            `<p>${esc(post.summary)}</p>`,
+            `<div class="ob-blog-tag-row">${renderBlogTags(post)}</div>`,
+          '</div>',
+        '</article>',
+      ].join('')).join(''),
+    '</div>',
+  ].join('');
+}
+
+function renderBlogArticle(post, posts) {
+  const related = posts.filter((item) => item.slug !== post.slug).slice(0, 3);
+  return [
+    '<article class="ob-blog-article">',
+      `<div class="ob-blog-article-hero"><img src="${esc(post.image)}" alt="${esc(post.imageAlt)}"></div>`,
+      '<div class="ob-blog-article-head">',
+        '<a class="ob-blog-back" href="/blog">← Back to all guides</a>',
+        `<div class="ob-blog-kicker">${esc(post.category)} · ${esc(post.readTime)}</div>`,
+        `<h1>${esc(post.title)}</h1>`,
+        `<p class="ob-blog-article-summary">${esc(post.summary)}</p>`,
+        `<div class="ob-blog-meta"><span>${esc(post.date)}</span><span>Ownlybiz Team</span><span>${esc(post.audience || 'Independent experts')}</span></div>`,
+      '</div>',
+      '<div class="ob-blog-article-body">',
+        '<div class="ob-blog-prose">',
+          `<div class="ob-blog-takeaways"><strong>Key takeaways</strong><ul>${(post.takeaways || []).map((item) => `<li>${esc(item)}</li>`).join('')}</ul></div>`,
+          (post.sections || []).map((section) => [
+            '<section>',
+              `<h2>${esc(section.heading)}</h2>`,
+              (section.body || []).map((p) => `<p>${esc(p)}</p>`).join(''),
+              section.bullets && section.bullets.length ? `<ul>${section.bullets.map((item) => `<li>${esc(item)}</li>`).join('')}</ul>` : '',
+            '</section>',
+          ].join('')).join(''),
+          `<div class="ob-blog-faq"><strong>FAQ</strong>${(post.faqs || []).map((faq) => `<div class="ob-blog-faq-item"><h3>${esc(faq.question)}</h3><p>${esc(faq.answer)}</p></div>`).join('')}</div>`,
+          '<div class="ob-blog-legal-note"><strong>Responsible use note</strong><p>Ownlybiz provides business infrastructure for independent experts. This guide is educational and operational, not legal, tax, medical, financial, therapy, or professional advice. Experts should review claims, policies, and field-specific obligations before publishing or sending campaigns.</p></div>',
+        '</div>',
+        '<aside class="ob-blog-aside">',
+          `<div class="ob-blog-aside-card"><h2>Ownlybiz features mentioned</h2><div class="ob-blog-feature-list">${renderBlogFeatures(post)}</div></div>`,
+          `<div class="ob-blog-aside-card"><h2>Email campaign angle</h2><p><strong>Subject:</strong> ${esc(post.email && post.email.subject)}</p><p><strong>Preheader:</strong> ${esc(post.email && post.email.preheader)}</p><p><strong>CTA:</strong> ${esc(post.email && post.email.cta)}</p></div>`,
+          `<div class="ob-blog-aside-card"><h2>Related guides</h2>${related.map((item) => `<p><a href="${blogUrl(item).replace('https://ownlybiz.com', '')}">${esc(item.title)}</a></p>`).join('')}</div>`,
+        '</aside>',
+      '</div>',
+    '</article>',
+  ].join('');
+}
+
+function blogJsonLd(post, posts) {
+  if (!post) {
+    return {
+      '@context': 'https://schema.org',
+      '@type': 'CollectionPage',
+      name: 'Ownlybiz Blog',
+      url: 'https://ownlybiz.com/blog',
+      about: ['independent experts', 'paid sessions', 'expert business infrastructure'],
+      hasPart: posts.map((item) => ({ '@type': 'Article', headline: item.title, url: blogUrl(item) })),
+    };
+  }
+  const article = {
+    '@context': 'https://schema.org',
+    '@type': 'Article',
+    headline: post.title,
+    description: post.seoDescription || post.summary,
+    image: `https://ownlybiz.com${post.image}`,
+    datePublished: post.date,
+    dateModified: post.date,
+    author: { '@type': 'Organization', name: 'Ownlybiz' },
+    publisher: { '@type': 'Organization', name: 'Ownlybiz' },
+    mainEntityOfPage: blogUrl(post),
+    keywords: (post.tags || []).join(', '),
+  };
+  const faq = post.faqs && post.faqs.length ? {
+    '@context': 'https://schema.org',
+    '@type': 'FAQPage',
+    mainEntity: post.faqs.map((item) => ({
+      '@type': 'Question',
+      name: item.question,
+      acceptedAnswer: { '@type': 'Answer', text: item.answer },
+    })),
+  } : null;
+  return faq ? [article, faq] : article;
+}
+
+function injectJsonLd(html, data) {
+  const safe = JSON.stringify(data).replace(/</g, '\\u003c');
+  return html.replace(/<\/head>/i, `<script type="application/ld+json">${safe}</script>\n</head>`);
+}
+
+function injectBlogContent(html, rendered) {
+  const marker = '<!--OB_BLOG_SSR-->\n        <div class="ob-blog-loading">Loading Ownlybiz guides...</div>';
+  return html.includes(marker)
+    ? html.replace(marker, rendered)
+    : html;
 }
 
 function hostFromReq(req) {
@@ -291,6 +464,7 @@ module.exports = async function handler(req, res) {
   }
 
   let html = readIndex();
+  let statusCode = 200;
   if (isExpert) {
     html = whiteLabelExpertShell(html);
     const primaryDomain = primaryDomainFromExpert(expert);
@@ -313,6 +487,41 @@ module.exports = async function handler(req, res) {
       image: whiteLabelAssetUrl(expert && (expert.og_image_url || expert.logo_url || expert.avatar_url), origin),
     });
     res.setHeader('X-Robots-Tag', robotsValue);
+  } else if (isBlogPath(pathOnly(req))) {
+    const posts = readBlogPosts();
+    const slug = blogSlugFromPath(pathOnly(req));
+    const hasSlug = slug !== '';
+    const post = hasSlug && slug ? posts.find((item) => item.slug === slug) : null;
+    const knownBlogRoute = !hasSlug || !!post;
+    if (!knownBlogRoute) statusCode = 404;
+    const rendered = post
+      ? renderBlogArticle(post, posts)
+      : knownBlogRoute
+        ? renderBlogHub(posts)
+        : '<div class="ob-blog-loading"><h2>Guide not found</h2><p>The requested Ownlybiz guide is not published. Return to the blog hub for current resources.</p><p><a class="ob-blog-read" href="/blog">Back to all guides</a></p></div>';
+    const title = post
+      ? `${post.title} | Ownlybiz Blog`
+      : knownBlogRoute
+        ? 'Ownlybiz Blog - Guides for Independent Experts'
+        : 'Guide not found | Ownlybiz Blog';
+    const description = post
+      ? post.seoDescription || post.summary
+      : knownBlogRoute
+        ? 'Useful Ownlybiz guides for independent experts building paid chat, voice, video, written services, packages, payments, email campaigns, and branded websites.'
+        : 'The requested Ownlybiz guide is not published.';
+    const canonicalPath = post ? `/blog/${encodeURIComponent(post.slug)}` : '/blog';
+    html = injectBlogContent(html, rendered);
+    html = injectSeo(html, {
+      title,
+      description,
+      canonical: `https://ownlybiz.com${canonicalPath}`,
+      robots: knownBlogRoute
+        ? 'index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1'
+        : 'noindex,follow',
+      image: post ? `https://ownlybiz.com${post.image}` : '',
+    });
+    html = injectJsonLd(html, blogJsonLd(post, posts));
+    res.setHeader('X-Robots-Tag', knownBlogRoute ? 'index,follow' : 'noindex,follow');
   } else {
     html = injectSeo(html, {
       title: 'Ownlybiz - Own your expertise. Own your income.',
@@ -325,5 +534,5 @@ module.exports = async function handler(req, res) {
 
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.setHeader('Cache-Control', 'public, s-maxage=300, stale-while-revalidate=3600');
-  res.status(200).send(html);
+  res.status(statusCode).send(html);
 };

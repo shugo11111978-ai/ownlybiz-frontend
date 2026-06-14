@@ -13527,6 +13527,18 @@ async function savePaymentConfig() {
     linear-gradient(color-mix(in srgb,var(--ob-book-text),transparent 90%),color-mix(in srgb,var(--ob-book-text),transparent 90%)) 0 276px/100% 60px no-repeat;
   animation:obBookSelectorSkeleton 1.15s ease-in-out infinite;
 }
+#view-4 #ep-book #booking-main-layout[data-ob-booking-blocked="1"]>div:first-child{
+  min-height:0!important;
+  pointer-events:auto!important;
+}
+#view-4 #ep-book #booking-main-layout[data-ob-booking-blocked="1"]>div:first-child>*{
+  opacity:1!important;
+}
+#view-4 #ep-book #booking-main-layout[data-ob-booking-blocked="1"]>div:first-child::after{
+  content:none!important;
+  display:none!important;
+  animation:none!important;
+}
 #view-4 #ep-book.ob-book-od-ready #booking-main-layout>div:first-child{
   opacity:1!important;
   transform:none!important;
@@ -13547,6 +13559,25 @@ async function savePaymentConfig() {
   border-radius:18px!important;
   padding:16px!important;
   box-shadow:var(--ob-book-shadow)!important;
+}
+#view-4 #ep-book #booking-main-layout.ob-book-unavailable-layout>div:first-child{
+  border-radius:8px!important;
+  padding:28px!important;
+  text-align:center!important;
+  max-width:560px!important;
+  margin:0 auto!important;
+}
+#view-4 #ep-book .ob-book-unavailable-title{
+  font-family:var(--font-head)!important;
+  font-size:28px!important;
+  line-height:1.12!important;
+  margin:0 0 10px!important;
+  color:var(--ob-book-text)!important;
+}
+#view-4 #ep-book .ob-book-unavailable-copy{
+  color:var(--ob-book-muted)!important;
+  line-height:1.65!important;
+  margin:0!important;
 }
 #view-4 #ep-book #booking-main-layout>div:first-child>label,
 #view-4 #ep-book #stype-error,
@@ -13933,12 +13964,18 @@ async function savePaymentConfig() {
 (function(){
   if(window._obExpertBookingSelector20260608) return;
   window._obExpertBookingSelector20260608 = true;
+  var originalBookingLayoutHtml = '';
 
   function bookRoot(){
     return document.querySelector('#view-4 #ep-book');
   }
   function cleanText(value){
     return String(value || '').replace(/\s+/g, ' ').trim();
+  }
+  function escHtml(value){
+    return String(value == null ? '' : value).replace(/[&<>"']/g, function(c){
+      return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+    });
   }
   function expertName(){
     var e = window._currentExpert || {};
@@ -14000,9 +14037,60 @@ async function savePaymentConfig() {
     if(value === false) return 0;
     return ['0','false','off','no','disabled'].indexOf(String(value).trim().toLowerCase()) >= 0 ? 0 : 1;
   }
+  function falseFlag(value){
+    return value === false || value === 0 || value === '0' || String(value || '').trim().toLowerCase() === 'false';
+  }
   function hasBookExpertData(){
     var e = window._currentExpert || {};
     return !!((e.name || e.display_name || e.slug || e.user_id || e.id) && !window._customDomainPending);
+  }
+  function bookingUnavailableReason(){
+    var e = window._currentExpert || {};
+    if(!hasBookExpertData()) return '';
+    if(e.service_pause && e.service_pause.blocked) return e.service_pause.message || 'Sessions are temporarily unavailable.';
+    if(falseFlag(e.payments_enabled)) return 'This expert is not accepting paid sessions yet. Please check back later.';
+    if(enabledFlag(e.chat_enabled, 1) === 0 && enabledFlag(e.voice_enabled, 1) === 0 && enabledFlag(e.video_enabled, 1) === 0) {
+      return 'This expert is not accepting sessions right now. Please check back later.';
+    }
+    return '';
+  }
+  function rememberBookingLayout(layout){
+    if(layout && !originalBookingLayoutHtml && layout.querySelector('#stype-grid')) {
+      originalBookingLayoutHtml = layout.innerHTML;
+    }
+  }
+  function restoreBookingLayout(){
+    var layout = document.getElementById('booking-main-layout');
+    if(!layout || layout.dataset.obBookingBlocked !== '1') return;
+    if(originalBookingLayoutHtml) {
+      layout.innerHTML = originalBookingLayoutHtml;
+    }
+    layout.dataset.obBookingBlocked = '0';
+    layout.classList.remove('ob-book-unavailable-layout');
+  }
+  function renderBookingUnavailable(reason){
+    reason = cleanText(reason || bookingUnavailableReason());
+    if(!reason) return false;
+    var root = bookRoot();
+    var layout = document.getElementById('booking-main-layout');
+    if(!root || !layout) return false;
+    rememberBookingLayout(layout);
+    ['booking-confirmed-screen','client-login-gate','booking-payment-panel'].forEach(function(id){
+      var el = document.getElementById(id);
+      if(el) el.style.display = 'none';
+    });
+    layout.style.display = 'block';
+    layout.dataset.obBookingBlocked = '1';
+    layout.classList.add('ob-book-unavailable-layout');
+    layout.innerHTML =
+      '<div id="ob-book-unavailable-card">' +
+        '<div class="ob-book-unavailable-title">Sessions are not available yet</div>' +
+        '<p class="ob-book-unavailable-copy">' + escHtml(reason) + '</p>' +
+      '</div>';
+    ensureBookProfileHeader();
+    updateCopy();
+    setBookSelectorReady(true);
+    return true;
   }
   function expertChannelEnabled(channel){
     var e = window._currentExpert || {};
@@ -14099,7 +14187,9 @@ async function savePaymentConfig() {
   }
   function setBookSelectorReady(ready){
     var root = bookRoot();
-    if(root) root.classList.toggle('ob-book-od-ready', !!ready);
+    var layout = document.getElementById('booking-main-layout');
+    var blocked = layout && layout.dataset.obBookingBlocked === '1';
+    if(root) root.classList.toggle('ob-book-od-ready', !!ready || !!blocked);
   }
   function hasDecoratedCoreBookingRows(grid){
     return !!(grid && grid.querySelector('.ob-live-card[data-ob-channel]') && grid.querySelector('#ob-book-later-selector-row'));
@@ -14264,14 +14354,22 @@ async function savePaymentConfig() {
   }
   function decorate(){
     var root = bookRoot();
-    var grid = root && root.querySelector('#stype-grid');
-    if(!grid) return;
+    if(!root) return;
     if(!hasBookExpertData()) {
       setBookSelectorReady(false);
       return;
     }
     ensureBookProfileHeader();
     updateCopy();
+    var unavailableReason = bookingUnavailableReason();
+    window.__obPublicBookingBlockReason = unavailableReason || '';
+    if(unavailableReason) {
+      renderBookingUnavailable(unavailableReason);
+      return;
+    }
+    restoreBookingLayout();
+    var grid = root.querySelector('#stype-grid');
+    if(!grid) return;
     Array.prototype.slice.call(grid.querySelectorAll('.stype-btn[data-mode="permin"]')).forEach(decorateLiveCard);
     decorateWrittenCard();
     ensureBookLaterRow();
@@ -14285,6 +14383,8 @@ async function savePaymentConfig() {
     finally { setTimeout(function(){ bookSelectorSelfDecorating = false; }, 0); }
   }
   window.obRefreshBookSelectorCards = runDecorate;
+  window.obPublicBookUnavailableReason = bookingUnavailableReason;
+  window.obRenderPublicBookUnavailable = renderBookingUnavailable;
   function install(){
     setBookSelectorReady(false);
     runDecorate();
@@ -56440,6 +56540,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     var view = publicView();
     if(!view) return;
     view.dataset.obBookingBlocked = '1';
+    if(typeof window.obRenderPublicBookUnavailable === 'function' && window.obRenderPublicBookUnavailable(reason)) return;
     var names = /^(book a session|start session now|start session now →|start chat now|book for later|chat with .+ now|call|video|start|schedule)$/i;
     Array.prototype.slice.call(view.querySelectorAll('a,button,[role="button"]')).forEach(function(el){
       var text = String(el.innerText || el.textContent || '').trim().replace(/\s+/g,' ');
@@ -56487,7 +56588,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     var reason = publicBookingBlockReason(data);
     window.__obPublicBookingBlockReason = reason;
     if(!reason) return;
-    [0,80,260,700,1600,3200].forEach(function(ms){ setTimeout(function(){ applyPublicBookingBlock(reason); }, ms); });
+    applyPublicBookingBlock(reason);
   }
   function refreshPublicBookabilityFromApi(){
     var slug = slugFromPublicLocation();

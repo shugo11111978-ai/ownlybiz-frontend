@@ -574,7 +574,8 @@ function publicFirstPaintShell(expertResult, req) {
   const border = wc.site_mode === 'dark' ? 'rgba(248,243,234,.14)' : 'rgba(36,26,21,.12)';
   const online = Number(expert.is_online) === 1 || expert.is_online === true;
   const paid = ![false, 0, '0', 'false', 'off', 'no'].includes(expert.payments_enabled);
-  const statusText = 'EXPERT SITE';
+  const statusText = online ? 'LIVE' : 'OFFLINE';
+  const statusColor = online ? status : '#9ca3af';
   const disabledCopy = !paid
     ? 'This expert is not accepting paid sessions yet.'
     : online
@@ -643,7 +644,11 @@ html.ob-public-first-paint.ob-public-loading #view-4{visibility:visible!importan
 #ob-public-first-paint-shell .ob-pfp-brand{display:flex;align-items:center;gap:10px;min-width:0;font-weight:900}
 #ob-public-first-paint-shell .ob-pfp-brand img{width:32px;height:32px;border-radius:8px;object-fit:cover}
 #ob-public-first-paint-shell .ob-pfp-brand span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-#ob-public-first-paint-shell .ob-pfp-pill{border:1px solid ${border};border-radius:999px;padding:6px 10px;color:${status};font-size:12px;font-weight:900}
+#ob-public-first-paint-shell .ob-pfp-actions{display:flex;align-items:center;gap:8px;flex:0 0 auto}
+#ob-public-first-paint-shell .ob-pfp-pill{border:1px solid ${border};border-radius:999px;padding:6px 10px;color:${statusColor};font-size:12px;font-weight:900}
+#ob-public-first-paint-shell .ob-pfp-login{border:1px solid ${border};border-radius:8px;background:${surface};color:${text};font-size:12px;font-weight:700;min-width:auto;padding:7px 14px;line-height:1;opacity:1}
+#ob-public-first-paint-shell .ob-pfp-menu{width:36px;height:32px;display:flex;flex-direction:column;justify-content:center;gap:5px;padding:7px;background:transparent;border:0}
+#ob-public-first-paint-shell .ob-pfp-menu span{display:block;width:22px;height:2px;border-radius:2px;background:${text}}
 #ob-public-first-paint-shell main{max-width:760px;margin:0 auto;padding:34px 22px 80px}
 #ob-public-first-paint-shell .ob-pfp-profile{display:flex;gap:16px;align-items:center;margin-bottom:18px}
 #ob-public-first-paint-shell .ob-pfp-avatar{width:76px;height:76px;border-radius:16px;overflow:hidden;background:${surface};border:1px solid ${accent};display:flex;align-items:center;justify-content:center;color:${text};font-weight:900;font-size:22px;flex:0 0 auto}
@@ -670,10 +675,10 @@ html.ob-public-first-paint.ob-public-loading #view-4{visibility:visible!importan
 #ob-public-first-paint-shell em{font-style:normal;color:${status};font-size:13px;font-weight:900}
 #ob-public-first-paint-shell .ob-pfp-hero{text-align:center;padding-top:30px}
 #ob-public-first-paint-shell.is-hiding{opacity:0;transition:opacity .16s ease}
-@media(max-width:620px){#ob-public-first-paint-shell .ob-pfp-nav{height:70px;padding:12px 16px}#ob-public-first-paint-shell main{padding:28px 16px 64px}#ob-public-first-paint-shell .ob-pfp-row{grid-template-columns:minmax(0,1fr);align-items:start}#ob-public-first-paint-shell button{width:100%}}
+@media(max-width:620px){#ob-public-first-paint-shell .ob-pfp-nav{height:70px;padding:12px 16px}#ob-public-first-paint-shell main{padding:28px 16px 64px}#ob-public-first-paint-shell .ob-pfp-row{grid-template-columns:minmax(0,1fr);align-items:start}#ob-public-first-paint-shell .ob-pfp-card button{width:100%}}
 </style>
 <div id="ob-public-first-paint-shell" data-slug="${esc(slug)}" aria-live="polite">
-  <nav class="ob-pfp-nav"><div class="ob-pfp-brand">${logo ? `<img src="${esc(logo)}" alt="">` : ''}<span>${esc(name)}</span></div><div class="ob-pfp-pill">${statusText}</div></nav>
+  <nav class="ob-pfp-nav"><div class="ob-pfp-brand">${logo ? `<img src="${esc(logo)}" alt="">` : ''}<span>${esc(name)}</span></div><div class="ob-pfp-actions"><div class="ob-pfp-pill">${statusText}</div><button type="button" class="ob-pfp-login">Log In</button><div class="ob-pfp-menu" aria-hidden="true"><span></span><span></span><span></span></div></div></nav>
   <main>${hero}</main>
 </div>`;
 }

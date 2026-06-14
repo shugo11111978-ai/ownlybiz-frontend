@@ -398,6 +398,15 @@ function setCanonical(html, href) {
   return replaceTag(html, /<link\s+rel=["']canonical["'][^>]*>/i, tag);
 }
 
+function setFavicon(html, href) {
+  const safe = esc(href);
+  const tags = [
+    `<link rel="icon" href="${safe}">`,
+    `<link rel="apple-touch-icon" href="${safe}">`,
+  ].join('\n');
+  return /<\/head>/i.test(html) ? html.replace(/<\/head>/i, `${tags}\n</head>`) : `${tags}\n${html}`;
+}
+
 function whiteLabelAssetUrl(value, origin) {
   const url = clean(value);
   if (!url) return '';
@@ -477,7 +486,35 @@ function injectPublicExpertPreload(html, expertResult, host) {
     expert: preloadedExpert,
   };
   const script = `<script id="ob-public-expert-preload">window.__OB_PRELOADED_EXPERT__=${safeScriptJson(payload)};</script>`;
+  if (/<head[^>]*>/i.test(html)) return html.replace(/<head([^>]*)>/i, `<head$1>\n${script}`);
   return /<\/head>/i.test(html) ? html.replace(/<\/head>/i, `${script}\n</head>`) : `${script}\n${html}`;
+}
+
+function websiteContent(expert) {
+  const raw = expert && expert.website_content;
+  if (!raw) return {};
+  if (typeof raw === 'object') return raw;
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch (_) {
+    return {};
+  }
+}
+
+function expertFaviconUrl(expert, req, host, origin) {
+  const wc = websiteContent(expert);
+  const direct = wc.favicon_image || wc.logo_image || expert.logo_url || wc.profile_image || expert.avatar_url || '';
+  const whitelabeled = whiteLabelAssetUrl(direct, origin);
+  if (whitelabeled) return whitelabeled;
+  const cleanPath = pathOnly(req).replace(/^\/+|\/+$/g, '');
+  const slug = cleanExpertSlug(expert.slug || '');
+  const qs = new URLSearchParams({
+    host: normalizeDomain(host, true),
+    path: cleanPath,
+  });
+  if (slug) qs.set('slug', slug);
+  return `${origin}/api/experts/favicon?${qs.toString()}`;
 }
 
 function whiteLabelExpertShell(html) {
@@ -524,6 +561,14 @@ module.exports = async function handler(req, res) {
   const isExpert = !!expertResult;
   const origin = `https://${host || 'ownlybiz.com'}`;
   const canonical = origin + pathOnly(req);
+  const iconRequestPath = pathOnly(req).toLowerCase();
+
+  if (iconRequestPath === '/favicon.ico' || iconRequestPath === '/favicon.png' || iconRequestPath === '/apple-touch-icon.png') {
+    res.setHeader('Location', expert ? expertFaviconUrl(expert, req, host, origin) : '/favicon.svg');
+    res.setHeader('Cache-Control', 'public, max-age=300, stale-while-revalidate=3600');
+    res.status(302).end();
+    return;
+  }
 
   if (isExpert && expert) {
     const primaryDomain = primaryDomainFromExpert(expert);
@@ -560,6 +605,7 @@ module.exports = async function handler(req, res) {
       robots: robotsValue,
       image: whiteLabelAssetUrl(expert && (expert.og_image_url || expert.logo_url || expert.avatar_url), origin),
     });
+    html = setFavicon(html, expertFaviconUrl(expert, req, host, origin));
     res.setHeader('X-Robots-Tag', robotsValue);
   } else if (isBlogPath(pathOnly(req))) {
     const posts = readBlogPosts();

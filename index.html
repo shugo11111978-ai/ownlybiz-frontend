@@ -4192,7 +4192,7 @@ body{font-feature-settings:"ss01","cv11";background:
 }
 
 </style>
-<style>body{opacity:0}body.ownly-ready{opacity:1;transition:opacity .15s ease}html.ob-route-loading body{opacity:0!important}html.ob-public-shell-guard #view-1{display:none!important;visibility:hidden!important}html.ob-public-shell-guard.ob-public-loading body{opacity:1!important}html.ob-public-shell-guard.ob-public-loading #views-container{visibility:hidden!important}html.ob-public-shell-guard.ob-public-loading:before{content:'';position:fixed;inset:0;z-index:2147483646;display:block;background:#0B0908}html.ob-public-loading #view-4,html.ob-dashboard-loading #view-3,html.ob-admin-loading #view-6{visibility:hidden}.coming-soon-badge{position:absolute;top:8px;right:8px;background:#ef4444;color:white;font-size:9px;font-weight:700;padding:2px 7px;border-radius:6px;text-transform:uppercase;letter-spacing:.5px;pointer-events:none;z-index:2;}
+<style>body{opacity:0}body.ownly-ready{opacity:1;transition:opacity .15s ease}html.ob-route-loading body{opacity:0!important}html.ob-public-shell-guard #view-1{display:none!important;visibility:hidden!important}html.ob-public-shell-guard.ob-public-loading body{opacity:1!important;background:var(--ob-public-shell-bg,#0B0908)!important}html.ob-public-shell-guard.ob-public-loading #views-container{visibility:hidden!important}html.ob-public-shell-guard.ob-public-loading:before{content:'';position:fixed;inset:0;z-index:2147483646;display:block;background:var(--ob-public-shell-bg,#0B0908)}html.ob-public-loading #view-4,html.ob-dashboard-loading #view-3,html.ob-admin-loading #view-6{visibility:hidden}.coming-soon-badge{position:absolute;top:8px;right:8px;background:#ef4444;color:white;font-size:9px;font-weight:700;padding:2px 7px;border-radius:6px;text-transform:uppercase;letter-spacing:.5px;pointer-events:none;z-index:2;}
 .stype-btn.disabled-channel{opacity:.45;pointer-events:none;position:relative;}
 .sso-btn.coming-soon{opacity:.5;pointer-events:none;position:relative;}
 .session-start-mode{display:none!important;}
@@ -4220,12 +4220,32 @@ body{font-feature-settings:"ss01","cv11";background:
   var isExpertSubdomain=/^[^.]+\.ownlybiz\.com$/i.test(host) && !/^www\.ownlybiz\.com$/i.test(host);
   var isPublicExpertRoute=!isLegalRoute && !isDashboardRoute && !isAdminRoute && (q.has('expert') || (firstPath && reserved.indexOf(firstPath)===-1) || isCustomDomain || isExpertSubdomain);
   var routeKind=isDashboardRoute?'dashboard':(isAdminRoute?'admin':(isPublicExpertRoute?'public':''));
+  function preloadedPublicExpert(){
+    var payload = window.__OB_PRELOADED_EXPERT__ || {};
+    return payload.expert || {};
+  }
   function preloadedPublicSlug(){
     var payload = window.__OB_PRELOADED_EXPERT__ || {};
-    var expert = payload.expert || {};
+    var expert = preloadedPublicExpert();
     var slug = payload.slug || expert.slug || '';
     slug = String(slug || '').trim();
     return /^[a-z0-9][a-z0-9-]{1,62}$/i.test(slug) ? slug : '';
+  }
+  function preloadedWebsiteContent(){
+    var wc = preloadedPublicExpert().website_content || {};
+    if(typeof wc === 'string') {
+      try { wc = JSON.parse(wc); } catch(e) { wc = {}; }
+    }
+    return wc && typeof wc === 'object' ? wc : {};
+  }
+  function applyPublicShellTone(){
+    if(routeKind !== 'public') return;
+    var wc = preloadedWebsiteContent();
+    var tokens = wc.design_tokens || {};
+    var bg = tokens.background || (wc.site_mode === 'dark' ? '#0B0908' : '#F7F1E8');
+    if(/^#[0-9a-f]{3,8}$/i.test(String(bg || ''))) {
+      document.documentElement.style.setProperty('--ob-public-shell-bg', bg);
+    }
   }
   var initialPublicSlug = routeKind === 'public' ? preloadedPublicSlug() : '';
   if(initialPublicSlug){
@@ -4233,10 +4253,22 @@ body{font-feature-settings:"ss01","cv11";background:
     window._currentExpertSlug = initialPublicSlug;
     window._customDomainPending = false;
   }
-  if(routeKind==='public') document.documentElement.classList.add('ob-public-shell-guard');
+  if(routeKind==='public') {
+    document.documentElement.classList.add('ob-public-shell-guard');
+    applyPublicShellTone();
+  }
   function hasPublicExpertPayload(){
     var e=window._currentExpert||{};
     return !!((e.slug||e.name||e.display_name||e.user_id||e.id) && !window._customDomainPending);
+  }
+  function releasePublicRoute(){
+    document.documentElement.classList.remove('ob-public-loading');
+    if(!document.documentElement.classList.contains('ob-dashboard-loading') &&
+       !document.documentElement.classList.contains('ob-admin-loading')) {
+      document.documentElement.classList.remove('ob-route-loading');
+    }
+    document.documentElement.classList.add('ob-public-loaded');
+    if(document.body) document.body.classList.add('ownly-ready');
   }
   function shouldHoldPublicReady(kind){
     return routeKind==='public' && (kind==='public' || !kind) && !hasPublicExpertPayload() && !window._obAllowPublicShellReady;
@@ -4247,6 +4279,10 @@ body{font-feature-settings:"ss01","cv11";background:
   }
   window._markRouteLoading=function(kind){
     kind=kind||routeKind||'';
+    if(routeKind==='public' && kind==='public' && hasPublicExpertPayload()){
+      releasePublicRoute();
+      return;
+    }
     document.documentElement.classList.add('ob-route-loading');
     if(kind) document.documentElement.classList.add('ob-'+kind+'-loading');
   };
@@ -13895,6 +13931,28 @@ async function savePaymentConfig() {
   function isDisabled(card){
     return !!(card && (card.classList.contains('disabled-channel') || card.classList.contains('ob-channel-unavailable') || card.dataset.channelDisabled === '1' || card.getAttribute('aria-disabled') === 'true'));
   }
+  function enabledFlag(value, fallback){
+    if(value === undefined || value === null || value === '') return fallback === 0 ? 0 : 1;
+    if(value === false) return 0;
+    return ['0','false','off','no','disabled'].indexOf(String(value).trim().toLowerCase()) >= 0 ? 0 : 1;
+  }
+  function hasBookExpertData(){
+    var e = window._currentExpert || {};
+    return !!((e.name || e.display_name || e.slug || e.user_id || e.id) && !window._customDomainPending);
+  }
+  function expertChannelEnabled(channel){
+    var e = window._currentExpert || {};
+    if(!channel) return false;
+    return enabledFlag(e[channel + '_enabled'], 1) === 1;
+  }
+  function applyExpertChannelState(card, channel){
+    if(!card || !channel) return;
+    var enabled = expertChannelEnabled(channel);
+    card.classList.toggle('disabled-channel', !enabled);
+    card.classList.toggle('ob-channel-unavailable', !enabled);
+    card.dataset.channelDisabled = enabled ? '0' : '1';
+    setAttr(card, 'aria-disabled', enabled ? 'false' : 'true');
+  }
   function priceText(card){
     var el = card && card.querySelector('.stype-btn-price');
     var current = cleanText(el && el.textContent);
@@ -13979,8 +14037,8 @@ async function savePaymentConfig() {
     var root = bookRoot();
     if(root) root.classList.toggle('ob-book-od-ready', !!ready);
   }
-  function syncBookSelectorReady(){
-    setBookSelectorReady(!!window.__obOnDemandPublicReady);
+  function hasDecoratedCoreBookingRows(grid){
+    return !!(grid && grid.querySelector('.ob-live-card[data-ob-channel]') && grid.querySelector('#ob-book-later-selector-row'));
   }
   function ensureBookProfileHeader(){
     var root = bookRoot();
@@ -14037,6 +14095,7 @@ async function savePaymentConfig() {
     if(!channel) return;
     card.classList.add('ob-live-card', 'ob-live-card-' + channel);
     setAttr(card, 'data-ob-channel', channel);
+    applyExpertChannelState(card, channel);
     var name = card.querySelector('.stype-btn-name');
     if(channel === 'chat') setText(name, 'Chat with ' + expertFirstName() + ' now');
     else if(channel === 'voice') setText(name, 'Call');
@@ -14142,13 +14201,17 @@ async function savePaymentConfig() {
   function decorate(){
     var root = bookRoot();
     var grid = root && root.querySelector('#stype-grid');
-    syncBookSelectorReady();
     if(!grid) return;
+    if(!hasBookExpertData()) {
+      setBookSelectorReady(false);
+      return;
+    }
     ensureBookProfileHeader();
     updateCopy();
     Array.prototype.slice.call(grid.querySelectorAll('.stype-btn[data-mode="permin"]')).forEach(decorateLiveCard);
     decorateWrittenCard();
     ensureBookLaterRow();
+    setBookSelectorReady(hasDecoratedCoreBookingRows(grid));
   }
   var bookSelectorSelfDecorating = false;
   function runDecorate(){
@@ -14159,7 +14222,7 @@ async function savePaymentConfig() {
   }
   window.obRefreshBookSelectorCards = runDecorate;
   function install(){
-    syncBookSelectorReady();
+    setBookSelectorReady(false);
     runDecorate();
     [160, 500, 1000, 1800, 2800].forEach(function(ms){ setTimeout(runDecorate, ms); });
     try {
@@ -14184,11 +14247,12 @@ async function savePaymentConfig() {
       };
       window.showExpertPage.__obExpertBookingSelector20260608 = true;
     }
-    window.addEventListener('ob:on-demand-public-ready', function(){ setBookSelectorReady(true); setTimeout(runDecorate, 40); });
+    window.addEventListener('ob:on-demand-public-ready', function(){
+      setTimeout(runDecorate, 40);
+    });
     setTimeout(function(){
-      if(!window.__obOnDemandPublicReady) {
+      if(!window.__obOnDemandPublicReady && hasBookExpertData()) {
         window.__obOnDemandPublicReady = true;
-        setBookSelectorReady(true);
         runDecorate();
       }
     }, 3500);
@@ -18278,7 +18342,6 @@ window.loadExpertWebsite = function(slug) {
     return;
   }
   window._browseExpert = slug;
-  if(typeof window._markRouteLoading === 'function') window._markRouteLoading('public');
 
   // This loader is authoritative for public expert pages. Calling
   // OwnlyAPI.loadExpertWebsite here re-enters older wrappers and repeats the
@@ -18294,6 +18357,7 @@ window.loadExpertWebsite = function(slug) {
   if(_preloadedExpert && window.__obPublicExpertPayloadAppliedSlug !== (String(_preloadedExpert.slug || slug))) {
     obApplyPublicExpertPayload(_preloadedExpert, slug, window.__OB_PRELOADED_EXPERT__ || {});
   }
+  if(!_preloadedExpert && typeof window._markRouteLoading === 'function') window._markRouteLoading('public');
   if(_loadState.inFlight[_loadKey]) return _loadState.inFlight[_loadKey];
   if(_recent && _now - _recent.at < 1500 && window._currentExpert && (window._currentExpert.slug === slug || window._currentExpertSlug === slug)) {
     if(typeof window._markRouteReady === 'function') window._markRouteReady('public');
@@ -18538,17 +18602,18 @@ setTimeout(function(){
   // Client-specific billing eligibility is controlled by the backend session.
     var name     = e.name || '';
 
-    // stype-btn-price: 3 per-min chips in session type selector
-    var stypeBtns = Array.from(document.querySelectorAll('.stype-btn'));
-    stypeBtns.forEach(function(btn){
-      var priceEl = btn.querySelector('.stype-btn-price');
-      if(!priceEl) return;
-      var icon = btn.querySelector('.stype-btn-icon')?.textContent || '';
-      if(icon.indexOf('\uD83D\uDCAC') > -1 || icon.indexOf('Chat') > -1 || btn.textContent.indexOf('Chat') > -1){
-        priceEl.textContent = '$'+chatPm.toFixed(2)+'/min'+(freeMins?' \u00B7 '+freeMins+' free':'');
-      } else if(icon.indexOf('\uD83C\uDF99') > -1 || icon.indexOf('\uD83C\uDFA4') > -1 || btn.textContent.indexOf('Voice') > -1){
-        priceEl.textContent = '$'+voicePm.toFixed(2)+'/min';
-      } else if(icon.indexOf('\uD83C\uDFA5') > -1 || btn.textContent.indexOf('Video') > -1){
+	    // stype-btn-price: 3 per-min chips in session type selector
+	    var stypeBtns = Array.from(document.querySelectorAll('.stype-btn'));
+	    stypeBtns.forEach(function(btn){
+	      var priceEl = btn.querySelector('.stype-btn-price');
+	      if(!priceEl) return;
+	      var icon = btn.querySelector('.stype-btn-icon')?.textContent || '';
+	      var usesFreePill = btn.closest && btn.closest('#ep-book #stype-grid') && btn.classList.contains('ob-live-card');
+	      if(icon.indexOf('\uD83D\uDCAC') > -1 || icon.indexOf('Chat') > -1 || btn.textContent.indexOf('Chat') > -1){
+	        priceEl.textContent = '$'+chatPm.toFixed(2)+'/min'+(freeMins && !usesFreePill ? ' \u00B7 '+freeMins+' free':'');
+	      } else if(icon.indexOf('\uD83C\uDF99') > -1 || icon.indexOf('\uD83C\uDFA4') > -1 || btn.textContent.indexOf('Voice') > -1){
+	        priceEl.textContent = '$'+voicePm.toFixed(2)+'/min';
+	      } else if(icon.indexOf('\uD83C\uDFA5') > -1 || btn.textContent.indexOf('Video') > -1){
         priceEl.textContent = '$'+videoPm.toFixed(2)+'/min';
       }
     });
@@ -23661,24 +23726,27 @@ window._handleRTCMessage=function(d){
 	        if(!hasSpecific && !hasLegacyChat) configuredFree[ch] = 0;
 	      });
 	    }
-    function rateText(ch){ return '$' + rates[ch].toFixed(2) + '/min'; }
-    function rateWithFree(ch){ return rateText(ch) + (configuredFree[ch] > 0 ? ' · ' + configuredFree[ch] + ' min free' : ''); }
-    function channelFromCard(el){
-      var txt = ((el && el.textContent) || '').toLowerCase();
-      if(txt.indexOf('voice') >= 0 || txt.indexOf('call') >= 0) return 'voice';
+	    function rateText(ch){ return '$' + rates[ch].toFixed(2) + '/min'; }
+	    function rateWithFree(ch){ return rateText(ch) + (configuredFree[ch] > 0 ? ' · ' + configuredFree[ch] + ' min free' : ''); }
+	    function usesSeparateBookFreePill(el){
+	      return !!(el && el.closest && el.closest('#ep-book #stype-grid .ob-live-card'));
+	    }
+	    function channelFromCard(el){
+	      var txt = ((el && el.textContent) || '').toLowerCase();
+	      if(txt.indexOf('voice') >= 0 || txt.indexOf('call') >= 0) return 'voice';
       if(txt.indexOf('video') >= 0) return 'video';
       if(txt.indexOf('chat') >= 0) return 'chat';
       return null;
     }
-    document.querySelectorAll('.stype-btn').forEach(function(btn){
-      var ch = channelFromCard(btn);
-      if(!ch) return;
-      var price = btn.querySelector('.stype-btn-price');
-      if(price) price.textContent = rateWithFree(ch);
-    });
-    document.querySelectorAll('[data-rate="chat"],.ep-chat-rate').forEach(function(el){ el.textContent = rateWithFree('chat'); });
-    document.querySelectorAll('[data-rate="voice"],.ep-voice-rate').forEach(function(el){ el.textContent = rateWithFree('voice'); });
-    document.querySelectorAll('[data-rate="video"],.ep-video-rate').forEach(function(el){ el.textContent = rateWithFree('video'); });
+	    document.querySelectorAll('.stype-btn').forEach(function(btn){
+	      var ch = channelFromCard(btn);
+	      if(!ch) return;
+	      var price = btn.querySelector('.stype-btn-price');
+	      if(price) price.textContent = usesSeparateBookFreePill(btn) ? rateText(ch) : rateWithFree(ch);
+	    });
+	    document.querySelectorAll('[data-rate="chat"],.ep-chat-rate').forEach(function(el){ el.textContent = usesSeparateBookFreePill(el) ? rateText('chat') : rateWithFree('chat'); });
+	    document.querySelectorAll('[data-rate="voice"],.ep-voice-rate').forEach(function(el){ el.textContent = usesSeparateBookFreePill(el) ? rateText('voice') : rateWithFree('voice'); });
+	    document.querySelectorAll('[data-rate="video"],.ep-video-rate').forEach(function(el){ el.textContent = usesSeparateBookFreePill(el) ? rateText('video') : rateWithFree('video'); });
     var total = document.getElementById('bk-total');
     var activeChannel = (window.currentBookChannel || (window.selectedChannel && window.selectedChannel.id) || 'chat');
     if(total && ['chat','voice','video'].includes(activeChannel)) total.textContent = rateWithFree(activeChannel);
@@ -34911,26 +34979,40 @@ body:has(#view-2.active) .privacy-consent.active{
     var picked = document.querySelector('input[name="'+name+'"][value="'+value+'"]') || document.querySelector('input[name="'+name+'"]');
     if(picked) picked.checked = true;
   }
-  function applyEditorState(profile){
-    window.obEnsureWebsiteDesignControls();
-    var wc = parseWebsiteContent(profile || window._websiteData || {});
-    setRadio('we-site-mode', wc.site_mode || 'light');
-    setRadio('we-site-layout', wc.site_layout || 'split');
-    setChoiceState(document.getElementById('ob-site-design-controls') || document);
-  }
-  function applyPublicDesign(data){
-    var view = document.getElementById('view-4');
-    if(!view) return;
-    var wc = parseWebsiteContent(data || {});
-    var requestedMode = (wc.site_mode === 'dark') ? 'dark' : 'light';
+	  function applyEditorState(profile){
+	    window.obEnsureWebsiteDesignControls();
+	    var wc = parseWebsiteContent(profile || window._websiteData || {});
+	    setRadio('we-site-mode', wc.site_mode || 'light');
+	    setRadio('we-site-layout', wc.site_layout || 'split');
+	    setChoiceState(document.getElementById('ob-site-design-controls') || document);
+	  }
+	  function isPublicExpertContext(){
+	    var hostName = (location.hostname || '').toLowerCase();
+	    var path = (location.pathname || '').replace(/^\/+|\/+$/g, '');
+	    var first = path.split('/').filter(Boolean)[0] || '';
+	    if(path === 'terms' || path === 'privacy' || path.indexOf('legal/') === 0) return false;
+	    if(first === 'dash' || first === 'admin') return false;
+	    if(new URLSearchParams(location.search || '').has('expert')) return true;
+	    if(/^[^.]+\.ownlybiz\.com$/i.test(hostName) && hostName !== 'www.ownlybiz.com') return true;
+	    if(hostName && ['ownlybiz.com','www.ownlybiz.com','localhost','127.0.0.1'].indexOf(hostName) === -1 && hostName.indexOf('vercel.app') < 0) return true;
+	    var reserved = {'':1,'index.html':1,'admin':1,'dash':1,'signup':1,'dashboard':1,'login':1,'expert':1,'session':1,'group':1,'connectors':1,'settings':1,'messages':1,'analytics':1,'payments':1,'packages':1,'reviews':1,'clients':1,'sessions':1,'pricing':1,'how':1,'features':1,'experts':1,'blog':1,'contact':1,'terms':1,'legal':1};
+	    return !!(first && !reserved[first]);
+	  }
+	  function applyPublicDesign(data){
+	    var view = document.getElementById('view-4');
+	    if(!view) return;
+	    var wc = parseWebsiteContent(data || {});
+	    var requestedMode = (wc.site_mode === 'dark') ? 'dark' : 'light';
     var mode = window.obResolveWebsiteMode ? window.obResolveWebsiteMode(requestedMode, wc.design_tokens || {}) : requestedMode;
     var layout = ['split','centered','editorial'].indexOf(wc.site_layout) >= 0 ? wc.site_layout : 'split';
-    view.classList.remove('ob-site-theme-light','ob-site-theme-dark','ob-site-layout-split','ob-site-layout-centered','ob-site-layout-editorial');
-    view.classList.add('ob-site-theme-' + mode, 'ob-site-layout-' + layout);
-    document.body.classList.toggle('ob-public-site-dark', mode === 'dark');
-    ['booking-overlay','bfl-overlay'].forEach(function(id){
-      var overlay = document.getElementById(id);
-      if(overlay){
+	    view.classList.remove('ob-site-theme-light','ob-site-theme-dark','ob-site-layout-split','ob-site-layout-centered','ob-site-layout-editorial');
+	    view.classList.add('ob-site-theme-' + mode, 'ob-site-layout-' + layout);
+	    document.body.classList.toggle('ob-public-site-dark', mode === 'dark');
+	    document.body.classList.toggle('ob-public-site-light', mode !== 'dark');
+	    if(isPublicExpertContext()) document.body.classList.remove('ob-ui-dark','ob-ui-light');
+	    ['booking-overlay','bfl-overlay'].forEach(function(id){
+	      var overlay = document.getElementById(id);
+	      if(overlay){
         overlay.classList.toggle('ob-site-theme-dark', mode === 'dark');
         overlay.classList.toggle('ob-site-theme-light', mode !== 'dark');
       }
@@ -35038,9 +35120,13 @@ body:has(#view-2.active) .privacy-consent.active{
     var slug = publicExpertSlug();
     if(slug && document.getElementById('view-4')) verifyPublicExpertAvailability(slug);
   }
-  function applyUiTheme(theme){
-    var t = theme === 'dark' ? 'dark' : 'light';
-    document.body.classList.toggle('ob-ui-dark', t === 'dark');
+	  function applyUiTheme(theme){
+	    if(isPublicExpertContext()){
+	      document.body.classList.remove('ob-ui-dark','ob-ui-light');
+	      return;
+	    }
+	    var t = theme === 'dark' ? 'dark' : 'light';
+	    document.body.classList.toggle('ob-ui-dark', t === 'dark');
     document.body.classList.toggle('ob-ui-light', t !== 'dark');
     try { localStorage.setItem('ob_ui_theme', t); } catch(e) {}
     document.querySelectorAll('[data-ob-ui-theme-toggle]').forEach(function(btn){
@@ -55736,10 +55822,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     });
   }
   function installPublic(){
-    if(state.publicInstalled) {
-      setTimeout(loadPublicOnDemand, 60);
-      return;
-    }
+    if(state.publicInstalled) return;
     state.publicInstalled = true;
     if(!window.__obOnDemandPublicWrapped && typeof window.loadExpertWebsite === 'function'){
       var prev = window.loadExpertWebsite;

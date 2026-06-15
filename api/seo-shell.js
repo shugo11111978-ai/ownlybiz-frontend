@@ -638,7 +638,7 @@ html.ob-public-first-paint.ob-route-loading body{opacity:1!important;background:
 html.ob-public-first-paint.ob-public-shell-guard.ob-public-loading:before{display:none!important}
 html.ob-public-first-paint.ob-public-shell-guard.ob-public-loading #views-container,
 html.ob-public-first-paint.ob-public-loading #view-4{visibility:visible!important}
-#ob-public-first-paint-shell{position:relative;z-index:2147483645;min-height:100vh;background:${bg};color:${text};font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+#ob-public-first-paint-shell{position:fixed;inset:0;z-index:2147483645;min-height:100vh;overflow:auto;background:${bg};color:${text};font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
 #ob-public-first-paint-shell *{box-sizing:border-box}
 #ob-public-first-paint-shell .ob-pfp-nav{height:64px;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:0 40px;border-bottom:1px solid ${border};background:${bg}}
 #ob-public-first-paint-shell .ob-pfp-brand{display:flex;align-items:center;gap:10px;min-width:0;font-weight:900}

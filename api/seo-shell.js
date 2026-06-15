@@ -358,6 +358,14 @@ async function fetchCachedPublicExpert(url, timeoutMs = 1800, ttlMs = 30000) {
   return null;
 }
 
+async function fetchCachedPublicOnDemand(slug) {
+  const cleanSlug = clean(slug);
+  if (!cleanSlug || !PUBLIC_FIRST_PAINT_SLUGS.has(cleanSlug)) return null;
+  const url = `${BACKEND}/api/on-demand/public/${encodeURIComponent(cleanSlug)}`;
+  const value = await fetchCachedPublicExpert(url, 1400, 60000);
+  return value && value.success !== false && value.available ? value : null;
+}
+
 async function resolveExpert(req, host) {
   const route = routeFromRequest(req, host);
   let slug = route.slug;
@@ -492,7 +500,7 @@ function publicExpertPreloadData(expert, profile) {
   return preloaded;
 }
 
-function injectPublicExpertPreload(html, expertResult, host) {
+function injectPublicExpertPreload(html, expertResult, host, onDemandResult) {
   const expert = expertResult && expertResult.expert;
   if (!expert || !(expert.name || expert.slug)) return html;
 
@@ -509,7 +517,10 @@ function injectPublicExpertPreload(html, expertResult, host) {
   const firstPaint = PUBLIC_FIRST_PAINT_SLUGS.has(payload.slug)
     ? `window.__OB_PUBLIC_FIRST_PAINT__={slug:${safeScriptJson(payload.slug)}};`
     : '';
-  const script = `<script id="ob-public-expert-preload">${firstPaint}window.__OB_PRELOADED_EXPERT__=${safeScriptJson(payload)};</script>`;
+  const onDemand = onDemandResult
+    ? `window.__OB_PRELOADED_ON_DEMAND__=${safeScriptJson(onDemandResult)};`
+    : '';
+  const script = `<script id="ob-public-expert-preload">${firstPaint}window.__OB_PRELOADED_EXPERT__=${safeScriptJson(payload)};${onDemand}</script>`;
   if (/<head[^>]*>/i.test(html)) return html.replace(/<head([^>]*)>/i, `<head$1>\n${script}`);
   return /<\/head>/i.test(html) ? html.replace(/<\/head>/i, `${script}\n</head>`) : `${script}\n${html}`;
 }
@@ -548,7 +559,7 @@ function safeHex(value, fallback) {
   return /^#[0-9a-f]{3,8}$/i.test(color) ? color : fallback;
 }
 
-function publicFirstPaintShell(expertResult, req) {
+function publicFirstPaintShell(expertResult, req, onDemandResult) {
   const expert = expertResult && expertResult.expert;
   const slug = clean(expert && (expert.slug || expertResult.slug));
   if (!PUBLIC_FIRST_PAINT_SLUGS.has(slug) || !expert || !(expert.name || expert.slug)) return '';
@@ -595,6 +606,12 @@ function publicFirstPaintShell(expertResult, req) {
           <strong>Sessions are not available yet</strong>
           <span>This expert is not accepting paid sessions yet. Please check back later.</span>
         </div>`;
+  const onDemand = onDemandResult && onDemandResult.available && Array.isArray(onDemandResult.buckets)
+    ? {
+      label: clean(onDemandResult.settings && onDemandResult.settings.public_label, 'Written Reading'),
+      price: onDemandResult.buckets.length ? money(onDemandResult.buckets[0].price_cents, '') : '',
+    }
+    : null;
   const hero = isBook
     ? `
       <section class="ob-pfp-profile">
@@ -618,6 +635,11 @@ function publicFirstPaintShell(expertResult, req) {
             <div><strong>Call</strong><span>${esc(voiceLabel)}</span></div>
             <div><strong>Video</strong><span>${esc(videoLabel)}</span></div>
           </div>
+          ${onDemand ? `<div class="ob-pfp-row">
+            <div class="ob-pfp-cal">WR</div>
+            <div><strong>${esc(onDemand.label)}</strong><span>Private written answer${onDemand.price ? ` from ${esc(onDemand.price)}` : ''}</span></div>
+            <em>Ask</em>
+          </div>` : ''}
           <div class="ob-pfp-row">
             <div class="ob-pfp-cal">CAL</div>
             <div><strong>Book a live session</strong><span>${esc(disabledCopy)}</span></div>
@@ -685,8 +707,8 @@ html.ob-public-first-paint.ob-public-loading #view-4{visibility:visible!importan
 </div>`;
 }
 
-function injectPublicFirstPaintShell(html, expertResult, req) {
-  const shell = publicFirstPaintShell(expertResult, req);
+function injectPublicFirstPaintShell(html, expertResult, req, onDemandResult) {
+  const shell = publicFirstPaintShell(expertResult, req, onDemandResult);
   if (!shell) return html;
   html = addHtmlClass(html, 'ob-public-first-paint');
   if (/<body([^>]*)>/i.test(html)) return html.replace(/<body([^>]*)>/i, `<body$1>\n${shell}`);
@@ -787,9 +809,13 @@ module.exports = async function handler(req, res) {
   let html = readIndex();
   let statusCode = 200;
   if (isExpert) {
+    const preloadOnDemand = PUBLIC_FIRST_PAINT_SLUGS.has(clean(expert && (expert.slug || expertResult.slug)))
+      && publicFirstPaintPage(req, route) === 'book'
+      ? await fetchCachedPublicOnDemand(expert.slug || expertResult.slug)
+      : null;
     html = whiteLabelExpertShell(html);
-    html = injectPublicExpertPreload(html, expertResult, host);
-    html = injectPublicFirstPaintShell(html, expertResult, req);
+    html = injectPublicExpertPreload(html, expertResult, host, preloadOnDemand);
+    html = injectPublicFirstPaintShell(html, expertResult, req, preloadOnDemand);
     const primaryDomain = primaryDomainFromExpert(expert);
     const hostedOwnlybizCopy = route && (route.kind === 'subdomain' || route.kind === 'platform-path');
     const expertCanonical = primaryDomain

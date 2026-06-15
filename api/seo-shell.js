@@ -640,7 +640,7 @@ html.ob-public-first-paint.ob-public-shell-guard.ob-public-loading #views-contai
 html.ob-public-first-paint.ob-public-loading #view-4{visibility:visible!important}
 #ob-public-first-paint-shell{position:relative;z-index:2147483645;min-height:100vh;background:${bg};color:${text};font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
 #ob-public-first-paint-shell *{box-sizing:border-box}
-#ob-public-first-paint-shell .ob-pfp-nav{height:76px;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 22px;border-bottom:1px solid ${border};background:${bg}}
+#ob-public-first-paint-shell .ob-pfp-nav{height:64px;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:0 40px;border-bottom:1px solid ${border};background:${bg}}
 #ob-public-first-paint-shell .ob-pfp-brand{display:flex;align-items:center;gap:10px;min-width:0;font-weight:900}
 #ob-public-first-paint-shell .ob-pfp-brand img{width:32px;height:32px;border-radius:8px;object-fit:cover}
 #ob-public-first-paint-shell .ob-pfp-brand span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -649,20 +649,22 @@ html.ob-public-first-paint.ob-public-loading #view-4{visibility:visible!importan
 #ob-public-first-paint-shell .ob-pfp-login{border:1px solid ${border};border-radius:8px;background:${surface};color:${text};font-size:12px;font-weight:700;min-width:auto;padding:7px 14px;line-height:1;opacity:1}
 #ob-public-first-paint-shell .ob-pfp-menu{width:36px;height:32px;display:flex;flex-direction:column;justify-content:center;gap:5px;padding:7px;background:transparent;border:0}
 #ob-public-first-paint-shell .ob-pfp-menu span{display:block;width:22px;height:2px;border-radius:2px;background:${text}}
-#ob-public-first-paint-shell main{max-width:760px;margin:0 auto;padding:34px 22px 80px}
-#ob-public-first-paint-shell .ob-pfp-profile{display:flex;gap:16px;align-items:center;margin-bottom:18px}
-#ob-public-first-paint-shell .ob-pfp-avatar{width:76px;height:76px;border-radius:16px;overflow:hidden;background:${surface};border:1px solid ${accent};display:flex;align-items:center;justify-content:center;color:${text};font-weight:900;font-size:22px;flex:0 0 auto}
+#ob-public-first-paint-shell main{max-width:720px;margin:0 auto;padding:clamp(24px,4vw,42px) 16px 64px}
+#ob-public-first-paint-shell .ob-pfp-profile{display:grid;grid-template-columns:76px minmax(0,1fr);gap:14px;align-items:center;margin:0 0 20px;color:${text}}
+#ob-public-first-paint-shell .ob-pfp-avatar{width:76px;height:76px;border-radius:14px;overflow:hidden;background:${surface};border:1px solid ${accent};display:flex;align-items:center;justify-content:center;color:${text};font-weight:900;font-size:22px;flex:0 0 auto}
 #ob-public-first-paint-shell .ob-pfp-avatar.large{width:132px;height:132px;margin:0 auto 18px;border-radius:22px;font-size:34px}
 #ob-public-first-paint-shell .ob-pfp-avatar img{width:100%;height:100%;object-fit:cover}
-#ob-public-first-paint-shell h1{font-size:clamp(32px,7vw,48px);line-height:1.08;margin:8px 0 10px;letter-spacing:0;font-weight:500}
-#ob-public-first-paint-shell h2{font-size:26px;line-height:1.1;margin:0 0 4px;letter-spacing:0}
-#ob-public-first-paint-shell p{margin:0;color:${muted};line-height:1.55}
-#ob-public-first-paint-shell .ob-pfp-rating{margin-top:8px;color:${accent};font-size:14px;font-weight:900}
+#ob-public-first-paint-shell h1{font-size:clamp(28px,5vw,34px);line-height:1.08;margin:0 0 6px;letter-spacing:0;font-weight:500}
+#ob-public-first-paint-shell h2{font-size:clamp(22px,4vw,30px);line-height:1.08;margin:0;letter-spacing:0;font-weight:950}
+#ob-public-first-paint-shell p{margin:0;color:${muted};line-height:1.42}
+#ob-public-first-paint-shell .ob-pfp-profile p{font-size:13px;line-height:1.35;margin-top:4px;font-weight:650}
+#ob-public-first-paint-shell .ob-pfp-book>p{max-width:560px;margin:0 0 14px}
+#ob-public-first-paint-shell .ob-pfp-rating{margin-top:8px;color:${accent};font-size:13px;line-height:1.25;font-weight:850}
 #ob-public-first-paint-shell .ob-pfp-rating span{color:${text};margin-left:6px}
 #ob-public-first-paint-shell .ob-pfp-card{margin-top:18px;background:${surface};border:1px solid ${border};border-radius:18px;padding:14px;box-shadow:0 24px 80px rgba(0,0,0,.22)}
-#ob-public-first-paint-shell .ob-pfp-unavailable{margin-top:18px;background:${surface};border:1px solid ${border};border-radius:18px;padding:26px 22px;text-align:center;box-shadow:0 24px 80px rgba(0,0,0,.18)}
-#ob-public-first-paint-shell .ob-pfp-unavailable strong{font-size:clamp(28px,7vw,44px);line-height:1.12;font-weight:500}
-#ob-public-first-paint-shell .ob-pfp-unavailable span{display:block;color:${muted};font-size:clamp(16px,4vw,23px);line-height:1.55;margin:18px auto 0;max-width:560px}
+#ob-public-first-paint-shell .ob-pfp-unavailable{margin:8px auto 0;background:${surface};border:1px solid ${border};border-radius:8px;padding:28px;text-align:center;max-width:560px;box-shadow:0 24px 80px rgba(0,0,0,.18)}
+#ob-public-first-paint-shell .ob-pfp-unavailable strong{font-size:28px;line-height:1.12;font-weight:500}
+#ob-public-first-paint-shell .ob-pfp-unavailable span{display:block;color:${muted};font-size:16px;line-height:1.65;margin:10px auto 0;max-width:560px}
 #ob-public-first-paint-shell .ob-pfp-row{display:grid;grid-template-columns:minmax(0,1fr) auto auto;align-items:center;gap:12px;border:1px solid ${border};border-radius:12px;padding:14px 16px;margin-bottom:10px;background:rgba(255,255,255,.03)}
 #ob-public-first-paint-shell .ob-pfp-row:last-child{margin-bottom:0;grid-template-columns:auto minmax(0,1fr) auto}
 #ob-public-first-paint-shell strong{display:block;color:${text};font-size:16px}
@@ -675,7 +677,7 @@ html.ob-public-first-paint.ob-public-loading #view-4{visibility:visible!importan
 #ob-public-first-paint-shell em{font-style:normal;color:${status};font-size:13px;font-weight:900}
 #ob-public-first-paint-shell .ob-pfp-hero{text-align:center;padding-top:30px}
 #ob-public-first-paint-shell.is-hiding{opacity:0;transition:opacity .16s ease}
-@media(max-width:620px){#ob-public-first-paint-shell .ob-pfp-nav{height:70px;padding:12px 16px}#ob-public-first-paint-shell main{padding:28px 16px 64px}#ob-public-first-paint-shell .ob-pfp-row{grid-template-columns:minmax(0,1fr);align-items:start}#ob-public-first-paint-shell .ob-pfp-card button{width:100%}}
+@media(max-width:620px){#ob-public-first-paint-shell .ob-pfp-nav{height:60px;padding:0 16px}#ob-public-first-paint-shell .ob-pfp-brand{max-width:130px;font-size:14px}#ob-public-first-paint-shell main{padding:24px 14px 52px}#ob-public-first-paint-shell .ob-pfp-profile{grid-template-columns:62px minmax(0,1fr);gap:12px;margin-bottom:18px}#ob-public-first-paint-shell .ob-pfp-avatar{width:62px;height:62px;border-radius:12px;font-size:22px}#ob-public-first-paint-shell .ob-pfp-profile p{font-size:12px}#ob-public-first-paint-shell .ob-pfp-rating{font-size:12px}#ob-public-first-paint-shell .ob-pfp-row{grid-template-columns:minmax(0,1fr);align-items:start}#ob-public-first-paint-shell .ob-pfp-card button{width:100%}}
 </style>
 <div id="ob-public-first-paint-shell" data-slug="${esc(slug)}" aria-live="polite">
   <nav class="ob-pfp-nav"><div class="ob-pfp-brand">${logo ? `<img src="${esc(logo)}" alt="">` : ''}<span>${esc(name)}</span></div><div class="ob-pfp-actions"><div class="ob-pfp-pill">${statusText}</div><button type="button" class="ob-pfp-login">Log In</button><div class="ob-pfp-menu" aria-hidden="true"><span></span><span></span><span></span></div></div></nav>

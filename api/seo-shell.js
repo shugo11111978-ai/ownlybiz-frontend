@@ -15,6 +15,12 @@ const CUSTOM_DOMAIN_SLUG_FALLBACKS = {
   'www.lunapsychics.com': 'liranprodtest',
 };
 const PUBLIC_FIRST_PAINT_SLUGS = new Set(['lunapsychics2']);
+const PUBLIC_LITE_EXPERT_SLUGS = new Set(
+  String(process.env.OB_PUBLIC_EXPERT_LITE_SLUGS || '')
+    .split(',')
+    .map((value) => clean(value) === '*' ? '*' : cleanExpertSlug(value))
+    .filter(Boolean)
+);
 
 let cachedIndex = null;
 let cachedBlogPosts = null;
@@ -224,12 +230,17 @@ function hostFromReq(req) {
     .replace(/:\d+$/, '');
 }
 
+function isLocalNetworkHost(host) {
+  return /^(?:10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}|0\.0\.0\.0|\[?::1\]?)$/.test(host);
+}
+
 function isPlatformHost(host) {
   return !host
     || host === 'ownlybiz.com'
     || host === 'www.ownlybiz.com'
     || host === 'localhost'
     || host === '127.0.0.1'
+    || isLocalNetworkHost(host)
     || host.endsWith('.vercel.app');
 }
 
@@ -276,6 +287,15 @@ function queryExpertSlug(req) {
     return cleanExpertSlug(new URLSearchParams(queryOnly(req)).get('expert'));
   } catch (_) {
     return '';
+  }
+}
+
+function queryFlag(req, name) {
+  try {
+    const value = new URLSearchParams(queryOnly(req)).get(name);
+    return value === '1' || String(value || '').toLowerCase() === 'true';
+  } catch (_) {
+    return false;
   }
 }
 
@@ -559,6 +579,478 @@ function safeHex(value, fallback) {
   return /^#[0-9a-f]{3,8}$/i.test(color) ? color : fallback;
 }
 
+const PUBLIC_LITE_PALETTES = {
+  warm: { accent: '#C4622D', action: '#FF6B47', status: '#637653', background: '#F7F1E8', surface: '#FFFDF8', text: '#241A15' },
+  ocean: { accent: '#2B6CB0', action: '#4FD1C5', status: '#2563EB', background: '#F3F8FB', surface: '#FFFFFF', text: '#102033' },
+  forest: { accent: '#2D5016', action: '#A3BE8C', status: '#2D8A4E', background: '#F4F7EF', surface: '#FFFFFA', text: '#142112' },
+  midnight: { accent: '#6C5CE7', action: '#A29BFE', status: '#C8FF3D', background: '#0B0908', surface: '#1A1614', text: '#FAF7F2' },
+  sunset: { accent: '#D35400', action: '#FF8A4C', status: '#84CC16', background: '#FFF4EA', surface: '#FFFFFF', text: '#27160E' },
+  rose: { accent: '#BE185D', action: '#F472B6', status: '#22C55E', background: '#FFF1F5', surface: '#FFFFFF', text: '#2A101A' },
+  slate: { accent: '#475569', action: '#64748B', status: '#22C55E', background: '#F8FAFC', surface: '#FFFFFF', text: '#111827' },
+  charcoal: { accent: '#374151', action: '#94A3B8', status: '#86EFAC', background: '#111827', surface: '#1F2937', text: '#F9FAFB' },
+};
+
+function publicLitePalette(name) {
+  return { ...(PUBLIC_LITE_PALETTES[clean(name).toLowerCase()] || PUBLIC_LITE_PALETTES.warm) };
+}
+
+function publicLiteRgb(hex) {
+  const color = safeHex(hex, '');
+  if (!color || color.length < 7) return null;
+  return {
+    r: parseInt(color.slice(1, 3), 16),
+    g: parseInt(color.slice(3, 5), 16),
+    b: parseInt(color.slice(5, 7), 16),
+  };
+}
+
+function publicLiteAlpha(hex, alpha, fallback) {
+  const rgb = publicLiteRgb(hex);
+  return rgb ? `rgba(${rgb.r},${rgb.g},${rgb.b},${alpha})` : fallback;
+}
+
+function publicLiteColorChannel(value) {
+  const channel = value / 255;
+  return channel <= 0.03928 ? channel / 12.92 : Math.pow((channel + 0.055) / 1.055, 2.4);
+}
+
+function publicLiteLuminance(hex) {
+  const rgb = publicLiteRgb(hex);
+  if (!rgb) return null;
+  return 0.2126 * publicLiteColorChannel(rgb.r)
+    + 0.7152 * publicLiteColorChannel(rgb.g)
+    + 0.0722 * publicLiteColorChannel(rgb.b);
+}
+
+function publicLiteContrast(foreground, background) {
+  const fg = publicLiteLuminance(foreground);
+  const bg = publicLiteLuminance(background);
+  if (fg === null || bg === null) return 0;
+  const high = Math.max(fg, bg);
+  const low = Math.min(fg, bg);
+  return (high + 0.05) / (low + 0.05);
+}
+
+function publicLiteReadableOn(hex) {
+  const luminance = publicLiteLuminance(hex);
+  return luminance !== null && luminance >= 0.58 ? '#0B0908' : '#FFFDF8';
+}
+
+function publicLiteReadableText(tokens, dark) {
+  const requested = safeHex(tokens.text, '');
+  const fallback = dark ? '#F8F3EA' : '#241A15';
+  if (requested && publicLiteContrast(requested, tokens.background) >= 4.5 && publicLiteContrast(requested, tokens.surface) >= 4.5) {
+    return requested;
+  }
+  return fallback;
+}
+
+function publicLiteDesign(expert, wc) {
+  const base = publicLitePalette(expert && expert.theme_preset);
+  const saved = wc && wc.design_tokens || {};
+  const tokens = {
+    accent: safeHex(saved.accent || (expert && expert.theme_color), base.accent),
+    action: safeHex(saved.action, base.action),
+    status: safeHex(saved.status, base.status),
+    background: safeHex(saved.background, base.background),
+    surface: safeHex(saved.surface, base.surface),
+    text: safeHex(saved.text, base.text),
+  };
+  const requestedMode = clean(wc && wc.site_mode, '').toLowerCase();
+  const bgLuminance = publicLiteLuminance(tokens.background);
+  const dark = requestedMode === 'dark' || (requestedMode !== 'light' && bgLuminance !== null && bgLuminance < 0.42);
+  tokens.text = publicLiteReadableText(tokens, dark);
+  return {
+    mode: dark ? 'dark' : 'light',
+    bg: tokens.background,
+    surface: tokens.surface,
+    text: tokens.text,
+    accent: tokens.accent,
+    action: tokens.action,
+    status: tokens.status,
+    muted: publicLiteAlpha(tokens.text, dark ? 0.78 : 0.74, dark ? 'rgba(248,243,234,.78)' : 'rgba(36,26,21,.74)'),
+    soft: publicLiteAlpha(tokens.text, dark ? 0.05 : 0.035, dark ? 'rgba(255,255,255,.05)' : 'rgba(36,26,21,.035)'),
+    border: publicLiteAlpha(tokens.text, dark ? 0.16 : 0.14, dark ? 'rgba(248,243,234,.16)' : 'rgba(36,26,21,.14)'),
+    actionSoft: publicLiteAlpha(tokens.action, dark ? 0.20 : 0.14, 'rgba(233,121,74,.18)'),
+    actionBorder: publicLiteAlpha(tokens.action, dark ? 0.72 : 0.46, 'rgba(233,121,74,.72)'),
+    actionText: publicLiteReadableOn(tokens.action),
+    statusSoft: publicLiteAlpha(tokens.status, dark ? 0.16 : 0.12, 'rgba(34,197,94,.12)'),
+    statusBorder: publicLiteAlpha(tokens.status, dark ? 0.38 : 0.28, 'rgba(34,197,94,.35)'),
+    shadow: dark ? '0 24px 90px rgba(0,0,0,.22)' : '0 18px 55px rgba(20,17,15,.10)',
+  };
+}
+
+function publicLiteEnabled(slug) {
+  const cleanSlug = cleanExpertSlug(slug);
+  return !!cleanSlug && (PUBLIC_LITE_EXPERT_SLUGS.has(cleanSlug) || PUBLIC_LITE_EXPERT_SLUGS.has('*'));
+}
+
+function publicLiteRequestOrigin(req, host) {
+  const proto = clean(req.headers['x-forwarded-proto'], host && /^(localhost|127\.0\.0\.1)(?::|$)/.test(host) ? 'http' : 'https')
+    .split(',')[0]
+    .trim()
+    .toLowerCase();
+  return `${proto || 'https'}://${host || 'ownlybiz.com'}`;
+}
+
+function publicLitePath(route, page) {
+  const cleanPage = clean(page || 'home').toLowerCase();
+  const suffix = cleanPage === 'home' ? '' : `/${encodeURIComponent(cleanPage)}`;
+  if (route && route.kind === 'platform-path') return `/${encodeURIComponent(route.slug || '')}${suffix}`.replace(/\/+$/, '') || '/';
+  return suffix || '/';
+}
+
+function publicLitePage(req, route) {
+  const page = publicFirstPaintPage(req, route);
+  return ['home', 'about', 'services', 'reviews', 'book', 'contact'].includes(page) ? page : 'home';
+}
+
+function publicLiteBoolean(value, fallback = true) {
+  if (value === undefined || value === null || value === '') return !!fallback;
+  if (value === false || value === 0) return false;
+  return !['0', 'false', 'off', 'no', 'disabled'].includes(String(value).trim().toLowerCase());
+}
+
+function publicLiteMoneyCents(cents, currency = 'USD') {
+  const amount = Number(cents);
+  if (!Number.isFinite(amount) || amount <= 0) return '';
+  try {
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: clean(currency, 'USD').toUpperCase(),
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(amount / 100);
+  } catch (_) {
+    return `$${(amount / 100).toFixed(2)}`;
+  }
+}
+
+function publicLiteFirstName(name) {
+  return clean(name, 'Expert').split(/\s+/)[0] || 'Expert';
+}
+
+function publicLiteRate(expert, channel, fallback) {
+  const keys = [`rate_${channel}`, `${channel}_pm`, `${channel}_rate`];
+  if (channel === 'chat') keys.push('rate', 'rate_per_min');
+  for (const key of keys) {
+    const amount = Number(expert && expert[key]);
+    if (Number.isFinite(amount) && amount > 0) return `$${amount.toFixed(2)}/min`;
+  }
+  return fallback;
+}
+
+function publicLiteFree(expert, channel) {
+  const keys = channel === 'chat'
+    ? ['chat_free_min_available', 'chat_free_min', 'free_minutes_available', 'free_minutes']
+    : [`${channel}_free_min_available`, `${channel}_free_min`];
+  for (const key of keys) {
+    const value = Number(expert && expert[key]);
+    if (Number.isFinite(value) && value > 0) return `${Math.round(value)} min free`;
+  }
+  return '';
+}
+
+function publicLiteTextBlock(value, fallback = '') {
+  const text = clean(value, fallback);
+  if (!text) return [];
+  return text
+    .split(/\n{2,}/)
+    .map((part) => clean(part))
+    .filter(Boolean)
+    .slice(0, 8);
+}
+
+function publicLiteOnDemand(onDemandResult) {
+  if (!onDemandResult || !onDemandResult.available || !Array.isArray(onDemandResult.buckets) || !onDemandResult.buckets.length) return null;
+  const settings = onDemandResult.settings || {};
+  const buckets = onDemandResult.buckets.map((bucket) => ({
+    id: clean(bucket.id || bucket.bucket_id || bucket.name),
+    label: clean(bucket.label || bucket.name || bucket.title, 'Written answer'),
+    price: publicLiteMoneyCents(bucket.price_cents, bucket.currency || 'USD'),
+    price_cents: Number(bucket.price_cents || 0),
+    currency: clean(bucket.currency, 'USD'),
+  })).filter((bucket) => bucket.id || bucket.label);
+  if (!buckets.length) return null;
+  return {
+    label: clean(settings.public_label, 'Written Reading'),
+    intro: clean(settings.intro_text, 'Send one private question and receive a written answer.'),
+    delivery: clean(settings.delivery_policy, 'Your private reading is delivered securely after login.'),
+    placement: settings.placement || {},
+    buckets,
+  };
+}
+
+function publicLiteServiceCard(item) {
+  const disabled = item.disabled ? ' is-disabled' : '';
+  const attrDisabled = item.disabled ? ' aria-disabled="true"' : '';
+  const action = item.disabled ? '' : ` onclick="${esc(item.action)}"`;
+  if (item.kind === 'chat') {
+    return `<button type="button" class="ob-lite-card ob-lite-card-chat${disabled}"${attrDisabled}${action}>
+      <span class="ob-lite-card-title">${esc(item.title)}</span>
+      <span class="ob-lite-card-copy">${esc(item.copy)}</span>
+      <span class="ob-lite-card-price">${esc(item.price || '')}</span>
+      ${item.free ? `<span class="ob-lite-free">${esc(item.free)}</span>` : ''}
+      <span class="ob-lite-start">Start</span>
+    </button>`;
+  }
+  if (item.kind === 'live') {
+    return `<button type="button" class="ob-lite-card ob-lite-card-live${disabled}"${attrDisabled}${action}>
+      <span class="ob-lite-card-title">${esc(item.title)}</span>
+      <span class="ob-lite-card-price">${esc(item.price || '')}</span>
+      ${item.free ? `<span class="ob-lite-free">${esc(item.free)}</span>` : ''}
+      <span class="ob-lite-start">Start</span>
+    </button>`;
+  }
+  if (item.kind === 'written') {
+    return `<button type="button" class="ob-lite-card ob-lite-card-written${disabled}"${attrDisabled}${action}>
+      <span class="ob-lite-badge">WR</span>
+      <span class="ob-lite-card-title">${esc(item.title)}</span>
+      <span class="ob-lite-card-copy">${esc(item.copy)}</span>
+      <span class="ob-lite-card-price">${esc(item.price || '')}</span>
+    </button>`;
+  }
+  if (item.kind === 'schedule') {
+    return `<button type="button" class="ob-lite-card ob-lite-card-schedule${disabled}"${attrDisabled}${action}>
+      <span class="ob-lite-badge ob-lite-badge-cal">CAL</span>
+      <span class="ob-lite-card-title">${esc(item.title)}</span>
+      <span class="ob-lite-card-copy">${esc(item.copy)}</span>
+      <span class="ob-lite-card-price">${esc(item.status || '')}</span>
+    </button>`;
+  }
+  return `<button type="button" class="ob-lite-service${disabled}"${attrDisabled}${action}>
+    <span class="ob-lite-service-icon">${esc(item.icon)}</span>
+    <span><strong>${esc(item.title)}</strong><small>${esc(item.copy)}</small></span>
+    <em>${esc(item.price || item.status || '')}</em>
+  </button>`;
+}
+
+function renderPublicLitePage(expertResult, req, host, onDemandResult) {
+  const expert = expertResult && expertResult.expert;
+  if (!expert || !(expert.name || expert.slug)) return '';
+  const route = expertResult.route || {};
+  const origin = publicLiteRequestOrigin(req, host);
+  const page = publicLitePage(req, route);
+  const slug = clean(expert.slug || expertResult.slug);
+  const wc = websiteContent(expert);
+  const design = publicLiteDesign(expert, wc);
+  const name = clean(expert.name || expert.display_name, 'Independent Expert');
+  const firstName = publicLiteFirstName(name);
+  const title = clean(expert.title || expert.category || expert.specialty || expert.tagline || expert.subtitle, 'Expert');
+  const tagline = clean(wc.hero_tagline || expert.hero_tagline || expert.tagline || expert.about_text || expert.bio, `Private sessions with ${name}.`);
+  const logo = whiteLabelAssetUrl(wc.logo_image || expert.logo_url || wc.profile_image || expert.avatar_url || '', origin);
+  const profileImage = whiteLabelAssetUrl(
+    expert.photo_url || expert.profile_photo || expert.avatar_url || expert.image_url || expert.photo || expert.photoUrl || wc.profile_image || expert.logo_url || wc.logo_image || '',
+    origin
+  );
+  const favicon = expertFaviconUrl(expert, req, host, origin);
+  const online = Number(expert.is_online) === 1 || expert.is_online === true;
+  const paid = publicLiteBoolean(expert.payments_enabled, false);
+  const rawOnDemand = publicLiteOnDemand(onDemandResult);
+  const onDemand = rawOnDemand && (
+    page === 'services' ? rawOnDemand.placement.services !== false
+      : page === 'book' ? rawOnDemand.placement.book === true
+        : rawOnDemand.placement.home !== false
+  ) ? rawOnDemand : null;
+  const chatEnabled = paid && online && publicLiteBoolean(expert.chat_enabled, true);
+  const voiceEnabled = paid && online && publicLiteBoolean(expert.voice_enabled, true);
+  const videoEnabled = paid && online && publicLiteBoolean(expert.video_enabled, true);
+  const scheduleEnabled = paid && (online || publicLiteBoolean(expert.accept_offline, true));
+  const rating = Number(expert.avg_rating) > 0
+    ? `${Number(expert.avg_rating).toFixed(1)} star${Number(expert.review_count) ? ` · ${Number(expert.review_count)} ratings` : ''}`
+    : 'New expert';
+  const avatar = profileImage
+    ? `<img src="${esc(profileImage)}" alt="" width="96" height="96" decoding="async" loading="${page === 'book' || page === 'home' ? 'eager' : 'lazy'}">`
+    : `<span>${initials(name)}</span>`;
+  const navItems = ['home', 'about', 'services', 'reviews', 'book', 'contact'];
+  const nav = navItems.map((item) => {
+    const label = item === 'home' ? 'Home' : item === 'book' ? clean((wc.nav_labels || {}).book, 'Book a Session') : clean((wc.nav_labels || {})[item], item[0].toUpperCase() + item.slice(1));
+    const active = item === page ? ' aria-current="page"' : '';
+    return `<a${active} href="${esc(publicLitePath(route, item))}">${esc(label)}</a>`;
+  }).join('');
+  const fullHref = `${pathOnly(req)}${queryOnly(req) ? `${queryOnly(req)}&full=1` : '?full=1'}`;
+  const liveCards = [
+    {
+      kind: 'chat',
+      title: `Chat with ${firstName} now`,
+      copy: chatEnabled ? 'Private live text session' : (paid ? 'Unavailable now' : 'Setup pending'),
+      price: publicLiteRate(expert, 'chat', '$3.50/min'),
+      free: publicLiteFree(expert, 'chat'),
+      action: "obLiteOpenLive('chat')",
+      disabled: !chatEnabled,
+    },
+    {
+      kind: 'live',
+      title: 'Call',
+      price: publicLiteRate(expert, 'voice', '$4.50/min'),
+      free: publicLiteFree(expert, 'voice'),
+      action: "obLiteOpenLive('voice')",
+      disabled: !voiceEnabled,
+    },
+    {
+      kind: 'live',
+      title: 'Video',
+      price: publicLiteRate(expert, 'video', '$6.00/min'),
+      free: publicLiteFree(expert, 'video'),
+      action: "obLiteOpenLive('video')",
+      disabled: !videoEnabled,
+    },
+  ].filter((item) => !item.disabled);
+  if (onDemand) {
+    liveCards.push({
+      kind: 'written',
+      title: onDemand.label,
+      copy: 'Send one private question. Delivered securely after login.',
+      price: onDemand.buckets[0] && onDemand.buckets[0].price ? `from ${onDemand.buckets[0].price}` : 'Written answer',
+      action: 'obLiteOpenWritten()',
+    });
+  }
+  const scheduleCard = scheduleEnabled ? {
+      kind: 'schedule',
+      title: 'Book a live session',
+      copy: 'Choose a time that works for you.',
+      status: 'Schedule',
+      action: 'obLiteOpenSchedule()',
+    } : null;
+  const bookItems = scheduleCard ? liveCards.concat(scheduleCard) : liveCards.slice();
+  const unavailableReason = !paid
+    ? 'This expert is not accepting paid sessions yet. Please check back later.'
+    : (!bookItems.length ? 'This expert is not accepting sessions right now. Please check back later.' : '');
+  const bookCards = bookItems.length
+    ? bookItems.map(publicLiteServiceCard).join('')
+    : `<div class="ob-lite-unavailable"><strong>Sessions are not available yet</strong><span>${esc(unavailableReason)}</span></div>`;
+  const serviceCards = liveCards.map(publicLiteServiceCard).join('');
+  const aboutParagraphs = publicLiteTextBlock(expert.about_text || expert.bio || wc.about_body, tagline)
+    .map((paragraph) => `<p>${esc(paragraph)}</p>`).join('');
+  const pageTitle = {
+    home: name,
+    about: clean(wc.about_title, `About ${name}`),
+    services: clean(wc.svc_title, 'Services & Rates'),
+    reviews: 'Reviews',
+    book: 'How would you like to connect?',
+    contact: clean(wc.contact_heading, `Contact ${name}`),
+  }[page];
+  const pageBodies = {
+    home: `<section class="ob-lite-hero">
+      <div class="ob-lite-photo">${avatar}</div>
+      <div>
+        <p class="ob-lite-kicker">${online ? 'Available now' : 'Offline right now'}</p>
+        <h1>${esc(name)}</h1>
+        <p>${esc(tagline)}</p>
+        <div class="ob-lite-actions"><a class="ob-lite-primary" href="${esc(publicLitePath(route, 'book'))}">Book a Session</a><a class="ob-lite-secondary" href="${esc(publicLitePath(route, 'services'))}">View Services</a></div>
+      </div>
+    </section>
+    <section class="ob-lite-section"><h2>${esc(clean(wc.svc_title, 'Choose your session'))}</h2><div class="ob-lite-services">${serviceCards}</div></section>`,
+    about: `<section class="ob-lite-section ob-lite-split"><div><h1>${esc(pageTitle)}</h1>${aboutParagraphs}</div><div class="ob-lite-photo large">${avatar}</div></section>`,
+    services: `<section class="ob-lite-section"><h1>${esc(pageTitle)}</h1><p>${esc(clean(wc.svc_subtitle, 'Choose the format that fits your question.'))}</p><div class="ob-lite-services stacked">${serviceCards}</div></section>`,
+    reviews: `<section class="ob-lite-section"><h1>Reviews</h1><div class="ob-lite-review"><div class="ob-lite-stars">★★★★★</div><strong>${esc(rating)}</strong><p>${esc(Number(expert.review_count) > 0 ? 'Client feedback from completed sessions.' : `${name} is ready for first reviews on this site.`)}</p></div></section>`,
+    book: `<section class="ob-lite-book-head">
+      <div class="ob-lite-profile"><div class="ob-lite-photo small">${avatar}</div><div><h2>${esc(name)}</h2><p>${esc(title)}</p><div class="ob-lite-stars">★★★★★ <span>${esc(rating)}</span></div></div></div>
+      <h1>How would you like to connect?</h1>
+      <p>Start now, send a private written question, or reserve time for later.</p>
+    </section><section class="ob-lite-book-grid">${bookCards}</section>`,
+    contact: `<section class="ob-lite-section"><h1>${esc(pageTitle)}</h1><div class="ob-lite-contact">
+      <p>${esc(clean(wc.contact_desc, 'For fastest support, book a session through this site.'))}</p>
+      <div><strong>Email</strong><span>${esc(clean(wc.contact_email || expert.privacy_contact_email, 'Use the booking form'))}</span></div>
+      <div><strong>Location</strong><span>${esc(clean(wc.contact_location || expert.location, 'Remote sessions'))}</span></div>
+      <div><strong>Hours</strong><span>${esc(clean(wc.contact_hours, 'Flexible availability'))}</span></div>
+    </div></section>`,
+  };
+  const config = {
+    slug,
+    name,
+    firstName,
+    title,
+    backend: BACKEND,
+    fullHref,
+    live: {
+      chat: { label: `Chat with ${firstName}`, enabled: chatEnabled, price: publicLiteRate(expert, 'chat', '$3.50/min'), free: publicLiteFree(expert, 'chat') },
+      voice: { label: 'Call', enabled: voiceEnabled, price: publicLiteRate(expert, 'voice', '$4.50/min'), free: publicLiteFree(expert, 'voice') },
+      video: { label: 'Video', enabled: videoEnabled, price: publicLiteRate(expert, 'video', '$6.00/min'), free: publicLiteFree(expert, 'video') },
+    },
+    onDemand,
+  };
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>${esc(expertTitle(expert))}</title>
+  <meta name="description" content="${esc(expertDescription(expert))}">
+  <meta name="robots" content="noindex,follow,max-image-preview:large">
+  <link rel="canonical" href="${esc(origin + pathOnly(req))}">
+  <link rel="icon" href="${esc(favicon)}">
+  <link rel="apple-touch-icon" href="${esc(favicon)}">
+  ${profileImage && (page === 'book' || page === 'home') ? `<link rel="preload" as="image" href="${esc(profileImage)}">` : ''}
+  <style>
+    :root{color-scheme:${design.mode};--bg:${design.bg};--surface:${design.surface};--text:${design.text};--muted:${design.muted};--border:${design.border};--soft:${design.soft};--accent:${design.accent};--action:${design.action};--action-soft:${design.actionSoft};--action-border:${design.actionBorder};--action-text:${design.actionText};--status:${design.status};--status-soft:${design.statusSoft};--status-border:${design.statusBorder};--shadow:${design.shadow};font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:inherit}a{color:inherit;text-decoration:none}button,input,textarea,select{font:inherit}
+    .ob-lite-nav{height:60px;display:flex;align-items:center;justify-content:space-between;gap:14px;padding:0 clamp(16px,4vw,40px);border-bottom:1px solid var(--border);background:var(--bg);position:sticky;top:0;z-index:20}
+    .ob-lite-brand{display:flex;align-items:center;gap:10px;min-width:0;font-weight:950;flex:1 1 auto}.ob-lite-brand img{width:32px;height:32px;border-radius:8px;object-fit:cover}.ob-lite-brand span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .ob-lite-links{display:none;position:absolute;top:60px;right:16px;width:min(320px,calc(100vw - 32px));z-index:50;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:8px;box-shadow:0 24px 80px rgba(0,0,0,.28);grid-template-columns:1fr}.ob-lite-links a{white-space:nowrap;padding:11px 12px;border-radius:8px;color:var(--muted);font-size:14px;font-weight:800}.ob-lite-links a[aria-current="page"]{color:var(--action)}.ob-lite-menu-open .ob-lite-links{display:grid}
+    .ob-lite-nav-actions{display:flex;align-items:center;gap:8px;flex:0 0 auto}.ob-lite-status{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--status-border);background:var(--status-soft);border-radius:999px;padding:8px 13px;color:var(--status);font-size:12px;font-weight:950;line-height:1}.ob-lite-status:before{content:"";width:9px;height:9px;border-radius:50%;background:var(--status)}.ob-lite-login{height:38px;border:1px solid var(--border);background:var(--surface);color:var(--text);border-radius:8px;padding:0 16px;font-weight:900}.ob-lite-menu-btn{width:42px;height:38px;border:0;background:transparent;color:var(--text);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:5px}.ob-lite-menu-btn span{width:26px;height:3px;border-radius:2px;background:currentColor;display:block}
+    main{width:min(720px,100%);margin:0 auto;padding:clamp(28px,5vw,44px) 16px 72px}.ob-lite-hero{display:grid;grid-template-columns:minmax(180px,280px) minmax(0,1fr);gap:clamp(20px,5vw,54px);align-items:center;min-height:calc(100svh - 124px)}
+    h1{font-size:clamp(34px,7vw,64px);line-height:1.02;letter-spacing:0;margin:0 0 14px;font-weight:850}h2{font-size:clamp(24px,4vw,34px);line-height:1.08;letter-spacing:0;margin:0 0 12px}p{color:var(--muted);line-height:1.6;margin:0 0 16px}.ob-lite-kicker{color:var(--status);font-size:13px;font-weight:950;text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px}
+    .ob-lite-photo{aspect-ratio:1;border-radius:22px;overflow:hidden;background:var(--surface);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:42px;font-weight:950;color:var(--text);box-shadow:var(--shadow)}.ob-lite-photo img{width:100%;height:100%;object-fit:cover}.ob-lite-photo.small{width:76px;height:76px;border-radius:14px;font-size:22px}.ob-lite-photo.large{width:min(320px,100%);margin:auto}
+    .ob-lite-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:28px}.ob-lite-primary,.ob-lite-secondary,.ob-lite-modal button,.ob-lite-service{border-radius:8px}.ob-lite-primary,.ob-lite-secondary{display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:0 18px;font-weight:900}.ob-lite-primary{background:var(--action);color:var(--action-text)}.ob-lite-secondary{border:1px solid var(--border);background:var(--surface);color:var(--text)}
+    .ob-lite-section{padding:22px 0}.ob-lite-split{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(180px,.9fr);gap:36px;align-items:start}.ob-lite-services{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:18px}.ob-lite-services.stacked{grid-template-columns:1fr}
+    .ob-lite-service{width:100%;min-height:92px;border:1px solid var(--border);background:var(--surface);color:var(--text);display:grid;grid-template-columns:44px minmax(0,1fr) auto;gap:12px;align-items:center;text-align:left;padding:14px 16px;cursor:pointer}.ob-lite-service:not(.is-disabled):hover{border-color:var(--action);transform:translateY(-1px)}.ob-lite-service.is-disabled{opacity:.54;cursor:default}.ob-lite-service-icon{width:44px;height:44px;border-radius:999px;background:var(--soft);border:1px solid var(--border);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:950;color:var(--accent)}.ob-lite-service strong{display:block;font-size:16px}.ob-lite-service small{display:block;color:var(--muted);line-height:1.45;margin-top:4px}.ob-lite-service em{font-style:normal;color:var(--action);font-size:13px;font-weight:950;white-space:nowrap}
+    .ob-lite-profile{display:grid;grid-template-columns:76px minmax(0,1fr);gap:14px;align-items:center;margin-bottom:22px}.ob-lite-profile h2{margin:0 0 4px}.ob-lite-profile p{font-size:13px;margin:0 0 6px}.ob-lite-stars{color:#f59e0b;font-weight:900;font-size:13px}.ob-lite-stars span{color:var(--text);margin-left:5px}.ob-lite-book-head{max-width:760px}.ob-lite-book-head>h1{font-size:clamp(34px,6vw,44px);font-weight:500;margin-bottom:6px}.ob-lite-book-grid{background:var(--surface);border:1px solid var(--border);border-radius:18px;padding:14px;box-shadow:var(--shadow);display:grid;grid-template-columns:1fr 1fr;gap:10px;max-width:760px}
+    .ob-lite-card{border:1px solid var(--border);background:var(--soft);color:var(--text);border-radius:12px;text-align:left;cursor:pointer;padding:15px 22px;min-height:78px}.ob-lite-card:not(.is-disabled):hover{border-color:var(--action-border)}.ob-lite-card-title{display:block;font-size:16px;line-height:1.15;font-weight:950}.ob-lite-card-copy{display:block;color:var(--muted);font-size:14px;line-height:1.35;font-weight:700}.ob-lite-card-price{display:block;color:var(--action);font-size:15px;font-weight:950;white-space:nowrap}.ob-lite-free{display:inline-flex;align-items:center;justify-content:center;width:max-content;border-radius:999px;background:var(--action-soft);color:var(--action);font-size:13px;font-weight:950;padding:4px 10px;white-space:nowrap}.ob-lite-start{display:inline-flex;align-items:center;justify-content:center;background:var(--action);color:var(--action-text);border-radius:999px;font-size:15px;font-weight:950;min-width:116px;height:36px;white-space:nowrap}.ob-lite-card-chat{grid-column:1/-1;display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"title price" "copy free" "copy start";gap:5px 16px;align-items:center;min-height:102px}.ob-lite-card-chat .ob-lite-card-title{grid-area:title}.ob-lite-card-chat .ob-lite-card-copy{grid-area:copy}.ob-lite-card-chat .ob-lite-card-price{grid-area:price;color:var(--text);font-size:16px}.ob-lite-card-chat .ob-lite-free{grid-area:free;justify-self:end}.ob-lite-card-chat .ob-lite-start{grid-area:start;justify-self:end}.ob-lite-card-live{display:grid;grid-template-columns:minmax(0,1fr) 58px;grid-template-areas:"title start" "price start" "free free";gap:8px 8px;align-items:center;min-height:92px}.ob-lite-card-live .ob-lite-card-title{grid-area:title;font-size:18px}.ob-lite-card-live .ob-lite-card-price{grid-area:price;color:var(--text);font-size:14px}.ob-lite-card-live .ob-lite-free{grid-area:free}.ob-lite-card-live .ob-lite-start{grid-area:start;min-width:58px;height:32px;font-size:13px}.ob-lite-card-written,.ob-lite-card-schedule{grid-column:1/-1;display:grid;grid-template-columns:44px minmax(0,1fr) auto;grid-template-areas:"badge title price" "badge copy price";gap:4px 12px;align-items:center;min-height:84px}.ob-lite-badge{grid-area:badge;width:42px;height:42px;border-radius:999px;border:1px solid var(--action-border);display:flex;align-items:center;justify-content:center;color:var(--action);font-size:12px;font-weight:950;background:var(--action-soft)}.ob-lite-badge-cal{border-color:var(--status-border);background:var(--status-soft);color:var(--status)}.ob-lite-card-written .ob-lite-card-title,.ob-lite-card-schedule .ob-lite-card-title{grid-area:title}.ob-lite-card-written .ob-lite-card-copy,.ob-lite-card-schedule .ob-lite-card-copy{grid-area:copy}.ob-lite-card-written .ob-lite-card-price,.ob-lite-card-schedule .ob-lite-card-price{grid-area:price;justify-self:end}.ob-lite-card-schedule .ob-lite-card-price{color:var(--status)}
+    .ob-lite-unavailable{grid-column:1/-1;border:1px solid var(--border);background:var(--soft);border-radius:12px;padding:28px;text-align:center}.ob-lite-unavailable strong{display:block;font-size:26px;line-height:1.15}.ob-lite-unavailable span{display:block;color:var(--muted);font-size:15px;line-height:1.55;margin-top:8px}
+    .ob-lite-review,.ob-lite-contact{border:1px solid var(--border);background:var(--surface);border-radius:12px;padding:20px}.ob-lite-contact{display:grid;gap:12px}.ob-lite-contact div{border-top:1px solid var(--border);padding-top:12px}.ob-lite-contact strong{display:block}.ob-lite-contact span{display:block;color:var(--muted);margin-top:3px}
+    .ob-lite-modal{position:fixed;inset:0;background:rgba(0,0,0,.62);display:none;align-items:center;justify-content:center;padding:16px;z-index:40}.ob-lite-modal.is-open{display:flex}.ob-lite-sheet{width:min(620px,100%);max-height:90svh;overflow:auto;background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:14px;padding:22px;box-shadow:var(--shadow)}.ob-lite-sheet-head{display:flex;justify-content:space-between;gap:14px;align-items:flex-start}.ob-lite-close{border:1px solid var(--border);background:var(--bg);color:var(--text);width:40px;height:40px;font-weight:950}.ob-lite-field{display:grid;gap:6px;margin-top:12px}.ob-lite-field span{font-size:13px;font-weight:850}.ob-lite-field input,.ob-lite-field textarea,.ob-lite-field select{width:100%;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);padding:11px 12px;min-height:42px}.ob-lite-field textarea{min-height:92px;resize:vertical}.ob-lite-buckets{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:14px 0}.ob-lite-bucket{border:1px solid var(--border);background:var(--bg);color:var(--text);padding:12px;border-radius:8px;text-align:left}.ob-lite-bucket.is-active{border-color:var(--action);box-shadow:inset 0 0 0 1px var(--action)}.ob-lite-submit{border:0;background:var(--action);color:var(--action-text);padding:12px 16px;font-weight:950;margin-top:16px}.ob-lite-note{font-size:13px;color:var(--muted);line-height:1.55;margin-top:10px}
+    .ob-lite-footer{border-top:1px solid var(--action-soft);background:var(--bg);color:var(--muted);padding:36px 28px;font-size:15px;line-height:1.65}.ob-lite-footer-inner{width:min(720px,100%);margin:0 auto}
+    @media(max-width:720px){.ob-lite-nav{padding:0 14px}.ob-lite-brand span{max-width:145px;font-size:15px}.ob-lite-links{left:10px;right:10px;width:auto}.ob-lite-status{padding:8px 12px}.ob-lite-login{padding:0 14px}.ob-lite-hero,.ob-lite-split{grid-template-columns:1fr;min-height:0}.ob-lite-photo{width:min(260px,100%);margin:0 auto}.ob-lite-services,.ob-lite-buckets{grid-template-columns:1fr}.ob-lite-service{grid-template-columns:38px minmax(0,1fr);min-height:86px}.ob-lite-service em{grid-column:2}.ob-lite-book-grid{border-radius:16px;grid-template-columns:1fr 1fr;padding:14px}.ob-lite-profile{grid-template-columns:62px minmax(0,1fr);gap:14px}.ob-lite-photo.small{width:62px;height:62px}.ob-lite-card{padding:14px 16px}.ob-lite-book-head>h1{font-size:34px}.ob-lite-start{height:34px}.ob-lite-card-live{padding:14px 12px}.ob-lite-card-live .ob-lite-start{min-width:58px;height:32px}}
+    @media(max-width:420px){main{padding-left:14px;padding-right:14px}.ob-lite-card-chat{grid-template-columns:minmax(0,1fr) auto;gap:4px 12px}.ob-lite-card-live{grid-template-columns:minmax(0,1fr) 58px;gap:8px 8px}.ob-lite-card-price{font-size:14px}.ob-lite-card-copy{font-size:13px}.ob-lite-login{height:36px}.ob-lite-status{height:36px}.ob-lite-menu-btn{width:36px}}
+  </style>
+</head>
+<body>
+  <nav class="ob-lite-nav">
+    <a class="ob-lite-brand" href="${esc(publicLitePath(route, 'home'))}">${logo ? `<img src="${esc(logo)}" alt="">` : ''}<span>${esc(name)}</span></a>
+    <div class="ob-lite-links">${nav}</div>
+    <div class="ob-lite-nav-actions"><div class="ob-lite-status">${esc(online ? 'LIVE' : 'OFFLINE')}</div><button class="ob-lite-login" type="button" onclick="location.href='/login'">Log In</button><button class="ob-lite-menu-btn" type="button" aria-label="Menu" onclick="obLiteToggleMenu()"><span></span><span></span><span></span></button></div>
+  </nav>
+  <main>${pageBodies[page]}</main>
+  <footer class="ob-lite-footer"><div class="ob-lite-footer-inner">⚖️ ${esc(clean(wc.footer_disclaimer, 'Services are provided by the independent expert.'))}<br><br>© 2026 ${esc(name)} Readings.</div></footer>
+  <div class="ob-lite-modal" id="ob-lite-modal" aria-hidden="true"><div class="ob-lite-sheet" role="dialog" aria-modal="true" aria-labelledby="ob-lite-modal-title"><div class="ob-lite-sheet-head"><div><h2 id="ob-lite-modal-title"></h2><p id="ob-lite-modal-copy"></p></div><button class="ob-lite-close" type="button" onclick="obLiteClose()">x</button></div><div id="ob-lite-modal-body"></div></div></div>
+  <script>window.__OB_PUBLIC_LITE__=${safeScriptJson(config)};</script>
+  <script>
+  (function(){
+    var cfg = window.__OB_PUBLIC_LITE__ || {};
+    var modal = document.getElementById('ob-lite-modal');
+    var title = document.getElementById('ob-lite-modal-title');
+    var copy = document.getElementById('ob-lite-modal-copy');
+    var body = document.getElementById('ob-lite-modal-body');
+    function escHtml(v){return String(v == null ? '' : v).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+    function open(t,c,h){title.textContent=t;copy.textContent=c || '';body.innerHTML=h || '';modal.classList.add('is-open');modal.setAttribute('aria-hidden','false');}
+    window.obLiteClose=function(){modal.classList.remove('is-open');modal.setAttribute('aria-hidden','true');};
+    window.obLiteToggleMenu=function(){document.body.classList.toggle('ob-lite-menu-open');};
+    document.querySelectorAll('.ob-lite-links a').forEach(function(link){link.addEventListener('click',function(){document.body.classList.remove('ob-lite-menu-open');});});
+    modal.addEventListener('click',function(ev){if(ev.target===modal) window.obLiteClose();});
+    window.addEventListener('keydown',function(ev){if(ev.key==='Escape') window.obLiteClose();});
+    window.obLiteOpenLive=function(channel){
+      var item = (cfg.live && cfg.live[channel]) || {};
+      if(!item.enabled){open(item.label || 'Session', 'This option is unavailable right now.', '<p class="ob-lite-note">Choose another available option or check back later.</p>');return;}
+      var detail = [item.price, item.free].filter(Boolean).join(' · ');
+      open(item.label || 'Live session', detail, '<button class="ob-lite-submit" type="button" onclick="location.href='+JSON.stringify(cfg.fullHref)+'">Continue Securely</button><p class="ob-lite-note">Your account and payment step opens only after you continue.</p>');
+    };
+    window.obLiteOpenSchedule=function(){
+      open('Book a live session', 'Choose a time in the secure booking flow.', '<button class="ob-lite-submit" type="button" onclick="location.href='+JSON.stringify(cfg.fullHref)+'">Continue Securely</button>');
+    };
+    window.obLiteSelectBucket=function(btn){document.querySelectorAll('.ob-lite-bucket').forEach(function(el){el.classList.remove('is-active');});btn.classList.add('is-active');};
+    window.obLiteOpenWritten=function(){
+      var od = cfg.onDemand || {};
+      var buckets = (od.buckets || []).map(function(b,i){return '<button class="ob-lite-bucket '+(i?'':'is-active')+'" type="button" data-bucket="'+escHtml(b.id)+'" onclick="obLiteSelectBucket(this)"><strong>'+escHtml(b.label)+'</strong><span style="display:block;color:var(--muted);margin-top:4px">'+escHtml(b.price)+'</span></button>';}).join('');
+      open(od.label || 'Written Reading', od.delivery || '', '<div class="ob-lite-buckets">'+buckets+'</div><label class="ob-lite-field"><span>Your question</span><textarea placeholder="What do you want answered?"></textarea></label><label class="ob-lite-field"><span>Context</span><textarea placeholder="Share the details '+escHtml(cfg.firstName || 'the expert')+' should know."></textarea></label><label class="ob-lite-field"><span>Email</span><input type="email" autocomplete="email" placeholder="you@example.com"></label><button class="ob-lite-submit" type="button" onclick="obLiteWrittenReady()">Continue to Payment</button><p class="ob-lite-note">Payment opens after the client account step.</p>');
+    };
+    window.obLiteWrittenReady=function(){open('Continue to payment', 'The written request is ready for the secure checkout step.', '<button class="ob-lite-submit" type="button" onclick="location.href='+JSON.stringify(cfg.fullHref)+'">Continue Securely</button>');};
+  })();
+  </script>
+</body>
+</html>`;
+}
+
 function publicFirstPaintShell(expertResult, req, onDemandResult) {
   const expert = expertResult && expertResult.expert;
   const slug = clean(expert && (expert.slug || expertResult.slug));
@@ -802,6 +1294,19 @@ module.exports = async function handler(req, res) {
       res.setHeader('Location', location);
       res.setHeader('Cache-Control', 'public, s-maxage=300, stale-while-revalidate=3600');
       res.status(308).end();
+      return;
+    }
+  }
+
+  if (isExpert && expert && publicLiteEnabled(expert.slug || expertResult.slug) && !queryFlag(req, 'full')) {
+    const preloadOnDemand = await fetchCachedPublicOnDemand(expert.slug || expertResult.slug);
+    const html = renderPublicLitePage(expertResult, req, host, preloadOnDemand);
+    if (html) {
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('X-Robots-Tag', 'noindex,follow');
+      res.setHeader('X-Ownlybiz-Public-Lite', clean(expert.slug || expertResult.slug));
+      res.status(200).send(html);
       return;
     }
   }

@@ -86,6 +86,43 @@ function isBlogPath(pathname) {
   return parts[0] === 'blog';
 }
 
+function platformMarketingSeo(pathname) {
+  const first = String(pathname || '/').replace(/^\/+|\/+$/g, '').split('/').filter(Boolean)[0] || '';
+  const pages = {
+    '': {
+      title: 'Ownlybiz - Own your expertise. Own your income.',
+      description: 'Ownlybiz helps independent experts launch paid chat, voice, and video sessions on their own branded website.',
+      canonicalPath: '/',
+    },
+    how: {
+      title: 'How Ownlybiz Works - Expert Business Infrastructure',
+      description: 'See how Ownlybiz helps independent experts publish a branded site, take bookings, run paid sessions, and manage clients.',
+      canonicalPath: '/how',
+    },
+    features: {
+      title: 'Ownlybiz Features - Websites, Payments, Sessions, and Email',
+      description: 'Explore Ownlybiz features for expert websites, Stripe-powered payments, live sessions, written services, bookings, analytics, and Email Center workflows.',
+      canonicalPath: '/features',
+    },
+    pricing: {
+      title: 'Ownlybiz Pricing - Clear Platform Fees for Experts',
+      description: 'Compare Ownlybiz plans and platform fees for independent experts running paid chat, voice, video, written services, and packages.',
+      canonicalPath: '/pricing',
+    },
+    experts: {
+      title: 'Expert Types on Ownlybiz - Consulting, Coaching, Wellness, Tarot, and More',
+      description: 'Explore the types of independent experts who can build a paid practice on Ownlybiz, from consultants and coaches to wellness, tarot, tutoring, and creative professionals.',
+      canonicalPath: '/experts',
+    },
+    contact: {
+      title: 'Contact Ownlybiz',
+      description: 'Contact Ownlybiz about expert business infrastructure, paid-session workflows, platform setup, or support.',
+      canonicalPath: '/contact',
+    },
+  };
+  return pages[first] || pages[''];
+}
+
 function blogUrl(post) {
   return `https://ownlybiz.com/blog/${encodeURIComponent(post.slug)}`;
 }
@@ -1393,10 +1430,11 @@ module.exports = async function handler(req, res) {
     html = injectJsonLd(html, blogJsonLd(post, posts));
     res.setHeader('X-Robots-Tag', knownBlogRoute ? 'index,follow' : 'noindex,follow');
   } else {
+    const seo = platformMarketingSeo(pathOnly(req));
     html = injectSeo(html, {
-      title: 'Ownlybiz - Own your expertise. Own your income.',
-      description: 'Ownlybiz helps independent experts launch paid chat, voice, and video sessions on their own branded website.',
-      canonical: 'https://ownlybiz.com/',
+      title: seo.title,
+      description: seo.description,
+      canonical: `https://ownlybiz.com${seo.canonicalPath}`,
       robots: 'index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1',
       image: '',
     });

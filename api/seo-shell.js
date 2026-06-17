@@ -5,10 +5,13 @@ const BACKEND = (process.env.OWNLYBIZ_API_URL || process.env.OWNLY_API || 'https
 const INDEX_PATH = path.join(process.cwd(), 'index.html');
 const BLOG_POSTS_PATH = path.join(process.cwd(), 'data', 'ownlybiz-blog-posts.json');
 const RESERVED = new Set([
-  '', 'index.html', 'admin', 'dash', 'signup', 'dashboard', 'login', 'expert',
+  '', 'index.html', 'admin', 'api', 'app', 'auth', 'billing', 'checkout',
+  'connect', 'dash', 'signup', 'dashboard', 'login', 'logout', 'expert',
   'session', 'group', 'connectors', 'settings', 'messages', 'analytics',
-  'payments', 'packages', 'reviews', 'clients', 'sessions', 'pricing', 'how',
-  'features', 'experts', 'blog', 'contact', 'terms', 'legal',
+  'payment', 'payments', 'packages', 'reviews', 'clients', 'sessions',
+  'pricing', 'how', 'features', 'experts', 'blog', 'contact', 'support',
+  'terms', 'legal', 'privacy', 'reset', 'reset-password', 'stripe', 'verify',
+  'verify-email', 'wallet',
 ]);
 const CUSTOM_DOMAIN_SLUG_FALLBACKS = {
   'lunapsychics.com': 'liranprodtest',
@@ -1287,7 +1290,7 @@ module.exports = async function handler(req, res) {
   const expertResult = await resolveExpert(req, host);
   const expert = expertResult && expertResult.expert;
   const route = expertResult && expertResult.route;
-  const isExpert = !!expertResult;
+  const isExpert = !!expert;
   const origin = `https://${host || 'ownlybiz.com'}`;
   const canonical = origin + pathOnly(req);
   const iconRequestPath = pathOnly(req).toLowerCase();

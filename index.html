@@ -12373,14 +12373,15 @@ function msgShowList() {
   if(backBtn) backBtn.style.display = 'none';
 }
 
-window.obApplyMarketingSeo = function(page) {
+window.obMarketingSeoPageFromPath = function(pathname) {
+  var first = String(pathname || location.pathname || '/').replace(/^\/+|\/+$/g, '').split('/').filter(Boolean)[0] || '';
+  var pages = {how:1, features:1, pricing:1, experts:1, contact:1};
+  return pages[first] ? first : '';
+};
+
+window.obMarketingSeoForPage = function(page) {
   page = String(page || 'home').trim().toLowerCase();
   var map = {
-    home: {
-      title: 'Ownlybiz - Own your expertise. Own your income.',
-      description: 'Ownlybiz helps independent experts launch paid chat, voice, and video sessions on their own branded website.',
-      path: '/'
-    },
     how: {
       title: 'How Ownlybiz Works - Expert Business Infrastructure',
       description: 'See how Ownlybiz helps independent experts publish a branded site, take bookings, run paid sessions, and manage clients.',
@@ -12407,23 +12408,47 @@ window.obApplyMarketingSeo = function(page) {
       path: '/contact'
     }
   };
-  var seo = map[page];
-  if(!seo || page === 'blog') return;
+  return map[page] || null;
+};
+
+window.obApplyMarketingSeo = function(page) {
+  page = String(page || window.obMarketingSeoPageFromPath() || '').trim().toLowerCase();
+  var seo = typeof window.obMarketingSeoForPage === 'function' ? window.obMarketingSeoForPage(page) : null;
+  if(!seo) return false;
+  var canonicalUrl = 'https://ownlybiz.com' + seo.path;
   document.title = seo.title;
-  var meta = document.head.querySelector('meta[name="description"]');
-  if(!meta) {
-    meta = document.createElement('meta');
-    meta.setAttribute('name', 'description');
-    document.head.appendChild(meta);
+  function metaByName(name) {
+    var el = document.head.querySelector('meta[name="' + name + '"]');
+    if(!el) {
+      el = document.createElement('meta');
+      el.setAttribute('name', name);
+      document.head.appendChild(el);
+    }
+    return el;
   }
-  meta.setAttribute('content', seo.description);
+  function metaByProp(prop) {
+    var el = document.head.querySelector('meta[property="' + prop + '"]');
+    if(!el) {
+      el = document.createElement('meta');
+      el.setAttribute('property', prop);
+      document.head.appendChild(el);
+    }
+    return el;
+  }
+  metaByName('description').setAttribute('content', seo.description);
+  metaByProp('og:title').setAttribute('content', seo.title);
+  metaByProp('og:description').setAttribute('content', seo.description);
+  metaByProp('og:url').setAttribute('content', canonicalUrl);
+  metaByName('twitter:title').setAttribute('content', seo.title);
+  metaByName('twitter:description').setAttribute('content', seo.description);
   var canonical = document.head.querySelector('link[rel="canonical"]');
   if(!canonical) {
     canonical = document.createElement('link');
     canonical.setAttribute('rel', 'canonical');
     document.head.appendChild(canonical);
   }
-  canonical.setAttribute('href', location.origin + seo.path);
+  canonical.setAttribute('href', canonicalUrl);
+  return true;
 };
 
 // Close mobile menus when a nav link is clicked
@@ -29705,6 +29730,9 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
 	    setVerification('msvalidate.01', settings.bingVerify);
 	    setVerification('yandex-verification', settings.yandexVerify);
 	    setJsonLd('ob-platform-schema', buildPlatformSchema(settings));
+	    if(typeof window.obMarketingSeoPageFromPath === 'function' && typeof window.obApplyMarketingSeo === 'function'){
+	      window.obApplyMarketingSeo(window.obMarketingSeoPageFromPath(location.pathname));
+	    }
 	  }
 	  window.obApplyPlatformSeo = applyPlatformSeo;
 	  function publicSlug(){

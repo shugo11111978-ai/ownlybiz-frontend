@@ -22385,15 +22385,18 @@ var _CLIENT_TOKEN_KEY = 'ob_client_token';
 var _BASE = 'https://victorious-wisdom-production-a6b0.up.railway.app';
 
 function getClientToken() {
-  return localStorage.getItem(_CLIENT_TOKEN_KEY) || sessionStorage.getItem('ob_client_t') || sessionStorage.getItem('ob_t') || null;
+  return localStorage.getItem(_CLIENT_TOKEN_KEY) || sessionStorage.getItem(_CLIENT_TOKEN_KEY) || sessionStorage.getItem('ob_client_t') || sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || null;
 }
 
 function setClientToken(token) {
   try { localStorage.setItem(_CLIENT_TOKEN_KEY, token); } catch(e) {}
+  try { sessionStorage.setItem(_CLIENT_TOKEN_KEY, token); } catch(e) {}
+  try { sessionStorage.setItem('ob_client_t', token); } catch(e) {}
 }
 
 function clearClientToken() {
   try { localStorage.removeItem(_CLIENT_TOKEN_KEY); } catch(e) {}
+  try { sessionStorage.removeItem(_CLIENT_TOKEN_KEY); } catch(e) {}
   try { localStorage.removeItem('ob_t'); } catch(e) {}
   try { localStorage.removeItem('ob_u'); } catch(e) {}
   try { sessionStorage.removeItem('ob_client_t'); } catch(e) {}
@@ -25088,23 +25091,29 @@ window._handleRTCMessage=function(d){
     return !!(window._obActiveSessId || window._sessId || window._obClientEndingSid);
   }
   function storedClientToken(){
-    return sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || localStorage.getItem('ob_client_token') || '';
+    return sessionStorage.getItem('ob_t') || sessionStorage.getItem('ob_client_token') || sessionStorage.getItem('ob_client_t') || localStorage.getItem('ob_t') || localStorage.getItem('ob_client_token') || '';
   }
   function rememberClientSessionToken(token){
     token = token || '';
     if(token) window._obClientLiveSessionToken = token;
     return token;
   }
+  function transientClientToken(){
+    if(isExpertSessionContext('')) return '';
+    return window._obClientLiveSessionToken || window._bflClientToken || '';
+  }
   function tok(){
     var t = storedClientToken();
     if(t) return rememberClientSessionToken(t);
-    return activeClientSessionTokenAllowed() ? (window._obClientLiveSessionToken || '') : '';
+    return activeClientSessionTokenAllowed() ? transientClientToken() : '';
   }
   function syncTokenStorage(){
     try {
-      var t = storedClientToken() || (activeClientSessionTokenAllowed() ? (window._obClientLiveSessionToken || '') : '');
+      var t = storedClientToken() || (activeClientSessionTokenAllowed() ? transientClientToken() : '');
       if(t) rememberClientSessionToken(t);
       if(t && !sessionStorage.getItem('ob_t')) sessionStorage.setItem('ob_t', t);
+      if(t && !sessionStorage.getItem('ob_client_token')) sessionStorage.setItem('ob_client_token', t);
+      if(t && !sessionStorage.getItem('ob_client_t')) sessionStorage.setItem('ob_client_t', t);
       if(t && !localStorage.getItem('ob_t')) localStorage.setItem('ob_t', t);
       if(t && !localStorage.getItem('ob_client_token')) localStorage.setItem('ob_client_token', t);
       var u = sessionStorage.getItem('ob_u') || localStorage.getItem('ob_u');
@@ -25886,6 +25895,7 @@ window._handleRTCMessage=function(d){
     var free = channelFree(ch, sess);
     window._obActiveSessId = sess.id || window._obActiveSessId;
     window._sessId = window._obActiveSessId;
+    syncTokenStorage();
     window._obPendingChannel = ch;
     window.currentBookChannel = ch;
     window._obPendingRate = rate;
@@ -25952,9 +25962,9 @@ window._handleRTCMessage=function(d){
     if(clientRecentlyEndedLocal(sid)) return;
     if(window._obClientEndingSid && sid !== window._obClientEndingSid) clearClientEndingState();
     if(!/[?&]booking=/.test(location.search)) document.documentElement.classList.remove('ob-session-boot');
-    syncTokenStorage();
     window._obActiveSessId = sid;
     window._sessId = sid;
+    syncTokenStorage();
     var ov = document.getElementById('booking-join-overlay'); if(ov) ov.remove();
     var wait = document.getElementById('ob-waiting-overlay'); if(wait) wait.classList.remove('show');
     ensureClientWsJoined(sid);
@@ -25967,11 +25977,11 @@ window._handleRTCMessage=function(d){
   };
 
   window.joinActiveBookingSession = function(sessionId, expertId, channel){
-    syncTokenStorage();
     document.documentElement.classList.add('ob-session-boot');
     channel = (channel || 'chat').toLowerCase();
     window._obActiveSessId = sessionId;
     window._sessId = sessionId;
+    syncTokenStorage();
     window._obPendingChannel = channel;
     window.currentBookChannel = channel;
     var ov = document.getElementById('booking-join-overlay'); if(ov) ov.remove();

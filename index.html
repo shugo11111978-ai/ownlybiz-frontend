@@ -38742,47 +38742,6 @@ body.ob-ui-dark .ob-connection-note,
     }
     return data;
   }
-  function itemRole(item){
-    var guess = String((item && item.role) || '').toLowerCase();
-    if(guess) return guess;
-    if(item && /expert/i.test(String(item.panelId || ''))) return 'expert';
-    return role() || 'client';
-  }
-  function liveSocket(item){
-    var r = itemRole(item);
-    var sockets = r === 'expert' ? [window._expertWs] : [window._obClientWs, window._obWs];
-    if(r !== 'expert') sockets.push(window._expertWs);
-    for(var i=0;i<sockets.length;i++){
-      if(sockets[i] && sockets[i].readyState === 1) return sockets[i];
-    }
-    return null;
-  }
-  function sendJson(ws, payload){
-    if(!ws || ws.readyState !== 1) return false;
-    try { ws.send(JSON.stringify(payload)); return true; } catch(e){ return false; }
-  }
-  function sendRealtime(item){
-    var ws = liveSocket(item);
-    if(!ws || !item || !item.sid || !item.content) return false;
-    var now = Date.now();
-    var t = token();
-    if(t && (!ws.__obOutboxAuthedAt || now - ws.__obOutboxAuthedAt > 30000)){
-      sendJson(ws, {type:'auth', token:t});
-      ws.__obOutboxAuthedAt = now;
-    }
-    if(ws.__obOutboxJoinedSid !== item.sid){
-      sendJson(ws, {type:'join', session_id:item.sid});
-      sendJson(ws, {type:'join_session', sessionId:item.sid});
-      ws.__obOutboxJoinedSid = item.sid;
-    }
-    return sendJson(ws, {
-      type:'message',
-      session_id:item.sid,
-      sessionId:item.sid,
-      content:item.content,
-      client_message_id:item.id
-    });
-  }
   async function flush(){
     if(!navigator.onLine || !token()) return;
     var items = read();
@@ -38790,7 +38749,6 @@ body.ob-ui-dark .ob-connection-note,
     var remaining = [];
     for(var i=0;i<items.length;i++){
       try {
-        if(sendRealtime(items[i])) continue;
         await postMessage(items[i]);
       }
       catch(e){ if(!e || !e.status || e.status >= 500) remaining.push(items[i]); }
@@ -38807,7 +38765,7 @@ body.ob-ui-dark .ob-connection-note,
       queue(panelId, sid, content, item.id);
       return true;
     }
-    if(sendRealtime(item)) return true;
+    // Persist first. The REST endpoint saves the message and broadcasts it to both live panes.
     postMessage(item).catch(function(e){
       if(e && e.status === 429) {
         queue(panelId, sid, content, item.id);

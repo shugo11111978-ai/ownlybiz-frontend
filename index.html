@@ -25346,9 +25346,49 @@ window._handleRTCMessage=function(d){
     sid = String(sid || '');
     return !!(sid && window._obClientLocallyEndedSid === sid && Date.now() - (window._obClientLocallyEndedAt || 0) < 45000);
   }
+  function rememberTerminalSession(sid){
+    sid = String(sid || '');
+    if(!sid) return;
+    window._obLastTerminalSessionSid = sid;
+    window._obLastTerminalSessionAt = Date.now();
+  }
+  function recentlyTerminalSession(sid){
+    sid = String(sid || '');
+    return !!(sid && (
+      clientRecentlyEndedLocal(sid) ||
+      (window._obLastTerminalSessionSid === sid && Date.now() - (window._obLastTerminalSessionAt || 0) < 60000)
+    ));
+  }
+  function endedPayload(d){
+    d = d || {};
+    var status = String(d.status || (d.session && d.session.status) || '').toLowerCase();
+    return status === 'ended' || status === 'cancelled' || status === 'failed';
+  }
+  function clearRtcRecoveryStatus(message){
+    var finalMessage = message || 'Connection ended';
+    if(typeof window._obClearSessionConnectionIssue === 'function') {
+      try { window._obClearSessionConnectionIssue(); } catch(e) {}
+    }
+    setText('rtc-status', finalMessage);
+    setText('b3-rtc-status', finalMessage);
+    setText('a4-session-rate', finalMessage);
+    setText('live-billing-status', finalMessage);
+    ['ob-connection-note','ob-rtc-quality-note','ob-rtc-peer-quality-note'].forEach(function(id){
+      var el = document.getElementById(id);
+      if(el && el.parentNode) el.parentNode.removeChild(el);
+    });
+    var badge = document.getElementById('live-client-status');
+    if(badge){
+      badge.textContent = finalMessage;
+      badge.style.cssText = 'font-size:12px;color:var(--gray-400);font-weight:700;';
+    }
+  }
   function applyClientReceipt(sess){
     sess = normalizeClientReceiptSession(sess);
-    markClientLocallyEnded(sess.id || sess.session_id || sess.sessionId || window._obClientEndingSid || window._obActiveSessId || window._sessId);
+    var terminalSid = sess.id || sess.session_id || sess.sessionId || window._obClientEndingSid || window._obActiveSessId || window._sessId;
+    markClientLocallyEnded(terminalSid);
+    rememberTerminalSession(terminalSid);
+    clearRtcRecoveryStatus('Session ended');
     var free = int(sess.free_minutes,0), rate = num(sess.rate_per_min,0), dur = int(sess.duration_secs,0);
     var chargedN = parseFloat(sess.charged), storedN = parseFloat(sess.total_charged);
     var total = isFinite(chargedN) && chargedN > 0 && (!isFinite(storedN) || storedN <= 0) ? chargedN : (isFinite(storedN) ? storedN : billableMinutes(dur, free) * rate);
@@ -25419,7 +25459,11 @@ window._handleRTCMessage=function(d){
   function showSessionConnectionStatus(d, roleName){
     d = d || {};
     var sid = d.session_id || d.sessionId || (d.session && d.session.id) || '';
-    if(clientRecentlyEndedLocal(sid)) return true;
+    if(recentlyTerminalSession(sid) || endedPayload(d)){
+      if(sid) rememberTerminalSession(sid);
+      clearRtcRecoveryStatus('Session ended');
+      return true;
+    }
     var activeSid = window._obActiveSessId || window._sid || window._sessId || '';
     if(activeSid && sid && sid !== activeSid) return true;
     var billingStarted = d.billing_started === true || (d.session && d.session.started_at);
@@ -25530,11 +25574,16 @@ window._handleRTCMessage=function(d){
       return showSessionConnectionStatus(d, roleName);
     }
     if(d.type === 'participant_rejoined' || d.type === 'session_resume_ack'){
+      if(recentlyTerminalSession(sid) || endedPayload(d)) {
+        if(sid) rememberTerminalSession(sid);
+        clearRtcRecoveryStatus('Session ended');
+        return true;
+      }
       if(!sid || sid === window._obActiveSessId || sid === window._sid || sid === window._sessId){
         if(typeof window._obClearSessionConnectionIssue === 'function') window._obClearSessionConnectionIssue(sid, d.channel || window._obPendingChannel || 'chat', roleName);
-        setText('rtc-status', 'Rejoined - restoring session');
-        setText('b3-rtc-status', 'Rejoined - restoring session');
-        setText('live-billing-status', 'Rejoined - restoring session');
+        setText('rtc-status', '\u2705 Connected');
+        setText('b3-rtc-status', '\u2705 Connected');
+        setText('live-billing-status', 'Connection restored');
       }
       handled = true;
     }
@@ -25605,6 +25654,8 @@ window._handleRTCMessage=function(d){
 	      var activeEndedSid = window._obActiveSessId || window._sid || window._sessId || '';
 	      if(activeEndedSid && (!sid || sid !== activeEndedSid)) return handled;
 	      var sess = mergeSessionEndedPayload(d);
+	      rememberTerminalSession(sid || sess.id || sess.session_id || sess.sessionId);
+	      clearRtcRecoveryStatus('Session ended');
 	      if(roleName === 'expert') {
 	        if(typeof window.obApplyAuthoritativeExpertEnded === 'function') window.obApplyAuthoritativeExpertEnded(d, 'client');
 	        else applyExpertEnded(sess, 'client');

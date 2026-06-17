@@ -14406,7 +14406,109 @@ async function savePaymentConfig() {
       card.appendChild(action);
     }
   }
+  function normalizedSlug(value){
+    return cleanText(value).toLowerCase();
+  }
+  function currentExpertSlug(){
+    var e = window._currentExpert || {};
+    return normalizedSlug(e.slug || window._currentExpertSlug || window._browseExpert || '');
+  }
+  function onDemandBookConfig(){
+    var e = window._currentExpert || {};
+    var config = e.on_demand_public || window.__OB_PRELOADED_ON_DEMAND__ || null;
+    if(!config || config.success === false || !config.available) return null;
+    var placement = config.settings && config.settings.placement || {};
+    if(placement.book !== true) return null;
+    var current = currentExpertSlug();
+    var expert = config.expert || {};
+    var loaded = normalizedSlug(expert.slug || config.slug || '');
+    if(current && loaded && current !== loaded) return null;
+    return config;
+  }
+  function onDemandMoney(cents, currency){
+    var amount = Number(cents || 0) / 100;
+    if(!Number.isFinite(amount) || amount <= 0) return '';
+    var code = String(currency || 'usd').toUpperCase();
+    try {
+      return new Intl.NumberFormat('en-US', {style:'currency', currency:code}).format(amount);
+    } catch(e) {
+      return '$' + amount.toFixed(2);
+    }
+  }
+  function onDemandBookPrice(config){
+    var buckets = config && config.buckets || [];
+    return buckets.length ? onDemandMoney(buckets[0].price_cents, buckets[0].currency) : '';
+  }
+  function openOnDemandPublic(ev){
+    if(ev) {
+      ev.preventDefault();
+      ev.stopPropagation();
+    }
+    if(typeof window.obOdOpenPublic === 'function') {
+      window.obOdOpenPublic();
+      return;
+    }
+    setTimeout(function(){
+      if(typeof window.obOdOpenPublic === 'function') window.obOdOpenPublic();
+    }, 120);
+  }
+  function createOnDemandBookCard(){
+    var card = document.createElement('div');
+    card.id = 'ob-public-on-demand-card';
+    card.className = 'stype-btn ob-od-stype-card ob-public-on-demand-entry';
+    card.setAttribute('data-mode', 'written');
+    card.setAttribute('role', 'button');
+    card.setAttribute('tabindex', '0');
+    card.innerHTML = '<div class="stype-btn-icon">WR</div><div class="stype-btn-name"></div><div class="stype-btn-price"></div><div class="ob-od-stype-meta"></div>';
+    card.addEventListener('click', openOnDemandPublic);
+    card.addEventListener('keydown', function(ev){
+      if(ev.key === 'Enter' || ev.key === ' ') openOnDemandPublic(ev);
+    });
+    return card;
+  }
+  function syncOnDemandBookCardText(card, config){
+    if(!card || !config) return;
+    var settings = config.settings || {};
+    var label = cleanText(settings.public_label) || 'Written Reading';
+    var price = onDemandBookPrice(config);
+    setText(card.querySelector('.stype-btn-icon'), 'WR');
+    setText(card.querySelector('.stype-btn-name'), label);
+    setText(card.querySelector('.stype-btn-price'), price ? 'from ' + price : 'Written answer');
+    setText(card.querySelector('.ob-od-stype-meta'), 'Send one private question. Delivered securely after login.');
+  }
+  function removeOtherOnDemandEntries(grid, keep){
+    document.querySelectorAll('.ob-public-on-demand-entry').forEach(function(el){
+      if(!el || el === keep) return;
+      if(!grid || !grid.contains(el) || el.id === 'ob-public-on-demand-card') el.remove();
+    });
+  }
+  function syncOnDemandBookCard(){
+    var grid = document.querySelector('#view-4 #ep-book #stype-grid');
+    if(!grid) return;
+    var config = onDemandBookConfig();
+    var card = grid.querySelector('#ob-public-on-demand-card.ob-od-stype-card');
+    if(!config) {
+      if(card) card.remove();
+      grid.classList.remove('ob-has-on-demand');
+      return;
+    }
+    if(!card) {
+      card = createOnDemandBookCard();
+      var placement = config.settings && config.settings.placement || {};
+      var disabled = Array.prototype.slice.call(grid.children || []).find(function(child){ return child && child.classList && child.classList.contains('disabled-channel'); });
+      var later = grid.querySelector('#ob-book-later-selector-row');
+      if(placement.position === 'top') grid.insertBefore(card, grid.firstChild);
+      else if(placement.position === 'bottom') grid.appendChild(card);
+      else if(disabled && disabled.parentNode === grid) grid.insertBefore(card, disabled);
+      else if(later && later.parentNode === grid) grid.insertBefore(card, later);
+      else grid.appendChild(card);
+    }
+    grid.classList.add('ob-has-on-demand');
+    removeOtherOnDemandEntries(grid, card);
+    syncOnDemandBookCardText(card, config);
+  }
   function decorateWrittenCard(){
+    syncOnDemandBookCard();
     var card = document.querySelector('#view-4 #ep-book #stype-grid .ob-od-stype-card');
     if(!card) return;
     card.classList.add('ob-book-option-row');
@@ -18593,6 +18695,7 @@ function obApplyPublicExpertPayload(e, slug, source) {
   window._currentExpertSlug = e.slug || slug;
   window.__obPublicExpertPayloadApplied = true;
   window.__obPublicExpertPayloadAppliedSlug = window._currentExpertSlug || slug;
+  if(e.on_demand_public) window.__OB_PRELOADED_ON_DEMAND__ = e.on_demand_public;
   if(typeof setExpertOnlineStatus === 'function') setExpertOnlineStatus(!!e.is_online);
   if(typeof window._applyExpertWebsite === 'function') window._applyExpertWebsite(e);
   if(typeof window._refreshPublicPage === 'function') window._refreshPublicPage(e);
@@ -55314,12 +55417,22 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     return slug;
   }
   function preloadedPublicOnDemand(slug){
-    var payload = window.__OB_PRELOADED_ON_DEMAND__ || null;
+    var currentExpert = window._currentExpert || {};
+    var payload = currentExpert.on_demand_public || window.__OB_PRELOADED_ON_DEMAND__ || null;
     if(!payload || payload.success === false || !payload.available) return null;
     var expert = payload.expert || {};
     var loadedSlug = String(expert.slug || payload.slug || '').trim().toLowerCase();
     var wanted = String(slug || '').trim().toLowerCase();
     return wanted && loadedSlug === wanted ? payload : null;
+  }
+  function rememberPublicOnDemandConfig(config, slug){
+    if(!config) return;
+    var expert = config.expert || {};
+    var loadedSlug = String(expert.slug || config.slug || '').trim().toLowerCase();
+    var wanted = String(slug || expertSlug() || '').trim().toLowerCase();
+    if(wanted && loadedSlug && wanted !== loadedSlug) return;
+    window.__OB_PRELOADED_ON_DEMAND__ = config;
+    if(window._currentExpert) window._currentExpert.on_demand_public = config;
   }
   function dashboardSlug(){
     var path = String(location.pathname || '');
@@ -55781,6 +55894,8 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     document.querySelectorAll('.ob-public-on-demand-entry').forEach(function(el){
       if(el && el !== except && el.parentNode) el.parentNode.removeChild(el);
     });
+    var grid = document.querySelector('#ep-book #stype-grid');
+    if(grid && !grid.querySelector('.ob-public-on-demand-entry')) grid.classList.remove('ob-has-on-demand');
   }
   function syncPublicBookingTypeCard(card, config){
     if(!card || !config) return false;
@@ -55800,9 +55915,24 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     if(meta && meta.textContent !== 'Send one private question. Delivered securely after login.') meta.textContent = 'Send one private question. Delivered securely after login.';
     return true;
   }
+  function routePublicPage(){
+    var known = {home:1, about:1, services:1, reviews:1, book:1, contact:1};
+    var parts = String(location.pathname || '').split('/').filter(Boolean);
+    for(var i = 0; i < parts.length; i++) {
+      var part = '';
+      try { part = decodeURIComponent(parts[i]); } catch(e) { part = parts[i]; }
+      part = String(part || '').toLowerCase();
+      if(known[part]) return part;
+    }
+    return '';
+  }
   function activePublicPage(){
+    var routed = routePublicPage();
     var active = document.querySelector('#view-4 .expert-page.active');
-    if(active && active.id) return active.id.replace(/^ep-/, '') || 'home';
+    var activePage = active && active.id ? active.id.replace(/^ep-/, '') : '';
+    if(activePage && activePage !== 'home') return activePage;
+    if(routed) return routed;
+    if(activePage) return activePage;
     if(document.querySelector('#view-4.active')) return 'home';
     return 'home';
   }
@@ -55824,18 +55954,28 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     return null;
   }
   function injectPublicCard(config){
+    var page = activePublicPage();
     if(!config || !config.available || !placementAllows(config)) {
       removePublicOnDemandEntries();
+      if(page === 'book' && typeof window.obRefreshBookSelectorCards === 'function') window.obRefreshBookSelectorCards();
       return;
     }
     addStyle();
     var p = config.settings && config.settings.placement || {};
-    var page = activePublicPage();
     var compact = page === 'home';
     var firstService = document.querySelector('#view-4 .service-big-card');
     var host = null;
     if(page === 'services') host = visibleHost([document.querySelector('#ep-services .service-cards-col'), firstService && firstService.parentElement]);
     else if(page === 'book') {
+      if(typeof window.obRefreshBookSelectorCards === 'function') {
+        window.obRefreshBookSelectorCards();
+        var selectorCard = document.querySelector('#ep-book #stype-grid #ob-public-on-demand-card.ob-od-stype-card');
+        if(selectorCard) {
+          syncPublicBookingTypeCard(selectorCard, config);
+          removePublicOnDemandEntries(selectorCard);
+          return;
+        }
+      }
       host = visibleHost([document.querySelector('#ep-book #stype-grid')]);
       if(host) {
         host.classList.add('ob-has-on-demand');
@@ -56175,6 +56315,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
       return;
     }
     if(state.publicConfig && state.publicLoadedSlug === slug) {
+      rememberPublicOnDemandConfig(state.publicConfig, slug);
       injectPublicCard(state.publicConfig);
       confirmCheckoutFromQuery(0);
       markPublicOnDemandReady();
@@ -56185,6 +56326,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     if(preloaded) {
       state.publicConfig = preloaded;
       state.publicLoadedSlug = slug;
+      rememberPublicOnDemandConfig(preloaded, slug);
       injectPublicCard(preloaded);
       confirmCheckoutFromQuery(0);
       markPublicOnDemandReady();
@@ -56195,6 +56337,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
       state.publicLoadInFlightSlug = '';
       state.publicConfig = config;
       state.publicLoadedSlug = slug;
+      rememberPublicOnDemandConfig(config, slug);
       if(window.obPublicSlugBackoff) window.obPublicSlugBackoff.clear('onDemand', slug);
       injectPublicCard(config);
       confirmCheckoutFromQuery(0);

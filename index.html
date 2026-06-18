@@ -57428,7 +57428,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
   window.__obMarketplaceMode20260618 = true;
 
   var API_ROOT = (window.OWNLYBIZ_API_URL || window._OB_BACKEND || 'https://victorious-wisdom-production-a6b0.up.railway.app').replace(/\/+$/,'') + '/api';
-  var state = { ownerBase:null, publicAppliedId:'', ownerData:null, adminIds:{}, publicMarketplace:null };
+  var state = { ownerBase:null, publicAppliedId:'', ownerData:null, adminIds:{}, publicMarketplace:null, gridObserver:null, publicSyncQueued:false };
 
   function esc(v){ return String(v == null ? '' : v).replace(/[&<>"']/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
   function attr(v){ return esc(v).replace(/"/g,'&quot;'); }
@@ -57518,7 +57518,22 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
   }
   function selectedMini(){
     var id = window._selectedMarketplaceExpertId || '';
-    return miniById(id) || defaultMini();
+    var mini = miniById(id);
+    if(mini) return mini;
+    var active = document.querySelector('#ob-marketplace-picker .ob-mp-card.active');
+    var activeText = active && active.textContent || '';
+    if(activeText) {
+      var list = (marketplacePayload().experts || []);
+      mini = list.filter(function(x){
+        var name = x.display_name || x.name || '';
+        return name && activeText.indexOf(name) >= 0;
+      })[0] || null;
+      if(mini) {
+        window._selectedMarketplaceExpertId = mini.id;
+        return mini;
+      }
+    }
+    return defaultMini();
   }
   function selectedMarketplaceId(){
     var mini = selectedMini();
@@ -57609,8 +57624,8 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     var price = card.querySelector('.stype-btn-price');
     if(price) {
       var copy = money(channelRate(owner, mini, ch)) + '/min';
-      price.textContent = copy;
-      price.setAttribute('data-ob-full-price', copy);
+      if(price.textContent !== copy) price.textContent = copy;
+      if(price.getAttribute('data-ob-full-price') !== copy) price.setAttribute('data-ob-full-price', copy);
     }
   }
   function syncPublicChannelCards(){
@@ -57629,6 +57644,22 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
         syncPublicNames();
       }, ms);
     });
+    observePublicGrid();
+  }
+  function queuePublicSync(){
+    if(state.publicSyncQueued) return;
+    state.publicSyncQueued = true;
+    setTimeout(function(){
+      state.publicSyncQueued = false;
+      syncPublicChannelCards();
+      syncPublicNames();
+    }, 80);
+  }
+  function observePublicGrid(){
+    var grid = document.getElementById('stype-grid');
+    if(!grid || state.gridObserver || typeof MutationObserver === 'undefined') return;
+    state.gridObserver = new MutationObserver(queuePublicSync);
+    state.gridObserver.observe(grid, { childList:true, subtree:true, characterData:true, attributes:true, attributeFilter:['class','data-ob-full-price'] });
   }
   function miniCard(mini){
     var name = mini.display_name || mini.name || 'Expert';

@@ -57428,7 +57428,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
   window.__obMarketplaceMode20260618 = true;
 
   var API_ROOT = (window.OWNLYBIZ_API_URL || window._OB_BACKEND || 'https://victorious-wisdom-production-a6b0.up.railway.app').replace(/\/+$/,'') + '/api';
-  var state = { ownerBase:null, publicAppliedId:'', ownerData:null, adminIds:{}, publicMarketplace:null, gridObserver:null, publicSyncQueued:false, publicView:'grid', publicQuery:'' };
+  var state = { ownerBase:null, publicAppliedId:'', ownerData:null, adminIds:{}, publicMarketplace:null, gridObserver:null, publicSyncQueued:false, publicView:'grid', publicQuery:'', publicRefreshInFlight:false, publicRefreshAt:0 };
 
   function esc(v){ return String(v == null ? '' : v).replace(/[&<>"']/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
   function attr(v){ return esc(v).replace(/"/g,'&quot;'); }
@@ -57860,6 +57860,48 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     state.gridObserver = new MutationObserver(queuePublicSync);
     state.gridObserver.observe(grid, { childList:true, subtree:true, characterData:true, attributes:true, attributeFilter:['class','data-ob-full-price'] });
   }
+  function publicSlug(){
+    var slug = clean(window._browseExpert || window._currentExpertSlug || (window._currentExpert && window._currentExpert.slug) || '');
+    if(slug) return slug;
+    var first = clean((location.pathname || '').replace(/^\/+/, '').split('/')[0] || '');
+    if(first && !(window.obIsPlatformRouteRoot && window.obIsPlatformRouteRoot(first))) return first;
+    return '';
+  }
+  function sameMarketplace(a, b){
+    var ax = (a && a.experts || []).map(function(x){ return [x.id, x.display_name || x.name, x.avatar_url || '', x.updated_at || ''].join('|'); }).join('::');
+    var bx = (b && b.experts || []).map(function(x){ return [x.id, x.display_name || x.name, x.avatar_url || '', x.updated_at || ''].join('|'); }).join('::');
+    return ax === bx && !!(a && b);
+  }
+  function refreshPublicMarketplace(){
+    var slug = publicSlug();
+    if(!slug || state.publicRefreshInFlight) return;
+    var now = Date.now();
+    if(now - (state.publicRefreshAt || 0) < 4500) return;
+    state.publicRefreshAt = now;
+    state.publicRefreshInFlight = true;
+    var fetcher = nativeFetch || (window.fetch && window.fetch.bind(window));
+    if(!fetcher) { state.publicRefreshInFlight = false; return; }
+    fetcher(API_ROOT + '/experts/' + encodeURIComponent(slug) + '?marketplace_ts=' + now, {cache:'no-store'}).then(function(res){
+      return res.json().catch(function(){ return {}; }).then(function(data){ return {ok:res.ok, data:data}; });
+    }).then(function(result){
+      if(!result.ok) return;
+      var expert = result.data.expert || result.data || {};
+      var mp = expert.marketplace_public || expert.marketplace || null;
+      if(!mp || !Array.isArray(mp.experts)) return;
+      var previous = state.publicMarketplace || marketplacePayload();
+      if(sameMarketplace(previous, mp)) return;
+      state.publicMarketplace = mp;
+      if(window._currentExpert) {
+        window._currentExpert.marketplace_public = mp;
+        window._currentExpert.marketplace = mp;
+      }
+      renderPublicPicker();
+    }).catch(function(err){
+      console.warn('[MarketplaceRefresh]', err && err.message ? err.message : err);
+    }).finally(function(){
+      state.publicRefreshInFlight = false;
+    });
+  }
   function miniCard(mini){
     var name = miniName(mini);
     var title = miniTitle(mini);
@@ -57924,6 +57966,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     addStyle();
     var mp = marketplacePayload();
     var existing = document.getElementById('ob-marketplace-picker');
+    refreshPublicMarketplace();
     if(!mp.enabled || !Array.isArray(mp.experts) || !mp.experts.length){
       if(existing) existing.remove();
       setMarketplaceBookState();

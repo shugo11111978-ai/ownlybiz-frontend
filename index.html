@@ -20781,7 +20781,15 @@ body.expert-page #mob-cta-bar{display:none!important;}
       if(sessionPromoCode) sessionRequestPayload.promo_code = sessionPromoCode;
     }
     fetch(BASE+'/api/sessions/request',{method:'POST',headers:hdr(),body:JSON.stringify(sessionRequestPayload)})
-      .then(function(r){return r.json();}).then(function(d){
+      .then(function(r){return r.json().catch(function(){return {};}).then(function(d){d=d||{};d._httpOk=r.ok;d._httpStatus=r.status;return d;});}).then(function(d){
+        if(!d._httpOk){
+          var msg = d.error || 'Could not request session';
+          if(d._httpStatus === 409 || /active|pending|already|existing/i.test(msg)){
+            msg = 'You already have a session waiting or active with this expert. Cancel or finish it before starting another.';
+          }
+          if(d.error && /promotion code/i.test(d.error) && typeof window.obCreditClearSessionPromo === 'function') window.obCreditClearSessionPromo();
+          obCancelWait();alert(msg);return;
+        }
         if(d.session){
           if(typeof window.obCreditRememberSessionMode === 'function') window.obCreditRememberSessionMode(d.session);
           _sessId=d.session.id;window._obPendingSessId=d.session.id;window._obPendingExpertName=expertName;
@@ -21760,9 +21768,11 @@ window.loadBookingSlots = function() {
   fetch('https://ownlybiz-backend-production.up.railway.app/api/bookings/slots/' + slug + '?date=' + dp.value)
     .then(function(r) { return r.json(); })
     .then(function(d) {
-      if (!d.slots || d.slots.length === 0) { grid.innerHTML = ''; noSlots.style.display = 'block'; return; }
+      var slots = (d.slots || []).map(function(s) { return String(s || '').trim(); }).filter(Boolean);
+      slots = slots.filter(function(s, i) { return slots.indexOf(s) === i; });
+      if (slots.length === 0) { grid.innerHTML = ''; noSlots.style.display = 'block'; return; }
       noSlots.style.display = 'none';
-      grid.innerHTML = d.slots.map(function(s) {
+      grid.innerHTML = slots.map(function(s) {
         var hh = parseInt(s.split(':')[0]), mm = s.split(':')[1];
         var ap = hh >= 12 ? 'PM' : 'AM', h12 = hh > 12 ? hh - 12 : (hh === 0 ? 12 : hh);
         return '<button class="bfl-slot-btn" onclick="selectBflSlot(this,' + "'" + s + "'" + ')" style="padding:10px 4px;border:1.5px solid var(--gray-200);border-radius:8px;background:var(--white);font-size:13px;font-weight:600;color:var(--brown);cursor:pointer;font-family:var(--font-body);transition:.15s;">' + h12 + ':' + mm + ' ' + ap + '</button>';
@@ -32444,8 +32454,9 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
   }
   function readinessHtml(id, channel){
     var copy = channel === 'voice' ? 'Enable your microphone before joining.' : 'Enable your camera and microphone before joining.';
+    var title = channel === 'voice' ? 'Microphone check' : 'Camera and microphone check';
     return '<div id="'+id+'" data-ob-media-channel="'+esc(channel)+'" style="background:rgba(122,140,110,.09);border:1px solid rgba(122,140,110,.26);border-radius:12px;padding:14px;margin-bottom:16px;">'
-      + '<div style="font-weight:800;color:var(--brown);font-size:14px;margin-bottom:4px;">Camera and microphone check</div>'
+      + '<div style="font-weight:800;color:var(--brown);font-size:14px;margin-bottom:4px;">'+title+'</div>'
       + '<div id="'+id+'-status" style="font-size:13px;color:var(--gray-500);line-height:1.5;margin-bottom:10px;">'+copy+'</div>'
       + '<div style="display:flex;justify-content:center;"><button type="button" class="btn btn-sm" style="background:var(--sage);color:white;" onclick="obEnableClientMedia(\''+id+'\')">Enable before session</button></div>'
       + '</div>';
@@ -32468,7 +32479,13 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
           window.ExpertSfuClient.setPrewarmedStream('client', stream, channel || 'video');
         }
       } catch(e) {}
-      if(status) { status.textContent = 'Camera and microphone enabled'; status.style.color = 'var(--sage)'; status.style.fontWeight = '800'; }
+      if(status) {
+        status.textContent = channel === 'voice'
+          ? 'Microphone ready. You will connect when the expert accepts.'
+          : 'Camera and microphone ready. You will connect when the expert accepts.';
+        status.style.color = 'var(--sage)';
+        status.style.fontWeight = '800';
+      }
       var btn = card && card.querySelector('button');
       if(btn) { btn.textContent = 'Enabled'; btn.disabled = true; btn.style.opacity = '.75'; }
     } catch(e) {
@@ -35308,6 +35325,15 @@ body:has(#view-2.active) .privacy-consent.active{
   right:auto!important;
   max-width:min(380px, calc(100vw - 36px))!important;
 }
+body.ob-conversion-overlay-open .privacy-consent.active{
+  display:none!important;
+  pointer-events:none!important;
+}
+#booking-overlay,
+#bfl-overlay,
+#ob-od-public-modal{
+  z-index:100050!important;
+}
 @media (max-width:680px){
   body.ob-book-later-open .privacy-consent.active{
     top:max(10px,env(safe-area-inset-top))!important;
@@ -35884,6 +35910,33 @@ body:has(#view-2.active) .privacy-consent.active{
   else finalizeBookingIcons();
   try {
     new MutationObserver(function(){ finalizeBookingIcons(); }).observe(document.body, {childList:true, subtree:true});
+  } catch(e) {}
+})();
+</script>
+<script id="ownlybiz-conversion-overlay-privacy-sync">
+(function(){
+  'use strict';
+  if(window.__ownlybizConversionOverlayPrivacySync) return;
+  window.__ownlybizConversionOverlayPrivacySync = true;
+  function visible(el){
+    if(!el) return false;
+    if(el.classList && el.classList.contains('show')) return true;
+    var st = window.getComputedStyle ? window.getComputedStyle(el) : null;
+    return !!(st && st.display !== 'none' && st.visibility !== 'hidden' && Number(st.opacity || 1) > 0);
+  }
+  function sync(){
+    if(!document.body) return;
+    var open = visible(document.getElementById('booking-overlay')) ||
+      visible(document.getElementById('bfl-overlay')) ||
+      visible(document.getElementById('ob-od-public-modal'));
+    document.body.classList.toggle('ob-conversion-overlay-open', !!open);
+  }
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', sync);
+  else sync();
+  document.addEventListener('click', function(){ setTimeout(sync, 0); }, true);
+  document.addEventListener('keydown', function(){ setTimeout(sync, 0); }, true);
+  try {
+    new MutationObserver(sync).observe(document.documentElement, {childList:true, subtree:true, attributes:true, attributeFilter:['style','class']});
   } catch(e) {}
 })();
 </script>
@@ -56090,7 +56143,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
         '<div id="ob-od-auth-name-wrap"><input id="ob-od-auth-name" class="ob-od-input" placeholder="Your name" style="margin-bottom:8px;"></div><input id="ob-od-auth-email" class="ob-od-input" placeholder="Email" style="margin-bottom:8px;"><input id="ob-od-auth-pass" class="ob-od-input" type="password" placeholder="Password" style="margin-bottom:8px;">' +
       '</div>' +
       (logged ? '<div class="ob-od-status">Signed in. Your private reading will stay in your client account.</div>' : '') +
-      '<label style="display:flex;gap:8px;align-items:flex-start;margin-top:12px;font-size:13px;line-height:1.45;"><input id="ob-od-consent" type="checkbox"> I understand this is a private written response. Status emails come from the expert provider, and the reading opens securely after login.</label>' +
+      '<label id="ob-od-consent-row" style="display:flex;gap:8px;align-items:flex-start;margin-top:12px;font-size:13px;line-height:1.45;border:1px solid rgba(36,24,19,.12);background:#fffdf8;border-radius:10px;padding:10px;"><input id="ob-od-consent" type="checkbox" onchange="var r=document.getElementById(&quot;ob-od-consent-row&quot;);if(r){r.style.borderColor=&quot;rgba(36,24,19,.12)&quot;;r.style.background=&quot;#fffdf8&quot;;}"> I understand this is a private written response. Status emails come from the expert provider, and the reading opens securely after login.</label>' +
       '<div id="ob-od-public-status" class="ob-od-alert" role="alert"></div><div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:16px;"><button type="button" class="ob-od-btn" id="ob-od-submit" onclick="obOdSubmitPublic()">Continue to payment</button></div>';
     obOdAuthMode(state.clientMode || 'signup');
   }
@@ -56126,7 +56179,18 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     var collected = collectPublicFields();
     if(!bucket) { setPublicStatus('error', 'Choose a response time.'); return; }
     if(collected.missing.length) { setPublicStatus('error', 'Please complete: ' + collected.missing.join(', ') + '.'); return; }
-    if(!((document.getElementById('ob-od-consent') || {}).checked)) { setPublicStatus('error', 'Confirm the delivery note first.'); return; }
+    var consent = document.getElementById('ob-od-consent');
+    if(!(consent || {}).checked) {
+      var consentRow = document.getElementById('ob-od-consent-row');
+      if(consentRow) {
+        consentRow.style.borderColor = '#c4622d';
+        consentRow.style.background = 'rgba(196,98,45,.08)';
+        try { consentRow.scrollIntoView({block:'center', behavior:'smooth'}); } catch(e) {}
+      }
+      if(consent && consent.focus) consent.focus();
+      setPublicStatus('error', 'Please check the private-response notice before payment.');
+      return;
+    }
     if(btn) { btn.disabled = true; btn.textContent = 'Opening payment...'; }
     setPublicStatus('info', 'Checking your request and opening secure payment...');
     ensureClientAuth().then(function(){

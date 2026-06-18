@@ -57805,8 +57805,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     setTimeout(function(){
       if(typeof window.openBookingOverlay === 'function') window.openBookingOverlay(channel);
       else if(typeof window.startLiveNow === 'function') window.startLiveNow(channel);
-      syncMarketplaceOverlayLabels(channel);
-      [120,420,900].forEach(function(ms){ setTimeout(function(){ syncMarketplaceOverlayLabels(channel); }, ms); });
+      scheduleMarketplaceOverlaySync(channel);
     }, 40);
   };
   window.obMarketplaceBookLater = function(id){
@@ -57821,8 +57820,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     var ch = miniEnabled(mini, 'chat_enabled') ? 'chat' : miniEnabled(mini, 'voice_enabled') ? 'voice' : 'video';
     setTimeout(function(){
       if(typeof window.openBookLaterModal === 'function') window.openBookLaterModal(ch);
-      syncMarketplaceOverlayLabels(ch);
-      [120,420,900].forEach(function(ms){ setTimeout(function(){ syncMarketplaceOverlayLabels(ch); }, ms); });
+      scheduleMarketplaceOverlaySync(ch);
     }, 40);
   };
   window.obMarketplaceWritten = function(id){
@@ -57837,8 +57835,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     setTimeout(function(){
       if(typeof window.obOdOpenPublic === 'function') window.obOdOpenPublic();
       else notify('Written requests are not available yet.', 'err');
-      syncMarketplaceOverlayLabels('chat');
-      [120,420,900].forEach(function(ms){ setTimeout(function(){ syncMarketplaceOverlayLabels('chat'); }, ms); });
+      scheduleMarketplaceOverlaySync('chat');
     }, 40);
   };
   function syncPublicNames(){
@@ -57860,6 +57857,28 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     if(channel === 'video') return 'Video';
     return 'Chat';
   }
+  function marketplaceChannelFree(mini, channel){
+    var policy = (marketplacePayload().settings || {}).free_minutes_policy || 'owner';
+    if(policy === 'none') return 0;
+    if(policy === 'mini') return Math.max(0, Number(mini && mini[channel + '_free_min'] || 0));
+    return Math.max(0, Number(channelFree(ownerBase(), mini, channel) || 0));
+  }
+  function syncMarketplaceSessionState(mini, channel, free, priceCopy){
+    try {
+      if(typeof freeMinutes === 'object') freeMinutes[channel] = free;
+      if(typeof window.freeMinutes === 'object') window.freeMinutes[channel] = free;
+    } catch(e) {}
+    window._obAvailableFreeMinutes = Object.assign({}, window._obAvailableFreeMinutes || {});
+    window._obAvailableFreeMinutes[channel] = free;
+    if(window.selectedChannel && window.selectedChannel.id === channel) {
+      window.selectedChannel.price = priceCopy;
+      window.selectedChannel.hasFree = free > 0;
+      window.selectedChannel.name = marketplaceChannelLabel(channel);
+    }
+    try {
+      if(typeof sessionStartMode === 'object' && sessionStartMode && free <= 0 && sessionStartMode[channel] === 'free') sessionStartMode[channel] = 'upfront';
+    } catch(e2) {}
+  }
   function syncMarketplaceOverlayLabels(channel){
     var mini = selectedMini();
     if(!mini) return;
@@ -57867,17 +57886,10 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     var title = miniTitle(mini);
     var ch = channel || window._obPendingChannel || window.currentBookChannel || (window.selectedChannel && window.selectedChannel.id) || 'chat';
     var label = marketplaceChannelLabel(ch);
-    var current = window._currentExpert || {};
-    var policy = (marketplacePayload().settings || {}).free_minutes_policy || 'owner';
-    var free = 0;
-    if(policy === 'mini') free = Number(mini && mini[ch + '_free_min'] || 0);
-    else if(policy !== 'none') {
-      var freeKey = ch + '_free_min';
-      var availableKey = freeKey + '_available';
-      if(current[availableKey] != null) free = Number(current[availableKey] || 0);
-      else if(current[freeKey] != null) free = Number(current[freeKey] || 0);
-    }
-    var detailCopy = channelPrice(mini, ch) + (free > 0 ? ' · first ' + (typeof obMinuteText === 'function' ? obMinuteText(free, 'free') : (free + ' min free')) : '');
+    var priceCopy = channelPrice(mini, ch);
+    var free = marketplaceChannelFree(mini, ch);
+    syncMarketplaceSessionState(mini, ch, free, priceCopy);
+    var detailCopy = priceCopy + (free > 0 ? ' · first ' + (typeof obMinuteText === 'function' ? obMinuteText(free, 'free') : (free + ' min free')) : '');
     var bovName = document.getElementById('bov-channel-name');
     if(bovName) bovName.textContent = label + ' with ' + name;
     var detail = document.getElementById('bov-channel-detail');
@@ -57901,6 +57913,11 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     if(presessTitle) presessTitle.textContent = title;
     var presessHead = document.getElementById('presess-title');
     if(presessHead) presessHead.textContent = label + ' with ' + name;
+  }
+  function scheduleMarketplaceOverlaySync(channel){
+    [0,40,120,260,520,900,1400,2200,3200].forEach(function(ms){
+      setTimeout(function(){ syncMarketplaceOverlayLabels(channel); }, ms);
+    });
   }
   function setChannelCard(ch, mini){
     var cards = Array.prototype.slice.call(document.querySelectorAll('#stype-grid .stype-btn[data-mode="permin"]'));

@@ -47789,9 +47789,34 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       wrap.innerHTML = homeSections.map(sectionHtml).join('');
       home.appendChild(wrap);
     }
-    var pages = (Array.isArray(wc.ai_pages) ? wc.ai_pages : []).filter(function(page){
-      return page && page.published !== false && page.published !== 0 && page.published !== '0';
-    });
+	    function aiPageText(page){
+	      page = page || {};
+	      var chunks = [page.slug, page.title, page.nav_label, page.summary, page.cta_label];
+	      (Array.isArray(page.sections) ? page.sections : []).forEach(function(section){
+	        chunks.push(section && section.title, section && section.body);
+	        (Array.isArray(section && section.items) ? section.items : []).forEach(function(item){ chunks.push(item); });
+	      });
+	      return chunks.map(clean).filter(Boolean).join(' ');
+	    }
+	    function isSafePublicAiPage(page){
+	      var slug = safeSlug(page && page.slug);
+	      if(!slug) return false;
+	      var text = aiPageText(page);
+	      if(/\b(fuck|shit|bitch|cunt|dick|pussy|ass|asshole)\b/i.test(text)) return false;
+	      var normalized = text.toLowerCase()
+	        .replace(/\bnew page\b/g,'')
+	        .replace(/\bpage\b/g,'')
+	        .replace(/\bcopy\b/g,'')
+	        .replace(/\ba short subtitle for this page\b/g,'')
+	        .replace(/\s+/g,' ')
+	        .trim();
+	      if(/^new-page(?:-\d+)?(?:-copy)*$/i.test(slug) && normalized.length < 36) return false;
+	      return true;
+	    }
+	    var rawPages = (Array.isArray(wc.ai_pages) ? wc.ai_pages : []).filter(function(page){
+	      return page && page.published !== false && page.published !== 0 && page.published !== '0';
+	    });
+	    var pages = rawPages.filter(isSafePublicAiPage);
     var parent = document.getElementById('view-4') || document.body;
     var before = document.getElementById('ep-book');
     var pendingSlug = String(window._pendingExpertPage || '').replace(/^ai-/, '');
@@ -47830,11 +47855,20 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
         else links.appendChild(li);
       }
     });
-    if(hasRequestedPage) {
-      window._pendingExpertPage = 'ai-' + requestedSlug;
-      showExpertPage('ai-' + requestedSlug);
-    }
-  }
+	    if(hasRequestedPage) {
+	      window._pendingExpertPage = 'ai-' + requestedSlug;
+	      showExpertPage('ai-' + requestedSlug);
+	    } else if(requestedSlug) {
+	      window._pendingExpertPage = 'home';
+	      if(typeof window.showExpertPage === 'function') window.showExpertPage('home');
+	      try {
+	        var parts = String(location.pathname || '').replace(/^\/+|\/+$/g,'').split('/').filter(Boolean);
+	        var platformHost = String(location.hostname || '').toLowerCase().indexOf('vercel.app') >= 0 || ['ownlybiz.com','www.ownlybiz.com','localhost','127.0.0.1'].indexOf(String(location.hostname || '').toLowerCase()) >= 0;
+	        if(platformHost && parts.length > 1 && safeSlug(parts[1]) === requestedSlug) history.replaceState({obRoute:true}, '', '/' + safeSlug(parts[0]));
+	        else if(!platformHost && parts[0] && safeSlug(parts[0]) === requestedSlug) history.replaceState({obRoute:true}, '', '/');
+	      } catch(e) {}
+	    }
+	  }
 
   function wireAdmin(){
     ensureAdminAiPanel();
@@ -57457,9 +57491,22 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     st.id = 'ob-marketplace-style';
     st.textContent = [
       '#view-4 #ep-book.ob-mp-grid-open .book-inner>h1,#view-4 #ep-book.ob-mp-grid-open .book-inner-sub,#view-4 #ep-book.ob-mp-grid-open #ob-book-profile-card,#view-4 #ep-book.ob-mp-grid-open #booking-main-layout,#view-4 #ep-book.ob-mp-grid-open #booking-confirmed-screen,#view-4 #ep-book.ob-mp-grid-open #client-login-gate,#view-4 #ep-book.ob-mp-grid-open #booking-payment-panel{display:none!important}',
-      '#view-4 #ep-book.ob-mp-profile-open .book-inner>h1,#view-4 #ep-book.ob-mp-profile-open .book-inner-sub,#view-4 #ep-book.ob-mp-profile-open #ob-book-profile-card,#view-4 #ep-book.ob-mp-profile-open #booking-main-layout,#view-4 #ep-book.ob-mp-profile-open #booking-confirmed-screen,#view-4 #ep-book.ob-mp-profile-open #client-login-gate,#view-4 #ep-book.ob-mp-profile-open #booking-payment-panel{display:none!important}',
-      '#view-4 #ep-book.ob-mp-grid-open .book-inner{max-width:min(1360px,calc(100vw - 64px))!important}',
-      '.ob-mp-picker{margin:0;padding:0;color:var(--ob-book-text,var(--brown,#241813))}',
+	      '#view-4 #ep-book.ob-mp-profile-open .book-inner>h1,#view-4 #ep-book.ob-mp-profile-open .book-inner-sub,#view-4 #ep-book.ob-mp-profile-open #ob-book-profile-card,#view-4 #ep-book.ob-mp-profile-open #booking-main-layout,#view-4 #ep-book.ob-mp-profile-open #booking-confirmed-screen,#view-4 #ep-book.ob-mp-profile-open #client-login-gate,#view-4 #ep-book.ob-mp-profile-open #booking-payment-panel{display:none!important}',
+	      '#view-4 #ep-book.ob-mp-grid-open .book-inner{max-width:min(1360px,calc(100vw - 64px))!important}',
+	      '#view-4.ob-mp-site-mode #ep-home>:not(#ob-marketplace-home){display:none!important}',
+	      '#ob-marketplace-home{min-height:calc(100vh - 80px);padding:56px 24px 72px;background:linear-gradient(180deg,#fbf6ed 0%,#fffaf4 46%,#fff 100%);color:#241813}',
+	      '.ob-mp-home-inner{max-width:1360px;margin:0 auto;display:grid;gap:22px}',
+	      '.ob-mp-home-hero{display:grid;grid-template-columns:minmax(0,.82fr) minmax(360px,1.18fr);gap:28px;align-items:end}',
+	      '.ob-mp-home-copy{display:grid;gap:14px;align-content:end;padding:8px 0 10px}',
+	      '.ob-mp-home-kicker{font-size:12px;text-transform:uppercase;letter-spacing:.12em;font-weight:950;color:#c4622d}',
+	      '.ob-mp-home-title{font-size:clamp(42px,6vw,78px);line-height:.95;font-weight:950;color:#241813;letter-spacing:0;margin:0;max-width:720px}',
+	      '.ob-mp-home-sub{font-size:17px;line-height:1.5;color:rgba(36,24,19,.68);max-width:680px}',
+	      '.ob-mp-home-stats{display:flex;flex-wrap:wrap;gap:9px}',
+	      '.ob-mp-home-stat{border:1px solid rgba(36,24,19,.1);background:rgba(255,255,255,.76);border-radius:999px;padding:8px 12px;font-size:12px;font-weight:950;color:rgba(36,24,19,.72)}',
+	      '.ob-mp-home-gridwrap{display:grid;gap:16px}',
+	      '#ob-marketplace-home .ob-mp-market-head{margin:0}',
+	      '#ob-marketplace-home .ob-mp-grid{grid-template-columns:repeat(auto-fit,minmax(230px,1fr))}',
+	      '.ob-mp-picker{margin:0;padding:0;color:var(--ob-book-text,var(--brown,#241813))}',
       '.ob-mp-market-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin:0 0 16px}',
       '.ob-mp-market-title{font-size:clamp(30px,5vw,46px);line-height:1.02;font-weight:950;letter-spacing:0;color:var(--ob-book-text,var(--brown,#241813))}',
       '.ob-mp-market-sub{font-size:15px;color:var(--ob-book-muted,var(--gray-500,#6b5a50));line-height:1.5;margin-top:7px;max-width:680px}',
@@ -57565,7 +57612,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
       '.ob-mp-mini{border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.035);border-radius:8px;padding:14px;display:grid;gap:10px}',
       '.ob-admin-mp-card{border-color:rgba(200,255,61,.18)!important}',
       '@media(max-width:1020px){.ob-mp-profile-layout{grid-template-columns:1fr}.ob-mp-profile-side{position:static}.ob-mp-services-grid{grid-template-columns:repeat(auto-fit,minmax(160px,1fr))}}',
-      '@media(max-width:900px){.ob-mp-profile-hero{grid-template-columns:1fr}.ob-mp-profile-photo{height:280px}.ob-mp-market-head{display:block}}',
+	      '@media(max-width:900px){.ob-mp-profile-hero{grid-template-columns:1fr}.ob-mp-profile-photo{height:280px}.ob-mp-market-head{display:block}.ob-mp-home-hero{grid-template-columns:1fr}.ob-mp-home-title{font-size:46px}#ob-marketplace-home{padding:34px 16px 58px}}',
       '@media(max-width:760px){.ob-mp-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.ob-mp-card{min-height:360px}.ob-mp-card-media{height:170px}.ob-mp-card-body{padding:25px 12px 12px}.ob-mp-name{font-size:22px}.ob-mp-title{font-size:13px}.ob-mp-reading{font-size:14px}.ob-mp-bio{font-size:14px;min-height:60px}.ob-mp-card-foot{display:grid;gap:9px}.ob-mp-from strong{font-size:16px}.ob-mp-search-row{grid-template-columns:minmax(0,1fr) 48px;gap:8px}.ob-mp-search,.ob-mp-filter{min-height:50px}.ob-mp-profile{gap:12px}.ob-mp-profile-copy{padding:17px;gap:10px}.ob-mp-profile h2{font-size:32px}.ob-mp-profile-title{font-size:15px}.ob-mp-profile-bio{font-size:14px;line-height:1.42}.ob-mp-profile-photo{height:220px}.ob-mp-stat{font-size:11px;padding:7px 8px}.ob-mp-chip{font-size:10px;padding:6px 8px}.ob-mp-section{padding:14px}.ob-mp-section-title{font-size:20px}.ob-mp-services-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.ob-mp-action{min-height:82px;padding:11px}.ob-mp-action-title{font-size:15px}.ob-mp-action-price{font-size:11px}.ob-mp-action-note{display:none}.ob-mp-actions-grid{grid-template-columns:1fr}.ob-mp-dash-title{font-size:28px}}',
       '@media(max-width:420px){.ob-mp-grid{grid-template-columns:1fr}.ob-mp-card-media{height:220px}.ob-mp-card{min-height:410px}}'
     ].join('');
@@ -57636,35 +57683,79 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
   function channelPrice(mini, ch){
     return money(channelRate(ownerBase(), mini, ch)) + '/min';
   }
-  function setMarketplaceBookState(){
-    var root = document.querySelector('#view-4 #ep-book');
-    var mp = marketplacePayload();
-    if(!root) return;
-    var enabled = !!(mp.enabled && Array.isArray(mp.experts) && mp.experts.length);
+	  function setMarketplaceBookState(){
+	    var root = document.querySelector('#view-4 #ep-book');
+	    var mp = marketplacePayload();
+	    if(!root) return;
+	    var enabled = !!(mp.enabled && Array.isArray(mp.experts) && mp.experts.length);
     root.classList.toggle('ob-mp-grid-open', enabled && state.publicView !== 'profile');
     root.classList.toggle('ob-mp-profile-open', enabled && state.publicView === 'profile');
     if(!enabled) {
       root.classList.remove('ob-mp-grid-open');
-      root.classList.remove('ob-mp-profile-open');
-    }
-  }
-  function marketplacePayload(){
-    var e = window._currentExpert || {};
-    var mp = e.marketplace_public || e.marketplace || (e.expert && e.expert.marketplace_public) || null;
-    if(mp && Array.isArray(mp.experts)) {
-      state.publicMarketplace = mp;
+	      root.classList.remove('ob-mp-profile-open');
+	    }
+	  }
+	  function marketplaceSiteEnabled(){
+	    var mp = marketplacePayload();
+	    return !!(mp.enabled && activeMiniExperts().length > 1);
+	  }
+	  window.obMarketplaceSiteEnabled = marketplaceSiteEnabled;
+	  function marketplacePayload(){
+	    var e = window._currentExpert || {};
+	    var mp = e.marketplace_public || e.marketplace || (e.expert && e.expert.marketplace_public) || null;
+	    if(mp && Array.isArray(mp.experts)) {
+	      state.publicMarketplace = mp;
       return mp;
     }
     return state.publicMarketplace || {enabled:false, experts:[]};
   }
-  function ownerBase(){
-    if(!state.ownerBase && window._currentExpert) state.ownerBase = Object.assign({}, window._currentExpert);
-    return state.ownerBase || window._currentExpert || {};
-  }
-  function miniById(id){
-    var mp = marketplacePayload();
-    return (mp.experts || []).filter(function(x){ return String(x.id) === String(id); })[0] || null;
-  }
+	  function ownerBase(){
+	    if(!state.ownerBase && window._currentExpert) state.ownerBase = Object.assign({}, window._currentExpert);
+	    return state.ownerBase || window._currentExpert || {};
+	  }
+	  function ownerWebsiteContent(owner){
+	    owner = owner || ownerBase();
+	    try { return typeof owner.website_content === 'string' ? JSON.parse(owner.website_content || '{}') : (owner.website_content || {}); }
+	    catch(e) { return {}; }
+	  }
+	  function ownerBrandName(){
+	    var owner = ownerBase();
+	    var wc = ownerWebsiteContent(owner);
+	    return clean(wc.logo_text || owner.footer_text || owner.business_name || owner.display_name || owner.name) || 'Experts';
+	  }
+	  function syncOwnerSiteIdentity(){
+	    if(!marketplaceSiteEnabled()) return;
+	    var owner = ownerBase();
+	    var wc = ownerWebsiteContent(owner);
+	    var logoText = document.getElementById('nav-logo-text');
+	    if(logoText) {
+	      logoText.style.display = '';
+	      logoText.textContent = ownerBrandName();
+	    }
+	    var logoWrap = document.getElementById('nav-logo-img');
+	    var logoImg = document.getElementById('nav-logo-img-el');
+	    if(logoImg && wc.logo_image) {
+	      logoImg.src = wc.logo_image;
+	      if(logoWrap) logoWrap.style.display = '';
+	    }
+	    var view = document.getElementById('view-4');
+	    if(view) view.classList.toggle('ob-mp-site-mode', true);
+	  }
+	  function restoreOwnerForSite(){
+	    if(!marketplaceSiteEnabled()) return;
+	    var owner = ownerBase();
+	    if(!owner || !(owner.name || owner.slug)) return;
+	    if(window._currentExpert && window._currentExpert.selected_marketplace_expert_id) {
+	      window._currentExpert = Object.assign({}, owner);
+	      window._currentExpertId = owner.user_id || owner.id || window._currentExpertId;
+	      window._currentExpertSlug = owner.slug || window._currentExpertSlug;
+	    }
+	    syncOwnerSiteIdentity();
+	  }
+	  function miniById(id){
+	    var mp = marketplacePayload();
+	    return (mp.experts || []).filter(function(x){ return String(x.id) === String(id); })[0] || null;
+	  }
   function defaultMini(){
     var list = (marketplacePayload().experts || []).filter(function(x){ return String(x.status || 'active') === 'active'; });
     return list.filter(function(x){ return x.is_online; })[0] || list[0] || null;
@@ -57747,11 +57838,12 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     next.free_minutes = next.chat_free_min || 0;
     next.free_minutes_available = next.chat_free_min_available || 0;
     window._currentExpert = next;
-    window._currentExpertId = owner.user_id || owner.id || window._currentExpertId;
-    if(typeof window.setExpertOnlineStatus === 'function') window.setExpertOnlineStatus(!!mini.is_online);
-    syncPublicChannelCards();
-    syncPublicNames();
-  }
+	    window._currentExpertId = owner.user_id || owner.id || window._currentExpertId;
+	    if(typeof window.setExpertOnlineStatus === 'function') window.setExpertOnlineStatus(!!mini.is_online);
+	    syncPublicChannelCards();
+	    syncPublicNames();
+	    syncOwnerSiteIdentity();
+	  }
   function focusMarketplaceTop(){
     var root = document.getElementById('ob-marketplace-picker');
     if(root && root.scrollIntoView) root.scrollIntoView({behavior:'smooth', block:'start'});
@@ -57759,24 +57851,41 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
   window.obSelectMarketplaceExpert = function(id){
     window.obOpenMarketplaceProfile(id);
   };
-  window.obOpenMarketplaceProfile = function(id){
-    state.publicView = 'profile';
-    applySelectedMini(id);
-    renderPublicPicker();
-    schedulePublicSync();
-    focusMarketplaceTop();
-  };
-  window.obMarketplaceBackToGrid = function(){
-    state.publicView = 'grid';
-    renderPublicPicker();
-    schedulePublicSync();
-    focusMarketplaceTop();
-  };
-  window.obMarketplaceFilter = function(value){
-    state.publicQuery = value || '';
-    state.publicView = 'grid';
-    renderPublicPicker();
-  };
+	  window.obOpenMarketplaceProfile = function(id){
+	    state.publicView = 'profile';
+	    applySelectedMini(id);
+	    renderPublicPicker();
+	    schedulePublicSync();
+	    focusMarketplaceTop();
+	  };
+	  window.obMarketplaceOpenProfilePage = function(id){
+	    state.publicView = 'profile';
+	    applySelectedMini(id);
+	    renderPublicPicker();
+	    renderMarketplaceHome();
+	    schedulePublicSync();
+	    window.__obMarketplaceOpeningProfile = true;
+	    try {
+	      if(typeof window.showExpertPage === 'function') window.showExpertPage('book');
+	    } finally {
+	      setTimeout(function(){ window.__obMarketplaceOpeningProfile = false; }, 60);
+	    }
+	    focusMarketplaceTop();
+	  };
+	  window.obMarketplaceBackToGrid = function(){
+	    state.publicView = 'grid';
+	    restoreOwnerForSite();
+	    renderPublicPicker();
+	    renderMarketplaceHome();
+	    schedulePublicSync();
+	    focusMarketplaceTop();
+	  };
+	  window.obMarketplaceFilter = function(value){
+	    state.publicQuery = value || '';
+	    state.publicView = 'grid';
+	    renderPublicPicker();
+	    renderMarketplaceHome();
+	  };
   function selectCoreChannel(channel){
     var cards = Array.prototype.slice.call(document.querySelectorAll('#stype-grid .stype-btn[data-mode="permin"]'));
     var idx = {chat:0, voice:1, video:2}[channel] || 0;
@@ -57947,21 +58056,23 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
   function schedulePublicSync(){
     [0,80,240,700,1400,2600].forEach(function(ms){
       setTimeout(function(){
-        syncPublicChannelCards();
-        syncPublicNames();
-      }, ms);
-    });
-    observePublicGrid();
-  }
+	        syncPublicChannelCards();
+	        syncPublicNames();
+	        syncOwnerSiteIdentity();
+	      }, ms);
+	    });
+	    observePublicGrid();
+	  }
   function queuePublicSync(){
     if(state.publicSyncQueued) return;
     state.publicSyncQueued = true;
     setTimeout(function(){
-      state.publicSyncQueued = false;
-      syncPublicChannelCards();
-      syncPublicNames();
-    }, 80);
-  }
+	      state.publicSyncQueued = false;
+	      syncPublicChannelCards();
+	      syncPublicNames();
+	      syncOwnerSiteIdentity();
+	    }, 80);
+	  }
   function observePublicGrid(){
     var grid = document.getElementById('stype-grid');
     if(!grid || state.gridObserver || typeof MutationObserver === 'undefined') return;
@@ -58016,8 +58127,8 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     var src = miniPhoto(mini);
     var status = miniStatus(mini);
     var rate = fromRate(mini);
-    return '<article class="ob-mp-card">' +
-      '<button type="button" class="ob-mp-card-tap" onclick="obOpenMarketplaceProfile(&quot;' + attr(mini.id) + '&quot;)" aria-label="Open ' + attr(name) + '">Open ' + esc(name) + '</button>' +
+	    return '<article class="ob-mp-card">' +
+	      '<button type="button" class="ob-mp-card-tap" onclick="obMarketplaceOpenProfilePage(&quot;' + attr(mini.id) + '&quot;)" aria-label="Open ' + attr(name) + '">Open ' + esc(name) + '</button>' +
       '<span class="ob-mp-card-media">' +
         (src ? '<img src="' + attr(src) + '" alt="">' : '<span class="ob-mp-avatar-fallback">' + esc(initials(name)) + '</span>') +
         '<span class="ob-mp-score"><span class="ob-mp-star">★</span>' + esc(ratingCopy(mini)) + '</span><span class="ob-mp-play"></span>' +
@@ -58140,10 +58251,10 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
       '<span class="ob-mp-action-note">' + esc(notes[channel] || '') + '</span>' +
     '</button>';
   }
-  function profileHtml(mini){
-    var status = miniStatus(mini);
-    var name = miniName(mini);
-    var title = miniTitle(mini);
+	  function profileHtml(mini){
+	    var status = miniStatus(mini);
+	    var name = miniName(mini);
+	    var title = miniTitle(mini);
     var rate = fromRate(mini);
     var timezone = clean(mini && mini.timezone) || clean(ownerBase().timezone) || 'local time';
     var actions = [
@@ -58177,21 +58288,71 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
           '<section class="ob-mp-section"><div class="ob-mp-section-kicker">Availability</div><h3 class="ob-mp-section-title">Open times</h3><p class="ob-mp-section-copy">Timezone: ' + esc(timezone) + '</p>' + availabilityHtml(mini) + '</section>' +
           '<section class="ob-mp-section"><div class="ob-mp-section-kicker">Confidence</div><h3 class="ob-mp-section-title">Profile signals</h3>' + confidenceHtml(mini) + '</section>' +
         '</aside>' +
-      '</div>' +
-    '</div>';
-  }
-  function renderPublicPicker(){
-    addStyle();
-    var mp = marketplacePayload();
-    var existing = document.getElementById('ob-marketplace-picker');
-    refreshPublicMarketplace();
+	      '</div>' +
+	    '</div>';
+	  }
+	  function marketplaceHomeHtml(){
+	    var mp = marketplacePayload();
+	    var settings = mp.settings || {};
+	    var list = filteredMiniExperts();
+	    var total = activeMiniExperts().length;
+	    var online = activeMiniExperts().filter(function(mini){ return miniStatus(mini).cls !== 'offline'; }).length;
+	    var title = settings.public_label || 'Choose your expert';
+	    var sub = settings.intro_text || 'Pick the person or service that fits this session.';
+	    return '<section id="ob-marketplace-home">' +
+	      '<div class="ob-mp-home-inner">' +
+	        '<div class="ob-mp-home-hero">' +
+	          '<div class="ob-mp-home-copy">' +
+	            '<div class="ob-mp-home-kicker">' + esc(ownerBrandName()) + '</div>' +
+	            '<h1 class="ob-mp-home-title">' + esc(title) + '</h1>' +
+	            '<div class="ob-mp-home-sub">' + esc(sub) + '</div>' +
+	            '<div class="ob-mp-home-stats">' +
+	              '<span class="ob-mp-home-stat">' + esc(total) + ' experts</span>' +
+	              '<span class="ob-mp-home-stat">' + esc(online) + ' online now</span>' +
+	              '<span class="ob-mp-home-stat">Chat, audio, video, and bookings</span>' +
+	            '</div>' +
+	          '</div>' +
+	          '<div class="ob-mp-home-gridwrap">' +
+	            '<div class="ob-mp-search-row"><div class="ob-mp-search-wrap"><span class="ob-mp-search-icon"></span><input class="ob-mp-search" value="' + attr(state.publicQuery) + '" oninput="obMarketplaceFilter(this.value)" placeholder="Find expert by name, topic, or question"></div><button type="button" class="ob-mp-filter" aria-label="Filter">≡</button></div>' +
+	            (list.length ? '<div class="ob-mp-grid">' + list.map(miniCard).join('') + '</div>' : '<div class="ob-mp-empty">No matching experts.</div>') +
+	          '</div>' +
+	        '</div>' +
+	      '</div>' +
+	    '</section>';
+	  }
+	  function renderMarketplaceHome(){
+	    addStyle();
+	    var home = document.getElementById('ep-home');
+	    var view = document.getElementById('view-4');
+	    if(!home || !view) return;
+	    var existing = document.getElementById('ob-marketplace-home');
+	    var enabled = marketplaceSiteEnabled();
+	    view.classList.toggle('ob-mp-site-mode', enabled);
+	    if(!enabled) {
+	      if(existing) existing.remove();
+	      return;
+	    }
+	    syncOwnerSiteIdentity();
+	    if(!existing) {
+	      existing = document.createElement('div');
+	      existing.id = 'ob-marketplace-home';
+	      home.insertBefore(existing, home.firstChild);
+	    }
+	    existing.outerHTML = marketplaceHomeHtml();
+	  }
+	  function renderPublicPicker(){
+	    addStyle();
+	    var mp = marketplacePayload();
+	    var existing = document.getElementById('ob-marketplace-picker');
+	    refreshPublicMarketplace();
     if(!mp.enabled || !Array.isArray(mp.experts) || !mp.experts.length){
-      if(existing) existing.remove();
-      setMarketplaceBookState();
-      return;
-    }
-    var host = document.querySelector('#ep-book .book-inner');
-    if(!host) return;
+	      if(existing) existing.remove();
+	      setMarketplaceBookState();
+	      renderMarketplaceHome();
+	      return;
+	    }
+	    var host = document.querySelector('#ep-book .book-inner');
+	    if(!host) return;
     if(state.publicView === 'profile') applySelectedMini(window._selectedMarketplaceExpertId || (defaultMini() || {}).id);
     var picker = existing || document.createElement('section');
     picker.id = 'ob-marketplace-picker';
@@ -58211,11 +58372,13 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     }
     var anchor = document.getElementById('booking-confirmed-screen') || document.getElementById('booking-main-layout');
     if(!existing) host.insertBefore(picker, anchor || host.firstChild);
-    setMarketplaceBookState();
-    syncPublicChannelCards();
-    syncPublicNames();
-    schedulePublicSync();
-  }
+	    setMarketplaceBookState();
+	    renderMarketplaceHome();
+	    syncPublicChannelCards();
+	    syncPublicNames();
+	    syncOwnerSiteIdentity();
+	    schedulePublicSync();
+	  }
 
   var nativeFetch = window.fetch && window.fetch.bind(window);
   if(nativeFetch){
@@ -58514,36 +58677,52 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     window.loadExpertDashboard = wrapped;
     if(window.OwnlyAPI) window.OwnlyAPI.loadExpertDashboard = wrapped;
   }
-  function boot(){
-    addStyle();
-    renderPublicPicker();
-    ensureOwnerPanel();
-    loadOwnerMarketplace(false);
-    wrapAdminOpen();
-    wrapDashboardLoad();
-  }
+	  function boot(){
+	    addStyle();
+	    renderPublicPicker();
+	    renderMarketplaceHome();
+	    ensureOwnerPanel();
+	    loadOwnerMarketplace(false);
+	    wrapAdminOpen();
+	    wrapDashboardLoad();
+	  }
   if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
   else boot();
   [250,900,1800,3600,6500].forEach(function(ms){ setTimeout(boot, ms); });
   if(typeof window.loadExpertWebsite === 'function' && !window.loadExpertWebsite.__obMarketplaceWrapped){
     var oldLoad = window.loadExpertWebsite;
-    window.loadExpertWebsite = function(){
-      var ret = oldLoad.apply(this, arguments);
-      state.ownerBase = null;
-      [120,500,1200].forEach(function(ms){ setTimeout(function(){ renderPublicPicker(); schedulePublicSync(); }, ms); });
-      return ret;
-    };
-    window.loadExpertWebsite.__obMarketplaceWrapped = true;
-  }
-  if(typeof window.showExpertPage === 'function' && !window.showExpertPage.__obMarketplaceWrapped){
-    var oldShow = window.showExpertPage;
-    window.showExpertPage = function(page){
-      var ret = oldShow.apply(this, arguments);
-      if(page === 'book') setTimeout(function(){ renderPublicPicker(); schedulePublicSync(); }, 80);
-      return ret;
-    };
-    window.showExpertPage.__obMarketplaceWrapped = true;
-  }
+	    window.loadExpertWebsite = function(){
+	      var ret = oldLoad.apply(this, arguments);
+	      state.ownerBase = null;
+	      [120,500,1200].forEach(function(ms){ setTimeout(function(){ renderPublicPicker(); renderMarketplaceHome(); schedulePublicSync(); }, ms); });
+	      return ret;
+	    };
+	    window.loadExpertWebsite.__obMarketplaceWrapped = true;
+	  }
+	  if(typeof window.showExpertPage === 'function' && !window.showExpertPage.__obMarketplaceWrapped){
+	    var oldShow = window.showExpertPage;
+	    window.showExpertPage = function(page){
+	      page = String(page || 'home');
+	      if(page.indexOf('ai-') === 0 && !document.getElementById('ep-' + page) && marketplaceSiteEnabled()) {
+	        page = 'home';
+	        try { window._pendingExpertPage = 'home'; } catch(e) {}
+	      }
+	      if(!document.getElementById('ep-' + page)) page = 'home';
+	      if(marketplaceSiteEnabled() && page !== 'book') {
+	        state.publicView = 'grid';
+	        restoreOwnerForSite();
+	      } else if(marketplaceSiteEnabled() && page === 'book' && !window.__obMarketplaceOpeningProfile) {
+	        state.publicView = 'grid';
+	        restoreOwnerForSite();
+	      }
+	      var ret = oldShow.call(this, page);
+	      if(page === 'book') setTimeout(function(){ renderPublicPicker(); schedulePublicSync(); }, 80);
+	      else setTimeout(function(){ renderMarketplaceHome(); schedulePublicSync(); }, 80);
+	      syncOwnerSiteIdentity();
+	      return ret;
+	    };
+	    window.showExpertPage.__obMarketplaceWrapped = true;
+	  }
 })();
 </script>
 	</html>

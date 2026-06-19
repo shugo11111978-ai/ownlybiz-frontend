@@ -3554,14 +3554,15 @@ input[type=range]{width:100%;accent-color:var(--terra);}
      ══════════════════════════════════════ */
 
   /* Nav */
-  .expert-site-nav{padding:0 16px;height:60px;top:0;position:sticky;}
+  .expert-site-nav{padding:0 16px;height:60px;top:0;position:sticky;z-index:100010;}
   .expert-site-logo{max-width:130px!important;font-size:14px!important;}
   #nav-logo-text{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:130px;display:block;}
   .expert-site-links{
-    display:none;position:absolute;top:60px;left:0;right:0;
+    display:none;position:fixed;top:60px;left:0;right:0;
     background:var(--white);flex-direction:column;gap:0;
     padding:8px 0 14px;border-bottom:1px solid var(--gray-200);
-    box-shadow:0 12px 40px rgba(37,24,16,.14);z-index:1000;
+    box-shadow:0 12px 40px rgba(37,24,16,.14);z-index:100011;
+    max-height:calc(100dvh - 60px);overflow-y:auto;-webkit-overflow-scrolling:touch;
   }
   .expert-site-links.mobile-open{display:flex;}
   .expert-site-links li a{display:block;padding:14px 20px;font-size:15px;font-weight:500;color:var(--brown);}
@@ -12356,6 +12357,12 @@ function closeDbSidebar() {
 function toggleExpertMenu() {
   var links = document.getElementById('expert-site-links');
   var burger = document.getElementById('expert-hamburger');
+  var expertView = document.getElementById('view-4');
+  if(expertView && expertView.classList.contains('active') && !document.body.classList.contains('ownly-ready')) {
+    if(links) links.classList.remove('mobile-open');
+    if(burger) burger.classList.remove('open');
+    return;
+  }
   var open = links && links.classList.toggle('mobile-open');
   if(burger) burger.classList.toggle('open', open);
 }
@@ -19961,15 +19968,23 @@ window._applyExpertWebsite = function _applyExpertWebsite(data) {
   // ═══ Nav labels ═══
   var nav = wc.nav_labels || {};
   var navMap = {home:'Home',about:'About',services:'Services',reviews:'Reviews',book:'Book a Session',contact:'Contact'};
-  Object.keys(navMap).forEach(function(key){
-    var label = nav[key] || navMap[key];
-    document.querySelectorAll('#expert-site-links a, .expert-site-links a').forEach(function(a){
-      if(a.textContent.trim()===navMap[key] || a.getAttribute('data-nav-key')===key){
-        a.textContent = label;
-        a.setAttribute('data-nav-key', key);
-      }
+  var marketplaceNavMode = false;
+  try {
+    var navMp = data.marketplace_public || data.marketplace || null;
+    if(typeof navMp === 'string') navMp = JSON.parse(navMp || '{}');
+    marketplaceNavMode = !!(navMp && navMp.enabled !== false && navMp.enabled !== 0 && navMp.enabled !== '0' && Array.isArray(navMp.experts) && navMp.experts.filter(function(expert){ return String(expert && expert.status || 'active') === 'active'; }).length > 1);
+  } catch(e) {}
+  if(!marketplaceNavMode) {
+    Object.keys(navMap).forEach(function(key){
+      var label = nav[key] || navMap[key];
+      document.querySelectorAll('#expert-site-links a, .expert-site-links a').forEach(function(a){
+        if(a.textContent.trim()===navMap[key] || a.getAttribute('data-nav-key')===key){
+          a.textContent = label;
+          a.setAttribute('data-nav-key', key);
+        }
+      });
     });
-  });
+  }
 
   // ═══ About page title ═══
   if(wc.about_title){
@@ -47784,6 +47799,22 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     try { return typeof data.website_content === 'string' ? JSON.parse(data.website_content || '{}') : (data.website_content || {}); }
     catch(e){ return {}; }
   }
+  function parsedObject(value){
+    if(!value) return null;
+    if(typeof value === 'string') {
+      try { return JSON.parse(value || '{}'); } catch(e) { return null; }
+    }
+    return typeof value === 'object' ? value : null;
+  }
+  function publicMarketplaceEnabled(data){
+    var mp = parsedObject(data && (data.marketplace_public || data.marketplace));
+    if(!mp) return false;
+    var settings = mp.settings || mp;
+    var experts = Array.isArray(mp.experts) ? mp.experts : [];
+    if(mp.enabled === false || mp.enabled === 0 || mp.enabled === '0') return false;
+    if(settings && (settings.enabled === false || settings.enabled === 0 || settings.enabled === '0')) return false;
+    return experts.filter(function(expert){ return String(expert && expert.status || 'active') === 'active'; }).length > 1;
+  }
   function sectionHtml(section){
     section = section || {};
     var img = safeImage(section.image_url);
@@ -47799,6 +47830,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   function renderAiPublicExtras(data){
     data = data || window._currentExpert || {};
     var wc = parseWebsiteContent(data);
+    var suppressNavLinks = publicMarketplaceEnabled(data);
     document.querySelectorAll('[data-ob-ai-public-extra]').forEach(function(el){ if(el.parentNode) el.parentNode.removeChild(el); });
     document.querySelectorAll('[data-ai-page-link]').forEach(function(el){ var li = el.closest('li'); if(li && li.parentNode) li.parentNode.removeChild(li); });
     var home = document.getElementById('ep-home');
@@ -47870,7 +47902,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
         pageEl.dataset.metaDescription = page.meta_description || page.summary || '';
       }
       var links = document.getElementById('expert-site-links');
-      if(links && page.show_in_nav !== false && page.show_in_nav !== 0 && page.show_in_nav !== '0'){
+      if(links && !suppressNavLinks && page.show_in_nav !== false && page.show_in_nav !== 0 && page.show_in_nav !== '0'){
         var li = document.createElement('li');
         li.innerHTML = '<a href="'+esc(aiPageHref(slug))+'" data-ai-page-link="'+esc(slug)+'" onclick="event.preventDefault();showExpertPage(\'ai-'+esc(slug)+'\')">'+esc(page.nav_label || page.title || slug)+'</a>';
         var bookLink = Array.prototype.slice.call(links.querySelectorAll('li')).find(function(item){ return String(item.innerHTML || '').indexOf("'book'") >= 0; });
@@ -57639,6 +57671,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
       '.ob-mp-mini{border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.035);border-radius:8px;padding:14px;display:grid;gap:10px}',
       '.ob-admin-mp-card{border-color:rgba(200,255,61,.18)!important}',
       '@media(max-width:1020px){.ob-mp-profile-layout{grid-template-columns:1fr}.ob-mp-profile-side{position:static}.ob-mp-services-grid{grid-template-columns:repeat(auto-fit,minmax(160px,1fr))}}',
+	      '@media(max-width:760px){#view-4.ob-mp-site-mode #ep-services .services-full{padding:34px 20px 54px!important}#view-4.ob-mp-site-mode #ep-services .services-full h1{font-size:36px!important;line-height:1.02!important}#view-4.ob-mp-site-mode #ep-services .services-full-sub{font-size:15px!important;line-height:1.45!important;margin-bottom:22px!important}#view-4.ob-mp-site-mode #ep-services .service-cards-col{gap:14px!important}#view-4.ob-mp-site-mode #ep-services .service-big-card{display:grid!important;grid-template-columns:48px minmax(0,1fr)!important;gap:12px 14px!important;align-items:start!important;padding:18px!important}#view-4.ob-mp-site-mode #ep-services .service-big-info{min-width:0!important;width:100%!important}#view-4.ob-mp-site-mode #ep-services .service-big-name{font-size:20px!important;line-height:1.1!important}#view-4.ob-mp-site-mode #ep-services .service-big-desc{font-size:14px!important;line-height:1.45!important}#view-4.ob-mp-site-mode #ep-services .service-big-card>div:last-child{grid-column:2!important;display:flex!important;align-items:center!important;justify-content:flex-start!important;gap:10px!important;text-align:left!important;flex-wrap:wrap!important}#view-4.ob-mp-site-mode #ep-services .service-big-price{text-align:left!important;white-space:nowrap!important}#view-4.ob-mp-site-mode #ep-services .service-big-card .btn{margin-top:0!important;min-height:40px!important;white-space:nowrap!important}}',
 	      '@media(max-width:900px){.ob-mp-profile-hero{grid-template-columns:1fr}.ob-mp-profile-photo{height:280px}.ob-mp-market-head{display:block}.ob-mp-home-hero{grid-template-columns:1fr}.ob-mp-home-copy{padding:0}.ob-mp-home-title{font-size:46px}#ob-marketplace-home{padding:34px 16px 58px}}',
 	      '@media(max-width:760px){.ob-mp-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.ob-mp-card{min-height:350px}.ob-mp-card-media{height:160px}.ob-mp-card-body{padding:14px 12px}.ob-mp-card-name{font-size:21px}.ob-mp-card-title{font-size:13px}.ob-mp-reading{font-size:13px}.ob-mp-bio{font-size:14px;min-height:60px}.ob-mp-card-foot{display:grid;gap:9px}.ob-mp-from strong{font-size:16px}.ob-mp-search-row{grid-template-columns:minmax(0,1fr);gap:8px}.ob-mp-search{min-height:50px}.ob-mp-profile{gap:12px}.ob-mp-profile-copy{padding:17px;gap:10px}.ob-mp-profile h2{font-size:32px}.ob-mp-profile-title{font-size:15px}.ob-mp-profile-bio{font-size:14px;line-height:1.42}.ob-mp-profile-photo{height:220px}.ob-mp-stat{font-size:11px;padding:7px 8px}.ob-mp-chip{font-size:10px;padding:6px 8px}.ob-mp-section{padding:14px}.ob-mp-section-title{font-size:20px}.ob-mp-services-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.ob-mp-action{min-height:82px;padding:11px}.ob-mp-action-title{font-size:15px}.ob-mp-action-price{font-size:11px}.ob-mp-action-note{display:none}.ob-mp-actions-grid{grid-template-columns:1fr}.ob-mp-dash-title{font-size:28px}}',
       '@media(max-width:420px){.ob-mp-grid{grid-template-columns:1fr}.ob-mp-card-media{height:220px}.ob-mp-card{min-height:410px}}'
@@ -57873,7 +57906,8 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
 		    if(page.indexOf('ai-') === 0) return '/' + encodeURIComponent(slug) + '/' + encodeURIComponent(page.replace(/^ai-/, ''));
 		    return '/' + encodeURIComponent(slug) + '/' + encodeURIComponent(page);
 		  }
-		  window.obMarketplaceActivatePage = function(page){
+		  window.obMarketplaceActivatePage = function(page, options){
+		    options = options || {};
 		    page = normalizeMarketplacePageKey(page || 'home');
 		    var target = document.getElementById('ep-' + page);
 		    if(!target) {
@@ -57891,18 +57925,20 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
 	    Array.prototype.slice.call(document.querySelectorAll('#expert-site-links a')).forEach(function(a){
 	      a.classList.toggle('active', a.getAttribute('data-nav-key') === page);
 	    });
-		    var elinks = document.getElementById('expert-site-links');
-		    var eburger = document.getElementById('expert-hamburger');
-		    if(elinks) elinks.classList.remove('mobile-open');
-		    if(eburger) eburger.classList.remove('open');
+		    if(options.closeMenu !== false) {
+		      var elinks = document.getElementById('expert-site-links');
+		      var eburger = document.getElementById('expert-hamburger');
+		      if(elinks) elinks.classList.remove('mobile-open');
+		      if(eburger) eburger.classList.remove('open');
+		    }
 		    try { window.scrollTo(0, 0); } catch(e) {}
 		  };
-	  function activateMarketplacePage(page){
-	    if(typeof window.obMarketplaceActivatePage === 'function') window.obMarketplaceActivatePage(page);
+	  function activateMarketplacePage(page, options){
+	    if(typeof window.obMarketplaceActivatePage === 'function') window.obMarketplaceActivatePage(page, options);
 	  }
-	  function reinforceMarketplacePage(page){
+	  function reinforceMarketplacePage(page, options){
 	    [0,80,240,700].forEach(function(ms){
-	      setTimeout(function(){ activateMarketplacePage(page); }, ms);
+	      setTimeout(function(){ activateMarketplacePage(page, options); }, ms);
 	    });
 	  }
 		  window.obMarketplaceNav = function(page){
@@ -57912,8 +57948,8 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
 		    if(page === 'home') renderMarketplaceHome();
 		    else if(page === 'book') renderPublicPicker();
 		    if(page.indexOf('ai-') === 0 && !marketplacePageExists(page)) window._pendingExpertPage = page;
-		    activateMarketplacePage(page);
-		    reinforceMarketplacePage(page);
+		    activateMarketplacePage(page, {closeMenu:true});
+		    reinforceMarketplacePage(page, {closeMenu:false});
 		    schedulePublicSync();
 		    try { history.pushState({obRoute:true}, '', marketplacePath(page)); } catch(e) {}
 		  };
@@ -57935,8 +57971,8 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
 		      window._pendingExpertPage = page;
 		      return;
 		    }
-		    activateMarketplacePage(page);
-		    reinforceMarketplacePage(page);
+		    activateMarketplacePage(page, {closeMenu:false});
+		    reinforceMarketplacePage(page, {closeMenu:false});
 		  }
 		  function normalizeMarketplaceNav(){
 		    if(!marketplaceSiteEnabled()) return;
@@ -57948,12 +57984,26 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
 		      if(slug) items.push({key:'ai-' + slug, label:clean(page.nav_label || page.title) || slug});
 		    });
 		    var activePage = normalizeMarketplacePageKey(window._currentEpPage || window._pendingExpertPage || marketplaceRoutePage());
-		    links.innerHTML = items.map(function(item){
+		    var signature = items.map(function(item){
 		      var key = normalizeMarketplacePageKey(item.key);
-		      return '<li><a ' + (key === activePage ? 'class="active" ' : '') +
-		        'data-nav-key="' + attr(key) + '" href="' + attr(marketplacePath(key)) + '" onclick="event.preventDefault();obMarketplaceNav(&quot;' + attr(key) + '&quot;)">' +
-		        esc(item.label) + '</a></li>';
-		    }).join('');
+		      return key + '|' + clean(item.label) + '|' + marketplacePath(key);
+		    }).join('\n');
+		    if(links.dataset.obMpNavSignature !== signature) {
+		      var wasOpen = links.classList.contains('mobile-open');
+		      links.innerHTML = items.map(function(item){
+		        var key = normalizeMarketplacePageKey(item.key);
+		        return '<li><a data-nav-key="' + attr(key) + '" href="' + attr(marketplacePath(key)) + '" onclick="event.preventDefault();obMarketplaceNav(&quot;' + attr(key) + '&quot;)">' +
+		          esc(item.label) + '</a></li>';
+		      }).join('');
+		      links.dataset.obMpNavSignature = signature;
+		      links.classList.toggle('mobile-open', wasOpen);
+		      var burger = document.getElementById('expert-hamburger');
+		      if(burger) burger.classList.toggle('open', wasOpen);
+		    }
+		    Array.prototype.slice.call(links.querySelectorAll('a')).forEach(function(a){
+		      var key = normalizeMarketplacePageKey(a.getAttribute('data-nav-key') || '');
+		      a.classList.toggle('active', key === activePage);
+		    });
 		  }
 	  function restoreOwnerForSite(){
 	    if(!marketplaceSiteEnabled()) return;

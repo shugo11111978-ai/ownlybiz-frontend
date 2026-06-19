@@ -80,6 +80,67 @@
 </script>
 <script>
 (function(){
+  function isSupportActive(){
+    try { return sessionStorage.getItem('ob_support_session') === '1' && !!sessionStorage.getItem('ob_t'); }
+    catch(e){ return false; }
+  }
+  function currentToken(){
+    try {
+      if(isSupportActive()) return sessionStorage.getItem('ob_t') || sessionStorage.getItem('ownlybiz_token') || '';
+      return sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || localStorage.getItem('ob_client_token') || sessionStorage.getItem('ownlybiz_token') || localStorage.getItem('ownlybiz_token') || '';
+    } catch(e) { return ''; }
+  }
+  function decodeJson(value){
+    if(!value) return null;
+    try {
+      var raw = String(value).replace(/-/g, '+').replace(/_/g, '/');
+      while(raw.length % 4) raw += '=';
+      return JSON.parse(decodeURIComponent(escape(atob(raw))));
+    } catch(e) {
+      return null;
+    }
+  }
+  function cleanSupportUrl(){
+    try {
+      var url = new URL(location.href);
+      ['support_token','support_user','support_session'].forEach(function(key){ url.searchParams.delete(key); });
+      if(url.searchParams.get('support') === '1') url.searchParams.delete('support');
+      history.replaceState({}, '', url.pathname + (url.searchParams.toString() ? '?' + url.searchParams.toString() : '') + url.hash);
+    } catch(e) {}
+  }
+  function installSupportSessionFromUrl(){
+    try {
+      var params = new URLSearchParams(location.search || '');
+      var token = params.get('support_token') || '';
+      if(!token) return;
+      var user = decodeJson(params.get('support_user')) || {};
+      var support = decodeJson(params.get('support_session')) || user.support_session || {};
+      support.impersonation = true;
+      support.read_only = true;
+      user.role = 'expert';
+      user.support_view = true;
+      user.support_session = support;
+      sessionStorage.setItem('ob_t', token);
+      sessionStorage.setItem('ownlybiz_token', token);
+      sessionStorage.setItem('ob_u', JSON.stringify(user));
+      sessionStorage.setItem('ob_support_session', '1');
+      sessionStorage.setItem('ob_support_session_meta', JSON.stringify(support));
+      window.__obSupportSession = { token:token, user:user, support_session:support };
+      window._adminViewingExpertId = null;
+      window._adminViewingExpertName = null;
+      window._adminViewingExpertSlug = null;
+      cleanSupportUrl();
+    } catch(e) {
+      cleanSupportUrl();
+    }
+  }
+  window.obSupportSessionActive = isSupportActive;
+  window.obAuthToken = currentToken;
+  installSupportSessionFromUrl();
+})();
+</script>
+<script>
+(function(){
   var roots = {'':1,'index.html':1,'admin':1,'api':1,'app':1,'auth':1,'billing':1,'checkout':1,'connect':1,'dash':1,'signup':1,'dashboard':1,'login':1,'logout':1,'expert':1,'session':1,'group':1,'connectors':1,'settings':1,'messages':1,'analytics':1,'payment':1,'payments':1,'packages':1,'reviews':1,'clients':1,'sessions':1,'pricing':1,'how':1,'features':1,'experts':1,'blog':1,'contact':1,'support':1,'help':1,'terms':1,'legal':1,'privacy':1,'reset':1,'reset-password':1,'stripe':1,'verify':1,'verify-email':1,'wallet':1};
   window.obPlatformRouteRoots = Object.assign(window.obPlatformRouteRoots || {}, roots);
   window.obIsPlatformRouteRoot = function(value){
@@ -15129,6 +15190,9 @@ async function savePaymentConfig() {
       _renderOverviewMsgs(dash.recent_sessions||[]);
       _renderBarChart($('revenue-chart'), (dash.monthly_revenue||[]).slice(-7), 'revenue');
       _hideAdminViewBanner();
+      var supportSession = me.support_session || (me.user && me.user.support_session) || _supportViewMeta();
+      if (supportSession) _showSupportViewBanner((me.user && me.user.name) || 'Expert', supportSession);
+      else _hideSupportViewBanner();
     } catch(err){ console.warn('Dashboard:',err.message); }
   }
 
@@ -15147,6 +15211,33 @@ async function savePaymentConfig() {
   function _hideAdminViewBanner() {
     var b = document.getElementById('admin-view-expert-banner');
     if (b) b.style.display = 'none';
+  }
+  function _supportViewMeta() {
+    try {
+      if (window.obSupportSessionActive && !window.obSupportSessionActive()) return null;
+      return JSON.parse(sessionStorage.getItem('ob_support_session_meta') || 'null');
+    } catch(e) { return null; }
+  }
+  function _showSupportViewBanner(name, supportSession) {
+    supportSession = supportSession || {};
+    var main = document.querySelector('#view-3 .db-main');
+    if (!main) return;
+    var existing = document.getElementById('ob-support-view-banner');
+    if (existing) existing.remove();
+    try {
+      sessionStorage.setItem('ob_support_session', '1');
+      sessionStorage.setItem('ob_support_session_meta', JSON.stringify(supportSession));
+    } catch(e) {}
+    var expires = supportSession.expires_at ? new Date(Number(supportSession.expires_at) * 1000).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'}) : '';
+    var banner = document.createElement('div');
+    banner.id = 'ob-support-view-banner';
+    banner.style.cssText = 'margin:0 0 14px;padding:12px 16px;border:1px solid rgba(196,98,45,.24);background:rgba(196,98,45,.10);color:rgba(246,241,233,.88);border-radius:8px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;font-size:12px;line-height:1.45;';
+    banner.innerHTML = '<span><strong style="color:#f6f1e9;">Viewing as ' + esc(name || 'Expert') + '</strong> through admin support. This tab is read-only.' + (expires ? ' Expires ' + esc(expires) + '.' : '') + '</span><span style="color:rgba(246,241,233,.58);font-weight:800;">Expert session</span>';
+    main.insertBefore(banner, main.firstChild);
+  }
+  function _hideSupportViewBanner() {
+    var b = document.getElementById('ob-support-view-banner');
+    if (b) b.remove();
   }
 
   async function loadExpertDashboardForAdmin(expertId) {
@@ -26562,6 +26653,55 @@ window._handleRTCMessage=function(d){
       if(u) localStorage.setItem('ob_u', u);
     } catch(e) {}
   }
+  function supportParamEncode(value){
+    try {
+      return btoa(unescape(encodeURIComponent(JSON.stringify(value || {}))))
+        .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/,'');
+    } catch(e) {
+      return '';
+    }
+  }
+  window.obAdminStartExpertSupportSession = function(expertId, slug, name){
+    if(!expertId){ toastMsg('Expert id missing','err'); return false; }
+    slug = slug || '';
+    if(!slug){ toastMsg('Expert slug not found','err'); return false; }
+    var waitingTab = null;
+    try {
+      waitingTab = window.open('', '_blank');
+      if(waitingTab){
+        try { waitingTab.opener = null; } catch(e) {}
+        try {
+          waitingTab.document.write('<!doctype html><title>Opening expert view</title><body style="margin:0;font-family:system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;background:#0b0908;color:#f6f1e9;display:grid;place-items:center;min-height:100vh;"><div style="text-align:center;"><div style="font-weight:800;margin-bottom:8px;">Opening expert view</div><div style="font-size:13px;color:rgba(246,241,233,.62);">Creating a read-only support session...</div></div></body>');
+          waitingTab.document.close();
+        } catch(e) {}
+      }
+    } catch(e) {}
+    return api('/api/admin/experts/' + encodeURIComponent(expertId) + '/support-session', {
+      method:'POST',
+      body: JSON.stringify({ reason:'admin_support_view' })
+    }).then(function(d){
+      var support = d.support_session || {};
+      var user = d.user || { id:expertId, name:name || 'Expert', role:'expert', slug:slug, support_view:true, support_session:support };
+      user.role = 'expert';
+      user.support_view = true;
+      user.support_session = support;
+      var path = d.redirect_path || ('/dash/' + encodeURIComponent(slug));
+      var params = new URLSearchParams();
+      params.set('support', '1');
+      params.set('support_token', d.token || '');
+      params.set('support_user', supportParamEncode(user));
+      params.set('support_session', supportParamEncode(support));
+      var url = location.origin + path + '?' + params.toString();
+      if(waitingTab && !waitingTab.closed) waitingTab.location.replace(url);
+      else window.open(url, '_blank', 'noopener');
+      toastMsg('Opened read-only expert support view.', 'ok');
+      return true;
+    }).catch(function(e){
+      try { if(waitingTab && !waitingTab.closed) waitingTab.close(); } catch(_closeErr) {}
+      toastMsg(e.message || 'Could not open expert support view','err');
+      return false;
+    });
+  };
   function queryParam(name){
     try { return new URLSearchParams(location.search || '').get(name) || ''; } catch(e) { return ''; }
   }
@@ -26723,7 +26863,7 @@ window._handleRTCMessage=function(d){
     var pauseNote = pauseAllowed
       ? 'This expert can keep using sessions and bookings while the platform service pause is on.'
       : 'This expert follows the platform service pause. Allowing access lets this expert keep operating while other experts remain paused.';
-    return '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px;"><button class="admin-action-btn" type="button" onclick="obAdminExpertBackToList()">Back to expert list</button><div style="display:flex;gap:8px;flex-wrap:wrap;"><button class="admin-action-btn" type="button" onclick="obAdminExpertAction(&quot;' + esc(expertId) + '&quot;,&quot;approve&quot;)">Approve</button><button class="admin-action-btn danger" type="button" onclick="obAdminExpertAction(&quot;' + esc(expertId) + '&quot;,&quot;suspend&quot;)">Suspend</button><button class="admin-action-btn" type="button" onclick="obAdminExpertAction(&quot;' + esc(expertId) + '&quot;,&quot;restore&quot;)">Restore</button><button class="admin-action-btn" type="button" onclick="obAdminOpenExpertDashboard(&quot;' + esc(expertId) + '&quot;,&quot;' + esc(slug) + '&quot;,&quot;' + esc(name) + '&quot;)">Open expert dashboard</button><button class="admin-action-btn ob-admin-expert-pause-access" type="button" data-id="' + esc(expertId) + '" data-allowed="' + (!pauseAllowed ? '1' : '0') + '" onclick="obAdminExpertPauseAccess(&quot;' + esc(expertId) + '&quot;,' + (!pauseAllowed) + ')">' + esc(pauseBtnLabel) + '</button></div></div>'
+    return '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px;"><button class="admin-action-btn" type="button" onclick="obAdminExpertBackToList()">Back to expert list</button><div style="display:flex;gap:8px;flex-wrap:wrap;"><button class="admin-action-btn" type="button" onclick="obAdminExpertAction(&quot;' + esc(expertId) + '&quot;,&quot;approve&quot;)">Approve</button><button class="admin-action-btn danger" type="button" onclick="obAdminExpertAction(&quot;' + esc(expertId) + '&quot;,&quot;suspend&quot;)">Suspend</button><button class="admin-action-btn" type="button" onclick="obAdminExpertAction(&quot;' + esc(expertId) + '&quot;,&quot;restore&quot;)">Restore</button><button class="admin-action-btn" type="button" onclick="obAdminOpenExpertDashboard(&quot;' + esc(expertId) + '&quot;,&quot;' + esc(slug) + '&quot;,&quot;' + esc(name) + '&quot;)">View exactly as expert</button><button class="admin-action-btn ob-admin-expert-pause-access" type="button" data-id="' + esc(expertId) + '" data-allowed="' + (!pauseAllowed ? '1' : '0') + '" onclick="obAdminExpertPauseAccess(&quot;' + esc(expertId) + '&quot;,' + (!pauseAllowed) + ')">' + esc(pauseBtnLabel) + '</button></div></div>'
       + '<div class="admin-card" style="padding:22px;"><div style="display:flex;align-items:flex-start;justify-content:space-between;gap:18px;flex-wrap:wrap;"><div><div style="font-size:30px;font-weight:950;color:rgba(246,241,233,.96);letter-spacing:0;">' + esc(name) + '</div><div style="font-size:13px;color:rgba(246,241,233,.58);margin-top:6px;">' + esc(user.email || '-') + '</div></div><div style="display:flex;gap:8px;flex-wrap:wrap;">' + adminExpertStatus(user, profile) + adminExpertPill(profile.subscription_plan || 'starter','info') + (Number(profile.website_published || 0) ? adminExpertPill('Website published','ok') : adminExpertPill('Website not published','warn')) + '</div></div>' + adminExpertInfoGrid(user, profile) + '<div style="margin-top:16px;font-size:12px;color:rgba(246,241,233,.58);line-height:1.6;"><strong style="display:block;color:rgba(246,241,233,.78);margin-bottom:4px;">Bio</strong>' + esc(profile.bio || 'No bio saved.') + '</div></div>'
       + '<div class="ob-admin-live-grid" style="margin-top:18px;">' + adminExpertKpi('Total sessions', int(stats.total_sessions || 0), 'Chat ' + int(stats.chat_sessions || 0) + ' / Voice ' + int(stats.voice_sessions || 0) + ' / Video ' + int(stats.video_sessions || 0)) + adminExpertKpi('Total earned', adminExpertMoney(stats.total_earnings || 0), 'Pending payout ' + adminExpertMoney(dash.pending_payout || 0)) + adminExpertKpi('Active sessions', int(stats.active_sessions || 0), 'Current active session count') + adminExpertKpi('Reviews', String(stats.avg_rating || 0) + ' avg', int(stats.review_count || 0) + ' reviews') + '</div>'
       + '<div class="ob-admin-live-grid" style="margin-top:12px;">' + adminExpertKpi('Chat rate', adminExpertMoney(rates.chat_pm || profile.rate_chat || 0), int(rates.chat_free_min || profile.free_minutes || 0) + ' free min') + adminExpertKpi('Voice rate', adminExpertMoney(rates.voice_pm || profile.rate_voice || 0), int(rates.voice_free_min || profile.free_minutes_voice || 0) + ' free min') + adminExpertKpi('Video rate', adminExpertMoney(rates.video_pm || profile.rate_video || 0), int(rates.video_free_min || profile.free_minutes_video || 0) + ' free min') + adminExpertKpi('AI chat', Number(ai.enabled || 0) === 1 ? 'Enabled' : 'Off', ai.mode || 'semi_ai') + '</div>'
@@ -26758,11 +26898,10 @@ window._handleRTCMessage=function(d){
     });
   }
   window.obAdminOpenExpertDashboard = function(expertId, slug, name){
-    copyAdminAuthForNewTab();
-    slug = slug || '';
-    if(!slug){ toastMsg('Expert slug not found','err'); return; }
-    writeAdminViewCtx({id:expertId, slug:slug, name:name || ''});
-    window.open(location.origin + '/dash/' + encodeURIComponent(slug) + '?admin=1&expertId=' + encodeURIComponent(expertId || '') + '&expertName=' + encodeURIComponent(name || ''), '_blank', 'noopener');
+    if(typeof window.obAdminStartExpertSupportSession === 'function') {
+      return window.obAdminStartExpertSupportSession(expertId, slug, name);
+    }
+    toastMsg('Expert support view is not ready. Refresh and try again.','err');
   };
   window.obAdminExpertBackToList = function(){
     window.__obAdminExpertDetailActive = null;
@@ -39821,7 +39960,7 @@ body.ob-ui-dark .ob-connection-note,
     var pauseNote = pauseAllowed
       ? 'This expert can keep using sessions and bookings while the platform service pause is on.'
       : 'This expert follows the platform service pause. Allowing access lets this expert keep operating while other experts remain paused.';
-    return '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px;"><button class="admin-action-btn" type="button" onclick="obAdminExpertBackToList()">Back to expert list</button><div style="display:flex;gap:8px;flex-wrap:wrap;"><button class="admin-action-btn" type="button" onclick="obAdminExpertAction(&quot;' + attr(id) + '&quot;,&quot;approve&quot;)">Approve</button><button class="admin-action-btn danger" type="button" onclick="obAdminExpertAction(&quot;' + attr(id) + '&quot;,&quot;suspend&quot;)">Suspend</button><button class="admin-action-btn" type="button" onclick="obAdminExpertAction(&quot;' + attr(id) + '&quot;,&quot;restore&quot;)">Restore</button><button class="admin-action-btn" type="button" onclick="obAdminOpenExpertDashboard(&quot;' + attr(id) + '&quot;,&quot;' + attr(slug) + '&quot;,&quot;' + attr(name) + '&quot;)">Open expert dashboard</button><button class="admin-action-btn" type="button" onclick="obAdminExpertPauseAccess(&quot;' + attr(id) + '&quot;,' + (!pauseAllowed) + ')">' + esc(pauseBtnLabel) + '</button></div></div>'
+    return '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px;"><button class="admin-action-btn" type="button" onclick="obAdminExpertBackToList()">Back to expert list</button><div style="display:flex;gap:8px;flex-wrap:wrap;"><button class="admin-action-btn" type="button" onclick="obAdminExpertAction(&quot;' + attr(id) + '&quot;,&quot;approve&quot;)">Approve</button><button class="admin-action-btn danger" type="button" onclick="obAdminExpertAction(&quot;' + attr(id) + '&quot;,&quot;suspend&quot;)">Suspend</button><button class="admin-action-btn" type="button" onclick="obAdminExpertAction(&quot;' + attr(id) + '&quot;,&quot;restore&quot;)">Restore</button><button class="admin-action-btn" type="button" onclick="obAdminOpenExpertDashboard(&quot;' + attr(id) + '&quot;,&quot;' + attr(slug) + '&quot;,&quot;' + attr(name) + '&quot;)">View exactly as expert</button><button class="admin-action-btn" type="button" onclick="obAdminExpertPauseAccess(&quot;' + attr(id) + '&quot;,' + (!pauseAllowed) + ')">' + esc(pauseBtnLabel) + '</button></div></div>'
       + '<div class="admin-card" style="padding:22px;"><div style="display:flex;align-items:flex-start;justify-content:space-between;gap:18px;flex-wrap:wrap;"><div><div style="font-size:30px;font-weight:950;color:rgba(246,241,233,.96);letter-spacing:0;">' + esc(name) + '</div><div style="font-size:13px;color:rgba(246,241,233,.58);margin-top:6px;">' + esc(user.email || '-') + '</div></div><div style="display:flex;gap:8px;flex-wrap:wrap;">' + status(user, profile) + pill(profile.subscription_plan || 'starter','info') + (Number(profile.website_published || 0) ? pill('Website published','ok') : pill('Website not published','warn')) + '</div></div>' + info(user, profile) + '<div style="margin-top:16px;font-size:12px;color:rgba(246,241,233,.58);line-height:1.6;"><strong style="display:block;color:rgba(246,241,233,.78);margin-bottom:4px;">Bio</strong>' + esc(profile.bio || 'No bio saved.') + '</div></div>'
       + '<div class="ob-admin-live-grid" style="margin-top:18px;">' + kpi('Total sessions', num(stats.total_sessions || 0), 'Chat ' + num(stats.chat_sessions || 0) + ' / Voice ' + num(stats.voice_sessions || 0) + ' / Video ' + num(stats.video_sessions || 0)) + kpi('Total earned', money(stats.total_earnings || 0), 'Pending payout ' + money(dash.pending_payout || 0)) + kpi('Active sessions', num(stats.active_sessions || 0), 'Current active session count') + kpi('Reviews', String(stats.avg_rating || 0) + ' avg', num(stats.review_count || 0) + ' reviews') + '</div>'
       + '<div class="ob-admin-live-grid" style="margin-top:12px;">' + kpi('Chat rate', money(rates.chat_pm || profile.rate_chat || 0), num(rates.chat_free_min || profile.free_minutes || 0) + ' free min') + kpi('Voice rate', money(rates.voice_pm || profile.rate_voice || 0), num(rates.voice_free_min || profile.free_minutes_voice || 0) + ' free min') + kpi('Video rate', money(rates.video_pm || profile.rate_video || 0), num(rates.video_free_min || profile.free_minutes_video || 0) + ' free min') + kpi('AI chat', aiOn ? 'Enabled' : 'Off', ai.mode || 'semi_ai') + '</div>'
@@ -39843,9 +39982,8 @@ body.ob-ui-dark .ob-connection-note,
       .catch(function(err){ c.innerHTML = '<div class="admin-card" style="padding:28px;color:#fecaca;">Expert details failed: ' + esc(err.message || err) + '</div>'; });
   }
   function openDash(id, slug, name){
-    try { var t=sessionStorage.getItem('ob_t')||localStorage.getItem('ob_t'); var u=sessionStorage.getItem('ob_u')||localStorage.getItem('ob_u'); if(t) localStorage.setItem('ob_t',t); if(u) localStorage.setItem('ob_u',u); } catch(e) {}
-    if(!slug){ note('This expert does not have a slug yet.', 'err'); return; }
-    window.open(location.origin + '/dash/' + encodeURIComponent(slug) + '?admin=1&expertId=' + encodeURIComponent(id || '') + '&expertName=' + encodeURIComponent(name || ''), '_blank', 'noopener');
+    if(typeof window.obAdminStartExpertSupportSession === 'function') return window.obAdminStartExpertSupportSession(id, slug, name);
+    note('Expert support view is not ready. Refresh and try again.', 'err');
   }
   function install(){
     window.obAdminOpenExpertDashboard = openDash;
@@ -40847,7 +40985,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
 
   function apiBase(){ return String(window.OWNLY_API || window.OWNLYBIZ_API_URL || window.API_BASE || PROD_API).replace(/\/+$/,''); }
   function api(path){ return apiBase() + path; }
-  function token(){ return localStorage.getItem('ownlybiz_token') || localStorage.getItem('ob_t') || sessionStorage.getItem('ob_t') || ''; }
+  function token(){ if(window.obSupportSessionActive && window.obSupportSessionActive()) return sessionStorage.getItem('ob_t') || sessionStorage.getItem('ownlybiz_token') || ''; return localStorage.getItem('ownlybiz_token') || localStorage.getItem('ob_t') || sessionStorage.getItem('ob_t') || ''; }
   function auth(){ var t=token(); return t ? {Authorization:'Bearer '+t} : {}; }
   function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
   function dash(){ return /^\/dash\//.test(location.pathname || ''); }
@@ -41439,7 +41577,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   function legacyHidden(){ try { return legacyHiddenKeys().some(function(k){ return localStorage.getItem(k)==='1'; }); } catch(e) { return false; } }
   function setLegacyHidden(value){ try { legacyHiddenKeys().forEach(function(k){ if(value) localStorage.setItem(k,'1'); else localStorage.removeItem(k); }); if(!value) legacyMinKeys().forEach(function(k){ sessionStorage.removeItem(k); }); } catch(e) {} }
   function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
-  function token(){ return localStorage.getItem('ownlybiz_token') || localStorage.getItem('ob_t') || sessionStorage.getItem('ownlybiz_token') || sessionStorage.getItem('ob_t') || ''; }
+  function token(){ if(window.obSupportSessionActive && window.obSupportSessionActive()) return sessionStorage.getItem('ob_t') || sessionStorage.getItem('ownlybiz_token') || ''; return localStorage.getItem('ownlybiz_token') || localStorage.getItem('ob_t') || sessionStorage.getItem('ownlybiz_token') || sessionStorage.getItem('ob_t') || ''; }
   function authHeaders(){ var t=token(); return t ? {Authorization:'Bearer '+t} : {}; }
   function removeLegacy(){ legacyIds.forEach(function(id){ var el=document.getElementById(id); if(el) el.remove(); }); var card=document.getElementById('ob-prod-publish-card'); if(card) card.remove(); }
   function activeIndex(s){ return Math.max(0, Math.min(steps.length - 1, Number(s.active || 0))); }
@@ -42310,7 +42448,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   function apiBase(){ return String(window.OWNLY_API || window.OWNLYBIZ_API_URL || window.API_BASE || PROD_API).replace(/\/+$/,''); }
   function api(path){ return apiBase() + path; }
   function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
-  function token(){ return localStorage.getItem('ownlybiz_token') || localStorage.getItem('ob_t') || sessionStorage.getItem('ownlybiz_token') || sessionStorage.getItem('ob_t') || ''; }
+  function token(){ if(window.obSupportSessionActive && window.obSupportSessionActive()) return sessionStorage.getItem('ob_t') || sessionStorage.getItem('ownlybiz_token') || ''; return localStorage.getItem('ownlybiz_token') || localStorage.getItem('ob_t') || sessionStorage.getItem('ownlybiz_token') || sessionStorage.getItem('ob_t') || ''; }
   function authHeaders(){ var t=token(); return t ? {Authorization:'Bearer '+t} : {}; }
   function storedUser(){
     var keys=['ownlybiz_user','ob_u'];
@@ -48865,13 +49003,8 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     return '<span class="admin-badge" style="background:rgba(245,158,11,.16);color:#f59e0b;">Pending</span>';
   }
   function openDashboard(id, slug, name){
-    try {
-      var t = sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t');
-      var u = sessionStorage.getItem('ob_u') || localStorage.getItem('ob_u');
-      if(t) localStorage.setItem('ob_t', t);
-      if(u) localStorage.setItem('ob_u', u);
-    } catch(_copyAuthErr) {}
-    if(slug) window.open(location.origin + '/dash/' + encodeURIComponent(slug) + '?admin=1&expertId=' + encodeURIComponent(id || '') + '&expertName=' + encodeURIComponent(name || ''), '_blank', 'noopener');
+    if(typeof window.obAdminStartExpertSupportSession === 'function') return window.obAdminStartExpertSupportSession(id, slug, name);
+    notify('Expert support view is not ready. Refresh and try again.', 'err');
   }
   function expertDetailHtml(id, data){
     var user = data.user || {};
@@ -48918,7 +49051,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
             '<button class="admin-action-btn" type="button" onclick="obAdminExpertAction(\'' + attr(id) + '\',\'approve\')">Approve</button>' +
             '<button class="admin-action-btn danger" type="button" onclick="obAdminExpertAction(\'' + attr(id) + '\',\'suspend\')">Suspend</button>' +
             '<button class="admin-action-btn" type="button" onclick="obAdminExpertAction(\'' + attr(id) + '\',\'restore\')">Restore</button>' +
-            '<button class="admin-action-btn" type="button" onclick="obAdminOpenExpertDashboard(\'' + attr(id) + '\',\'' + attr(slug) + '\',\'' + attr(name) + '\')">Open dashboard</button>' +
+            '<button class="admin-action-btn" type="button" onclick="obAdminOpenExpertDashboard(\'' + attr(id) + '\',\'' + attr(slug) + '\',\'' + attr(name) + '\')">View exactly as expert</button>' +
           '</div>' +
         '</div>' +
       '</div>' +
@@ -51114,14 +51247,8 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     return badge('Pending','warn');
   }
   function openDashboard(id, slug, name){
-    try {
-      var t = sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t');
-      var u = sessionStorage.getItem('ob_u') || localStorage.getItem('ob_u');
-      if(t) localStorage.setItem('ob_t', t);
-      if(u) localStorage.setItem('ob_u', u);
-    } catch(e) {}
-    if(!slug){ notify('This expert does not have a slug yet.', 'err'); return; }
-    window.open(location.origin + '/dash/' + encodeURIComponent(slug) + '?admin=1&expertId=' + encodeURIComponent(id || '') + '&expertName=' + encodeURIComponent(name || ''), '_blank', 'noopener');
+    if(typeof window.obAdminStartExpertSupportSession === 'function') return window.obAdminStartExpertSupportSession(id, slug, name);
+    notify('Expert support view is not ready. Refresh and try again.', 'err');
   }
   function kpi(label, value, sub){
     return '<div class="admin-kpi" style="min-height:88px;"><div class="admin-kpi-label">' + esc(label) + '</div><div class="admin-kpi-val">' + esc(value) + '</div>' + (sub ? '<div style="font-size:11px;color:rgba(246,241,233,.45);margin-top:4px;">' + esc(sub) + '</div>' : '') + '</div>';
@@ -51354,7 +51481,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       +     '<button class="admin-action-btn" type="button" onclick="obAdminExpertAction(&quot;' + attr(id) + '&quot;,&quot;approve&quot;)">Approve</button>'
       +     '<button class="admin-action-btn danger" type="button" onclick="obAdminExpertAction(&quot;' + attr(id) + '&quot;,&quot;suspend&quot;)">Suspend</button>'
       +     '<button class="admin-action-btn" type="button" onclick="obAdminExpertAction(&quot;' + attr(id) + '&quot;,&quot;restore&quot;)">Restore</button>'
-      +     '<button class="admin-action-btn" type="button" onclick="obAdminOpenExpertDashboard(&quot;' + attr(id) + '&quot;,&quot;' + attr(slug) + '&quot;,&quot;' + attr(name) + '&quot;)">Open expert dashboard</button>'
+      +     '<button class="admin-action-btn" type="button" onclick="obAdminOpenExpertDashboard(&quot;' + attr(id) + '&quot;,&quot;' + attr(slug) + '&quot;,&quot;' + attr(name) + '&quot;)">View exactly as expert</button>'
       +     '<button class="admin-action-btn" type="button" onclick="obAdminExpertPauseAccess(&quot;' + attr(id) + '&quot;,' + (!pauseAllowed) + ')">' + esc(pauseBtnLabel) + '</button>'
       +   '</div>'
       + '</div>'

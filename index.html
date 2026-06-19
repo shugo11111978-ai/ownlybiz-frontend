@@ -56717,6 +56717,117 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
       + '</div>'
       + '</div>';
   }
+  function checkedAttr(value){ return value ? 'checked' : ''; }
+  function selectedAttr(value, expected){ return String(value) === String(expected) ? 'selected' : ''; }
+  function marketplaceFeatureLabel(key){
+    var labels = {
+      allow_chat:'Chat',
+      allow_voice:'Voice',
+      allow_video:'Video',
+      allow_book_later:'Book Later',
+      allow_on_demand:'On Demand',
+      allow_packages:'Packages',
+      allow_ai:'AI',
+      allow_independent_availability:'Independent Availability'
+    };
+    return labels[key] || String(key || '').replace(/^allow_/,'').replace(/_/g,' ').replace(/\b\w/g,function(ch){ return ch.toUpperCase(); });
+  }
+  function marketplaceFeatureCheckbox(key, settings){
+    var checked = settings[key] !== false && settings[key] !== 0 && settings[key] !== '0';
+    return '<label style="display:flex;align-items:center;gap:8px;font-size:12px;color:rgba(246,241,233,.72);line-height:1.35;"><input id="ob-admin-mp-' + attr(key) + '" type="checkbox" ' + checkedAttr(checked) + '> ' + esc(marketplaceFeatureLabel(key)) + '</label>';
+  }
+  function marketplaceCardHtml(id, marketplace){
+    marketplace = marketplace || {};
+    var settings = marketplace.settings || {};
+    var experts = Array.isArray(marketplace.experts) ? marketplace.experts : [];
+    var rawEnabled = settings.enabled != null ? settings.enabled : marketplace.enabled;
+    var enabled = rawEnabled === true || rawEnabled === 1 || rawEnabled === '1';
+    var featureKeys = ['allow_chat','allow_voice','allow_video','allow_book_later','allow_on_demand','allow_packages','allow_ai','allow_independent_availability'];
+    var note = marketplace.error
+      ? 'Team marketplace status could not load: ' + marketplace.error
+      : 'Controls whether this expert website can operate as a multi-expert public marketplace. Mini-experts and their session types remain managed in the expert dashboard once this entitlement is enabled.';
+    return '<div class="admin-card ob-admin-mp-card" id="ob-admin-marketplace-card" data-ob-mp-core="1" style="padding:18px;margin-top:18px;border-color:' + (enabled ? 'rgba(34,197,94,.26)' : 'rgba(255,255,255,.08)') + ';">'
+      + '<div class="admin-card-title">Team Marketplace <span class="admin-card-title-sub">Admin-only per-expert feature</span></div>'
+      + '<div style="font-size:12px;color:rgba(246,241,233,.58);line-height:1.55;margin-bottom:12px;">' + esc(note) + '</div>'
+      + '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px;align-items:end;">'
+      +   '<label style="font-size:13px;color:rgba(246,241,233,.78);display:flex;gap:8px;align-items:center;"><input id="ob-admin-mp-enabled" type="checkbox" ' + checkedAttr(enabled) + '> Enable for this expert</label>'
+      +   '<label style="font-size:12px;color:rgba(246,241,233,.55);">Public label<input id="ob-admin-mp-public-label" class="admin-input" value="' + attr(settings.public_label || '') + '" placeholder="Choose your expert" style="width:100%;margin-top:6px;"></label>'
+      +   '<label style="font-size:12px;color:rgba(246,241,233,.55);">Free minutes<select id="ob-admin-mp-free-policy" class="admin-input" style="width:100%;margin-top:6px;"><option value="owner" ' + selectedAttr(settings.free_minutes_policy || 'owner','owner') + '>Owner-wide</option><option value="mini" ' + selectedAttr(settings.free_minutes_policy,'mini') + '>Per mini expert</option><option value="none" ' + selectedAttr(settings.free_minutes_policy,'none') + '>None</option></select></label>'
+      + '</div>'
+      + '<label style="display:block;font-size:12px;color:rgba(246,241,233,.55);margin-top:14px;">Intro text<input id="ob-admin-mp-intro-text" class="admin-input" value="' + attr(settings.intro_text || '') + '" placeholder="Pick the expert or service that fits this session." style="width:100%;margin-top:6px;"></label>'
+      + '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-top:14px;">' + featureKeys.map(function(key){ return marketplaceFeatureCheckbox(key, settings); }).join('') + '</div>'
+      + '<div style="display:flex;gap:10px;align-items:center;margin-top:12px;flex-wrap:wrap;"><button class="admin-action-btn" type="button" onclick="obAdminMarketplaceSave(&quot;' + attr(id) + '&quot;)">Save marketplace access</button><span id="ob-admin-mp-status" style="font-size:12px;color:rgba(246,241,233,.55);">' + (enabled ? 'Enabled' : 'Disabled') + '</span><span class="admin-badge">' + esc(experts.length + ' mini experts') + '</span></div>'
+      + '</div>';
+  }
+  function renderMarketplaceControls(id, marketplace){
+    var root = content();
+    if(!root) return;
+    var html = marketplaceCardHtml(id, marketplace || {});
+    var existing = document.getElementById('ob-admin-marketplace-card');
+    Array.prototype.slice.call(root.querySelectorAll('.ob-admin-mp-card')).forEach(function(card){
+      if(card !== existing) card.remove();
+    });
+    if(existing) {
+      existing.outerHTML = html;
+      var refreshed = document.getElementById('ob-admin-marketplace-card');
+      var currentGroup = document.getElementById('ob-admin-group-sessions-card');
+      if(refreshed && currentGroup && refreshed.previousElementSibling !== currentGroup) currentGroup.insertAdjacentElement('afterend', refreshed);
+    } else {
+      var group = document.getElementById('ob-admin-group-sessions-card');
+      var od = document.getElementById('ob-admin-on-demand-card');
+      var ai = document.getElementById('ob-admin-ai-chat-visible-card');
+      var service = Array.prototype.slice.call(root.querySelectorAll('.admin-card')).find(function(card){
+        var title = card.querySelector && card.querySelector('.admin-card-title');
+        return title && /service pause access/i.test(title.textContent || '');
+      });
+      if(group && group.parentNode) group.insertAdjacentHTML('afterend', html);
+      else if(od && od.parentNode) od.insertAdjacentHTML('afterend', html);
+      else if(ai && ai.parentNode) ai.insertAdjacentHTML('afterend', html);
+      else if(service && service.parentNode) service.insertAdjacentHTML('beforebegin', html);
+      else {
+        var anchor = findRateRow(root);
+        if(anchor && anchor.parentNode) anchor.insertAdjacentHTML('afterend', html);
+        else root.insertAdjacentHTML('afterbegin', html);
+      }
+    }
+    installMarketplaceSaveFallback();
+  }
+  function ensureMarketplaceCard(id){
+    if(!id) return Promise.resolve(null);
+    return api('/admin/experts/' + encodeURIComponent(id) + '/marketplace').then(function(data){
+      renderMarketplaceControls(id, data || {});
+      return data;
+    }).catch(function(err){
+      console.warn('[AdminExpertMarketplace]', err && err.message ? err.message : err);
+      renderMarketplaceControls(id, {error:err && err.message ? err.message : 'Marketplace settings unavailable'});
+      return null;
+    });
+  }
+  function installMarketplaceSaveFallback(){
+    window.obAdminEnsureMarketplaceCard = ensureMarketplaceCard;
+    if(typeof window.obAdminMarketplaceSave === 'function') return;
+    window.obAdminMarketplaceSave = function(id){
+      var status = document.getElementById('ob-admin-mp-status');
+      var body = {
+        enabled: !!((document.getElementById('ob-admin-mp-enabled') || {}).checked),
+        public_label: (document.getElementById('ob-admin-mp-public-label') || {}).value || '',
+        intro_text: (document.getElementById('ob-admin-mp-intro-text') || {}).value || '',
+        free_minutes_policy: (document.getElementById('ob-admin-mp-free-policy') || {}).value || 'owner'
+      };
+      ['allow_chat','allow_voice','allow_video','allow_book_later','allow_on_demand','allow_packages','allow_ai','allow_independent_availability'].forEach(function(key){
+        body[key] = !!((document.getElementById('ob-admin-mp-' + key) || {}).checked);
+      });
+      if(status) status.textContent = 'Saving...';
+      api('/admin/experts/' + encodeURIComponent(id) + '/marketplace', {method:'PUT', body:body}).then(function(){
+        if(status) status.textContent = body.enabled ? 'Enabled' : 'Disabled';
+        notify('Marketplace access saved.', 'ok');
+        return ensureMarketplaceCard(id);
+      }).catch(function(err){
+        if(status) status.textContent = err.message || 'Save failed.';
+        notify(err.message || 'Marketplace save failed.', 'err');
+      });
+    };
+  }
   function renderGroupControls(id, group){
     var root = content();
     if(!root) return;
@@ -56873,12 +56984,14 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     if(text.indexOf('ai chat') < 0 && text.indexOf('chat ai') < 0 && text.indexOf('total sessions') < 0) return;
     api('/admin/experts/' + encodeURIComponent(id) + '/profile').then(function(data){
       ensureGroupCard(id);
+      ensureMarketplaceCard(id);
       renderAiControls(id, data.ai_chat || {});
       if(typeof window.obAdminInjectOnDemand === 'function') window.obAdminInjectOnDemand(id);
-      [250,900,1700].forEach(function(ms){ setTimeout(function(){ ensureGroupCard(id); placeOnDemandCard(); }, ms); });
+      [250,900,1700].forEach(function(ms){ setTimeout(function(){ ensureGroupCard(id); ensureMarketplaceCard(id); placeOnDemandCard(); }, ms); });
     }).catch(function(err){
       console.warn('[AdminExpertControls]', err && err.message ? err.message : err);
       ensureGroupCard(id);
+      ensureMarketplaceCard(id);
       placeOnDemandCard();
     });
   }
@@ -56889,7 +57002,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     if(!panel) return;
     observerInstalled = true;
     new MutationObserver(function(){
-      if(document.getElementById('ob-admin-ai-chat-visible-card') && document.getElementById('ob-admin-on-demand-card') && document.getElementById('ob-admin-group-sessions-card')) return;
+      if(document.getElementById('ob-admin-ai-chat-visible-card') && document.getElementById('ob-admin-on-demand-card') && document.getElementById('ob-admin-group-sessions-card') && document.getElementById('ob-admin-marketplace-card')) return;
       clearTimeout(observerTimer);
       observerTimer = setTimeout(function(){
         var id = idFromOpenDetail();
@@ -59066,7 +59179,8 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     api('/admin/experts/' + encodeURIComponent(id) + '/marketplace', {method:'PUT', body:body}).then(function(){
       if(status) status.textContent = 'Saved.';
       notify('Marketplace settings saved.', 'ok');
-      injectAdminCard(id);
+      if(typeof window.obAdminEnsureMarketplaceCard === 'function') window.obAdminEnsureMarketplaceCard(id);
+      else injectAdminCard(id);
     }).catch(function(err){
       if(status) status.textContent = err.message || 'Save failed.';
       notify(err.message || 'Marketplace save failed.', 'err');

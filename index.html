@@ -4164,6 +4164,7 @@ body{font-feature-settings:"ss01","cv11";background:
 .db-nav-item[onclick*="analytics"] .icon::before,.admin-nav-item[onclick*="'analytics'"]>span:first-child::before{content:"↗";}
 .db-nav-item[onclick*="pricing"] .icon::before,.admin-nav-item[onclick*="'revenue'"]>span:first-child::before,.admin-nav-item[onclick*="'platform-payments'"]>span:first-child::before{content:"$";}
 .db-nav-item[onclick*="payments"] .icon::before{content:"▭";}
+.db-nav-item[onclick*="marketplace"] .icon::before{content:"◇";}
 .db-nav-item[onclick*="_openMyWebsite"] .icon::before{content:"⌁";}
 .db-nav-item[onclick*="website-editor"] .icon::before{content:"✎";}
 .db-nav-item[onclick*="settings"] .icon::before,.admin-nav-item[onclick*="'platform-settings'"]>span:first-child::before{content:"⚙";}
@@ -12243,6 +12244,7 @@ function dbNav(el, panel) {
     'contact-inbox': 'Contact Inbox',
     packages: 'Packages',
     pricing: 'Pricing & Packages',
+    marketplace: 'Marketplace',
     'email-center': 'Email Center',
     messages: 'Messages',
     settings: 'Settings',
@@ -59169,19 +59171,75 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
 
   function ensureOwnerPanel(){
     addStyle();
-    var nav = document.getElementById('db-nav-marketplace');
-    if(nav) nav.remove();
-    var host = document.querySelector('#db-panel-settings .db-content') || document.querySelector('#db-panel-overview .db-content');
-    if(!host) return null;
-    var panel = document.getElementById('ob-marketplace-owner-suite');
+    installOwnerMarketplaceNav();
+    var main = document.querySelector('#view-3 .db-main');
+    if(!main) return null;
+    var panel = document.getElementById('db-panel-marketplace');
     if(!panel){
-      panel = document.createElement('section');
-      panel.id = 'ob-marketplace-owner-suite';
-      panel.className = 'ob-mp-owner-suite';
-      panel.innerHTML = '<div id="ob-marketplace-dashboard-root" class="ob-mp-dash"></div>';
-      host.appendChild(panel);
+      panel = document.createElement('div');
+      panel.id = 'db-panel-marketplace';
+      panel.className = 'db-tab-panel';
+      panel.innerHTML = '<div class="db-content"></div>';
+      var settingsPanel = document.getElementById('db-panel-settings');
+      if(settingsPanel && settingsPanel.parentNode) settingsPanel.parentNode.insertBefore(panel, settingsPanel);
+      else main.appendChild(panel);
     }
-    return panel;
+    var content = panel.querySelector('.db-content') || panel;
+    var suite = document.getElementById('ob-marketplace-owner-suite');
+    if(!suite){
+      suite = document.createElement('section');
+      suite.id = 'ob-marketplace-owner-suite';
+      suite.className = 'ob-mp-owner-suite';
+      suite.innerHTML = '<div id="ob-marketplace-dashboard-root" class="ob-mp-dash"></div>';
+    } else if(!suite.querySelector('#ob-marketplace-dashboard-root')) {
+      suite.innerHTML = '<div id="ob-marketplace-dashboard-root" class="ob-mp-dash"></div>';
+    }
+    if(suite.parentNode !== content) content.appendChild(suite);
+    return suite;
+  }
+  function installOwnerMarketplaceNav(){
+    var navRoot = document.querySelector('#view-3 .db-nav');
+    if(!navRoot) return null;
+    var item = document.getElementById('db-nav-marketplace');
+    if(!item){
+      item = document.createElement('div');
+      item.id = 'db-nav-marketplace';
+      item.className = 'db-nav-item';
+      item.setAttribute('onclick', "dbNav(this,'marketplace')");
+      item.innerHTML = '<span class="icon" aria-hidden="true"></span> Marketplace';
+    }
+    var payments = Array.prototype.slice.call(navRoot.querySelectorAll('.db-nav-item')).filter(function(el){
+      return String(el.getAttribute('onclick') || '').indexOf('payments') >= 0;
+    })[0];
+    if(payments && payments.parentNode) payments.parentNode.insertBefore(item, payments.nextSibling);
+    else navRoot.appendChild(item);
+    return item;
+  }
+  function removeOwnerMarketplaceAccess(){
+    var wasActive = false;
+    var nav = document.getElementById('db-nav-marketplace');
+    if(nav) {
+      wasActive = nav.classList.contains('active');
+      nav.remove();
+    }
+    var panel = document.getElementById('db-panel-marketplace');
+    if(panel) {
+      wasActive = wasActive || panel.classList.contains('active');
+      panel.remove();
+    }
+    var straySuite = document.getElementById('ob-marketplace-owner-suite');
+    if(straySuite) straySuite.remove();
+    if(wasActive && typeof window.dbNav === 'function'){
+      var overview = document.querySelector('#view-3 .db-nav-item[onclick*="overview"]');
+      window.dbNav(overview, 'overview');
+    }
+  }
+  function syncOwnerMarketplaceAccess(enabled){
+    if(!enabled) {
+      removeOwnerMarketplaceAccess();
+      return null;
+    }
+    return ensureOwnerPanel();
   }
   function boolAttrs(value){ return value ? 'checked' : ''; }
   function selectedAttrs(a,b){ return String(a) === String(b) ? 'selected' : ''; }
@@ -59242,16 +59300,16 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     '</div>';
   }
   function renderOwnerMarketplace(data){
-    ensureOwnerPanel();
     state.ownerData = data || state.ownerData || {};
-    var root = document.getElementById('ob-marketplace-dashboard-root');
-    if(!root) return;
     var settings = state.ownerData.settings || {};
     var experts = state.ownerData.experts || [];
     if(!settings.enabled){
-      root.innerHTML = '<div class="ob-mp-panel"><div class="ob-mp-dash-title">Mini expert suites</div><div class="ob-mp-dash-sub">Marketplace mode is managed by admin for this expert account.</div></div>';
+      syncOwnerMarketplaceAccess(false);
       return;
     }
+    syncOwnerMarketplaceAccess(true);
+    var root = document.getElementById('ob-marketplace-dashboard-root');
+    if(!root) return;
     root.innerHTML =
       '<div class="ob-mp-dash-head"><div><div class="ob-mp-dash-title">Mini expert suites</div><div class="ob-mp-dash-sub">Owner controls stay here: rates, free minutes, availability gates, and suite access. Mini experts edit their own profile content from their suite.</div></div><button class="ob-mp-btn" onclick="obMarketplaceShowNew()">Add expert</button></div>' +
       '<section class="ob-mp-panel"><div class="ob-mp-grid">' +
@@ -59262,10 +59320,14 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
       '<div class="ob-mp-mini-list">' + (experts.length ? experts.map(function(expert){ return '<div class="ob-mp-mini">' + miniForm(expert) + '</div>'; }).join('') : '<section class="ob-mp-panel">No mini experts yet.</section>') + '</div>';
   }
   function loadOwnerMarketplace(force){
-    var panel = ensureOwnerPanel();
-    if(!panel) return Promise.resolve(null);
-    if(!token()) return Promise.resolve(null);
-    if(!force && state.ownerData) return Promise.resolve(state.ownerData);
+    if(!token()) {
+      syncOwnerMarketplaceAccess(false);
+      return Promise.resolve(null);
+    }
+    if(!force && state.ownerData) {
+      renderOwnerMarketplace(state.ownerData);
+      return Promise.resolve(state.ownerData);
+    }
     return api('/experts/me/marketplace').then(function(data){
       renderOwnerMarketplace(data);
       return data;
@@ -59725,7 +59787,6 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
 	    renderPublicPicker();
 	    renderMarketplaceHome();
 	    applyMarketplaceRoute();
-	    ensureOwnerPanel();
 	    loadOwnerMarketplace(false);
 	    wrapAdminOpen();
 	    wrapDashboardLoad();

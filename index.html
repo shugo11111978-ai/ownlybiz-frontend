@@ -31089,6 +31089,8 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
 	        var initialExpertPage = clean(window._obInitialExpertRouteGuardPage || window._obInitialExpertRoutePage || '');
 	        if(clean(page || 'home') === 'home' && initialExpertPage && initialExpertPage !== 'home' && Date.now() - Number(window._obInitialExpertRouteAt || 0) < 8000) return ret;
 	        if(initialExpertPage && clean(page || '') === initialExpertPage) window._obInitialExpertRoutePage = '';
+	        var marketplaceProfileRoute = /(?:^|\/)experts\/[^/]+/.test(location.pathname || '');
+	        if(typeof window.obMarketplaceSiteEnabled === 'function' && window.obMarketplaceSiteEnabled() && (window.__obMarketplaceOpeningProfile || marketplaceProfileRoute)) return ret;
 	        var url = expertUrl(page);
 	        if(!applyingRoute && url) writeUrl(url, false);
 	        return ret;
@@ -48090,7 +48092,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     var host = String(location.hostname || '').toLowerCase();
     var sub = host.match(/^([^.]+)\.ownlybiz\.com$/i);
     var platformish = host === 'ownlybiz.com' || host === 'www.ownlybiz.com' || host === 'localhost' || host === '127.0.0.1' || host.indexOf('vercel.app') >= 0;
-    var reserved = {home:1,about:1,services:1,reviews:1,book:1,booking:1,contact:1,account:1,login:1,signup:1,admin:1,dash:1,'mini-suite':1};
+    var reserved = {home:1,about:1,services:1,reviews:1,book:1,booking:1,contact:1,account:1,login:1,signup:1,admin:1,dash:1,experts:1,'mini-suite':1};
     if(parts[0] === 'mini-suite') return '';
     var candidate = '';
     if(sub && sub[1] && sub[1] !== 'www' && parts[0]) candidate = parts[0];
@@ -58519,13 +58521,36 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
 		    normalizeMarketplaceNav();
 		    syncMarketplaceContentCopy();
 		  }
+		  function marketplaceIsPlatformHost(){
+		    var host = String(location.hostname || '').toLowerCase();
+		    return host === 'ownlybiz.com' || host === 'www.ownlybiz.com' || host === 'localhost' || host === '127.0.0.1' || host.indexOf('vercel.app') >= 0;
+		  }
+		  function marketplaceOwnerSlug(){
+		    return publicSlug() || clean(ownerBase().slug || window._currentExpertSlug || window._browseExpert);
+		  }
+		  function marketplacePathPrefix(){
+		    var slug = marketplaceOwnerSlug();
+		    if(!slug) return '';
+		    return marketplaceIsPlatformHost() ? '/' + encodeURIComponent(slug) : '';
+		  }
+		  function marketplaceJoinPath(prefix, segment){
+		    prefix = String(prefix || '').replace(/\/+$/,'');
+		    segment = String(segment || '').replace(/^\/+/,'');
+		    var path = (prefix ? prefix : '') + (segment ? '/' + segment : '');
+		    return path || '/';
+		  }
 		  function marketplacePath(page){
 		    page = normalizeMarketplacePageKey(page || 'home');
-		    var slug = publicSlug() || clean(ownerBase().slug || window._currentExpertSlug || window._browseExpert);
-		    if(!slug) return '#';
-		    if(page === 'home') return '/' + encodeURIComponent(slug);
-		    if(page.indexOf('ai-') === 0) return '/' + encodeURIComponent(slug) + '/' + encodeURIComponent(page.replace(/^ai-/, ''));
-		    return '/' + encodeURIComponent(slug) + '/' + encodeURIComponent(page);
+		    var prefix = marketplacePathPrefix();
+		    if(marketplaceIsPlatformHost() && !prefix) return '#';
+		    if(page === 'home') return marketplaceJoinPath(prefix, '');
+		    if(page.indexOf('ai-') === 0) return marketplaceJoinPath(prefix, encodeURIComponent(page.replace(/^ai-/, '')));
+		    return marketplaceJoinPath(prefix, encodeURIComponent(page));
+		  }
+		  function marketplaceProfilePath(id){
+		    var prefix = marketplacePathPrefix();
+		    if(marketplaceIsPlatformHost() && !prefix) return '#';
+		    return marketplaceJoinPath(prefix, 'experts/' + encodeURIComponent(id || ''));
 		  }
 		  function marketplaceInstantScrollTo(top){
 		    var root = document.documentElement;
@@ -58586,16 +58611,36 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
 		    schedulePublicSync();
 		    try { history.pushState({obRoute:true}, '', marketplacePath(page)); } catch(e) {}
 		  };
-		  function marketplaceRoutePage(){
+		  function marketplaceRouteParts(){
 		    var parts = String(location.pathname || '').replace(/^\/+|\/+$/g,'').split('/').filter(Boolean);
-		    var host = String(location.hostname || '').toLowerCase();
-		    var platformish = host === 'ownlybiz.com' || host === 'www.ownlybiz.com' || host === 'localhost' || host === '127.0.0.1' || host.indexOf('vercel.app') >= 0;
-		    var segment = platformish ? (parts[1] || '') : (parts[0] || '');
-		    segment = clean(segment).toLowerCase();
+		    return marketplaceIsPlatformHost() ? parts.slice(1) : parts;
+		  }
+		  function safeDecodePathPart(value){
+		    try { return decodeURIComponent(String(value || '')); } catch(e) { return String(value || ''); }
+		  }
+		  function marketplaceRouteProfileId(){
+		    var parts = marketplaceRouteParts();
+		    return String(parts[0] || '').toLowerCase() === 'experts' && parts[1] ? clean(safeDecodePathPart(parts[1]), 80) : '';
+		  }
+		  function marketplaceRoutePage(){
+		    var parts = marketplaceRouteParts();
+		    if(String(parts[0] || '').toLowerCase() === 'experts') return 'home';
+		    var segment = clean(parts[0] || '').toLowerCase();
 		    return normalizeMarketplacePageKey(segment || 'home');
 		  }
 		  function applyMarketplaceRoute(){
-		    if(!marketplaceSiteEnabled() || state.publicView === 'profile') return;
+		    if(!marketplaceSiteEnabled()) return;
+		    var profileId = marketplaceRouteProfileId();
+		    if(profileId) {
+		      state.publicView = 'profile';
+		      applySelectedMini(profileId);
+		      renderMarketplaceHome();
+		      activateMarketplacePage('home', {closeMenu:false, scroll:false});
+		      reinforceMarketplacePage('home', {closeMenu:false, scroll:false});
+		      schedulePublicSync();
+		      return;
+		    }
+		    if(state.publicView === 'profile') return;
 		    var page = marketplaceRoutePage();
 		    restoreOwnerForSite();
 		    if(page === 'home') renderMarketplaceHome();
@@ -58759,7 +58804,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
 	    state.publicView = 'profile';
 	    window.__obMarketplaceOpeningProfile = true;
 	    applySelectedMini(id);
-	    try { history.pushState({obRoute:true}, '', marketplacePath('home')); } catch(e) {}
+	    try { history.pushState({obRoute:true}, '', marketplaceProfilePath(id)); } catch(e) {}
 	    renderMarketplaceHome();
 	    schedulePublicSync();
 	    activateMarketplacePage('home', {closeMenu:false, scroll:false});
@@ -58771,6 +58816,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
 	  window.obMarketplaceBackToGrid = function(){
 	    state.publicView = 'grid';
 	    restoreOwnerForSite();
+	    try { history.pushState({obRoute:true}, '', marketplacePath('home')); } catch(e) {}
 	    renderPublicPicker();
 	    renderMarketplaceHome();
 	    schedulePublicSync();
@@ -58981,6 +59027,10 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
   function publicSlug(){
     var slug = clean(window._browseExpert || window._currentExpertSlug || (window._currentExpert && window._currentExpert.slug) || '');
     if(slug) return slug;
+    var host = String(location.hostname || '').toLowerCase();
+    var sub = host.match(/^([^.]+)\.ownlybiz\.com$/);
+    if(sub && sub[1] && sub[1] !== 'www') return sub[1];
+    if(host && host !== 'ownlybiz.com' && host !== 'www.ownlybiz.com' && host !== 'localhost' && host !== '127.0.0.1' && host.indexOf('vercel.app') < 0) return '';
     var first = clean((location.pathname || '').replace(/^\/+/, '').split('/')[0] || '');
     if(first && !(window.obIsPlatformRouteRoot && window.obIsPlatformRouteRoot(first))) return first;
     return '';
@@ -60011,6 +60061,11 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
 		    window.showExpertPage = function(page){
 		      page = normalizeMarketplacePageKey(page || 'home');
 		      if(marketplaceSiteEnabled()) {
+		        var marketplaceProfileId = marketplaceRouteProfileId();
+		        if(marketplaceProfileId) {
+		          state.publicView = 'profile';
+		          applySelectedMini(marketplaceProfileId);
+		        }
 		        if(page === 'home') {
 		          var routedPage = marketplaceRoutePage();
 		          if(routedPage !== 'home' && routedPage !== 'book' &&
@@ -60023,7 +60078,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
 		          return;
 		        }
 		        if(!document.getElementById('ep-' + page)) page = 'home';
-		        if(!window.__obMarketplaceOpeningProfile) state.publicView = 'grid';
+		        if(!window.__obMarketplaceOpeningProfile && !marketplaceProfileId) state.publicView = 'grid';
 		        restoreOwnerForSite();
 		      } else if(!document.getElementById('ep-' + page)) {
 		        page = 'home';

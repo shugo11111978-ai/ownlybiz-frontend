@@ -19970,6 +19970,53 @@ window.obResetPlatformFavicon = function(){
   } catch(e) {}
 };
 
+window.obPublicExpertBrokenMediaUrls = window.obPublicExpertBrokenMediaUrls || {};
+window.obMarkPublicExpertImageBroken = function(url){
+  url = String(url || '').trim();
+  if(url) window.obPublicExpertBrokenMediaUrls[url] = 1;
+};
+window.obPublicExpertImageUrl = function(url){
+  url = String(url || '').trim();
+  if(!url || window.obPublicExpertBrokenMediaUrls[url]) return '';
+  if(/^https?:\/\//i.test(url) || url.charAt(0) === '/' || /^data:image\//i.test(url)) return url;
+  return '';
+};
+window.obSetPublicExpertImage = function(img, url, placeholderSelector, options){
+  if(!img) return false;
+  options = options || {};
+  var parent = img.parentElement;
+  var src = window.obPublicExpertImageUrl(url);
+  var placeholder = placeholderSelector ? document.querySelector(placeholderSelector) : null;
+  function showPlaceholder(){
+    img.removeAttribute('src');
+    img.style.display = 'none';
+    img.onload = null;
+    img.onerror = null;
+    if(parent) parent.classList.add('ob-image-missing');
+    if(placeholder) placeholder.style.display = '';
+    if(options.hideParentWhenMissing && parent) parent.style.display = 'none';
+  }
+  if(!src) {
+    showPlaceholder();
+    return false;
+  }
+  if(options.hideParentWhenMissing && parent) parent.style.display = '';
+  img.onerror = function(){
+    window.obMarkPublicExpertImageBroken(img.currentSrc || img.src || src);
+    showPlaceholder();
+  };
+  img.onload = function(){
+    if(parent) parent.classList.remove('ob-image-missing');
+    if(placeholder) placeholder.style.display = 'none';
+    img.style.display = 'block';
+  };
+  img.src = src;
+  img.style.display = 'block';
+  if(parent) parent.classList.remove('ob-image-missing');
+  if(placeholder) placeholder.style.display = 'none';
+  return true;
+};
+
 window._applyExpertWebsite = function _applyExpertWebsite(data) {
   if (!data) return;
   var wc = {};
@@ -20164,22 +20211,28 @@ window._applyExpertWebsite = function _applyExpertWebsite(data) {
   if(wc.profile_image){
     // Hero photo
     var heroImg = document.getElementById('expert-photo-img');
-    if(heroImg){ heroImg.src = wc.profile_image; heroImg.style.display = 'block'; var _emojiEl = document.getElementById('expert-photo-emoji'); if(_emojiEl) _emojiEl.style.display = 'none'; }
+    if(heroImg) window.obSetPublicExpertImage(heroImg, wc.profile_image, '#expert-photo-emoji');
     // About page photo
     var aboutImg = document.getElementById('ew-about-photo');
-    if(aboutImg){ aboutImg.src = wc.profile_image; aboutImg.style.display = 'block'; var _aboutEmoji = aboutImg.parentElement.querySelector('.about-photo-emoji'); if(_aboutEmoji) _aboutEmoji.style.display = 'none'; }
+    if(aboutImg) window.obSetPublicExpertImage(aboutImg, wc.profile_image, '#view-4 .about-photo-emoji');
     // Any .ep-avatar elements
     document.querySelectorAll('.ep-avatar').forEach(function(el){
-      if(el.tagName==='IMG'){ el.src = wc.profile_image; el.style.display = 'block'; }
+      if(el.tagName==='IMG') window.obSetPublicExpertImage(el, wc.profile_image, '');
     });
   }
   if(wc.logo_image){
     var logoImg = document.getElementById('nav-logo-img-el');
     var logoWrap = document.getElementById('nav-logo-img');
-    if(logoImg){ logoImg.src = wc.logo_image; }
-    if(logoWrap){ logoWrap.style.display = ''; }
+    if(logoImg) window.obSetPublicExpertImage(logoImg, wc.logo_image, '', { hideParentWhenMissing:true });
+    if(logoWrap && window.obPublicExpertImageUrl(wc.logo_image)){ logoWrap.style.display = ''; }
   }
-  var faviconUrl = wc.favicon_image || wc.logo_image || data.logo_url || wc.profile_image || data.avatar_url || '';
+  var faviconUrl =
+    window.obPublicExpertImageUrl(wc.favicon_image) ||
+    window.obPublicExpertImageUrl(wc.logo_image) ||
+    window.obPublicExpertImageUrl(data.logo_url) ||
+    window.obPublicExpertImageUrl(wc.profile_image) ||
+    window.obPublicExpertImageUrl(data.avatar_url) ||
+    '';
   if(faviconUrl && window.obSetExpertFavicon) window.obSetExpertFavicon(faviconUrl);
 }
 
@@ -37219,6 +37272,11 @@ body.ob-ui-dark .ob-connection-note,
 #view-4 .expert-photo,
 #view-4 .about-photo{
   font-size:0!important;
+  background:
+    radial-gradient(circle at 28% 18%,rgba(255,255,255,.82),rgba(255,255,255,0) 34%),
+    linear-gradient(145deg,#f8faf8 0%,#e7edf1 54%,#eee7f1 100%)!important;
+  border:1px solid rgba(36,24,19,.08)!important;
+  box-shadow:0 24px 58px rgba(42,28,18,.1),inset 0 0 0 1px rgba(255,255,255,.62)!important;
 }
 	#view-4 .expert-photo .ob-avatar-initials,
 	#view-4 .about-photo .ob-avatar-initials,
@@ -37229,7 +37287,7 @@ body.ob-ui-dark .ob-connection-note,
   justify-content:center!important;
   width:100%!important;
   height:100%!important;
-  color:var(--ob-site-action-text,#0B0908)!important;
+  color:rgba(36,24,19,.74)!important;
   font-family:var(--font-body)!important;
   font-size:clamp(42px,7vw,76px)!important;
   font-weight:900!important;
@@ -44846,10 +44904,12 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     var id = img.id || '';
     var isKnownExpertMedia = /^(expert-photo-img|ew-about-photo|nav-logo-img-el)$/.test(id) || img.classList.contains('ep-avatar');
     if(!isKnownExpertMedia) return;
+    if(window.obMarkPublicExpertImageBroken) window.obMarkPublicExpertImageBroken(img.currentSrc || img.src || img.getAttribute('src') || '');
     if(img.dataset.obBrokenHandled && getComputedStyle(img).display === 'none' && !img.getAttribute('src')) return;
     img.dataset.obBrokenHandled = '1';
     img.removeAttribute('src');
     img.style.display = 'none';
+    if(img.parentElement) img.parentElement.classList.add('ob-image-missing');
     if(id === 'expert-photo-img'){
       var emoji = document.getElementById('expert-photo-emoji');
       if(emoji) emoji.style.display = '';

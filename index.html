@@ -16526,6 +16526,27 @@ async function savePaymentConfig() {
 	          <tbody>${rows(items, empty)}</tbody>
 	        </table>
 	      </div>`;
+	    const emailTraffic = (email) => {
+	      email = email || {};
+	      const totals = email.totals || {};
+	      const sourceRows = (email.sources && email.sources.length ? email.sources.map(r=>`
+	        <tr><td style="max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(r.label || 'Email campaigns')}</td><td style="text-align:right;">${n(r.pageviews)}</td><td style="text-align:right;">${n(r.visitors)}</td><td style="text-align:right;">${n(r.campaigns)}</td></tr>`).join('') : '<tr><td colspan="4" style="padding:18px;text-align:center;color:rgba(246,241,233,.35);">No email traffic source yet.</td></tr>');
+	      const campaignRows = (email.campaigns && email.campaigns.length ? email.campaigns.map(r=>`
+	        <tr><td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(r.label || 'unknown email campaign')}</td><td>${esc(r.source || 'email')}</td><td style="text-align:right;">${n(r.pageviews)}</td><td style="text-align:right;">${n(r.visitors)}</td><td style="text-align:right;">${n(r.visits)}</td></tr>`).join('') : '<tr><td colspan="5" style="padding:18px;text-align:center;color:rgba(246,241,233,.35);">No campaign-tagged email visits yet.</td></tr>');
+	      return `
+	        <div class="admin-card">
+	          <div class="admin-card-title">Email Campaign Traffic <span class="admin-card-title-sub">UTM-tagged email visitors</span></div>
+	          <div class="admin-kpi-row" style="grid-template-columns:repeat(3,1fr);margin-top:14px;">
+	            <div class="admin-kpi"><div class="admin-kpi-label">Email Visitors</div><div class="admin-kpi-val">${n(totals.visitors)}</div><div class="admin-kpi-change">From email links</div></div>
+	            <div class="admin-kpi"><div class="admin-kpi-label">Email Visits</div><div class="admin-kpi-val">${n(totals.visits)}</div><div class="admin-kpi-change">Session estimate</div></div>
+	            <div class="admin-kpi"><div class="admin-kpi-label">Campaigns Seen</div><div class="admin-kpi-val">${n(totals.campaigns)}</div><div class="admin-kpi-change">Tagged campaigns</div></div>
+	          </div>
+	          <div style="display:grid;grid-template-columns:1fr 1.35fr;gap:20px;margin-top:18px;">
+	            <div><div class="admin-card-title" style="font-size:16px;margin-bottom:10px;">Email Sources</div><table class="experts-table" style="width:100%;"><thead><tr><th>Source</th><th style="text-align:right;">Views</th><th style="text-align:right;">Visitors</th><th style="text-align:right;">Campaigns</th></tr></thead><tbody>${sourceRows}</tbody></table></div>
+	            <div><div class="admin-card-title" style="font-size:16px;margin-bottom:10px;">Email Campaigns</div><table class="experts-table" style="width:100%;"><thead><tr><th>Campaign</th><th>Source</th><th style="text-align:right;">Views</th><th style="text-align:right;">Visitors</th><th style="text-align:right;">Visits</th></tr></thead><tbody>${campaignRows}</tbody></table></div>
+	          </div>
+	        </div>`;
+	    };
 	    try {
 	      const d=await api('GET','/admin/analytics?days=30');
 	      const t=d.totals||{};
@@ -16542,6 +16563,7 @@ async function savePaymentConfig() {
 	          <div class="admin-card-title">Traffic Trend <span class="admin-card-title-sub">Daily pageviews</span></div>
 	          <div style="height:150px;display:flex;align-items:flex-end;gap:5px;padding-top:18px;">${daily || '<div style="color:rgba(246,241,233,.35);padding:28px;">No pageviews tracked yet.</div>'}</div>
 	        </div>
+	        ${emailTraffic(d.email_traffic)}
 	        <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">
 	          ${table('Top Pages', d.top_pages, 'No pages yet')}
 	          ${table('Top Domains', d.top_domains, 'No domains yet')}
@@ -39799,6 +39821,37 @@ body.ob-ui-dark .ob-connection-note,
   function analyticsTable(title, items, empty){
     return '<div class="admin-card"><div class="admin-card-title">' + esc(title) + '</div><table class="experts-table" style="width:100%;"><thead><tr><th>Source</th><th style="text-align:right;">Views</th><th style="text-align:right;">Visitors</th></tr></thead><tbody>' + analyticsRows(items, empty) + '</tbody></table></div>';
   }
+  function emailSourceRows(items, empty){
+    if(items && items.length){
+      return items.map(function(row){
+        return '<tr><td style="max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + esc(row.label || 'Email campaigns') + '">' + esc(row.label || 'Email campaigns') + '</td><td style="text-align:right;">' + n(row.pageviews) + '</td><td style="text-align:right;">' + n(row.visitors) + '</td><td style="text-align:right;">' + n(row.campaigns) + '</td></tr>';
+      }).join('');
+    }
+    return '<tr><td colspan="4" style="padding:18px;text-align:center;color:rgba(246,241,233,.56);">' + esc(empty) + '</td></tr>';
+  }
+  function emailCampaignRows(items, empty){
+    if(items && items.length){
+      return items.map(function(row){
+        var label = row.label || 'unknown email campaign';
+        return '<tr><td style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + esc(label) + '">' + esc(label) + '</td><td>' + esc(row.source || 'email') + '</td><td style="text-align:right;">' + n(row.pageviews) + '</td><td style="text-align:right;">' + n(row.visitors) + '</td><td style="text-align:right;">' + n(row.visits) + '</td></tr>';
+      }).join('');
+    }
+    return '<tr><td colspan="5" style="padding:18px;text-align:center;color:rgba(246,241,233,.56);">' + esc(empty) + '</td></tr>';
+  }
+  function emailTrafficHtml(email){
+    email = email || {};
+    var totals = email.totals || {};
+    return '<div class="admin-card"><div class="admin-card-title">Email Campaign Traffic <span class="admin-card-title-sub">UTM-tagged email visitors</span></div>' +
+      '<div class="admin-kpi-row" style="grid-template-columns:repeat(3,1fr);margin-top:14px;">' +
+        '<div class="admin-kpi"><div class="admin-kpi-label">Email Visitors</div><div class="admin-kpi-val">' + n(totals.visitors) + '</div><div class="admin-kpi-change">From email links</div></div>' +
+        '<div class="admin-kpi"><div class="admin-kpi-label">Email Visits</div><div class="admin-kpi-val">' + n(totals.visits) + '</div><div class="admin-kpi-change">Session estimate</div></div>' +
+        '<div class="admin-kpi"><div class="admin-kpi-label">Campaigns Seen</div><div class="admin-kpi-val">' + n(totals.campaigns) + '</div><div class="admin-kpi-change">Tagged campaigns</div></div>' +
+      '</div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1.35fr;gap:20px;margin-top:18px;">' +
+        '<div><div class="admin-card-title" style="font-size:16px;margin-bottom:10px;">Email Sources</div><table class="experts-table" style="width:100%;"><thead><tr><th>Source</th><th style="text-align:right;">Views</th><th style="text-align:right;">Visitors</th><th style="text-align:right;">Campaigns</th></tr></thead><tbody>' + emailSourceRows(email.sources || [], 'No email traffic source yet.') + '</tbody></table></div>' +
+        '<div><div class="admin-card-title" style="font-size:16px;margin-bottom:10px;">Email Campaigns</div><table class="experts-table" style="width:100%;"><thead><tr><th>Campaign</th><th>Source</th><th style="text-align:right;">Views</th><th style="text-align:right;">Visitors</th><th style="text-align:right;">Visits</th></tr></thead><tbody>' + emailCampaignRows(email.campaigns || [], 'No campaign-tagged email visits yet.') + '</tbody></table></div>' +
+      '</div></div>';
+  }
   var adminAnalyticsLoading = false;
   var adminAnalyticsLoadedAt = 0;
   async function loadAdminAnalyticsFresh(force){
@@ -39831,6 +39884,7 @@ body.ob-ui-dark .ob-connection-note,
           '<div class="admin-kpi"><div class="admin-kpi-label">Domains Seen</div><div class="admin-kpi-val">' + n(t.domains) + '</div><div class="admin-kpi-change">Platform + expert domains</div></div>' +
         '</div>' +
         '<div class="admin-card"><div class="admin-card-title">Traffic Trend <span class="admin-card-title-sub">Daily pageviews</span></div><div style="height:150px;display:flex;align-items:flex-end;gap:5px;padding-top:18px;">' + (daily || '<div style="color:rgba(246,241,233,.62);padding:28px;">No pageviews tracked yet.</div>') + '</div></div>' +
+        emailTrafficHtml(d.email_traffic) +
         '<div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;">' +
           analyticsTable('Top Pages', d.top_pages, 'No pages yet') + analyticsTable('Top Domains', d.top_domains, 'No domains yet') + analyticsTable('Traffic Sources', d.referrers, 'No referrers yet') + analyticsTable('Countries', d.countries, 'No geo data yet') + analyticsTable('Devices', d.devices, 'No device data yet') + analyticsTable('Expert Sites', d.expert_sites, 'No expert-site visits yet') +
         '</div>';
@@ -54411,7 +54465,15 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
   function coreScenarios(){ return scenarios().filter(function(s){ return !(s.marketing || s.unsubscribe_applicable || s.is_custom); }); }
   function marketingScenarios(){ return scenarios().filter(function(s){ return !!(s.marketing || s.unsubscribe_applicable || s.is_custom); }); }
   function mapRows(){ var o=state.overview||{}; return o.map || scenarios(); }
-  function fmt(n){ return String(Number(n||0).toLocaleString ? Number(n||0).toLocaleString() : (n||0)); }
+  function fmt(n){
+    var num = Number(n);
+    if(Number.isFinite(num)) return num.toLocaleString();
+    return String(n == null ? '' : n);
+  }
+  function pct(n){
+    var num = Number(n);
+    return (Number.isFinite(num) ? num : 0).toLocaleString(undefined, {maximumFractionDigits:1}) + '%';
+  }
   function stat(label,value){ return '<div class="ob-admin-ec-kpi"><strong>'+esc(fmt(value))+'</strong><span>'+esc(label)+'</span></div>'; }
   function paintStatus(msg){
     state.status=msg||'';
@@ -55065,8 +55127,8 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
   }
   function analyticsHtml(){
     var a=platform().analytics||{}, t=a.totals||{};
-    return '<div class="ob-admin-ec-kpis">'+stat('Sent',t.sent)+stat('Opens',t.opens)+stat('Clicks',t.clicks)+stat('Unsubscribes',t.unsubscribes)+stat('Open rate',String(t.open_rate||0)+'%')+stat('Click rate',String(t.click_rate||0)+'%')+'</div>'
-      + '<div class="ob-admin-ec-box">'+sectionHead('Campaign performance','Delivery and engagement totals from saved campaigns.','<button class="ob-admin-ec-btn" type="button" onclick="window.OBAdminEmailCenter.open(\'log\')">Send Log</button><button class="ob-admin-ec-btn" type="button" onclick="window.OBAdminEmailCenter.open(\'campaigns\')">Campaigns</button>')+'<table class="ob-admin-ec-table"><thead><tr><th>Campaign</th><th>Status</th><th>Sent</th><th>Opens</th><th>Failed</th><th>Open</th></tr></thead><tbody>'+campaigns().map(function(c){return '<tr><td>'+esc(c.name||c.subject)+'</td><td><span class="ob-admin-ec-badge '+(c.status==='sent'?'ready':'')+'">'+esc(c.status||'draft')+'</span></td><td>'+fmt(c.sent_count||0)+'</td><td>'+fmt(c.open_count||c.opens||0)+'</td><td>'+fmt(c.failed_count||0)+'</td><td><button class="ob-admin-ec-btn" type="button" onclick="window.OBAdminEmailCenter.editCampaign(\''+jsArg(c.id)+'\')">Details</button></td></tr>';}).join('')+'</tbody></table></div>';
+    return '<div class="ob-admin-ec-kpis">'+stat('Sent',t.sent)+stat('Opens',t.opens)+stat('Clicks',t.clicks)+stat('Unsubscribes',t.unsubscribes)+stat('Open rate',pct(t.open_rate))+stat('Click rate',pct(t.click_rate))+'</div>'
+      + '<div class="ob-admin-ec-box">'+sectionHead('Campaign performance','Delivery and engagement totals from saved campaigns.','<button class="ob-admin-ec-btn" type="button" onclick="window.OBAdminEmailCenter.open(\'log\')">Send Log</button><button class="ob-admin-ec-btn" type="button" onclick="window.OBAdminEmailCenter.open(\'campaigns\')">Campaigns</button>')+'<table class="ob-admin-ec-table"><thead><tr><th>Campaign</th><th>Status</th><th>Sent</th><th>Opens</th><th>Clicks</th><th>Failed</th><th>Open</th></tr></thead><tbody>'+campaigns().map(function(c){return '<tr><td>'+esc(c.name||c.subject)+'</td><td><span class="ob-admin-ec-badge '+(c.status==='sent'?'ready':'')+'">'+esc(c.status||'draft')+'</span></td><td>'+fmt(c.sent_count||0)+'</td><td>'+fmt(c.open_count||c.opens||0)+'</td><td>'+fmt(c.click_count||c.clicks||0)+'</td><td>'+fmt(c.failed_count||0)+'</td><td><button class="ob-admin-ec-btn" type="button" onclick="window.OBAdminEmailCenter.editCampaign(\''+jsArg(c.id)+'\')">Details</button></td></tr>';}).join('')+'</tbody></table></div>';
   }
   function sendLogHtml(){
     var a=platform().analytics||{};

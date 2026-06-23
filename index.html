@@ -18897,6 +18897,33 @@ function obApplyPublicExpertPayload(e, slug, source) {
   if(typeof window._markRouteReady === 'function') window._markRouteReady('public');
   return e;
 }
+function obPublicLoaderShouldCheckStatus(slug) {
+  slug = String(slug || '').trim().toLowerCase();
+  if(!slug) return false;
+  var host = String(location.hostname || '').toLowerCase();
+  var sub = host.match(/^([a-z0-9][a-z0-9-]{1,62})\.ownlybiz\.com$/i);
+  if(sub && sub[1] && sub[1] !== 'www') return sub[1].toLowerCase() === slug;
+  var platform = !host || host === 'ownlybiz.com' || host === 'www.ownlybiz.com' || host === 'localhost' || host === '127.0.0.1' || host.indexOf('vercel.app') >= 0;
+  if(!platform) return false;
+  var first = String(location.pathname || '').replace(/^\/+/, '').split('/')[0].toLowerCase();
+  if(window.obIsPlatformRouteRoot && window.obIsPlatformRouteRoot(first)) return false;
+  return first === slug;
+}
+function obPublicLoaderStatus(slug) {
+  if(!obPublicLoaderShouldCheckStatus(slug)) return Promise.resolve({public_available:true});
+  return fetch('https://ownlybiz-backend-production.up.railway.app/api/experts/public-status/' + encodeURIComponent(slug), {cache:'no-store'})
+    .then(function(r){
+      return r.json().catch(function(){ return {}; }).then(function(d){
+        if(!r.ok || d.error) {
+          var err = new Error(d.error || 'Expert status unavailable');
+          err.status = r.status;
+          err.body = d;
+          throw err;
+        }
+        return d;
+      });
+    });
+}
 window.loadExpertWebsite = function(slug) {
   slug = slug || window._browseExpert || 'expert-slug';
   slug = (slug == null ? '' : String(slug).trim());
@@ -18938,8 +18965,18 @@ window.loadExpertWebsite = function(slug) {
 	    }
 	    return Promise.resolve(null);
 	  }
-  var _loadPromise = fetch('https://ownlybiz-backend-production.up.railway.app/api/experts/' + slug, _mainPublicExpertFetchOpts)
-    .then(function(r){ return r.json().catch(function(){ return {}; }).then(function(d){ if(!r.ok){ var err = new Error(d.error || d.message || ('HTTP ' + r.status)); err.status = r.status; err.body = d; throw err; } return d; }); })
+	  var _loadPromise = (_preloadedExpert ? Promise.resolve({public_available:true}) : obPublicLoaderStatus(slug))
+	    .then(function(status){
+	      if(status && status.public_available === false) {
+	        var err = new Error(status.code === 'site_unpublished' ? 'Expert site is not published yet' : 'Expert site unavailable');
+	        err.status = 404;
+	        err.body = status || {};
+	        err.publicStatusBlocked = true;
+	        throw err;
+	      }
+	      return fetch('https://ownlybiz-backend-production.up.railway.app/api/experts/' + slug, _mainPublicExpertFetchOpts);
+	    })
+	    .then(function(r){ return r.json().catch(function(){ return {}; }).then(function(d){ if(!r.ok){ var err = new Error(d.error || d.message || ('HTTP ' + r.status)); err.status = r.status; err.body = d; throw err; } return d; }); })
     .then(function(d){
       var e = d.expert || d;
       var applied = obApplyPublicExpertPayload(e, slug, d);
@@ -18950,11 +18987,19 @@ window.loadExpertWebsite = function(slug) {
       _loadState.recent[_loadKey] = { at:Date.now(), promise:_loadPromise };
       if(window.obPublicSlugBackoff) window.obPublicSlugBackoff.clear('expert', slug);
       return applied;
-	    }).catch(function(err){
-	      if(window.obPublicSlugBackoff && err && err.status === 404) {
-	        window.obPublicSlugBackoff.mark('expert', slug, 'not_found', 5*60*1000, err.body || null);
-	        if(typeof window._markRouteReady === 'function') window._markRouteReady('public');
-	        return;
+		    }).catch(function(err){
+		      if(err && err.publicStatusBlocked) {
+		        window.__obPublicExpertUnavailableSlug = slug;
+		        window.__obPublicGateAllowedSlug = '';
+		        window._obAllowPublicShellReady = true;
+		        if(window.obPublicSlugBackoff) window.obPublicSlugBackoff.mark('expert', slug, err.body && err.body.code === 'site_unpublished' ? 'site_unpublished' : 'not_found', 5*60*1000, err.body || null);
+		        if(typeof window._markRouteReady === 'function') window._markRouteReady('public');
+		        return;
+		      }
+		      if(window.obPublicSlugBackoff && err && err.status === 404) {
+		        window.obPublicSlugBackoff.mark('expert', slug, 'not_found', 5*60*1000, err.body || null);
+		        if(typeof window._markRouteReady === 'function') window._markRouteReady('public');
+		        return;
 	      }
 	      if(window.obPublicSlugBackoff && err && err.status === 429) {
 	        var row = window.obPublicSlugBackoff.mark('expert', slug, 'rate_limited', 5*1000, err.body || null);

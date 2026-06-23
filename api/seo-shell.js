@@ -17,13 +17,8 @@ const CUSTOM_DOMAIN_SLUG_FALLBACKS = {
   'lunapsychics.com': 'liranprodtest',
   'www.lunapsychics.com': 'liranprodtest',
 };
-const PUBLIC_FIRST_PAINT_SLUGS = new Set(['lunapsychics2']);
-const PUBLIC_LITE_EXPERT_SLUGS = new Set(
-  String(process.env.OB_PUBLIC_EXPERT_LITE_SLUGS || '')
-    .split(',')
-    .map((value) => clean(value) === '*' ? '*' : cleanExpertSlug(value))
-    .filter(Boolean)
-);
+const PUBLIC_FIRST_PAINT_SLUGS = publicSlugSet(process.env.OB_PUBLIC_EXPERT_FIRST_PAINT_SLUGS);
+const PUBLIC_LITE_EXPERT_SLUGS = publicSlugSet(process.env.OB_PUBLIC_EXPERT_LITE_SLUGS);
 
 let cachedIndex = null;
 let cachedBlogPosts = null;
@@ -307,6 +302,20 @@ function cleanExpertSlug(value) {
   return RESERVED.has(slug) ? '' : slug;
 }
 
+function publicSlugSet(raw) {
+  return new Set(
+    String(raw || '')
+      .split(',')
+      .map((value) => clean(value) === '*' ? '*' : cleanExpertSlug(value))
+      .filter(Boolean)
+  );
+}
+
+function publicSlugSetHas(set, slug) {
+  const cleanSlug = cleanExpertSlug(slug);
+  return !!cleanSlug && (set.has(cleanSlug) || set.has('*'));
+}
+
 function firstPathSegment(req) {
   const rawPath = String((req.url || '/').split('?')[0] || '/').replace(/^\/+|\/+$/g, '');
   return rawPath.split('/').filter(Boolean)[0] || '';
@@ -420,7 +429,7 @@ async function fetchCachedPublicExpert(url, timeoutMs = 1800, ttlMs = 30000) {
 
 async function fetchCachedPublicOnDemand(slug) {
   const cleanSlug = clean(slug);
-  if (!cleanSlug || !PUBLIC_FIRST_PAINT_SLUGS.has(cleanSlug)) return null;
+  if (!cleanSlug || !publicPreloadOnDemandEnabled(cleanSlug)) return null;
   const url = `${BACKEND}/api/on-demand/public/${encodeURIComponent(cleanSlug)}`;
   const value = await fetchCachedPublicExpert(url, 1400, 60000);
   return value && value.success !== false && value.available ? value : null;
@@ -437,7 +446,7 @@ async function resolveExpert(req, host) {
   if (!slug) return null;
 
   const profileUrl = `${BACKEND}/api/experts/${encodeURIComponent(slug)}`;
-  const profileTtl = PUBLIC_FIRST_PAINT_SLUGS.has(slug) ? 300000 : 30000;
+  const profileTtl = publicFirstPaintEnabled(slug) ? 300000 : 30000;
   const profile = await fetchCachedPublicExpert(profileUrl, 1800, profileTtl);
   const expert = profile && (profile.expert || profile);
   if (!expert || !(expert.name || expert.slug)) return { slug, route: { ...route, slug } };
@@ -574,7 +583,7 @@ function injectPublicExpertPreload(html, expertResult, host, onDemandResult) {
     routeKind: expertResult && expertResult.route && expertResult.route.kind || '',
     expert: preloadedExpert,
   };
-  const firstPaint = PUBLIC_FIRST_PAINT_SLUGS.has(payload.slug)
+  const firstPaint = publicFirstPaintEnabled(payload.slug)
     ? `window.__OB_PUBLIC_FIRST_PAINT__={slug:${safeScriptJson(payload.slug)}};`
     : '';
   const onDemand = onDemandResult
@@ -721,8 +730,15 @@ function publicLiteDesign(expert, wc) {
 }
 
 function publicLiteEnabled(slug) {
-  const cleanSlug = cleanExpertSlug(slug);
-  return !!cleanSlug && (PUBLIC_LITE_EXPERT_SLUGS.has(cleanSlug) || PUBLIC_LITE_EXPERT_SLUGS.has('*'));
+  return publicSlugSetHas(PUBLIC_LITE_EXPERT_SLUGS, slug);
+}
+
+function publicFirstPaintEnabled(slug) {
+  return publicSlugSetHas(PUBLIC_FIRST_PAINT_SLUGS, slug);
+}
+
+function publicPreloadOnDemandEnabled(slug) {
+  return publicFirstPaintEnabled(slug) || publicLiteEnabled(slug);
 }
 
 function publicLiteRequestOrigin(req, host) {
@@ -1106,7 +1122,7 @@ function renderPublicLitePage(expertResult, req, host, onDemandResult) {
 function publicFirstPaintShell(expertResult, req, onDemandResult) {
   const expert = expertResult && expertResult.expert;
   const slug = clean(expert && (expert.slug || expertResult.slug));
-  if (!PUBLIC_FIRST_PAINT_SLUGS.has(slug) || !expert || !(expert.name || expert.slug)) return '';
+  if (!publicFirstPaintEnabled(slug) || !expert || !(expert.name || expert.slug)) return '';
 
   const wc = websiteContent(expert);
   const tokens = wc.design_tokens || {};
@@ -1366,7 +1382,7 @@ module.exports = async function handler(req, res) {
   let html = readIndex();
   let statusCode = 200;
   if (isExpert) {
-    const preloadOnDemand = PUBLIC_FIRST_PAINT_SLUGS.has(clean(expert && (expert.slug || expertResult.slug)))
+    const preloadOnDemand = publicFirstPaintEnabled(clean(expert && (expert.slug || expertResult.slug)))
       && publicFirstPaintPage(req, route) === 'book'
       ? await fetchCachedPublicOnDemand(expert.slug || expertResult.slug)
       : null;

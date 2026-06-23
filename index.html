@@ -16736,7 +16736,12 @@ async function savePaymentConfig() {
 	      window._browseExpert = '';
 	      loadMarketing();
 	      if(typeof switchView === 'function') switchView(1);
-	      if(typeof showMktPage === 'function') showMktPage('home');
+	      window.__obRenderingLegalRoute = true;
+	      try {
+	        if(typeof showMktPage === 'function') showMktPage('home');
+	      } finally {
+	        window.__obRenderingLegalRoute = false;
+	      }
 	      if(typeof window.obRenderLegalPage === 'function') window.obRenderLegalPage();
 	      if(typeof window._markRouteReady === 'function') window._markRouteReady();
 	      return;
@@ -29547,7 +29552,12 @@ window._handleRTCMessage=function(d){
     }
     ensureLegalRouteStyle();
     document.body.classList.add('ob-legal-route');
-    if(typeof showMktPage === 'function') showMktPage('home');
+    window.__obRenderingLegalRoute = true;
+    try {
+      if(typeof showMktPage === 'function') showMktPage('home');
+    } finally {
+      window.__obRenderingLegalRoute = false;
+    }
     setLegalHomeMode(home, true);
     var expertLegal = expertSiteContext();
     var nav = document.getElementById('mkt-nav');
@@ -30861,8 +30871,9 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
 	      window._obInitialExpertRouteAt = Date.now();
 	    }
 	  })();
-	  function routeIsPublicExpert(){
+  function routeIsPublicExpert(){
     if(supportSessionActive()) return false;
+    if(routeIsLegalPage()) return false;
     var q = new URLSearchParams(location.search || '');
     if(q.get('expert')) return true;
     if(expertHost()) return true;
@@ -30870,7 +30881,12 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
     var first = clean(parts[0]);
     return !!cleanSlug(first);
   }
-  function routeIsBlogMarketing(){
+  function routeIsLegalPage(){
+    var parts = pathParts();
+    var first = clean(parts[0]);
+    return first === 'legal' || first === 'terms' || first === 'privacy';
+  }
+	  function routeIsBlogMarketing(){
     if(!platformHost()) return false;
     var parts = pathParts();
     return clean(parts[0]) === 'blog';
@@ -30900,7 +30916,7 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
     }, 70);
   }
   function applyPlatformFallbackSeo(){
-    if(expertHost() || routeIsPublicExpert() || routeIsBlogMarketing()) return;
+    if(expertHost() || routeIsLegalPage() || routeIsPublicExpert() || routeIsBlogMarketing()) return;
     try {
       if(typeof window.obResetPlatformFavicon === 'function') window.obResetPlatformFavicon();
       document.title = 'Ownlybiz - Own your expertise. Own your income.';
@@ -30991,7 +31007,7 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
     var first = clean(parts[0]);
     if(first === 'group' && clean(parts[1])) return {type:'group', roomId:clean(parts[1])};
     if(first === 'mini-suite') return {type:'mini-suite'};
-    if(first === 'legal' || first === 'terms') return {type:'legal'};
+    if(first === 'legal' || first === 'terms' || first === 'privacy') return {type:'legal'};
     if(first === 'admin') return {type:'admin', panel:ADMIN_PANELS[parts[1]] ? parts[1] : 'dashboard'};
     if(first === 'dash') return {type:'dash', slug:clean(parts[1]), panel:DASH_PANELS[parts[2]] ? parts[2] : 'overview', settings:SEG_TO_SETTINGS[parts[3]] || ''};
     if(supportSessionActive()){
@@ -31132,7 +31148,11 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
   }
   function applyRoute(){
     var route = parseRoute();
-    if(!route || route.type === 'legal') return;
+    if(!route) return;
+    if(route.type === 'legal'){
+      if(typeof window.obRenderLegalPage === 'function') window.obRenderLegalPage();
+      return;
+    }
     applyingRoute = true;
     try {
       if(route.type === 'admin') applyAdminRoute(route);
@@ -31167,7 +31187,7 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
   }
   function routeForHref(href){
     if(!href || href.charAt(0) !== '/') return null;
-    if(href.indexOf('/legal/') === 0 || href === '/terms') return null;
+    if(href.indexOf('/legal/') === 0 || href === '/legal' || href === '/terms' || href === '/privacy') return null;
     try { return parseRouteFromPath(href); } catch(e) { return null; }
   }
   function parseRouteFromPath(path){
@@ -31198,9 +31218,10 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
       var oldShowMkt = window.showMktPage;
       window.showMktPage = function(page){
         var ret = oldShowMkt.apply(this, arguments);
-        if(platformHost() && !routeIsPublicExpert() && !routeIsBlogMarketing()) applyPlatformFallbackSeo();
-        if(platformHost() && !routeIsPublicExpert() && !routeIsBlogMarketing() && typeof window.obApplyMarketingSeo === 'function') window.obApplyMarketingSeo(page || 'home');
-        if(!applyingRoute && platformHost() && !routeIsPublicExpert()) writeUrl(MKT_TO_PATH[page] || '/', false);
+        var legalRouteActive = !!window.__obRenderingLegalRoute || routeIsLegalPage() || document.body.classList.contains('ob-legal-route');
+        if(platformHost() && !legalRouteActive && !routeIsPublicExpert() && !routeIsBlogMarketing()) applyPlatformFallbackSeo();
+        if(platformHost() && !legalRouteActive && !routeIsPublicExpert() && !routeIsBlogMarketing() && typeof window.obApplyMarketingSeo === 'function') window.obApplyMarketingSeo(page || 'home');
+        if(!applyingRoute && platformHost() && !legalRouteActive && !routeIsPublicExpert()) writeUrl(MKT_TO_PATH[page] || '/', false);
         return ret;
       };
       window.showMktPage._obUrlRoutingWrapped = true;

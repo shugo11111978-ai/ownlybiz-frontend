@@ -29692,14 +29692,23 @@ window._handleRTCMessage=function(d){
 		    if(customHost) return '';
 		    return reserved[first] ? '' : first;
 		  }
-	  function fetchExpertConsentBanner(slug){
-	    if(!slug) return Promise.resolve(false);
-	    return fetch(API + '/experts/' + encodeURIComponent(slug)).then(function(r){ return r.json(); }).then(function(d){
-	      var expert = d && (d.expert || d);
-	      if(expert && expert.slug){
-	        window._currentExpert = Object.assign(window._currentExpert || {}, expert);
-	        window._currentExpertSlug = expert.slug;
-	      }
+		  function fetchExpertConsentBanner(slug){
+		    if(!slug) return Promise.resolve(false);
+		    return fetch(API + '/experts/public-status/' + encodeURIComponent(slug), {cache:'no-store'}).then(function(r){
+		      return r.json().catch(function(){ return {}; }).then(function(d){ return {ok:r.ok, data:d}; });
+		    }).then(function(result){
+		      if(!result.ok || (result.data && result.data.public_available === false)) return false;
+		      return fetch(API + '/experts/' + encodeURIComponent(slug), {cache:'no-store'});
+		    }).then(function(r){
+		      if(!r) return null;
+		      return r.json();
+		    }).then(function(d){
+		      if(!d) return false;
+		      var expert = d && (d.expert || d);
+		      if(expert && expert.slug){
+		        window._currentExpert = Object.assign(window._currentExpert || {}, expert);
+		        window._currentExpertSlug = expert.slug;
+		      }
 	      return readExpertConsentBanner();
 	    }).catch(function(){ return false; });
 	  }
@@ -30103,31 +30112,45 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
     }
     return '';
   }
-  function lookupSlug(){
-    var slug = slugFromLocation();
-    if(slug) return Promise.resolve(slug);
-    if(platformHost()) return Promise.resolve('');
-    return fetch(API + '/api/domains/lookup?domain=' + encodeURIComponent(location.hostname), {cache:'no-store'})
+	  function lookupSlug(){
+	    var slug = slugFromLocation();
+	    if(slug) return Promise.resolve(slug);
+	    if(platformHost()) return Promise.resolve('');
+	    return fetch(API + '/api/domains/lookup?domain=' + encodeURIComponent(location.hostname), {cache:'no-store'})
       .then(function(r){ return r.json(); })
-      .then(function(d){ return d && d.slug ? String(d.slug) : ''; })
-      .catch(function(){ return ''; });
-  }
-  function refreshExpertConsentFlag(){
-    if(!expertContext()) return Promise.resolve(false);
-    var current = window._currentExpert || {};
-    if(disabled(current.privacy_cookie_banner_enabled)){
-      closeAndHide();
+	      .then(function(d){ return d && d.slug ? String(d.slug) : ''; })
+	      .catch(function(){ return ''; });
+	  }
+	  function publicStatusAllows(slug){
+	    if(!slug) return Promise.resolve(false);
+	    return fetch(API + '/api/experts/public-status/' + encodeURIComponent(slug), {cache:'no-store'})
+	      .then(function(r){ return r.json().catch(function(){ return {}; }).then(function(d){ return {ok:r.ok, data:d}; }); })
+	      .then(function(result){ return !!(result.ok && (!result.data || result.data.public_available !== false)); })
+	      .catch(function(){ return false; });
+	  }
+	  function refreshExpertConsentFlag(){
+	    if(!expertContext()) return Promise.resolve(false);
+	    var current = window._currentExpert || {};
+	    if(disabled(current.privacy_cookie_banner_enabled)){
+	      closeAndHide();
       return Promise.resolve(true);
     }
-    return lookupSlug().then(function(slug){
-      if(!slug) return false;
-      return fetch(API + '/api/experts/' + encodeURIComponent(slug) + '?_=' + Date.now(), {cache:'no-store'})
-        .then(function(r){ return r.json(); })
-        .then(function(d){
-          var expert = d && (d.expert || d) || {};
-          if(expert && expert.slug) {
-            window._currentExpert = Object.assign(window._currentExpert || {}, expert);
-            window._currentExpertSlug = expert.slug;
+	    return lookupSlug().then(function(slug){
+	      if(!slug) return false;
+	      return publicStatusAllows(slug).then(function(allowed){
+	        if(!allowed) return null;
+	        return fetch(API + '/api/experts/' + encodeURIComponent(slug) + '?_=' + Date.now(), {cache:'no-store'});
+	      })
+	        .then(function(r){
+	          if(!r) return null;
+	          return r.json();
+	        })
+	        .then(function(d){
+	          if(!d) return false;
+	          var expert = d && (d.expert || d) || {};
+	          if(expert && expert.slug) {
+	            window._currentExpert = Object.assign(window._currentExpert || {}, expert);
+	            window._currentExpertSlug = expert.slug;
           }
           if(disabled(expert.privacy_cookie_banner_enabled)){
             closeAndHide();
@@ -57970,12 +57993,16 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
       if(typeof window._markRouteLoading === 'function') window._markRouteLoading('public');
       return;
     }
-    window.__obPublicExpertUnavailableSlug = expertSlug(slug);
-    window.__obPublicGateAllowedSlug = '';
-    window._obAllowPublicShellReady = true;
-    view.classList.add('ob-expert-unavailable','ob-site-theme-light');
-    view.classList.remove('ob-site-theme-dark');
-    view.innerHTML =
+	    window.__obPublicExpertUnavailableSlug = expertSlug(slug);
+	    window.__obPublicGateAllowedSlug = '';
+	    window._obAllowPublicShellReady = true;
+	    try {
+	      var consent = document.getElementById('privacy-consent');
+	      if(consent) consent.classList.remove('active');
+	    } catch(e) {}
+	    view.classList.add('ob-expert-unavailable','ob-site-theme-light');
+	    view.classList.remove('ob-site-theme-dark');
+	    view.innerHTML =
       '<main style="min-height:100vh;display:flex;align-items:center;justify-content:center;text-align:center;padding:72px 22px;background:#F7F1E8;color:#241A15;">' +
         '<section style="max-width:540px;background:#FFFDF8;border:1px solid #E1D6C8;border-radius:8px;padding:34px 28px;box-shadow:0 18px 60px rgba(42,28,18,.08);">' +
           '<div style="font-family:var(--font-head);font-size:32px;line-height:1.1;margin-bottom:12px;">This expert site is not available yet</div>' +
@@ -58180,15 +58207,19 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     if(!reason) return;
     applyPublicBookingBlock(reason);
   }
-  function refreshPublicBookabilityFromApi(){
-    var slug = slugFromPublicLocation();
-    if(!slug) return;
-    fetch(apiBase() + '/api/experts/' + encodeURIComponent(slug), {cache:'no-store'})
-      .then(function(response){ return response.json().catch(function(){ return {}; }).then(function(body){ if(!response.ok || body.error) return null; return body.expert || body; }); })
-      .then(function(expert){
-        if(!expert) return;
-        publicGate.payload[slug] = expert;
-        if(String(expert.slug || '').toLowerCase() === slug) publicGate.allowed[slug] = true;
+	  function refreshPublicBookabilityFromApi(){
+	    var slug = slugFromPublicLocation();
+	    if(!slug) return;
+	    verifyOwnlybizSubdomain(slug).then(function(ok){
+	      if(!ok) return null;
+	      if(publicGate.payload[slug]) return publicGate.payload[slug];
+	      return fetch(apiBase() + '/api/experts/' + encodeURIComponent(slug), {cache:'no-store'})
+	        .then(function(response){ return response.json().catch(function(){ return {}; }).then(function(body){ if(!response.ok || body.error) return null; return body.expert || body; }); });
+	    })
+	      .then(function(expert){
+	        if(!expert) return;
+	        publicGate.payload[slug] = expert;
+	        if(String(expert.slug || '').toLowerCase() === slug) publicGate.allowed[slug] = true;
         if(window.obPublicSlugBackoff) window.obPublicSlugBackoff.clear('expert', slug);
         window._currentExpert = Object.assign(window._currentExpert || {}, expert);
         syncPublicBookingBlock(expert);
@@ -58196,60 +58227,65 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
       .catch(function(){});
   }
 
-  function installPublicSubdomainGate(){
-    var oldLoad = window.loadExpertWebsite;
-    if(typeof oldLoad === 'function' && !oldLoad.__obHighRiskSubdomainGate){
-      var guardedLoad = function(slug){
-        var hostSlug = ownlybizSubdomainSlug();
-        var resolved = expertSlug(slug || hostSlug || window._browseExpert || '');
-        if(hostSlug){
-          resolved = hostSlug;
-          window._browseExpert = hostSlug;
-          return verifyOwnlybizSubdomain(hostSlug).then(function(ok){
-            if(!ok) return null;
-            if(publicGate.payload[hostSlug] && typeof window._applyExpertWebsite === 'function'){
-              try { window._applyExpertWebsite(publicGate.payload[hostSlug]); } catch(e) {}
-            }
-            return oldLoad.call(window, resolved);
-          });
-        }
-        return oldLoad.apply(this, arguments);
+	  function installPublicSubdomainGate(){
+	    var oldLoad = window.loadExpertWebsite;
+	    if(typeof oldLoad === 'function' && !oldLoad.__obHighRiskSubdomainGate){
+	      var guardedLoad = function(slug){
+	        var hostSlug = ownlybizSubdomainSlug();
+	        var routeSlug = slugFromPublicLocation();
+	        var gateSlug = hostSlug || routeSlug;
+	        var resolved = expertSlug(slug || gateSlug || window._browseExpert || '');
+	        if(gateSlug){
+	          resolved = gateSlug;
+	          window._browseExpert = gateSlug;
+	          window._currentExpertSlug = gateSlug;
+	          return verifyOwnlybizSubdomain(gateSlug).then(function(ok){
+	            if(!ok) return null;
+	            if(publicGate.payload[gateSlug] && typeof window._applyExpertWebsite === 'function'){
+	              try { window._applyExpertWebsite(publicGate.payload[gateSlug]); } catch(e) {}
+	            }
+	            return oldLoad.call(window, resolved);
+	          });
+	        }
+	        return oldLoad.apply(this, arguments);
       };
       guardedLoad.__obHighRiskSubdomainGate = true;
       window.loadExpertWebsite = guardedLoad;
     }
-    var oldApply = window._applyExpertWebsite;
-    if(typeof oldApply === 'function' && !oldApply.__obHighRiskSubdomainGate){
-	      var guardedApply = function(data){
-	        var hostSlug = ownlybizSubdomainSlug();
-	        if(hostSlug){
-	          var dataSlug = expertSlug((data && (data.slug || (data.expert && data.expert.slug))) || '');
-	          if(dataSlug === hostSlug) {
-	            publicGate.allowed[hostSlug] = true;
-	            publicGate.blocked[hostSlug] = false;
-	            publicGate.payload[hostSlug] = (data && data.expert) || data;
-	          } else if(publicGate.blocked[hostSlug] || publicGate.pending[hostSlug] || !publicGate.allowed[hostSlug] || (dataSlug && dataSlug !== hostSlug)){
-	            return undefined;
-	          }
-	        }
-        var result = oldApply.apply(this, arguments);
-        syncPublicBookingBlock(data);
-        return result;
+	    var oldApply = window._applyExpertWebsite;
+	    if(typeof oldApply === 'function' && !oldApply.__obHighRiskSubdomainGate){
+		      var guardedApply = function(data){
+		        var hostSlug = ownlybizSubdomainSlug();
+		        var routeSlug = slugFromPublicLocation();
+		        var gateSlug = hostSlug || routeSlug;
+		        if(gateSlug){
+		          var dataSlug = expertSlug((data && (data.slug || (data.expert && data.expert.slug))) || '');
+		          if(publicGate.blocked[gateSlug] || publicGate.pending[gateSlug] || !publicGate.allowed[gateSlug] || (dataSlug && dataSlug !== gateSlug)){
+		            return undefined;
+		          }
+		          if(dataSlug === gateSlug) publicGate.payload[gateSlug] = (data && data.expert) || data;
+		        }
+	        var result = oldApply.apply(this, arguments);
+	        syncPublicBookingBlock(data);
+	        return result;
       };
       guardedApply.__obHighRiskSubdomainGate = true;
       window._applyExpertWebsite = guardedApply;
     }
-    var hostSlug = ownlybizSubdomainSlug();
-    if(hostSlug){
-      window._browseExpert = hostSlug;
-      verifyOwnlybizSubdomain(hostSlug).then(function(ok){
-        if(ok && publicGate.payload[hostSlug] && typeof window._applyExpertWebsite === 'function'){
-          try { window._applyExpertWebsite(publicGate.payload[hostSlug]); } catch(e) {}
-        }
-        if(ok && typeof window.loadExpertWebsite === 'function') window.loadExpertWebsite(hostSlug);
-      });
-    }
-  }
+	    var hostSlug = ownlybizSubdomainSlug();
+	    var routeSlug = slugFromPublicLocation();
+	    var gateSlug = hostSlug || routeSlug;
+	    if(gateSlug){
+	      window._browseExpert = gateSlug;
+	      window._currentExpertSlug = gateSlug;
+	      verifyOwnlybizSubdomain(gateSlug).then(function(ok){
+	        if(ok && publicGate.payload[gateSlug] && typeof window._applyExpertWebsite === 'function'){
+	          try { window._applyExpertWebsite(publicGate.payload[gateSlug]); } catch(e) {}
+	        }
+	        if(ok && typeof window.loadExpertWebsite === 'function') window.loadExpertWebsite(gateSlug);
+	      });
+	    }
+	  }
 
   function positive(){
     for(var i=0;i<arguments.length;i++){
@@ -59541,27 +59577,41 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     state.gridObserver = new MutationObserver(queuePublicSync);
     state.gridObserver.observe(grid, { childList:true, subtree:true, characterData:true, attributes:true, attributeFilter:['class','data-ob-full-price'] });
   }
-  function publicSlug(){
-    var slug = clean(window._browseExpert || window._currentExpertSlug || (window._currentExpert && window._currentExpert.slug) || '');
-    if(slug) return slug;
-    var host = String(location.hostname || '').toLowerCase();
-    var sub = host.match(/^([^.]+)\.ownlybiz\.com$/);
-    if(sub && sub[1] && sub[1] !== 'www') return sub[1];
-    if(host && host !== 'ownlybiz.com' && host !== 'www.ownlybiz.com' && host !== 'localhost' && host !== '127.0.0.1' && host.indexOf('vercel.app') < 0) return '';
-    var first = clean((location.pathname || '').replace(/^\/+/, '').split('/')[0] || '');
-    if(first && !(window.obIsPlatformRouteRoot && window.obIsPlatformRouteRoot(first))) return first;
-    return '';
-  }
+	  function publicSlug(){
+	    var path = String(location.pathname || '').replace(/^\/+|\/+$/g, '');
+	    var firstPath = clean(path.split('/')[0] || '');
+	    if(firstPath === 'dash' || firstPath === 'admin' || document.querySelector('#view-3.active,#view-6.active')) return '';
+	    var slug = clean(window._browseExpert || window._currentExpertSlug || (window._currentExpert && window._currentExpert.slug) || '');
+	    if(slug) return slug;
+	    var host = String(location.hostname || '').toLowerCase();
+	    var sub = host.match(/^([^.]+)\.ownlybiz\.com$/);
+	    if(sub && sub[1] && sub[1] !== 'www') return sub[1];
+	    if(host && host !== 'ownlybiz.com' && host !== 'www.ownlybiz.com' && host !== 'localhost' && host !== '127.0.0.1' && host.indexOf('vercel.app') < 0) return '';
+	    var first = clean((location.pathname || '').replace(/^\/+/, '').split('/')[0] || '');
+	    if(first && !(window.obIsPlatformRouteRoot && window.obIsPlatformRouteRoot(first))) return first;
+	    return '';
+	  }
+	  function publicRouteSlug(){
+	    var host = String(location.hostname || '').toLowerCase();
+	    var sub = host.match(/^([^.]+)\.ownlybiz\.com$/);
+	    if(sub && sub[1] && sub[1] !== 'www') return clean(sub[1]);
+	    if(host && host !== 'ownlybiz.com' && host !== 'www.ownlybiz.com' && host !== 'localhost' && host !== '127.0.0.1' && host.indexOf('vercel.app') < 0) return '';
+	    var first = clean((location.pathname || '').replace(/^\/+/, '').split('/')[0] || '');
+	    return first && !(window.obIsPlatformRouteRoot && window.obIsPlatformRouteRoot(first)) ? first : '';
+	  }
   function sameMarketplace(a, b){
     var ax = (a && a.experts || []).map(function(x){ return [x.id, x.display_name || x.name, x.avatar_url || '', x.updated_at || ''].join('|'); }).join('::');
     var bx = (b && b.experts || []).map(function(x){ return [x.id, x.display_name || x.name, x.avatar_url || '', x.updated_at || ''].join('|'); }).join('::');
     return ax === bx && !!(a && b);
   }
-  function refreshPublicMarketplace(){
-    var slug = publicSlug();
-    if(!slug || state.publicRefreshInFlight) return;
-    var now = Date.now();
-    if(now - (state.publicRefreshAt || 0) < 4500) return;
+	  function refreshPublicMarketplace(){
+	    var slug = publicSlug();
+	    if(!slug || state.publicRefreshInFlight) return;
+	    if(window.__obPublicExpertUnavailableSlug === slug) return;
+	    var routeSlug = publicRouteSlug();
+	    if(routeSlug === slug && window.__obPublicGateAllowedSlug !== slug) return;
+	    var now = Date.now();
+	    if(now - (state.publicRefreshAt || 0) < 4500) return;
     state.publicRefreshAt = now;
     state.publicRefreshInFlight = true;
     var fetcher = nativeFetch || (window.fetch && window.fetch.bind(window));

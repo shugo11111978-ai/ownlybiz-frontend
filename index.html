@@ -7420,8 +7420,8 @@ if (!window.toast) {
               </div>
               <div class="ob-profile-basics-field">
                 <label for="we-profile-specialty">Specialty</label>
-                <input class="settings-field-input" id="we-profile-specialty" placeholder="Career coaching">
-                <div class="ob-profile-basics-hint">Saved as your primary expertise tag.</div>
+                <input class="settings-field-input" id="we-profile-specialty" placeholder="Example: Career coaching">
+                <div class="ob-profile-basics-hint">Type a specialty here. Example text does not count until it is saved.</div>
               </div>
               <div class="ob-profile-basics-field">
                 <label for="we-profile-public-link">Public link</label>
@@ -13451,6 +13451,17 @@ async function savePaymentConfig() {
       window.OWNLYBIZ_WS_URL  = 'wss://ownlybiz-backend-production.up.railway.app';
       window.OWNLY_API = window.OWNLYBIZ_API_URL;
     }
+    window.obFriendlyLoginError = window.obFriendlyLoginError || function(err) {
+      var status = err && err.status;
+      var data = err && err.data || {};
+      var code = String(data.code || '').toLowerCase();
+      var message = String((err && err.message) || data.error || '').trim();
+      var combined = (code + ' ' + message).toLowerCase();
+      if(status === 403 && /approval|pending|inactive|not active|review|suspended/.test(combined)) {
+        return 'Your expert account is waiting for admin approval. We will email you when it is approved.';
+      }
+      return message || 'Login failed. Check your credentials.';
+    };
 
     // ── handleMarketingLogin — defined EARLY, works before health check ──────
     // This is called by the Sign In button's onclick attribute directly.
@@ -13476,9 +13487,14 @@ async function savePaymentConfig() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ email: email, password: pass })
         });
-        var d = await r.json();
+        var d = await r.json().catch(function(){ return {}; });
         console.log('[OB] Login response:', r.status, d);
-        if (!r.ok) throw new Error(d.error || 'Invalid email or password');
+        if (!r.ok) {
+          var loginErr = new Error(d.error || 'Invalid email or password');
+          loginErr.status = r.status;
+          loginErr.data = d;
+          throw loginErr;
+        }
 
         // Save to sessionStorage + unified client token
         sessionStorage.setItem('ob_t', d.token);
@@ -13575,8 +13591,9 @@ async function savePaymentConfig() {
 
       } catch(err) {
         console.error('[OB] Login error:', err);
-        if (errEl) { errEl.textContent = '⚠ ' + (err.message || 'Login failed. Check your credentials.'); errEl.style.display = 'block'; setTimeout(function(){errEl.style.display='none';},6000); }
-        if (typeof toast === 'function') toast(err.message || 'Login failed', 'err');
+        var friendly = window.obFriendlyLoginError ? window.obFriendlyLoginError(err) : (err.message || 'Login failed. Check your credentials.');
+        if (errEl) { errEl.textContent = friendly; errEl.style.display = 'block'; setTimeout(function(){errEl.style.display='none';},6000); }
+        if (typeof toast === 'function') toast(friendly, 'err');
       } finally {
         if (btn) { btn.textContent = btn._t || 'Sign In →'; btn.disabled = false; }
       }
@@ -14786,7 +14803,12 @@ async function savePaymentConfig() {
       body: body ? JSON.stringify(body) : undefined
     });
     const d = await r.json().catch(()=>({}));
-    if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`);
+    if (!r.ok) {
+      const err = new Error(d.error || `HTTP ${r.status}`);
+      err.status = r.status;
+      err.data = d;
+      throw err;
+    }
     return d;
   }
 
@@ -15100,52 +15122,52 @@ async function savePaymentConfig() {
     const pInp = page.querySelector('input[type=password],[placeholder*="password"i],[id*="pass"i]');
     const btn  = page.querySelector('button.btn-primary,button[type=submit],.login-btn');
     if (!btn) return;
-	    btn.onclick = async () => {
-	      const email=eInp?.value?.trim(); const pass=pInp?.value;
-	      if(!email||!pass) return toast('Enter email and password','err');
-	      btnLoad(btn,true);
-	      try {
-	        const d=await api('POST','/auth/login',{email,password:pass});
-	        Auth.save(d.token,d.user);
-	        WS.connect();
-	        toast(`Welcome back, ${d.user.name}! 👋`);
-	        setTimeout(()=>{
-	          try {
-	            const nextPath = sessionStorage.getItem('ob_next') || '';
-	            if(nextPath && nextPath.charAt(0) === '/' && nextPath.indexOf('//') !== 0) {
-	              sessionStorage.removeItem('ob_next');
-	              window.location.href = nextPath;
-	              return;
-	            }
-	          } catch(e) {}
-	          if(d.user.role==='admin') {
-	            try { window.history.replaceState({}, '', '/admin/dashboard'); } catch(e) {}
-	            switchView(6);
-	            loadAdminDashboard();
-	          }
-	          else if(d.user.role==='expert') {
-	            api('GET','/experts/me/dashboard').then(function(ed){
-	              var slug = ed && ed.profile && ed.profile.slug ? ed.profile.slug : '';
-	              if(slug) {
-	                window._myExpertSlug = slug;
-	                window._dashSlug = slug;
-	                try { window.history.replaceState({}, '', '/dash/' + encodeURIComponent(slug)); } catch(e) {}
-	                if(typeof window.loadDashboard === 'function') { window.loadDashboard(slug); return; }
-	              }
-	              switchView(3);
-	              loadExpertDashboard();
-	            }).catch(function(){
-	              switchView(3);
-	              loadExpertDashboard();
-	            });
-	          }
-	          else {
-	            switchView(4);
-	          }
-	        },400);
-	      } catch(err){ toast(err.message,'err'); }
-	      finally{ btnLoad(btn,false); }
-	    };
+    btn.onclick = async () => {
+      const email=eInp?.value?.trim(); const pass=pInp?.value;
+      if(!email||!pass) return toast('Enter email and password','err');
+      btnLoad(btn,true);
+      try {
+        const d=await api('POST','/auth/login',{email,password:pass});
+        Auth.save(d.token,d.user);
+        WS.connect();
+        toast(`Welcome back, ${d.user.name}! 👋`);
+        setTimeout(()=>{
+          try {
+            const nextPath = sessionStorage.getItem('ob_next') || '';
+            if(nextPath && nextPath.charAt(0) === '/' && nextPath.indexOf('//') !== 0) {
+              sessionStorage.removeItem('ob_next');
+              window.location.href = nextPath;
+              return;
+            }
+          } catch(e) {}
+          if(d.user.role==='admin') {
+            try { window.history.replaceState({}, '', '/admin/dashboard'); } catch(e) {}
+            switchView(6);
+            loadAdminDashboard();
+          }
+          else if(d.user.role==='expert') {
+            api('GET','/experts/me/dashboard').then(function(ed){
+              var slug = ed && ed.profile && ed.profile.slug ? ed.profile.slug : '';
+              if(slug) {
+                window._myExpertSlug = slug;
+                window._dashSlug = slug;
+                try { window.history.replaceState({}, '', '/dash/' + encodeURIComponent(slug)); } catch(e) {}
+                if(typeof window.loadDashboard === 'function') { window.loadDashboard(slug); return; }
+              }
+              switchView(3);
+              loadExpertDashboard();
+            }).catch(function(){
+              switchView(3);
+              loadExpertDashboard();
+            });
+          }
+          else {
+            switchView(4);
+          }
+        },400);
+      } catch(err){ toast(window.obFriendlyLoginError ? window.obFriendlyLoginError(err) : err.message,'err'); }
+      finally{ btnLoad(btn,false); }
+    };
     // Add sign-up link if missing
     const su = page.querySelector('.signup-link,.goto-signup');
     if(su) su.onclick=()=>switchView(2);
@@ -19749,6 +19771,12 @@ function saveWebsiteContent() {
   var selectedSiteMode = document.querySelector('input[name="we-site-mode"]:checked')?.value || existingWc.site_mode || 'light';
   var resolvedSiteMode = window.obResolveWebsiteMode ? window.obResolveWebsiteMode(selectedSiteMode, nextDesignTokens) : selectedSiteMode;
   var nextWebsiteContent = Object.assign({}, existingWc, {
+    name: profileName || existingWc.name || '',
+    title: profileTitle || existingWc.title || '',
+    bio: profileBio || existingWc.bio || '',
+    short_intro: profileBio || existingWc.short_intro || '',
+    specialty: profileSpecialty || existingWc.specialty || '',
+    primary_specialty: profileSpecialty || existingWc.primary_specialty || '',
     hero_cta: document.getElementById('we-hero-cta')?.value || '',
     hero_tagline: profileTitle || existingWc.hero_tagline || '',
     footer_disclaimer: document.getElementById('we-footer-disclaimer')?.value || '',
@@ -19852,10 +19880,11 @@ function loadWebsiteEditor() {
     // Populate editor fields
     var g = function(id, val) { var el = document.getElementById(id); if (el) el.value = val || ''; };
     var tags = _obProfileTags(p.tags);
+    var profileSpecialty = tags[0] || p.specialty || p.primary_specialty || p.category || wc.specialty || wc.primary_specialty || '';
     g('we-profile-name', u.name || '');
-    g('we-profile-title', p.title || '');
-    g('we-profile-bio', p.bio || '');
-    g('we-profile-specialty', tags[0] || '');
+    g('we-profile-title', p.title || wc.title || wc.hero_tagline || '');
+    g('we-profile-bio', p.bio || wc.short_intro || wc.bio || '');
+    g('we-profile-specialty', profileSpecialty);
     _obSetProfileBasicsLink(p.slug || u.slug || '');
     g('we-about-bio', p.about_text || '');
     g('we-footer-disclaimer', wc.footer_disclaimer || '');
@@ -30925,6 +30954,21 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
       try { if(typeof window.obTrackPageview === 'function') window.obTrackPageview({path:path}); } catch(e) {}
     }, 70);
   }
+  function dashboardViewActive(){
+    try {
+      var view = document.getElementById('view-3');
+      return !!(view && view.classList.contains('active'));
+    } catch(e) {
+      return false;
+    }
+  }
+  function suppressDashboardPublicWrite(path){
+    if(!dashboardViewActive() || !platformHost()) return false;
+    var nextPath = String(path || '').split('?')[0].replace(/^\/+|\/+$/g, '');
+    var first = clean(nextPath.split('/')[0]);
+    if(!first || PATH_TO_MKT[first] || first === 'admin' || first === 'dash' || first === 'legal' || first === 'terms' || first === 'privacy' || first === 'blog' || first === 'group' || first === 'mini-suite') return false;
+    return !!cleanSlug(first);
+  }
   function applyPlatformFallbackSeo(){
     if(expertHost() || routeIsLegalPage() || routeIsPublicExpert() || routeIsBlogMarketing()) return;
     try {
@@ -30938,6 +30982,7 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
   }
   function writeUrl(path, replace){
     if(applyingRoute || !path) return;
+    if(suppressDashboardPublicWrite(path)) return;
     var current = (location.pathname || '/') + (location.search || '');
     if(current === path) return;
     history[replace ? 'replaceState' : 'pushState']({obRoute:true}, '', path);
@@ -31076,8 +31121,11 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
     safeShowExpertPage(route.page || 'home');
     loadExpertOnce(route.slug);
   }
-	  function applyDashRoute(route){
-	    if(route.slug) window._dashSlug = route.slug;
+  function applyDashRoute(route){
+    if(route.slug) {
+      window._dashSlug = route.slug;
+      if(userRole() === 'expert') window._myExpertSlug = route.slug;
+    }
     if(supportSessionActive()){
       window._browseExpert = '';
       window._currentExpertSlug = '';
@@ -31355,7 +31403,7 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
   var originalMarkReady = window._markRouteReady;
   if(originalMarkReady && !originalMarkReady._obGuarded){
     window._markRouteReady = function(kind){
-      if((kind === 'public' || !kind) && publicExpertContext() && publicExpertHost() && !hasExpertPayload()){
+      if((kind === 'public' || !kind) && publicExpertContext() && publicExpertHost() && !hasExpertPayload() && !window._obAllowPublicShellReady){
         document.documentElement.classList.add('ob-route-loading');
         document.documentElement.classList.add('ob-public-loading');
         return;
@@ -42575,6 +42623,56 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     font-weight:900;
     margin-bottom:3px;
   }
+  #ob-launch-center-v1 .ob-launch-publish-gate {
+    align-items:center;
+    background:rgba(11,9,8,.34);
+    border:1px solid rgba(255,250,240,.12);
+    border-radius:10px;
+    display:grid;
+    gap:14px;
+    grid-template-columns:38px minmax(0,1fr) auto;
+    margin-top:18px;
+    padding:16px;
+  }
+  #ob-launch-center-v1 .ob-launch-lock {
+    align-items:center;
+    background:rgba(200,255,61,.09);
+    border:1px solid rgba(200,255,61,.25);
+    border-radius:999px;
+    color:var(--lime,#c8ff3d);
+    display:inline-flex;
+    font-size:10px;
+    font-weight:900;
+    height:38px;
+    justify-content:center;
+    letter-spacing:.04em;
+    width:38px;
+  }
+  #ob-launch-center-v1 .ob-launch-publish-gate strong {
+    color:var(--text,#faf7f2);
+    display:block;
+    font-size:15px;
+    font-weight:900;
+    margin-bottom:4px;
+  }
+  #ob-launch-center-v1 .ob-launch-publish-gate p {
+    color:var(--text-mid,#b7aaa0);
+    font-size:13px;
+    line-height:1.45;
+    margin:0;
+  }
+  #ob-launch-center-v1 .ob-launch-publish-gate button {
+    background:rgba(255,250,240,.055);
+    border:1px solid rgba(255,250,240,.14);
+    border-radius:999px;
+    color:var(--text,#faf7f2);
+    cursor:pointer;
+    font-size:12px;
+    font-weight:900;
+    min-height:40px;
+    padding:0 14px;
+    white-space:nowrap;
+  }
   #ob-launch-center-v1 .ob-launch-refresh {
     background:transparent;
     border:1px solid rgba(255,250,240,.14);
@@ -42701,14 +42799,16 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   body:not(.ob-ui-dark) #ob-launch-center-v1 .ob-launch-row h3,
   body:not(.ob-ui-dark) #ob-launch-center-v1 .ob-launch-section-title span,
   body:not(.ob-ui-dark) #ob-launch-center-v1 .ob-launch-summary strong,
-  body:not(.ob-ui-dark) #ob-launch-center-v1 .ob-launch-legal-confirm strong {
+  body:not(.ob-ui-dark) #ob-launch-center-v1 .ob-launch-legal-confirm strong,
+  body:not(.ob-ui-dark) #ob-launch-center-v1 .ob-launch-publish-gate strong {
     color:#241a15;
   }
   body:not(.ob-ui-dark) #ob-launch-center-v1 .ob-launch-copy,
   body:not(.ob-ui-dark) #ob-launch-center-v1 .ob-launch-row p,
   body:not(.ob-ui-dark) #ob-launch-center-v1 .ob-launch-note,
   body:not(.ob-ui-dark) #ob-launch-center-v1 .ob-launch-summary span,
-  body:not(.ob-ui-dark) #ob-launch-center-v1 .ob-launch-legal-confirm span {
+  body:not(.ob-ui-dark) #ob-launch-center-v1 .ob-launch-legal-confirm span,
+  body:not(.ob-ui-dark) #ob-launch-center-v1 .ob-launch-publish-gate p {
     color:#6f6358;
   }
   body:not(.ob-ui-dark) #ob-launch-center-v1 .ob-launch-list,
@@ -42720,12 +42820,17 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     background:#f8faeb;
     border-color:rgba(93,116,18,.24);
   }
+  body:not(.ob-ui-dark) #ob-launch-center-v1 .ob-launch-publish-gate {
+    background:#fffdf8;
+    border-color:rgba(46,33,25,.10);
+  }
   body:not(.ob-ui-dark) #ob-launch-center-v1 .ob-launch-section-title,
   body:not(.ob-ui-dark) #ob-launch-center-v1 .ob-launch-row,
   body:not(.ob-ui-dark) #ob-launch-center-v1 .ob-launch-footer {
     border-color:rgba(46,33,25,.09);
   }
   body:not(.ob-ui-dark) #ob-launch-center-v1 .ob-launch-row button,
+  body:not(.ob-ui-dark) #ob-launch-center-v1 .ob-launch-publish-gate button,
   body:not(.ob-ui-dark) #ob-launch-center-v1 .ob-launch-refresh,
   body:not(.ob-ui-dark) #ob-launch-companion-v1 .ob-launch-comp-refresh {
     background:#fffdf8;
@@ -42779,6 +42884,15 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     #ob-launch-center-v1 .ob-launch-legal-confirm {
       margin-top:16px;
       padding:12px;
+    }
+    #ob-launch-center-v1 .ob-launch-publish-gate {
+      grid-template-columns:38px minmax(0,1fr);
+      padding:14px;
+    }
+    #ob-launch-center-v1 .ob-launch-publish-gate button {
+      grid-column:1 / -1;
+      width:100%;
+      white-space:normal;
     }
     #ob-launch-companion-v1 {
       align-items:stretch;
@@ -43141,6 +43255,38 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       + '<button type="button" data-ob-launch-action="'+esc(item.action)+'">'+esc(item.done ? 'Review' : item.button)+'</button>'
       + '</div>';
   }
+  function launchCopy(headline, next){
+    if(next) {
+      return headline + ' Complete the required items below. Publish website unlocks here after the last required item is ready. Custom domain and Email Center stay optional.';
+    }
+    return headline + ' Review the publish responsibility acknowledgement, then publish when you are ready. Custom domain and Email Center stay optional.';
+  }
+  function publishGateCopy(model){
+    var remaining = (model && model.remaining) || [];
+    if(!remaining.length) return '';
+    var names = remaining.map(function(item){ return item.title; });
+    var lead = remaining.length === 1
+      ? '1 step left before Publish website becomes available: ' + names[0] + '.'
+      : remaining.length + ' steps left before Publish website becomes available: ' + names.join(', ') + '.';
+    return lead + ' After these are ready, the publish acknowledgement and Publish website button will appear here.';
+  }
+  function publishGateButton(next){
+    if(!next) return 'Review required items';
+    if(next.action === 'email') return 'Verify email first';
+    if(next.action === 'stripe') return next.button === 'Finish setup' ? 'Finish Stripe setup first' : 'Connect Stripe first';
+    if(next.action === 'profile') return 'Complete Profile Basics first';
+    if(next.action === 'rates') return 'Set your offer first';
+    if(next.action === 'availability') return 'Set availability first';
+    return next.button || 'Continue';
+  }
+  function publishGateHtml(model, next){
+    if(!next) return '';
+    return '<section class="ob-launch-publish-gate" aria-label="Publish website eligibility">'
+      + '<span class="ob-launch-lock" aria-hidden="true">LOCK</span>'
+      + '<div><strong>Publish website is locked</strong><p>'+esc(publishGateCopy(model))+'</p></div>'
+      + '<button type="button" data-ob-launch-action="'+esc(next.action)+'">'+esc(publishGateButton(next))+'</button>'
+      + '</section>';
+  }
   function publishLegalHtml(){
     return '<label class="ob-launch-legal-confirm" for="ob-launch-legal-confirm">'
       + '<input type="checkbox" id="ob-launch-legal-confirm">'
@@ -43289,7 +43435,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     var launchLegalConfirmHtml = primaryAction === 'publish' ? publishLegalHtml() : '';
     var primaryDisabledAttr = primaryAction === 'publish' ? ' disabled aria-disabled="true"' : '';
     root.innerHTML = '<div class="ob-launch-inner">'
-      + '<div class="ob-launch-head"><div><div class="ob-launch-kicker">Post-approval launch</div><h2>Launch Status</h2><p class="ob-launch-copy">'+esc(headline)+' Publish website appears only after Stripe, profile basics, your offer, and availability are ready. Custom domain and Email Center stay optional.</p></div>'
+      + '<div class="ob-launch-head"><div><div class="ob-launch-kicker">Post-approval launch</div><h2>Launch Status</h2><p class="ob-launch-copy">'+esc(launchCopy(headline, next))+'</p></div>'
       + '<div class="ob-launch-summary"><strong>'+model.remaining.length+'</strong><span>required left</span></div></div>'
       + '<div class="ob-launch-progress" aria-hidden="true"><span style="width:'+pct+'%"></span></div>'
       + '<div class="ob-launch-grid"><div class="ob-launch-list"><div class="ob-launch-section-title"><span>Required to publish</span><em>Must</em></div>'
@@ -43297,6 +43443,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       + '</div><div class="ob-launch-list"><div class="ob-launch-section-title"><span>Available later</span><em>Optional</em></div>'
       + model.optional.map(function(item){ return rowHtml(item, false, true); }).join('')
       + '</div></div>'
+      + publishGateHtml(model, next)
       + launchLegalConfirmHtml
       + '<div class="ob-launch-footer"><p class="ob-launch-note">Publishing uses your auto-created Ownlybiz link first. A custom domain is optional and SEO applies only after a custom domain is connected.</p><div class="ob-launch-actions"><button type="button" class="ob-launch-refresh" data-ob-launch-action="refresh">'+(state.loading?'Refreshing':'Refresh')+'</button><button type="button" class="ob-launch-primary" data-ob-launch-action="'+esc(primaryAction)+'"'+primaryDisabledAttr+'>'+esc(primaryText)+'</button></div></div>'
       + '</div>';
@@ -51593,6 +51740,9 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   function bootSiteEvents(){
     var slug = publicExpertSlug();
     if(!slug) return;
+    if(window.__obPublicExpertUnavailableSlug === slug) return;
+    var current = window._currentExpert || {};
+    if(String(current.slug || '').toLowerCase() !== slug) return;
     api('/public/experts/' + encodeURIComponent(slug) + '/rooms').then(function(d){
       renderSiteEvents(slug, d.rooms || []);
     }).catch(function(){});
@@ -57820,6 +57970,9 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
       if(typeof window._markRouteLoading === 'function') window._markRouteLoading('public');
       return;
     }
+    window.__obPublicExpertUnavailableSlug = expertSlug(slug);
+    window.__obPublicGateAllowedSlug = '';
+    window._obAllowPublicShellReady = true;
     view.classList.add('ob-expert-unavailable','ob-site-theme-light');
     view.classList.remove('ob-site-theme-dark');
     view.innerHTML =
@@ -57832,55 +57985,91 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
       '</main>';
     if(typeof window._markRouteReady === 'function') window._markRouteReady('public');
   }
-	  function hasRenderedExpertShell(){
-	    var title = String(document.title || '');
-	    var text = String(document.body && document.body.innerText || '');
-	    if(/This expert site is not available yet/i.test(text)) return false;
-	    if(/Independent Expert|Ownlybiz - Own your expertise/i.test(title)) return false;
-	    return /Client Growth Consultant|\$\d+(?:\.\d{2})?\/min|Start Session|Book a Session|How I Can Help/i.test(text);
-	  }
-	  function schedulePublicGateRetry(slug, delay){
-	    slug = expertSlug(slug);
-	    if(!slug) return;
-	    if(window.obPublicSlugBackoff && typeof window.obPublicSlugBackoff.retry === 'function') {
-	      window.obPublicSlugBackoff.retry(slug, delay || 2500);
-	    }
-	    setTimeout(function(){ verifyOwnlybizSubdomain(slug); }, Math.max(1000, Math.min(Number(delay || 2500), 15000)));
-	  }
-	  function temporaryPublicGateError(err){
-	    if(!err) return true;
-	    if(err.status === 429 || err.status === 0 || err.name === 'AbortError') return true;
-	    return /too many requests|timed out|network|failed to fetch/i.test(String(err.message || ''));
-	  }
-	  function verifyOwnlybizSubdomain(slug){
-	    slug = expertSlug(slug);
-	    if(!slug) return Promise.resolve(false);
-	    var preloaded = preloadedGateExpert(slug);
-	    if(preloaded){
-	      publicGate.allowed[slug] = true;
-	      publicGate.blocked[slug] = false;
-	      publicGate.payload[slug] = preloaded;
-	      return Promise.resolve(true);
-	    }
-	    if(publicGate.allowed[slug]) return Promise.resolve(true);
-	    var blocked = window.obPublicSlugBackoff && window.obPublicSlugBackoff.blocked('expert', slug);
-	    if(blocked && blocked.status === 429) {
-	      renderPublicGate(slug, 'loading');
-	      schedulePublicGateRetry(slug, Math.max(1000, (blocked.until || Date.now()) - Date.now() + 250));
-	      return Promise.resolve(false);
-	    }
-	    if(blocked) {
-	      renderPublicGate(slug, 'unavailable');
-	      return Promise.resolve(false);
-	    }
+  function hasRenderedExpertShell(){
+    var title = String(document.title || '');
+    var text = String(document.body && document.body.innerText || '');
+    if(/This expert site is not available yet/i.test(text)) return false;
+    if(/Independent Expert|Ownlybiz - Own your expertise/i.test(title)) return false;
+    return /Client Growth Consultant|\$\d+(?:\.\d{2})?\/min|Start Session|Book a Session|How I Can Help/i.test(text);
+  }
+  function schedulePublicGateRetry(slug, delay){
+    slug = expertSlug(slug);
+    if(!slug) return;
+    if(window.obPublicSlugBackoff && typeof window.obPublicSlugBackoff.retry === 'function') {
+      window.obPublicSlugBackoff.retry(slug, delay || 2500);
+    }
+    setTimeout(function(){ verifyOwnlybizSubdomain(slug); }, Math.max(1000, Math.min(Number(delay || 2500), 15000)));
+  }
+  function fetchPublicStatus(slug){
+    return fetch(apiBase() + '/api/experts/public-status/' + encodeURIComponent(slug), {cache:'no-store'})
+      .then(function(response){
+        return response.json().catch(function(){ return {}; }).then(function(body){
+          if(!response.ok || body.error) {
+            var err = new Error(body.error || 'Expert status unavailable');
+            err.status = response.status;
+            err.body = body;
+            throw err;
+          }
+          return body;
+        });
+      });
+  }
+  function publicStatusBlockedError(status){
+    var code = status && status.code || '';
+    var err = new Error(code === 'site_unpublished' ? 'Expert site is not published yet' : 'Expert site unavailable');
+    err.status = 200;
+    err.code = code;
+    err.body = status || {};
+    return err;
+  }
+  function temporaryPublicGateError(err){
+    if(!err) return true;
+    if(err.status === 429 || err.status === 0 || err.name === 'AbortError') return true;
+    return /too many requests|timed out|network|failed to fetch/i.test(String(err.message || ''));
+  }
+  function verifyOwnlybizSubdomain(slug){
+    slug = expertSlug(slug);
+    if(!slug) return Promise.resolve(false);
+    var preloaded = preloadedGateExpert(slug);
+    if(preloaded){
+      publicGate.allowed[slug] = true;
+      publicGate.blocked[slug] = false;
+      publicGate.payload[slug] = preloaded;
+      window.__obPublicExpertUnavailableSlug = '';
+      window.__obPublicGateAllowedSlug = slug;
+      return Promise.resolve(true);
+    }
+    if(publicGate.allowed[slug]) {
+      window.__obPublicExpertUnavailableSlug = '';
+      window.__obPublicGateAllowedSlug = slug;
+      return Promise.resolve(true);
+    }
+    var blocked = window.obPublicSlugBackoff && window.obPublicSlugBackoff.blocked('expert', slug);
+    if(blocked && blocked.status === 429) {
+      renderPublicGate(slug, 'loading');
+      schedulePublicGateRetry(slug, Math.max(1000, (blocked.until || Date.now()) - Date.now() + 250));
+      return Promise.resolve(false);
+    }
+    if(blocked) {
+      window.__obPublicExpertUnavailableSlug = slug;
+      window.__obPublicGateAllowedSlug = '';
+      renderPublicGate(slug, 'unavailable');
+      return Promise.resolve(false);
+    }
     if(publicGate.blocked[slug]) {
+      window.__obPublicExpertUnavailableSlug = slug;
+      window.__obPublicGateAllowedSlug = '';
       renderPublicGate(slug, 'unavailable');
       return Promise.resolve(false);
     }
     if(publicGate.inFlight[slug]) return publicGate.inFlight[slug];
     publicGate.pending[slug] = true;
     var timeout = new Promise(function(_, reject){ setTimeout(function(){ reject(new Error('Expert site check timed out')); }, 4500); });
-    publicGate.inFlight[slug] = Promise.race([fetch(apiBase() + '/api/experts/' + encodeURIComponent(slug), {cache:'no-store'}), timeout])
+    publicGate.inFlight[slug] = Promise.race([fetchPublicStatus(slug), timeout])
+      .then(function(status){
+        if(status && status.public_available === false) throw publicStatusBlockedError(status);
+        return fetch(apiBase() + '/api/experts/' + encodeURIComponent(slug), {cache:'no-store'});
+      })
       .then(function(response){
         return response.json().catch(function(){ return {}; }).then(function(body){
           if(!response.ok || body.error) { var err = new Error(body.error || 'Expert site is not published yet'); err.status = response.status; err.body = body; throw err; }
@@ -57889,25 +58078,29 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
           publicGate.allowed[slug] = true;
           publicGate.blocked[slug] = false;
           publicGate.payload[slug] = expert;
+          window.__obPublicExpertUnavailableSlug = '';
+          window.__obPublicGateAllowedSlug = slug;
           if(window.obPublicSlugBackoff) window.obPublicSlugBackoff.clear('expert', slug);
           return true;
         });
-	      })
-	      .catch(function(err){
-	        publicGate.allowed[slug] = false;
-	        if(temporaryPublicGateError(err)) {
-	          publicGate.blocked[slug] = false;
-	          var row = window.obPublicSlugBackoff && window.obPublicSlugBackoff.mark('expert', slug, 'rate_limited', 5*1000, err && err.body || null);
-	          renderPublicGate(slug, 'loading');
-	          schedulePublicGateRetry(slug, Math.max(1000, (row && row.until ? row.until - Date.now() : 2500) + 250));
-	          return false;
-	        }
-	        publicGate.blocked[slug] = true;
-	        if(window.obPublicSlugBackoff && err && (err.status === 404 || /not found|not published|unavailable/i.test(err.message || ''))) {
-	          window.obPublicSlugBackoff.mark('expert', slug, 'not_found', 5*60*1000, err.body || null);
-	        }
-	        renderPublicGate(slug, 'unavailable');
-	        return false;
+      })
+      .catch(function(err){
+        publicGate.allowed[slug] = false;
+        if(temporaryPublicGateError(err)) {
+          publicGate.blocked[slug] = false;
+          var row = window.obPublicSlugBackoff && window.obPublicSlugBackoff.mark('expert', slug, 'rate_limited', 5*1000, err && err.body || null);
+          renderPublicGate(slug, 'loading');
+          schedulePublicGateRetry(slug, Math.max(1000, (row && row.until ? row.until - Date.now() : 2500) + 250));
+          return false;
+        }
+        publicGate.blocked[slug] = true;
+        window.__obPublicExpertUnavailableSlug = slug;
+        window.__obPublicGateAllowedSlug = '';
+        if(window.obPublicSlugBackoff && err && (err.status === 404 || /not found|not published|unavailable/i.test(err.message || ''))) {
+          window.obPublicSlugBackoff.mark('expert', slug, 'not_found', 5*60*1000, err.body || null);
+        }
+        renderPublicGate(slug, 'unavailable');
+        return false;
       })
       .finally(function(){
         publicGate.pending[slug] = false;

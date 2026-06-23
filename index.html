@@ -2601,6 +2601,11 @@ h1 em,h2 em,h3 em,h4 em,.panel-title em,.hero h1 em,.section-head h2 em,.brand-n
 .tos-row input[type=checkbox]{width:18px;height:18px;margin-top:2px;accent-color:var(--terra);}
 .tos-text{font-size:13px;color:var(--gray-500);line-height:1.5;}
 .tos-text a{color:var(--terra);font-weight:600;}
+.tos-text strong{display:block;color:var(--brown);font-weight:700;margin-bottom:4px;}
+.tos-details{margin-top:8px;}
+.tos-details summary{color:var(--terra);cursor:pointer;font-weight:700;list-style:none;}
+.tos-details summary::-webkit-details-marker{display:none;}
+.tos-details p{margin:6px 0 0;}
 .category-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;}
 .cat-btn{
   padding:16px 12px;border-radius:10px;border:2px solid var(--gray-200);background:var(--cream);
@@ -5416,7 +5421,12 @@ if (!window.toast) {
 	        <div class="tos-row">
 	          <input type="checkbox" id="tos-check">
 	          <div class="tos-text">
-	            I agree to the <a href="/legal/independent-professional-terms" target="_blank" rel="noopener">Independent Professional Terms</a> and <a href="/legal/platform-policy" target="_blank" rel="noopener">Platform Policy</a>. I understand that I am an independent professional, not an Ownlybiz employee, agent, partner, or representative. I am solely responsible for my services, client outcomes, credentials, compliance, taxes, disputes, refunds, chargebacks, and any regulated advice I provide. Ownlybiz does not guarantee clients, revenue, uptime, bookings, email delivery, video quality, checkout availability, search placement, or lost profits. I will not offer prohibited, illegal, deceptive, adult sexual, gambling, high-risk financial, unlicensed medical/legal, hate, violence, or other restricted services through Ownlybiz.
+	            <strong>I agree to the <a href="/legal/independent-professional-terms" target="_blank" rel="noopener">Independent Professional Terms</a> and <a href="/legal/platform-policy" target="_blank" rel="noopener">Platform Policy</a>.</strong>
+	            I understand that I am an independent professional responsible for my own services, claims, compliance, taxes, disputes, refunds, and client outcomes.
+	            <details class="tos-details">
+	              <summary>What this means</summary>
+	              <p>Ownlybiz is platform infrastructure. Ownlybiz does not guarantee clients, revenue, uptime, bookings, email delivery, video or audio quality, checkout availability, search placement, or lost profits. I will not offer prohibited, illegal, deceptive, adult sexual, gambling, high-risk financial, unlicensed medical/legal, hateful, violent, or otherwise restricted services through Ownlybiz.</p>
+	            </details>
 	          </div>
 	        </div>
 	        <div class="tos-row">
@@ -41529,7 +41539,9 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       if(value && !verifiedFrom(d) && !s.emailVerified){ s.active=4; writeGuide(s); renderGuide(); toast('Verify '+accountEmail(s)+' first, then publish.'); return; }
       var approval=(d&&d.profile&&d.profile.approval_status)||s.approvalStatus;
       if(value && approvalBlocked(approval)){ saveGuidePatch({publishBlocked:'approval',approvalStatus:approval,active:5}); toast('Ownlybiz approval is still needed before this site can go public.'); return; }
-      publishDirect(value).then(function(pd){
+      if(value && typeof window.obRequirePublishLegalConfirmation === 'function' && !window.obRequirePublishLegalConfirmation()) return;
+      var legalReady = value && typeof window.obRecordPublishLegalAcceptance === 'function' ? window.obRecordPublishLegalAcceptance({source:'dashboard_setup_guide', public_slug:s.publicSlug||slug()}) : Promise.resolve();
+      legalReady.then(function(){ return publishDirect(value); }).then(function(pd){
         var p=(pd&&pd.profile)||{}, publicSlug=p.slug||s.publicSlug||slug();
         saveGuidePatch({websitePublished:!!value,publicSlug:publicSlug,publishBlocked:''});
         if(value){ publicCheck(publicSlug).then(function(){saveGuidePatch({publicAvailable:true,websitePublished:true,active:5}); toast('Website published. Use View website to check the public page.'); installPublishCard();}).catch(function(){saveGuidePatch({publicAvailable:false,publishBlocked:'public'}); toast('Publishing was saved, but the public page is not ready yet.');}); }
@@ -42134,7 +42146,9 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       if(!verifiedFrom(d)&&!s.emailVerified){ s.active=4; write(s); render(); toast('Verify '+accountEmail(s)+' first, then publish.'); return; }
       var approval=(d&&d.profile&&d.profile.approval_status)||s.approvalStatus;
       if(approvalBlocked(approval)){ s.approvalStatus=approval; s.publishBlocked='approval'; s.publicAvailable=false; write(s); render(); toast('Email is verified. Ownlybiz approval is still needed before this site can go public.'); return; }
-      publishDirect().then(function(pd){
+      if(typeof window.obRequirePublishLegalConfirmation === 'function' && !window.obRequirePublishLegalConfirmation()) return;
+      var legalReady = typeof window.obRecordPublishLegalAcceptance === 'function' ? window.obRecordPublishLegalAcceptance({source:'floating_onboarding_v20', public_slug:s.publicSlug||slug()}) : Promise.resolve();
+      legalReady.then(function(){ return publishDirect(); }).then(function(pd){
         var ns=read(), p=(pd&&pd.profile)||{}; if(p.slug) ns.publicSlug=p.slug; if(p.approval_status) ns.approvalStatus=p.approval_status; ns.websitePublished=true; ns.publicAvailable=false; ns.publishBlocked=''; write(ns);
         return publicCheck().then(finishPublish).catch(function(){ var xs=read(); xs.publishBlocked=approvalBlocked(xs.approvalStatus)?'approval':'public'; xs.publicAvailable=false; write(xs); render(); toast(xs.publishBlocked==='approval'?'Ownlybiz approval is still needed before this site can go public.':'Publishing was saved, but the public page is not ready yet.'); });
       }).catch(function(){
@@ -42528,6 +42542,35 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     cursor:not-allowed;
     opacity:.62;
   }
+  #ob-launch-center-v1 .ob-launch-legal-confirm {
+    align-items:flex-start;
+    background:rgba(200,255,61,.075);
+    border:1px solid rgba(200,255,61,.24);
+    border-radius:10px;
+    display:flex;
+    gap:12px;
+    margin-top:18px;
+    padding:13px 14px;
+  }
+  #ob-launch-center-v1 .ob-launch-legal-confirm input {
+    accent-color:var(--lime,#c8ff3d);
+    flex:0 0 auto;
+    height:18px;
+    margin-top:3px;
+    width:18px;
+  }
+  #ob-launch-center-v1 .ob-launch-legal-confirm span {
+    color:var(--text-mid,#b7aaa0);
+    font-size:12px;
+    line-height:1.5;
+  }
+  #ob-launch-center-v1 .ob-launch-legal-confirm strong {
+    color:var(--text,#faf7f2);
+    display:block;
+    font-size:13px;
+    font-weight:900;
+    margin-bottom:3px;
+  }
   #ob-launch-center-v1 .ob-launch-refresh {
     background:transparent;
     border:1px solid rgba(255,250,240,.14);
@@ -42653,19 +42696,25 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   body:not(.ob-ui-dark) #ob-launch-center-v1 h2,
   body:not(.ob-ui-dark) #ob-launch-center-v1 .ob-launch-row h3,
   body:not(.ob-ui-dark) #ob-launch-center-v1 .ob-launch-section-title span,
-  body:not(.ob-ui-dark) #ob-launch-center-v1 .ob-launch-summary strong {
+  body:not(.ob-ui-dark) #ob-launch-center-v1 .ob-launch-summary strong,
+  body:not(.ob-ui-dark) #ob-launch-center-v1 .ob-launch-legal-confirm strong {
     color:#241a15;
   }
   body:not(.ob-ui-dark) #ob-launch-center-v1 .ob-launch-copy,
   body:not(.ob-ui-dark) #ob-launch-center-v1 .ob-launch-row p,
   body:not(.ob-ui-dark) #ob-launch-center-v1 .ob-launch-note,
-  body:not(.ob-ui-dark) #ob-launch-center-v1 .ob-launch-summary span {
+  body:not(.ob-ui-dark) #ob-launch-center-v1 .ob-launch-summary span,
+  body:not(.ob-ui-dark) #ob-launch-center-v1 .ob-launch-legal-confirm span {
     color:#6f6358;
   }
   body:not(.ob-ui-dark) #ob-launch-center-v1 .ob-launch-list,
   body:not(.ob-ui-dark) #ob-launch-center-v1 .ob-launch-summary {
     background:#fbf8f2;
     border-color:rgba(46,33,25,.10);
+  }
+  body:not(.ob-ui-dark) #ob-launch-center-v1 .ob-launch-legal-confirm {
+    background:#f8faeb;
+    border-color:rgba(93,116,18,.24);
   }
   body:not(.ob-ui-dark) #ob-launch-center-v1 .ob-launch-section-title,
   body:not(.ob-ui-dark) #ob-launch-center-v1 .ob-launch-row,
@@ -42722,6 +42771,10 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     #ob-launch-center-v1 .ob-launch-refresh {
       flex:1 1 160px;
       white-space:normal;
+    }
+    #ob-launch-center-v1 .ob-launch-legal-confirm {
+      margin-top:16px;
+      padding:12px;
     }
     #ob-launch-companion-v1 {
       align-items:stretch;
@@ -43084,6 +43137,38 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       + '<button type="button" data-ob-launch-action="'+esc(item.action)+'">'+esc(item.done ? 'Review' : item.button)+'</button>'
       + '</div>';
   }
+  function publishLegalHtml(){
+    return '<label class="ob-launch-legal-confirm" for="ob-launch-legal-confirm">'
+      + '<input type="checkbox" id="ob-launch-legal-confirm">'
+      + '<span><strong>Ready to publish as an independent expert.</strong> I confirm that my public site, service claims, pricing, availability, credentials, client communications, refunds or disputes, and legal compliance are my responsibility. I understand Ownlybiz does not guarantee clients, revenue, uptime, bookings, checkout availability, search placement, or lost profits.</span>'
+      + '</label>';
+  }
+  function publishAcceptanceBox(){
+    return document.getElementById('ob-launch-legal-confirm');
+  }
+  function publishConfirmed(){
+    var box = publishAcceptanceBox();
+    return !box || !!box.checked;
+  }
+  function focusPublishAcceptance(){
+    var box = publishAcceptanceBox();
+    if(!box) return;
+    try { box.focus({preventScroll:false}); }
+    catch(e) { try { box.focus(); } catch(ignore) {} }
+  }
+  function syncPublishLegalConfirm(root){
+    if(!root) return;
+    var box = root.querySelector('#ob-launch-legal-confirm');
+    var btn = root.querySelector('.ob-launch-primary[data-ob-launch-action="publish"]');
+    if(!box || !btn) return;
+    function sync(){
+      var ready = !!box.checked;
+      btn.disabled = !ready;
+      btn.setAttribute('aria-disabled', ready ? 'false' : 'true');
+    }
+    box.addEventListener('change', sync);
+    sync();
+  }
   function allItems(model){
     return (model.required || []).concat(model.optional || []);
   }
@@ -43197,6 +43282,8 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     var headline = model.published ? 'Your site is live.' : (next ? model.remaining.length + ' required item' + (model.remaining.length === 1 ? '' : 's') + ' left before publishing.' : 'Ready to publish on your Ownlybiz link.');
     var primaryText = model.published ? 'View live site' : (next ? 'Next: ' + next.title : 'Publish website');
     var primaryAction = model.published ? 'view' : (next ? next.action : 'publish');
+    var launchLegalConfirmHtml = primaryAction === 'publish' ? publishLegalHtml() : '';
+    var primaryDisabledAttr = primaryAction === 'publish' ? ' disabled aria-disabled="true"' : '';
     root.innerHTML = '<div class="ob-launch-inner">'
       + '<div class="ob-launch-head"><div><div class="ob-launch-kicker">Post-approval launch</div><h2>Launch Status</h2><p class="ob-launch-copy">'+esc(headline)+' Publish website appears only after Stripe, profile basics, your offer, and availability are ready. Custom domain and Email Center stay optional.</p></div>'
       + '<div class="ob-launch-summary"><strong>'+model.remaining.length+'</strong><span>required left</span></div></div>'
@@ -43206,10 +43293,12 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       + '</div><div class="ob-launch-list"><div class="ob-launch-section-title"><span>Available later</span><em>Optional</em></div>'
       + model.optional.map(function(item){ return rowHtml(item, false, true); }).join('')
       + '</div></div>'
-      + '<div class="ob-launch-footer"><p class="ob-launch-note">Publishing uses your auto-created Ownlybiz link first. A custom domain is optional and SEO applies only after a custom domain is connected.</p><div class="ob-launch-actions"><button type="button" class="ob-launch-refresh" data-ob-launch-action="refresh">'+(state.loading?'Refreshing':'Refresh')+'</button><button type="button" class="ob-launch-primary" data-ob-launch-action="'+esc(primaryAction)+'">'+esc(primaryText)+'</button></div></div>'
+      + launchLegalConfirmHtml
+      + '<div class="ob-launch-footer"><p class="ob-launch-note">Publishing uses your auto-created Ownlybiz link first. A custom domain is optional and SEO applies only after a custom domain is connected.</p><div class="ob-launch-actions"><button type="button" class="ob-launch-refresh" data-ob-launch-action="refresh">'+(state.loading?'Refreshing':'Refresh')+'</button><button type="button" class="ob-launch-primary" data-ob-launch-action="'+esc(primaryAction)+'"'+primaryDisabledAttr+'>'+esc(primaryText)+'</button></div></div>'
       + '</div>';
     if(!root.parentNode) content.insertBefore(root, content.firstChild);
     else if(root.parentNode !== content) content.insertBefore(root, content.firstChild);
+    syncPublishLegalConfirm(root);
     renderCompanion(model);
   }
   function dashNavItem(targetPanel){
@@ -43284,6 +43373,26 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       return true;
     });
   }
+  function recordPublishAcceptance(meta){
+    if(!token()) return Promise.reject(new Error('Please log in first.'));
+    meta = Object.assign({source:'launch_center_v1', public_slug:slug()}, meta || {});
+    return fetch(api('/api/legal/acceptance'), {
+      method:'POST',
+      headers:Object.assign({'Content-Type':'application/json'}, authHeaders()),
+      body:JSON.stringify({
+        action:'website_publish_acceptance',
+        document_key:'expert-publish-responsibility',
+        document_version:'expert-publish-responsibility-2026-06-23',
+        surface:'expert_launch_center',
+        metadata:meta
+      })
+    }).then(function(r){
+      return r.json().catch(function(){ return {}; }).then(function(d){
+        if(!r.ok || d.success === false) throw new Error(d.error || 'Could not record publish acknowledgement');
+        return d;
+      });
+    });
+  }
   function publishDirect(){
     if(!token()) return Promise.reject(new Error('Please log in first.'));
     return fetch(api('/api/auth/me'), {
@@ -43310,7 +43419,14 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       toast('Publishing is not available for this account yet.','err');
       return;
     }
-    publishDirect().then(function(d){
+    if(!publishConfirmed()){
+      focusPublishAcceptance();
+      toast('Confirm the publish responsibility acknowledgement first.','err');
+      return;
+    }
+    recordPublishAcceptance().then(function(){
+      return publishDirect();
+    }).then(function(d){
       var publicSlug = d && d.profile && d.profile.slug || slug();
       return publicCheck(publicSlug);
     }).then(function(){
@@ -43417,6 +43533,15 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     e.stopPropagation();
     act(btn.getAttribute('data-ob-launch-action'));
   }, true);
+  window.obRequirePublishLegalConfirmation = function(){
+    if(publishConfirmed()) return true;
+    focusPublishAcceptance();
+    toast('Confirm the publish responsibility acknowledgement first.','err');
+    return false;
+  };
+  window.obRecordPublishLegalAcceptance = function(meta){
+    return recordPublishAcceptance(meta);
+  };
   window.ownlybizLaunchCenterOpen = openLaunchCenter;
   window.ownlybizLaunchStatusOpen = openLaunchCenter;
   window.ownlybizLaunchStatusRefresh = function(force){ if(force === false) scheduleLaunchRefresh('manual', 350); else load(true); };

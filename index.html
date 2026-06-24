@@ -21852,12 +21852,32 @@ window._obOpenClientChat = openClientChat;
   var BASE = 'https://victorious-wisdom-production-a6b0.up.railway.app';
   function tok(){ return sessionStorage.getItem('ob_t')||localStorage.getItem('ob_t')||''; }
   function hdr(){ return {Authorization:'Bearer '+tok(),'Content-Type':'application/json'}; }
+  function storedRole(){
+    try {
+      var raw = sessionStorage.getItem('ob_u') || localStorage.getItem('ob_u') || '{}';
+      var user = JSON.parse(raw);
+      return String(user.role || '').toLowerCase();
+    } catch(e) { return ''; }
+  }
+  function dashboardContext(){
+    var path = String((window.location && window.location.pathname) || '');
+    return path === '/admin' || path.indexOf('/admin/') === 0 || path.indexOf('/dash/') === 0;
+  }
+  function skipExpertPrivateRead(){
+    var role = storedRole();
+    return role && role !== 'expert' && !dashboardContext();
+  }
 
   // FIX 1: correct path /api/experts/stripe/status
   window.fetchStripeStatus = function fetchStripeStatus(cb){
-    fetch(BASE+'/api/experts/stripe/status',{headers:hdr()})
+    if(!tok() || skipExpertPrivateRead()){
+      if(typeof cb === 'function') cb(null);
+      return Promise.resolve(null);
+    }
+    return fetch(BASE+'/api/experts/stripe/status',{headers:hdr()})
       .then(function(r){return r.json();})
-      .then(function(d){cb(d);}).catch(function(){cb(null);});
+      .then(function(d){ if(typeof cb === 'function') cb(d); return d; })
+      .catch(function(){ if(typeof cb === 'function') cb(null); return null; });
   }
 
   // FIX 2: UI — red when not configured, green when connected
@@ -29358,7 +29378,7 @@ window._handleRTCMessage=function(d){
 	      banner.style.display = '';
 	      if(!banner.dataset.obStripeStatus) banner.dataset.obStripeStatus = 'loading';
 	    }
-	    if(!token()) return;
+	    if(!token() || !privateRatesContext()) return;
 	    api('/experts/stripe/status').then(function(d){
 	      if(typeof window.updateStripeUI === 'function') window.updateStripeUI(d);
       else setPaymentBanner(d);
@@ -52986,8 +53006,23 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       card.classList.toggle('connected', state.key === 'connected');
     }
   }
+  function storedRole(){
+    try {
+      var raw = sessionStorage.getItem('ob_u') || localStorage.getItem('ob_u') || '{}';
+      var user = JSON.parse(raw);
+      return String(user.role || '').toLowerCase();
+    } catch(e) { return ''; }
+  }
+  function dashboardContext(){
+    var path = String((window.location && window.location.pathname) || '');
+    return path === '/admin' || path.indexOf('/admin/') === 0 || path.indexOf('/dash/') === 0;
+  }
+  function skipExpertPrivateRead(){
+    var role = storedRole();
+    return role && role !== 'expert' && !dashboardContext();
+  }
   async function loadSidebarStripeStatus(){
-    if(!token()){ syncSidebarStripeStatus(null, 'none'); return; }
+    if(!token() || skipExpertPrivateRead()){ syncSidebarStripeStatus(null, 'none'); return; }
     syncSidebarStripeStatus(null, 'loading');
     try {
       var data = await jsonFetch('/api/experts/stripe/status', {method:'GET'});

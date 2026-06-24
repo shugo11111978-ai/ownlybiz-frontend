@@ -18207,7 +18207,10 @@ function _refreshPublicPage(e) {
           if(!e || !e.name) return;
           // Also fetch rates for this expert
           var tok = sessionStorage.getItem('ob_t');
+          var authRole = '';
+          try { authRole = String((JSON.parse(sessionStorage.getItem('ob_u') || localStorage.getItem('ob_u') || '{}') || {}).role || '').toLowerCase(); } catch(e) {}
           var ratePromise = tok
+            && authRole === 'expert'
             ? fetch('https://victorious-wisdom-production-a6b0.up.railway.app/api/experts/rates',{headers:{'Authorization':'Bearer '+tok}}).then(function(r){return r.json();}).catch(function(){return {};})
             : Promise.resolve({});
           ratePromise.then(function(rd){
@@ -49682,6 +49685,10 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     var path = appPath();
     return userRole() === 'admin' || path === '/admin' || path.indexOf('/admin/') === 0;
   }
+  function isDashboardContext(){
+    var path = appPath();
+    return path === '/admin' || path.indexOf('/admin/') === 0 || path.indexOf('/dash/') === 0;
+  }
   function urlFromInput(input){
     try {
       if(typeof input === 'string') return new URL(input, window.location.origin);
@@ -49725,12 +49732,28 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       path.indexOf('/api/credits/') === 0 ||
       path.indexOf('/api/sessions') === 0;
   }
+  function isPrivateExpertEndpoint(path){
+    return path.indexOf('/api/experts/me') === 0 ||
+      path === '/api/experts/rates' ||
+      path.indexOf('/api/experts/rates?') === 0 ||
+      path === '/api/experts/stripe/status' ||
+      path.indexOf('/api/experts/stripe/status?') === 0 ||
+      path === '/api/billing/me' ||
+      path.indexOf('/api/billing/me?') === 0;
+  }
   window.fetch = function(input, init){
     var url = urlFromInput(input);
     if(url && isOwnlyApi(url)){
       var path = url.pathname + (url.search || '');
       var apiPath = url.pathname;
       var role = userRole();
+      if(role && role !== 'expert' && isPrivateExpertEndpoint(apiPath) && !isDashboardContext()){
+        return jsonResponse(403, {
+          success:false,
+          skipped:true,
+          error:'Expert-only request skipped for this public client session.'
+        });
+      }
       if(apiPath.indexOf('/api/admin/') === 0 && !isPublicAdminEndpoint(apiPath) && !isAdminContext()){
         return jsonResponse(role && role !== 'admin' ? 403 : 401, {
           success:false,
@@ -60315,6 +60338,10 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
   }
   function loadOwnerMarketplace(force){
     if(!token()) {
+      syncOwnerMarketplaceAccess(false);
+      return Promise.resolve(null);
+    }
+    if(userRole() !== 'expert' && userRole() !== 'admin') {
       syncOwnerMarketplaceAccess(false);
       return Promise.resolve(null);
     }

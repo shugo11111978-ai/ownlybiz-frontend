@@ -4591,7 +4591,7 @@ if (!window.toast) {
   };
 }
 
-	window.OWNLYBIZ_IS_STAGING=false;
+	window.OWNLYBIZ_IS_STAGING=true;
 	window.OWNLYBIZ_PROD_BACKEND='https://victorious-wisdom-production-a6b0.up.railway.app';
 	window._OB_BACKEND='https://victorious-wisdom-production-a6b0.up.railway.app';
 	window.OWNLYBIZ_API_URL='https://victorious-wisdom-production-a6b0.up.railway.app';
@@ -40554,7 +40554,17 @@ body.ob-ui-dark .ob-connection-note,
     if(typeof window.obAdminStartExpertSupportSession === 'function') return window.obAdminStartExpertSupportSession(id, slug, name);
     note('Expert support view is not ready. Refresh and try again.', 'err');
   }
+  function canonicalDetailReady(){
+    return !!window.__obAdminExpertDetailCanonicalReady;
+  }
+  function currentDetailOpener(){
+    if(typeof window.__obAdminExpertDetailCanonicalOpen === 'function') return window.__obAdminExpertDetailCanonicalOpen;
+    var latest = window.obAdminOpenExpertDetail || window.adminViewExpertDashboard;
+    if(!latest || latest === openDetail || !canonicalDetailReady()) return null;
+    return latest;
+  }
   function install(){
+    if(canonicalDetailReady()) return;
     window.obAdminOpenExpertDashboard = openDash;
     window.obAdminOpenExpertDetail = openDetail;
     window.adminViewExpertDashboard = openDetail;
@@ -40590,8 +40600,8 @@ body.ob-ui-dark .ob-connection-note,
     var b = ev.target && ev.target.closest ? ev.target.closest('.ob-admin-view-expert') : null;
     if(!b) return;
     ev.preventDefault(); ev.stopPropagation(); if(ev.stopImmediatePropagation) ev.stopImmediatePropagation();
-    var latest = window.obAdminOpenExpertDetail;
-    if(latest && latest.__obStripeModeDetail){
+    var latest = currentDetailOpener();
+    if(latest){
       latest(b.getAttribute('data-id'), b.getAttribute('data-slug'), b.getAttribute('data-name'));
       return;
     }
@@ -48764,6 +48774,76 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       (img ? '<img src="'+esc(img)+'" alt="'+esc(section.title || 'Website image')+'">' : '') +
     '</section>';
   }
+  var sessionWidgetTypeMap = {
+    chat: { icon:'CH', title:'Chat', meta:'Live text session', action:'Start chat' },
+    voice: { icon:'VO', title:'Voice', meta:'Audio session', action:'Start voice' },
+    video: { icon:'VI', title:'Video', meta:'Face-to-face session', action:'Start video' },
+    written: { icon:'WR', title:'Written reading', meta:'Private written request', action:'Ask a question' },
+    'book-later': { icon:'BL', title:'Book later', meta:'Reserve a time', action:'Schedule' }
+  };
+  var sessionWidgetTypeOrder = ['chat','voice','video','written','book-later'];
+  function sessionWidgetPlacement(widget){
+    var placement = safeSlug(widget && widget.placement || 'after_content');
+    return {hero:1,before_content:1,after_content:1,bottom:1}[placement] ? placement : 'after_content';
+  }
+  function sessionWidgetTypes(widget){
+    var raw = Array.isArray(widget && widget.types) ? widget.types : [];
+    var seen = {};
+    var list = raw.map(function(type){ return safeSlug(type); }).filter(function(type){
+      if(!sessionWidgetTypeMap[type] || seen[type]) return false;
+      seen[type] = true;
+      return true;
+    });
+    return list.length ? list : sessionWidgetTypeOrder.slice();
+  }
+  function pageSessionWidget(page){
+    var widget = page && page.session_widget || {};
+    if(!(widget.enabled === true || widget.enabled === 1 || widget.enabled === '1' || widget.enabled === 'true')) return null;
+    var types = sessionWidgetTypes(widget);
+    if(!types.length) return null;
+    return {
+      placement: sessionWidgetPlacement(widget),
+      types: types,
+      title: clean(widget.title) || 'Choose how to connect',
+      intro: clean(widget.intro) || 'Start live, send a private written request, or reserve a time that works for you.'
+    };
+  }
+  function sessionWidgetButton(type){
+    var item = sessionWidgetTypeMap[type];
+    if(!item) return '';
+    return '<button type="button" class="ob-session-widget-card" data-ob-session-type="'+esc(type)+'" onclick="obContentPageSessionWidgetAction(\''+esc(type)+'\')">' +
+      '<span class="ob-session-widget-icon">'+esc(item.icon)+'</span>' +
+      '<span class="ob-session-widget-copy"><strong>'+esc(item.title)+'</strong><small>'+esc(item.meta)+'</small></span>' +
+      '<span class="ob-session-widget-action">'+esc(item.action)+'</span>' +
+    '</button>';
+  }
+  function sessionWidgetHtml(page, placement){
+    var widget = pageSessionWidget(page);
+    if(!widget || widget.placement !== placement) return '';
+    return '<section class="ob-session-widget" data-ob-session-widget="'+esc(placement)+'">' +
+      '<div class="ob-session-widget-head"><h2>'+esc(widget.title)+'</h2><p>'+esc(widget.intro)+'</p></div>' +
+      '<div class="ob-session-widget-grid">'+widget.types.map(sessionWidgetButton).join('')+'</div>' +
+    '</section>';
+  }
+  window.obContentPageSessionWidgetAction = function(type){
+    type = safeSlug(type);
+    if(type === 'chat' || type === 'voice' || type === 'video'){
+      window._obPendingChannel = type;
+      if(typeof window.startLiveNow === 'function') { window.startLiveNow(type); return; }
+      if(typeof window.showExpertPage === 'function') window.showExpertPage('book');
+      return;
+    }
+    if(type === 'written'){
+      if(typeof window.obOdOpenPublic === 'function') { window.obOdOpenPublic(); return; }
+      if(typeof window.showExpertPage === 'function') window.showExpertPage('book');
+      try { if(window.toast) window.toast('Written readings are not available right now.','err'); } catch(e) {}
+      return;
+    }
+    if(type === 'book-later'){
+      if(typeof window.openBookLaterModal === 'function') { window.openBookLaterModal('chat'); return; }
+      if(typeof window.showExpertPage === 'function') window.showExpertPage('book');
+    }
+  };
   function renderAiPublicExtras(data){
     data = data || window._currentExpert || {};
     var wc = parseWebsiteContent(data);
@@ -48823,15 +48903,22 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       pageEl.id = 'ep-ai-' + slug;
       pageEl.setAttribute('data-ob-ai-public-extra','page');
       var pageSections = Array.isArray(page.sections) ? page.sections : [];
+      var renderedSections = pageSections.map(sectionHtml);
       var headerImg = safeImage(page.header_image_url);
       var ctaLabel = clean(page.cta_label);
       var ctaPage = aiPageKey(page.cta_page || 'book');
       pageEl.innerHTML =
         '<div class="expert-page-hero">' +
           '<div class="ob-cp-hero-copy"><h1>'+esc(page.title || page.nav_label || slug)+'</h1>'+(page.summary ? '<p>'+esc(page.summary)+'</p>' : '') +
-          (ctaLabel ? '<div class="ob-cp-hero-actions"><button class="btn btn-primary btn-sm" onclick="showExpertPage(\''+esc(ctaPage)+'\')">'+esc(ctaLabel)+'</button></div>' : '') + '</div>' +
+          (ctaLabel ? '<div class="ob-cp-hero-actions"><button class="btn btn-primary btn-sm" onclick="showExpertPage(\''+esc(ctaPage)+'\')">'+esc(ctaLabel)+'</button></div>' : '') +
+          sessionWidgetHtml(page,'hero') + '</div>' +
           (headerImg ? '<div class="ob-cp-hero-image"><img src="'+esc(headerImg)+'" alt="'+esc(page.title || page.nav_label || 'Page header')+'"></div>' : '') +
-        '</div>' + pageSections.map(sectionHtml).join('');
+        '</div>' +
+        sessionWidgetHtml(page,'before_content') +
+        (renderedSections[0] || '') +
+        sessionWidgetHtml(page,'after_content') +
+        renderedSections.slice(1).join('') +
+        sessionWidgetHtml(page,'bottom');
       if(before && before.parentNode) before.parentNode.insertBefore(pageEl, before);
       else parent.appendChild(pageEl);
       if(page.meta_title || page.meta_description){
@@ -48980,6 +49067,43 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     var expertSlug = slugify(state.expertSlug || window._browseExpert || (window._currentExpert && window._currentExpert.slug) || 'expert-slug');
     return '/' + expertSlug + '/' + slug;
   }
+  var sessionWidgetTypes = [
+    {key:'chat', label:'Chat', meta:'Live text'},
+    {key:'voice', label:'Voice', meta:'Audio'},
+    {key:'video', label:'Video', meta:'Face to face'},
+    {key:'written', label:'Written reading', meta:'On Demand'},
+    {key:'book-later', label:'Book later', meta:'Scheduled'}
+  ];
+  var sessionWidgetTypeMap = sessionWidgetTypes.reduce(function(map, item){ map[item.key] = item; return map; }, {});
+  var sessionWidgetPlacements = [
+    {key:'hero', label:'Inside page intro'},
+    {key:'before_content', label:'Before main content'},
+    {key:'after_content', label:'After main content'},
+    {key:'bottom', label:'Page bottom'}
+  ];
+  var sessionWidgetPlacementMap = sessionWidgetPlacements.reduce(function(map, item){ map[item.key] = item; return map; }, {});
+  function defaultSessionWidgetTypes(){
+    return sessionWidgetTypes.map(function(item){ return item.key; });
+  }
+  function normalizeSessionWidget(widget){
+    widget = widget || {};
+    var seen = {};
+    var types = (Array.isArray(widget.types) ? widget.types : defaultSessionWidgetTypes()).map(slugify).filter(function(type){
+      if(!sessionWidgetTypeMap[type] || seen[type]) return false;
+      seen[type] = true;
+      return true;
+    });
+    if(!types.length) types = defaultSessionWidgetTypes();
+    var placement = slugify(widget.placement || 'after_content');
+    if(!sessionWidgetPlacementMap[placement]) placement = 'after_content';
+    return {
+      enabled: widget.enabled === true || widget.enabled === 1 || widget.enabled === '1' || widget.enabled === 'true',
+      placement: placement,
+      types: types,
+      title: line(widget.title, 90) || 'Choose how to connect',
+      intro: text(widget.intro, 220) || 'Start live, send a private written request, or reserve a time that works for you.'
+    };
+  }
   function defaultForTemplate(type){
     type = templateLabels[type] ? type : 'content';
     if(type === 'article') return {
@@ -49049,6 +49173,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       cta_page: slugify(page.cta_page || 'book') || 'book',
       meta_title: line(page.meta_title, 70),
       meta_description: line(page.meta_description, 180),
+      session_widget: normalizeSessionWidget(page.session_widget),
       sections: [{
         id: slug + '-main',
         target_page: slug,
@@ -49114,8 +49239,10 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     list.innerHTML = state.pages.map(function(page, idx){
       var active = page.id === state.active ? ' active' : '';
       var status = page.published ? (page.show_in_nav ? 'Published in nav' : 'Published, hidden from nav') : 'Draft';
+      var widget = normalizeSessionWidget(page.session_widget);
+      var widgetLabel = widget.enabled ? ' - Session widget' : '';
       return '<button type="button" class="ob-cp-list-item'+active+'" onclick="obSelectContentPage(\''+esc(page.id)+'\')">' +
-        '<span><strong>'+esc(page.nav_label || page.title)+'</strong><small>/'+esc(page.slug || '')+' · '+esc(templateLabels[page.template] || 'Page')+'</small></span>' +
+        '<span><strong>'+esc(page.nav_label || page.title)+'</strong><small>/'+esc(page.slug || '')+' - '+esc(templateLabels[page.template] || 'Page')+widgetLabel+'</small></span>' +
         '<em>'+esc(status)+'</em>' +
       '</button>';
     }).join('');
@@ -49133,6 +49260,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     }
     state.active = page.id;
     var section = page.sections && page.sections[0] ? page.sections[0] : {title:'',body:'',items:[]};
+    var widget = normalizeSessionWidget(page.session_widget);
     editor.innerHTML =
       '<div class="ob-cp-editor-top">' +
         '<div><strong>Edit Page</strong><span>'+esc(pageUrl(page.slug))+'</span></div>' +
@@ -49154,6 +49282,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
         field('CTA button text','<input id="ob-cp-cta-label-input" class="settings-field-input" value="'+esc(page.cta_label || '')+'" oninput="obContentPageField(&quot;cta_label&quot;,this.value)" placeholder="Book a session">') +
         field('CTA destination','<input class="settings-field-input" value="'+esc(page.cta_page || 'book')+'" oninput="obContentPageField(&quot;cta_page&quot;,this.value)" placeholder="book, contact, services, or page slug">') +
       '</div>' +
+      sessionWidgetEditor(widget) +
       field('Main content heading','<input id="ob-cp-section-title-input" class="settings-field-input" value="'+esc(section.title || '')+'" oninput="obContentPageSectionField(&quot;title&quot;,this.value)" placeholder="Main section heading">') +
       field('Main content','<textarea id="ob-cp-body-input" class="settings-field-input ob-cp-main" rows="10" oninput="obContentPageSectionField(&quot;body&quot;,this.value)" placeholder="Write the full article, guide, content page, or resource copy here.">'+esc(section.body || '')+'</textarea>') +
       field('Key points / FAQ items','<textarea id="ob-cp-items-input" class="settings-field-input" rows="5" oninput="obContentPageSectionField(&quot;items&quot;,this.value)" placeholder="One point per line. Useful for FAQs, guides, and resource pages.">'+esc((section.items || []).join('\\n'))+'</textarea>') +
@@ -49164,6 +49293,31 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   }
   function field(label, inputHtml){
     return '<label class="ob-cp-field"><span>'+esc(label)+'</span>'+inputHtml+'</label>';
+  }
+  function sessionWidgetEditor(widget){
+    widget = normalizeSessionWidget(widget);
+    var active = widget.enabled ? '' : ' inactive';
+    var typeHtml = sessionWidgetTypes.map(function(item){
+      var checked = widget.types.indexOf(item.key) >= 0;
+      return '<label class="ob-cp-widget-type'+(checked ? ' active' : '')+'">' +
+        '<input type="checkbox" '+(checked ? 'checked' : '')+' onchange="obContentPageSessionWidgetType(&quot;'+esc(item.key)+'&quot;,this.checked)">' +
+        '<strong>'+esc(item.label)+'</strong><small>'+esc(item.meta)+'</small>' +
+      '</label>';
+    }).join('');
+    var placementHtml = sessionWidgetPlacements.map(function(item){
+      return '<option value="'+esc(item.key)+'" '+(widget.placement === item.key ? 'selected' : '')+'>'+esc(item.label)+'</option>';
+    }).join('');
+    return '<div class="ob-cp-widget-panel'+active+'">' +
+      '<label class="ob-cp-widget-enable"><input type="checkbox" '+(widget.enabled ? 'checked' : '')+' onchange="obContentPageSessionWidgetField(&quot;enabled&quot;,this.checked)"><span><strong>Session type widget</strong><small>Choose session options and placement for this page.</small></span></label>' +
+      '<div class="ob-cp-widget-body">' +
+        '<div class="ob-cp-widget-types">'+typeHtml+'</div>' +
+        '<div class="ob-cp-grid two">' +
+          field('Widget placement','<select class="settings-field-input" onchange="obContentPageSessionWidgetField(&quot;placement&quot;,this.value)">'+placementHtml+'</select>') +
+          field('Widget headline','<input class="settings-field-input" value="'+esc(widget.title)+'" oninput="obContentPageSessionWidgetField(&quot;title&quot;,this.value)" placeholder="Choose how to connect">') +
+        '</div>' +
+        field('Widget intro','<textarea class="settings-field-input" rows="2" oninput="obContentPageSessionWidgetField(&quot;intro&quot;,this.value)" placeholder="Short line above the session buttons">'+esc(widget.intro)+'</textarea>') +
+      '</div>' +
+    '</div>';
   }
   function ensureVisibilityHost(){
     var firstPagesCard = document.querySelector('.we-tab-card[data-we-tab="pages"]');
@@ -49457,6 +49611,45 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     if(fieldName === 'items') section.items = String(value || '').split('\n').map(function(item){ return text(item, 320); }).filter(Boolean);
     else section[fieldName] = value;
   };
+  window.obContentPageSessionWidgetField = function(fieldName, value){
+    var page = activePage();
+    if(!page) return;
+    var widget = normalizeSessionWidget(page.session_widget);
+    if(fieldName === 'enabled') {
+      widget.enabled = !!value;
+      if(!widget.types.length) widget.types = defaultSessionWidgetTypes();
+      page.session_widget = widget;
+      renderList();
+      renderEditor();
+      return;
+    }
+    if(fieldName === 'placement') {
+      widget.placement = sessionWidgetPlacementMap[slugify(value)] ? slugify(value) : 'after_content';
+      page.session_widget = widget;
+      renderEditor();
+      return;
+    }
+    if(fieldName === 'title') widget.title = line(value, 90) || '';
+    else if(fieldName === 'intro') widget.intro = text(value, 220) || '';
+    page.session_widget = widget;
+  };
+  window.obContentPageSessionWidgetType = function(type, checked){
+    var page = activePage();
+    if(!page) return;
+    type = slugify(type);
+    if(!sessionWidgetTypeMap[type]) return;
+    var widget = normalizeSessionWidget(page.session_widget);
+    var next = widget.types.filter(function(item){ return item !== type; });
+    if(checked) next.push(type);
+    if(!next.length) {
+      if(typeof _showToast === 'function') _showToast('Choose at least one session type','red');
+      renderEditor();
+      return;
+    }
+    widget.types = sessionWidgetTypes.map(function(item){ return item.key; }).filter(function(item){ return next.indexOf(item) >= 0; });
+    page.session_widget = widget;
+    renderEditor();
+  };
   window.obCollectWebsiteContentPages = function(existingPages){
     if(!state.allowed) return Array.isArray(existingPages) ? existingPages : [];
     return state.pages.map(function(page, idx){
@@ -49612,6 +49805,94 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     list-style:none;
     padding:12px 14px;
   }
+  #view-4 .ob-ai-custom-page .ob-session-widget{
+    background:var(--ob-site-surface,var(--white));
+    border:1px solid color-mix(in srgb,var(--ob-site-text,var(--brown)),transparent 86%);
+    border-radius:16px;
+    box-shadow:0 18px 48px rgba(42,28,18,.08);
+    color:var(--ob-site-text,var(--brown));
+    margin:28px auto;
+    max-width:980px;
+    padding:24px;
+    text-align:left;
+  }
+  #view-4 .ob-ai-custom-page .expert-page-hero .ob-session-widget{
+    margin:28px auto 0;
+  }
+  #view-4 .ob-ai-custom-page .ob-session-widget-head{
+    margin-bottom:16px;
+  }
+  #view-4 .ob-ai-custom-page .ob-session-widget h2{
+    color:var(--ob-site-text,var(--brown))!important;
+    font-size:24px;
+    font-weight:750;
+    letter-spacing:0;
+    line-height:1.16;
+    margin:0 0 6px;
+  }
+  #view-4 .ob-ai-custom-page .ob-session-widget p{
+    color:color-mix(in srgb,var(--ob-site-text,var(--brown)),transparent 30%)!important;
+    font-size:14px;
+    line-height:1.55;
+    margin:0;
+  }
+  #view-4 .ob-ai-custom-page .ob-session-widget-grid{
+    display:grid;
+    gap:10px;
+    grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+  }
+  #view-4 .ob-ai-custom-page .ob-session-widget-card{
+    align-items:flex-start;
+    background:color-mix(in srgb,var(--ob-site-bg,var(--cream)),var(--ob-site-surface,var(--white)) 54%);
+    border:1px solid color-mix(in srgb,var(--ob-site-text,var(--brown)),transparent 88%);
+    border-radius:12px;
+    color:var(--ob-site-text,var(--brown));
+    cursor:pointer;
+    display:grid;
+    gap:8px;
+    min-height:132px;
+    padding:14px;
+    text-align:left;
+    transition:transform .16s ease,box-shadow .16s ease,border-color .16s ease;
+    width:100%;
+  }
+  #view-4 .ob-ai-custom-page .ob-session-widget-card:hover{
+    border-color:color-mix(in srgb,var(--terra,#C4622D),transparent 42%);
+    box-shadow:0 16px 36px rgba(42,28,18,.12);
+    transform:translateY(-2px);
+  }
+  #view-4 .ob-ai-custom-page .ob-session-widget-icon{
+    align-items:center;
+    background:color-mix(in srgb,var(--terra,#C4622D),transparent 84%);
+    border-radius:10px;
+    color:var(--terra,#C4622D);
+    display:flex;
+    font-size:12px;
+    font-weight:900;
+    height:36px;
+    justify-content:center;
+    letter-spacing:0;
+    width:36px;
+  }
+  #view-4 .ob-ai-custom-page .ob-session-widget-copy strong{
+    color:var(--ob-site-text,var(--brown));
+    display:block;
+    font-size:14px;
+    line-height:1.25;
+  }
+  #view-4 .ob-ai-custom-page .ob-session-widget-copy small,
+  #view-4 .ob-ai-custom-page .ob-session-widget-action{
+    color:color-mix(in srgb,var(--ob-site-text,var(--brown)),transparent 38%);
+    display:block;
+    font-size:12px;
+    line-height:1.35;
+    margin-top:3px;
+  }
+  #view-4 .ob-ai-custom-page .ob-session-widget-action{
+    color:var(--terra,#C4622D);
+    font-weight:850;
+    margin-top:auto;
+  }
   #view-4.ob-site-theme-dark .ob-ai-custom-page .ob-ai-public-section{
     box-shadow:0 20px 60px rgba(0,0,0,.22);
   }
@@ -49649,6 +49930,19 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   #ob-content-pages-card textarea.settings-field-input{min-height:0;}
   #ob-content-pages-card .ob-cp-main{min-height:170px;}
   #ob-content-pages-card .ob-cp-check{align-items:center;background:var(--cream);border:1px solid var(--gray-200);border-radius:10px;color:var(--brown);display:flex;font-size:13px;font-weight:700;gap:8px;padding:10px 12px;}
+  #ob-content-pages-card .ob-cp-widget-panel{background:var(--cream);border:1px solid var(--gray-200);border-radius:14px;display:grid;gap:12px;padding:14px;}
+  #ob-content-pages-card .ob-cp-widget-panel.inactive .ob-cp-widget-body{display:none;}
+  #ob-content-pages-card .ob-cp-widget-enable{align-items:flex-start;color:var(--brown);display:flex;font-size:13px;font-weight:800;gap:10px;}
+  #ob-content-pages-card .ob-cp-widget-enable input{margin-top:3px;}
+  #ob-content-pages-card .ob-cp-widget-enable strong{display:block;font-size:14px;line-height:1.25;}
+  #ob-content-pages-card .ob-cp-widget-enable small{color:var(--gray-400);display:block;font-size:12px;font-weight:600;line-height:1.45;margin-top:2px;}
+  #ob-content-pages-card .ob-cp-widget-body{display:grid;gap:12px;}
+  #ob-content-pages-card .ob-cp-widget-types{display:grid;gap:8px;grid-template-columns:repeat(5,minmax(0,1fr));}
+  #ob-content-pages-card .ob-cp-widget-type{background:var(--white);border:1px solid var(--gray-200);border-radius:10px;color:var(--brown);cursor:pointer;display:grid;gap:3px;min-height:76px;padding:10px;}
+  #ob-content-pages-card .ob-cp-widget-type.active{border-color:var(--terra);box-shadow:0 0 0 1px rgba(196,98,45,.22);}
+  #ob-content-pages-card .ob-cp-widget-type input{height:15px;margin:0;width:15px;}
+  #ob-content-pages-card .ob-cp-widget-type strong{font-size:12px;line-height:1.2;}
+  #ob-content-pages-card .ob-cp-widget-type small{color:var(--gray-400);font-size:10px;font-weight:700;line-height:1.25;}
   #ob-content-pages-card .ob-cp-image-row{display:grid;gap:12px;grid-template-columns:180px 1fr;align-items:stretch;}
   #ob-content-pages-card .ob-cp-image-preview{align-items:center;background:var(--cream);border:1.5px dashed var(--gray-200);border-radius:14px;color:var(--gray-400);display:flex;font-size:12px;font-weight:800;justify-content:center;min-height:112px;overflow:hidden;position:relative;text-align:center;}
   #ob-content-pages-card .ob-cp-image-preview img{height:100%;min-height:112px;object-fit:cover;width:100%;}
@@ -49676,6 +49970,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     #ob-content-pages-card .ob-cp-manager,
     #ob-content-pages-card .ob-cp-grid.two,
     #ob-content-pages-card .ob-cp-grid.compact,
+    #ob-content-pages-card .ob-cp-widget-types,
     #ob-content-pages-card .ob-cp-image-row{grid-template-columns:1fr;}
     #ob-content-pages-card .ob-cp-template{width:100%;}
   }
@@ -52372,6 +52667,8 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   }
   function install(){
     openExpertDetail.__obStripeModeDetail = true;
+    window.__obAdminExpertDetailCanonicalReady = true;
+    window.__obAdminExpertDetailCanonicalOpen = openExpertDetail;
     window.obAdminOpenExpertDashboard = openDashboard;
     window.obAdminOpenExpertDetail = openExpertDetail;
     window.adminViewExpertDashboard = openExpertDetail;
@@ -54217,9 +54514,13 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
   .ob-ec-v1-progress-bar{height:6px;border-radius:999px;background:rgba(255,255,255,.10);overflow:hidden}
   .ob-ec-v1-progress-bar span{display:block;width:38%;height:100%;border-radius:999px;background:linear-gradient(90deg,#d8ff5d,#ffb24b,#d8ff5d);animation:obEcV1Progress 1.15s ease-in-out infinite}
   .ob-ec-v1-schedule-panel{border:1px solid rgba(255,255,255,.12);border-radius:8px;background:rgba(255,255,255,.04);padding:12px;display:grid;gap:10px}
-  .ob-ec-v1-schedule-grid{display:grid;grid-template-columns:minmax(92px,.7fr) minmax(130px,1fr) minmax(190px,1.4fr);gap:8px;align-items:end}
-  .ob-ec-v1-schedule-grid label{min-width:0}
-	  @media(max-width:760px){.ob-ec-v1-schedule-grid{grid-template-columns:1fr}}
+	  .ob-ec-v1-schedule-grid{display:grid;grid-template-columns:minmax(92px,.7fr) minmax(130px,1fr) minmax(190px,1.4fr);gap:8px;align-items:end}
+	  .ob-ec-v1-schedule-grid label{min-width:0}
+	  .ob-ec-v1-import-progress{margin-top:12px;border:1px solid rgba(255,255,255,.14);border-radius:8px;overflow:hidden;background:rgba(255,255,255,.08)}
+	  .ob-ec-v1-import-progress-bar{height:9px;background:linear-gradient(90deg,#bfff24,#70f0ff);transition:width .25s ease}
+	  .ob-ec-v1-import-progress.indeterminate .ob-ec-v1-import-progress-bar{width:42%;animation:obEcV1Progress 1.2s linear infinite}
+	  .ob-ec-v1-import-progress-label{padding:7px 9px;color:rgba(248,250,252,.78);font-size:12px;line-height:1.35}
+		  @media(max-width:760px){.ob-ec-v1-schedule-grid{grid-template-columns:1fr}}
   @keyframes obEcV1Progress{0%{transform:translateX(-105%)}100%{transform:translateX(280%)}}
 </style>
 <script id="ownlybiz-expert-email-center-parity-js">
@@ -54229,8 +54530,9 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
   window.__ownlybizExpertEmailCenterParity20260609 = true;
 
   var BASE = String(window.OWNLYBIZ_API_URL || window._OB_BACKEND || 'https://victorious-wisdom-production-a6b0.up.railway.app').replace(/\/+$/,'');
-  var tabs = [['campaigns','Campaigns'],['builder','Builder'],['contacts','Lists & Uploads'],['analytics','Analytics'],['map','Flow Map'],['transactional','Core Scenarios'],['journeys','Marketing Cycles'],['templates','Templates'],['log','Send Log'],['settings','Settings']];
-	  var state = { tab:'campaigns', loading:false, status:'', overview:null, analytics:null, contacts:[], contactsMeta:{}, lists:[], templates:[], campaigns:[], lifecycles:{presets:[],lifecycles:[]}, sends:[], events:[], draft:null, campaign:null, preview:null, aiBusy:false, imageBusy:false, aiPrompt:'', testTo:'', file:null, importPreview:null, importListName:'', importConsent:'', importConfirmed:false, importBusy:false, manualText:'', manualListMode:'new', manualListId:'', manualListName:'', manualConsent:'', manualConfirmed:false, manualPreview:null, manualBusy:false, contactListId:'__all', contactStatus:'all', contactSearch:'', contactLimit:10, contactOffset:0, selectedContacts:{}, bulkAction:'', bulkListId:'', builderListId:'', builderTarget:'audience', builderJourneyId:'', builderJourneyStepId:'', sendReview:null, sendingBusy:false, sendMode:'now', scheduleDays:0, scheduleTime:'17:00', scheduleTimezone:'UTC', layoutKey:'balanced_card' };
+	  var tabs = [['campaigns','Campaigns'],['builder','Builder'],['contacts','Lists & Uploads'],['analytics','Analytics'],['map','Flow Map'],['transactional','Core Scenarios'],['journeys','Marketing Cycles'],['templates','Templates'],['log','Send Log'],['settings','Settings']];
+		  var state = { tab:'campaigns', loading:false, status:'', overview:null, analytics:null, contacts:[], contactsMeta:{}, lists:[], templates:[], campaigns:[], lifecycles:{presets:[],lifecycles:[]}, sends:[], events:[], draft:null, campaign:null, preview:null, aiBusy:false, imageBusy:false, aiPrompt:'', testTo:'', file:null, importPreview:null, importProgress:null, importListName:'', importConsent:'', importConfirmed:false, importBusy:false, manualText:'', manualListMode:'new', manualListId:'', manualListName:'', manualConsent:'', manualConfirmed:false, manualPreview:null, manualBusy:false, contactListId:'__all', contactStatus:'all', contactSearch:'', contactLimit:10, contactOffset:0, selectedContacts:{}, bulkAction:'', bulkListId:'', builderListId:'', builderTarget:'audience', builderJourneyId:'', builderJourneyStepId:'', sendReview:null, sendingBusy:false, sendMode:'now', scheduleDays:0, scheduleTime:'17:00', scheduleTimezone:'UTC', layoutKey:'balanced_card' };
+	  var importPollTimer=null;
 	  window.addEventListener('resize', function(){ try{ fitPreviewFrames(); }catch(e){} });
 
   function tok(){ return sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || localStorage.getItem('ownlybiz_token') || sessionStorage.getItem('ownlybiz_token') || ''; }
@@ -54293,7 +54595,17 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
   function scheduleEpoch(days,time,zone,baseDate){ zone=validTimeZone(zone); var current=zonedParts(zone,baseDate||new Date()); var target=addLocalDays(current,days); var parts=cleanClock(time).split(':'); return localClockEpoch(zone,target.year,target.month,target.day,Number(parts[0]),Number(parts[1])); }
   function scheduleLabel(days,time,zone){ days=clampNumber(days,0,365,0); return days+' day'+(days===1?'':'s')+' at '+prettyTime(time)+' '+tzLabel(zone); }
   function toast(msg,type){ try{ if(window.toast) window.toast(msg,type||'ok'); else if(window._showToast) window._showToast(msg,type==='err'?'red':'green'); }catch(e){} }
-  function api(path, opts){
+	  var IMPORT_FILE_MAX_BYTES = 3 * 1024 * 1024;
+	  var IMPORT_SYNC_ROW_LIMIT = 5000;
+	  function isTextImportFile(file){ return !/\.xlsx$/i.test((file && file.name) || ''); }
+	  function importFilePayload(file, result, isText){ return isText ? {filename:file.name,text:String(result||'')} : {filename:file.name,file_base64:String(result||'').split(',').pop()}; }
+	  function importCount(p,key,listKey){ p=p||{}; var n=Number(p[key]); if(Number.isFinite(n)) return n; return ((p[listKey]||[]).length)||0; }
+	  function setImportProgress(label,percent,active){ state.importProgress={label:label||'',percent:Math.max(0,Math.min(100,Number(percent)||0)),active:active!==false}; render(); }
+	  function clearImportPoll(){ if(importPollTimer){clearTimeout(importPollTimer);importPollTimer=null;} }
+	  function progressHtml(){ var p=state.importProgress; if(!p)return ''; var pct=Math.max(0,Math.min(100,Number(p.percent)||0)); var cls=p.active&&pct<100?' ob-ec-v1-import-progress indeterminate':' ob-ec-v1-import-progress'; return '<div class="'+cls.trim()+'"><div class="ob-ec-v1-import-progress-bar" style="width:'+pct+'%"></div><div class="ob-ec-v1-import-progress-label">'+esc(p.label||'Working...')+'</div></div>'; }
+	  function apiUpload(path,body,onProgress){return new Promise(function(resolve,reject){var xhr=new XMLHttpRequest();xhr.open('POST',BASE+'/api/experts/me/email-center'+path,true);xhr.setRequestHeader('Content-Type','application/json');var token=tok();if(token)xhr.setRequestHeader('Authorization','Bearer '+token);xhr.upload.onprogress=function(e){if(e.lengthComputable&&onProgress){onProgress(Math.round((e.loaded/e.total)*100));}};xhr.onload=function(){var d={};try{d=JSON.parse(xhr.responseText||'{}');}catch(e){}if(xhr.status<200||xhr.status>=300||d.success===false){reject(new Error(d.error||'Email Center request failed'));return;}resolve(d);};xhr.onerror=function(){reject(new Error('Upload failed. Check your connection and try again.'));};xhr.send(JSON.stringify(body||{}));});}
+	  function pollImportStatus(id){ clearImportPoll(); if(!id)return; api('/imports/'+encodeURIComponent(id)).then(function(d){var p=d.progress||{};var status=p.status||d.import&&d.import.status||'processing';var pct=Number(p.percent||0);state.importProgress={percent:pct,active:status!=='completed'&&status!=='failed',label:status==='completed'?'Import complete: '+fmt(p.accepted_rows)+' added, '+fmt(p.rejected_rows)+' rejected, '+fmt(p.suppressed_rows)+' suppressed.':'Importing contacts: '+fmt(p.processed_rows)+' / '+fmt(p.accepted_total)+' processed.'};state.status=state.importProgress.label;render();if(status==='completed'||status==='failed'){state.importBusy=false;state.manualBusy=false;return apiObj.loadContacts();}importPollTimer=setTimeout(function(){pollImportStatus(id);},1500);}).catch(function(e){state.importBusy=false;state.manualBusy=false;setStatus(e.message,'err');}); }
+	  function api(path, opts){
     opts=opts||{};
     var headers={'Content-Type':'application/json'};
     var token=tok(); if(token) headers.Authorization='Bearer '+token;
@@ -54542,9 +54854,9 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     var busy=state.importBusy?'disabled':'';
     var manualBusy=state.manualBusy?'disabled':'';
     var existingListSelect=(state.lists||[]).length?'<label style="display:'+(state.manualListMode==='existing'?'grid':'none')+'">Existing list<select id="ob-ec-manual-list-id" onchange="window.OBEmailCenterV1.syncManualForm()">'+state.lists.map(function(l){return '<option value="'+esc(l.id)+'" '+(state.manualListId===l.id?'selected':'')+'>'+esc(l.name||'List')+' ('+fmt(l.contact_count||0)+')</option>';}).join('')+'</select></label>':'<div class="ob-ec-v1-small" style="display:'+(state.manualListMode==='existing'?'block':'none')+'">Create a list first, or switch to New list.</div>';
-    return '<div class="ob-ec-v1-box"><h3>Lists & Uploads</h3><div class="ob-ec-v1-form"><label class="ob-ec-v1-file"><span>CSV, TSV, TXT, or Excel .xlsx</span><strong>Choose file</strong><span class="ob-ec-v1-file-meta">'+esc(fileName)+'</span><input id="ob-ec-upload-file" type="file" accept=".csv,.tsv,.txt,.xlsx,text/csv,text/tab-separated-values" onchange="window.OBEmailCenterV1.readImportFile(this)"></label><label>New list name<input id="ob-ec-import-list-name" value="'+esc(state.importListName||'')+'" oninput="window.OBEmailCenterV1.syncImportForm()" placeholder="June client list"></label><label>Consent source<input id="ob-ec-import-consent" value="'+esc(state.importConsent||'')+'" oninput="window.OBEmailCenterV1.syncImportForm()" placeholder="Example: website opt-in form"></label><label class="ob-ec-v1-check"><input id="ob-ec-import-confirm" type="checkbox" '+(state.importConfirmed?'checked':'')+' onchange="window.OBEmailCenterV1.syncImportForm()"> I confirm every imported contact gave permission for marketing emails from me.</label><div class="ob-ec-v1-actions"><button class="ob-ec-v1-btn primary" '+busy+' type="button" onclick="window.OBEmailCenterV1.previewImport()">Preview upload</button><button class="ob-ec-v1-btn primary" '+busy+' type="button" onclick="window.OBEmailCenterV1.commitImport()">Create list and import</button></div>'+previewSummary(state.importPreview)+'</div><hr style="border:0;border-top:1px solid rgba(255,255,255,.1);margin:16px 0"><div class="ob-ec-v1-form"><label>Emails, names, and tags<textarea id="ob-ec-manual-contacts" oninput="window.OBEmailCenterV1.syncManualForm()" placeholder="alice@example.com, Alice, vip&#10;Bob Cohen, bob@example.com, follow up">'+esc(state.manualText||'')+'</textarea></label><label>Add contacts to<select id="ob-ec-manual-list-mode" onchange="window.OBEmailCenterV1.setManualListMode(this.value)"><option value="new" '+(state.manualListMode==='new'?'selected':'')+'>Create a new list</option><option value="existing" '+(state.manualListMode==='existing'?'selected':'')+'>Add to existing list</option></select></label><label style="display:'+(state.manualListMode==='new'?'grid':'none')+'">New list name<input id="ob-ec-manual-list-name" value="'+esc(state.manualListName||'')+'" oninput="window.OBEmailCenterV1.syncManualForm()" placeholder="Manual VIP clients"></label>'+existingListSelect+'<label>Consent source<input id="ob-ec-manual-consent" value="'+esc(state.manualConsent||'')+'" oninput="window.OBEmailCenterV1.syncManualForm()" placeholder="Example: phone opt-in"></label><label class="ob-ec-v1-check"><input id="ob-ec-manual-confirm" type="checkbox" '+(state.manualConfirmed?'checked':'')+' onchange="window.OBEmailCenterV1.syncManualForm()"> I confirm every manually added contact gave permission for marketing emails from me.</label><div class="ob-ec-v1-actions"><button class="ob-ec-v1-btn primary" '+manualBusy+' type="button" onclick="window.OBEmailCenterV1.previewManual()">Preview manual contacts</button><button class="ob-ec-v1-btn primary" '+manualBusy+' type="button" onclick="window.OBEmailCenterV1.commitManual()">Add contacts</button></div>'+previewSummary(state.manualPreview)+'</div></div>';
+    return '<div class="ob-ec-v1-box"><h3>Lists & Uploads</h3><div class="ob-ec-v1-form"><label class="ob-ec-v1-file"><span>CSV, TSV, TXT, or Excel .xlsx</span><strong>Choose file</strong><span class="ob-ec-v1-file-meta">'+esc(fileName)+'</span><input id="ob-ec-upload-file" type="file" accept=".csv,.tsv,.txt,.xlsx,text/csv,text/tab-separated-values" onchange="window.OBEmailCenterV1.readImportFile(this)"></label><label>New list name<input id="ob-ec-import-list-name" value="'+esc(state.importListName||'')+'" oninput="window.OBEmailCenterV1.syncImportForm()" placeholder="June client list"></label><label>Consent source<input id="ob-ec-import-consent" value="'+esc(state.importConsent||'')+'" oninput="window.OBEmailCenterV1.syncImportForm()" placeholder="Example: website opt-in form"></label><label class="ob-ec-v1-check"><input id="ob-ec-import-confirm" type="checkbox" '+(state.importConfirmed?'checked':'')+' onchange="window.OBEmailCenterV1.syncImportForm()"> I confirm every imported contact gave permission for marketing emails from me.</label><div class="ob-ec-v1-actions"><button class="ob-ec-v1-btn primary" '+busy+' type="button" onclick="window.OBEmailCenterV1.previewImport()">Preview upload</button><button class="ob-ec-v1-btn primary" '+busy+' type="button" onclick="window.OBEmailCenterV1.commitImport()">Create list and import</button></div>'+previewSummary(state.importPreview)+progressHtml()+'</div><hr style="border:0;border-top:1px solid rgba(255,255,255,.1);margin:16px 0"><div class="ob-ec-v1-form"><label>Emails, names, and tags<textarea id="ob-ec-manual-contacts" oninput="window.OBEmailCenterV1.syncManualForm()" placeholder="alice@example.com, Alice, vip&#10;Bob Cohen, bob@example.com, follow up">'+esc(state.manualText||'')+'</textarea></label><label>Add contacts to<select id="ob-ec-manual-list-mode" onchange="window.OBEmailCenterV1.setManualListMode(this.value)"><option value="new" '+(state.manualListMode==='new'?'selected':'')+'>Create a new list</option><option value="existing" '+(state.manualListMode==='existing'?'selected':'')+'>Add to existing list</option></select></label><label style="display:'+(state.manualListMode==='new'?'grid':'none')+'">New list name<input id="ob-ec-manual-list-name" value="'+esc(state.manualListName||'')+'" oninput="window.OBEmailCenterV1.syncManualForm()" placeholder="Manual VIP clients"></label>'+existingListSelect+'<label>Consent source<input id="ob-ec-manual-consent" value="'+esc(state.manualConsent||'')+'" oninput="window.OBEmailCenterV1.syncManualForm()" placeholder="Example: phone opt-in"></label><label class="ob-ec-v1-check"><input id="ob-ec-manual-confirm" type="checkbox" '+(state.manualConfirmed?'checked':'')+' onchange="window.OBEmailCenterV1.syncManualForm()"> I confirm every manually added contact gave permission for marketing emails from me.</label><div class="ob-ec-v1-actions"><button class="ob-ec-v1-btn primary" '+manualBusy+' type="button" onclick="window.OBEmailCenterV1.previewManual()">Preview manual contacts</button><button class="ob-ec-v1-btn primary" '+manualBusy+' type="button" onclick="window.OBEmailCenterV1.commitManual()">Add contacts</button></div>'+previewSummary(state.manualPreview)+'</div></div>';
   }
-  function previewSummary(p){ if(!p) return ''; return '<div class="ob-ec-v1-small" style="margin-top:10px">Accepted '+fmt((p.accepted||[]).length)+' / rejected '+fmt((p.rejected||[]).length)+(p.truncated?' · truncated to first rows':'')+'</div>'; }
+  function previewSummary(p){ if(!p) return ''; var a=importCount(p,'accepted_count','accepted'); var r=importCount(p,'rejected_count','rejected'); var note=a>IMPORT_SYNC_ROW_LIMIT?' · background import will process this list safely':''; return '<div class="ob-ec-v1-small" style="margin-top:10px">Accepted '+fmt(a)+' / rejected '+fmt(r)+note+(p.truncated?' · truncated to first rows':'')+'</div>'; }
   function listsHtml(){
     var lists=state.lists||[];
     if(!lists.length) return '<div class="ob-ec-v1-box"><h3>Lists</h3><div class="ob-ec-v1-empty">No lists yet.</div></div>';
@@ -54712,14 +55024,14 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     cancelSendReview:function(){state.sendReview=null;state.sendingBusy=false;render();},
     confirmReviewedSend:function(){var r=state.sendReview;if(!r||!r.campaign_id){setStatus('Review the audience before sending.','err');return;}if(!checked('ob-ec-final-legal-confirm')){setStatus('Confirm marketing compliance before final send.','err');return;}captureDeliveryFields();var delivery=deliveryInfo();var label=r.audience_label||audienceLabelForList(r.list_id);var endpoint='/send-now';var body={confirm_send:true,audience_confirmed:true,legal_confirmed:true,policy_version:'marketing-email-compliance-2026-06-23',expected_list_id:r.list_id||'',expected_eligible_count:Number(r.eligible_count||0),confirm_all_contacts:!!r.all_contacts};var confirmText='Final confirmation: queue '+fmt(r.eligible_count)+' sends to '+label+'? Already sent emails cannot be recalled.';if(delivery.mode==='schedule'){if(!delivery.epoch||delivery.epoch<=Math.floor(Date.now()/1000)+30){setStatus('Schedule time must be in the future. Choose a later time or increase the day offset.','err');return;}endpoint='/schedule';body.scheduled_at=delivery.epoch;body.scheduled_timezone=delivery.timezone;confirmText='Final confirmation: schedule '+fmt(r.eligible_count)+' sends to '+label+' for '+delivery.label+'? Already sent emails cannot be recalled.';}if(!confirm(confirmText))return;state.sendingBusy=true;render();api('/campaigns/'+encodeURIComponent(r.campaign_id)+endpoint,{method:'POST',body:body}).then(function(d){state.campaign=null;state.draft=null;state.preview=null;state.sendReview=null;state.sendingBusy=false;setStatus((delivery.mode==='schedule'?'Scheduled ':'Queued ')+fmt(d.queued||0)+' sends; skipped '+fmt(d.skipped||0)+'.','ok');open('campaigns');}).catch(function(e){state.sendingBusy=false;state.status=e.message;render();});},
     stopQueued:function(id){if(!id)return;if(!confirm('Stop all queued sends for this campaign now? Emails already sent cannot be recalled.'))return;api('/campaigns/'+encodeURIComponent(id)+'/stop-queued',{method:'POST',body:{confirm_stop:true}}).then(function(d){setStatus('Stopped '+fmt(d.stopped||0)+' queued sends.','ok');open('campaigns');}).catch(function(e){setStatus(e.message,'err');});},
-    readImportFile:function(input){var file=input&&input.files&&input.files[0];if(!file)return;var reader=new FileReader();reader.onload=function(){captureUploadFields();state.file={filename:file.name,file_base64:String(reader.result||'').split(',').pop()};state.importPreview=null;state.status='File ready: '+file.name+'.';render();};reader.onerror=function(){setStatus('Could not read this file.','err');};reader.readAsDataURL(file);},
+    readImportFile:function(input){var file=input&&input.files&&input.files[0];if(!file)return;clearImportPoll();if(file.size>IMPORT_FILE_MAX_BYTES){state.file=null;state.importPreview=null;state.importProgress=null;if(input)input.value='';setStatus('Import file is too large. Use a file under 3 MB, or split the list into smaller CSV files.','err');render();return;}var isText=isTextImportFile(file);var reader=new FileReader();state.status='Reading '+file.name+'...';state.importProgress={label:'Reading '+file.name+'...',percent:12,active:true};render();reader.onload=function(){captureUploadFields();state.file=importFilePayload(file,reader.result,isText);state.importPreview=null;state.importProgress={label:'File ready: '+file.name+'. Preview it before importing.',percent:30,active:false};state.status='File ready: '+file.name+'.';render();};reader.onerror=function(){state.importProgress=null;setStatus('Could not read this file.','err');};if(isText)reader.readAsText(file);else reader.readAsDataURL(file);},
     syncImportForm:function(){captureUploadFields();},
-    previewImport:function(){captureUploadFields();if(!state.file){setStatus('Choose a file first.','err');return;}api('/imports/preview',{method:'POST',body:state.file}).then(function(d){state.importPreview=d.preview||null;setStatus('Upload preview ready.','ok');render();}).catch(function(e){setStatus(e.message,'err');});},
-    commitImport:function(){captureUploadFields();if(!state.file){setStatus('Choose and preview a file first.','err');return;}if(!state.importPreview){setStatus('Preview the upload before creating the list.','err');return;}if(!state.importConsent.trim()){setStatus('Add the consent source for this list.','err');return;}if(!state.importConfirmed){setStatus('Confirm consent before importing.','err');return;}state.importBusy=true;render();api('/imports/commit',{method:'POST',body:Object.assign({},state.file,{list_name:state.importListName,consent_source:state.importConsent,consent_confirmed:true})}).then(function(d){var r=d.result||d.import||{};state.file=null;state.importPreview=null;state.importListName='';state.importConsent='';state.importConfirmed=false;state.contactListId=r.list_id||state.contactListId;setStatus('List imported'+(r.accepted_rows!=null?': '+fmt(r.accepted_rows)+' contacts added.':'.'),'ok');return apiObj.loadContacts();}).catch(function(e){setStatus(e.message,'err');}).finally(function(){state.importBusy=false;render();});},
+    previewImport:function(){captureUploadFields();if(!state.file){setStatus('Choose a file first.','err');return;}if(state.importPreview&&state.importPreview.import_token&&state.file.import_token){setStatus('Upload preview ready. Optimized commit is prepared.','ok');return;}state.importBusy=true;setImportProgress('Uploading and previewing contacts...',35,true);apiUpload('/imports/preview',state.file,function(p){setImportProgress('Uploading file for preview: '+fmt(p)+'%',35+Math.round(p*.35),true);}).then(function(d){state.importPreview=d.preview||null;if(state.importPreview&&state.importPreview.import_token)state.file={filename:state.file.filename,import_token:state.importPreview.import_token};var a=importCount(state.importPreview,'accepted_count','accepted');state.importProgress={label:a>IMPORT_SYNC_ROW_LIMIT?'Preview ready: '+fmt(a)+' contacts will import in the background.':'Preview ready. Import can start now.',percent:70,active:false};setStatus('Upload preview ready. Optimized import is prepared.','ok');render();}).catch(function(e){state.importProgress=null;setStatus(e.message,'err');}).finally(function(){state.importBusy=false;render();});},
+    commitImport:function(){captureUploadFields();if(!state.file){setStatus('Choose and preview a file first.','err');return;}if(!state.importPreview){setStatus('Preview the upload before creating the list.','err');return;}if(!state.importConsent.trim()){setStatus('Add the consent source for this list.','err');return;}if(!state.importConfirmed){setStatus('Confirm consent before importing.','err');return;}state.importBusy=true;setImportProgress('Starting background import...',75,true);var importBody=Object.assign({},state.file,{list_name:state.importListName,consent_source:state.importConsent,consent_confirmed:true});if(state.importPreview&&state.importPreview.import_token){importBody.import_token=state.importPreview.import_token;delete importBody.file_base64;delete importBody.text;}api('/imports/commit',{method:'POST',body:importBody}).then(function(d){var r=d.result||d.import||{};if(r.async&&r.import_id){state.file=null;state.importPreview=null;state.importListName='';state.importConsent='';state.importConfirmed=false;state.contactListId=r.list_id||state.contactListId;state.importProgress=Object.assign({import_id:r.import_id,percent:0,active:true,label:'Import queued.'},d.progress||{});if(!state.importProgress.label)state.importProgress.label='Import queued.';setStatus('Import queued. You can watch progress here.','ok');pollImportStatus(r.import_id);return null;}state.file=null;state.importPreview=null;state.importListName='';state.importConsent='';state.importConfirmed=false;state.contactListId=r.list_id||state.contactListId;state.importBusy=false;state.importProgress={label:'List imported'+(r.accepted_rows!=null?': '+fmt(r.accepted_rows)+' contacts added.':'.'),percent:100,active:false};setStatus(state.importProgress.label,'ok');return apiObj.loadContacts();}).catch(function(e){state.importProgress=null;state.importBusy=false;setStatus(e.message,'err');}).finally(function(){render();});},
     setManualListMode:function(v){captureManualFields();state.manualListMode=v==='existing'?'existing':'new';render();},
     syncManualForm:function(){captureManualFields();},
     previewManual:function(){captureManualFields();if(!state.manualText.trim()){setStatus('Paste at least one email address.','err');return;}api('/imports/preview',{method:'POST',body:{manual_text:state.manualText,filename:'manual-contacts.txt'}}).then(function(d){state.manualPreview=d.preview||null;setStatus('Manual preview ready.','ok');render();}).catch(function(e){setStatus(e.message,'err');});},
-    commitManual:function(){captureManualFields();if(!state.manualPreview){setStatus('Preview the manual contacts before adding them.','err');return;}if(state.manualListMode==='existing'&&!state.manualListId){setStatus('Choose an existing list or switch to New list.','err');return;}if(state.manualListMode!=='existing'&&!state.manualListName.trim()){setStatus('Add a new list name.','err');return;}if(!state.manualConsent.trim()){setStatus('Add the consent source.','err');return;}if(!state.manualConfirmed){setStatus('Confirm consent before adding contacts.','err');return;}state.manualBusy=true;render();var body={manual_text:state.manualText,filename:'manual-contacts.txt',source:'manual_entry',consent_source:state.manualConsent,consent_confirmed:true};if(state.manualListMode==='existing')body.list_id=state.manualListId;else body.list_name=state.manualListName;api('/imports/commit',{method:'POST',body:body}).then(function(d){var r=d.result||d.import||{};state.manualText='';state.manualPreview=null;state.manualListName='';state.manualConsent='';state.manualConfirmed=false;state.contactListId=r.list_id||state.contactListId;setStatus('Manual contacts added'+(r.accepted_rows!=null?': '+fmt(r.accepted_rows)+' contacts added.':'.'),'ok');return apiObj.loadContacts();}).catch(function(e){setStatus(e.message,'err');}).finally(function(){state.manualBusy=false;render();});},
+    commitManual:function(){captureManualFields();if(!state.manualPreview){setStatus('Preview the manual contacts before adding them.','err');return;}if(state.manualListMode==='existing'&&!state.manualListId){setStatus('Choose an existing list or switch to New list.','err');return;}if(state.manualListMode!=='existing'&&!state.manualListName.trim()){setStatus('Add a new list name.','err');return;}if(!state.manualConsent.trim()){setStatus('Add the consent source.','err');return;}if(!state.manualConfirmed){setStatus('Confirm consent before adding contacts.','err');return;}state.manualBusy=true;setImportProgress('Starting manual contact import...',75,true);var body={manual_text:state.manualText,filename:'manual-contacts.txt',source:'manual_entry',consent_source:state.manualConsent,consent_confirmed:true};if(state.manualPreview&&state.manualPreview.import_token){body={filename:'manual-contacts.txt',import_token:state.manualPreview.import_token,source:'manual_entry',consent_source:state.manualConsent,consent_confirmed:true};}if(state.manualListMode==='existing')body.list_id=state.manualListId;else body.list_name=state.manualListName;api('/imports/commit',{method:'POST',body:body}).then(function(d){var r=d.result||d.import||{};state.manualText='';state.manualPreview=null;state.manualListName='';state.manualConsent='';state.manualConfirmed=false;state.contactListId=r.list_id||state.contactListId;if(r.async&&r.import_id){state.importProgress=Object.assign({import_id:r.import_id,percent:0,active:true,label:'Manual import queued.'},d.progress||{});if(!state.importProgress.label)state.importProgress.label='Manual import queued.';setStatus('Manual import queued. You can watch progress here.','ok');pollImportStatus(r.import_id);return null;}state.manualBusy=false;state.importProgress={label:'Manual contacts added'+(r.accepted_rows!=null?': '+fmt(r.accepted_rows)+' contacts added.':'.'),percent:100,active:false};setStatus(state.importProgress.label,'ok');return apiObj.loadContacts();}).catch(function(e){state.importProgress=null;state.manualBusy=false;setStatus(e.message,'err');}).finally(function(){render();});},
     loadContacts:function(){return Promise.all([api('/lists'),loadContacts()]).then(function(r){state.lists=r[0].lists||[];render();});},
     setContactList:function(v){state.contactListId=v||'__all';state.contactOffset=0;state.selectedContacts={};this.loadContacts();},
     setContactStatus:function(v){state.contactStatus=v||'all';state.contactOffset=0;this.loadContacts();},

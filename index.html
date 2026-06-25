@@ -48782,6 +48782,93 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     'book-later': { icon:'BL', title:'Book later', meta:'Reserve a time', action:'Schedule' }
   };
   var sessionWidgetTypeOrder = ['chat','voice','video','written','book-later'];
+  function sessionWidgetNumber(){
+    for(var i=0;i<arguments.length;i++){
+      if(arguments[i] === undefined || arguments[i] === null || arguments[i] === '') continue;
+      var n = parseFloat(arguments[i]);
+      if(isFinite(n) && n > 0) return n;
+    }
+    return 0;
+  }
+  function sessionWidgetInt(){
+    for(var i=0;i<arguments.length;i++){
+      if(arguments[i] === undefined || arguments[i] === null || arguments[i] === '') continue;
+      var n = parseInt(arguments[i], 10);
+      if(isFinite(n) && n > 0) return n;
+    }
+    return 0;
+  }
+  function sessionWidgetMoney(amount){
+    var n = Number(amount || 0);
+    return isFinite(n) && n > 0 ? '$' + n.toFixed(2) : '';
+  }
+  function sessionWidgetCents(cents, currency){
+    var n = Number(cents || 0);
+    if(!isFinite(n) || n <= 0) return '';
+    var code = String(currency || 'USD').toUpperCase();
+    var value = n / 100;
+    if(code === 'USD' || code === '') return '$' + value.toFixed(2);
+    try { return value.toLocaleString(undefined, { style:'currency', currency:code }); }
+    catch(e){ return code + ' ' + value.toFixed(2); }
+  }
+  function sessionWidgetMinuteText(minutes){
+    minutes = sessionWidgetInt(minutes);
+    if(!minutes) return '';
+    if(typeof window.obMinuteText === 'function') return window.obMinuteText(minutes, 'free');
+    return minutes + ' minute' + (minutes === 1 ? '' : 's') + ' free';
+  }
+  function sessionWidgetOnDemandConfig(data){
+    return parsedObject(data && data.on_demand_public) || parsedObject(window.__OB_PRELOADED_ON_DEMAND__) || {};
+  }
+  function sessionWidgetWrittenPrice(data){
+    var config = sessionWidgetOnDemandConfig(data || {});
+    var buckets = Array.isArray(config.buckets) ? config.buckets.filter(function(bucket){ return bucket && bucket.enabled !== false && bucket.enabled !== 0 && bucket.enabled !== '0'; }) : [];
+    if(buckets.length){
+      var price = sessionWidgetCents(buckets[0].price_cents, buckets[0].currency);
+      if(price) return 'from ' + price;
+    }
+    var direct = sessionWidgetNumber(
+      data && data.on_demand_price,
+      data && data.written_price,
+      data && data.private_question_price,
+      data && data.request_price
+    );
+    return direct ? 'from ' + sessionWidgetMoney(direct) : 'Price shown before checkout';
+  }
+  function sessionWidgetDetails(type, data){
+    data = data || window._currentExpert || {};
+    if(type === 'chat' || type === 'voice' || type === 'video'){
+      var fallback = type === 'chat' ? 3.5 : (type === 'voice' ? 4 : 5);
+      var rate = type === 'chat'
+        ? sessionWidgetNumber(data.rate_chat, data.chat_pm, fallback)
+        : (type === 'voice' ? sessionWidgetNumber(data.rate_voice, data.voice_pm, fallback) : sessionWidgetNumber(data.rate_video, data.video_pm, fallback));
+      var free = type === 'chat'
+        ? sessionWidgetInt(data.chat_free_min_available, data.free_minutes_available, data.chat_free_min, data.free_minutes)
+        : (type === 'voice' ? sessionWidgetInt(data.voice_free_min_available, data.voice_free_min, data.free_minutes_voice) : sessionWidgetInt(data.video_free_min_available, data.video_free_min, data.free_minutes_video));
+      return {
+        price: sessionWidgetMoney(rate) + '/min',
+        detail: free ? 'First ' + sessionWidgetMinuteText(free) : 'Billed per minute',
+        meta: sessionWidgetTypeMap[type].meta
+      };
+    }
+    if(type === 'written'){
+      return {
+        price: sessionWidgetWrittenPrice(data),
+        detail: 'Private written response',
+        meta: sessionWidgetTypeMap[type].meta
+      };
+    }
+    if(type === 'book-later'){
+      var chatRate = sessionWidgetNumber(data.rate_chat, data.chat_pm, 3.5);
+      var chatFree = sessionWidgetInt(data.chat_free_min_available, data.free_minutes_available, data.chat_free_min, data.free_minutes);
+      return {
+        price: 'from ' + sessionWidgetMoney(chatRate) + '/min',
+        detail: chatFree ? 'First ' + sessionWidgetMinuteText(chatFree) : 'Choose an available time',
+        meta: sessionWidgetTypeMap[type].meta
+      };
+    }
+    return { price:'', detail:'', meta:'' };
+  }
   function sessionWidgetPlacement(widget){
     var placement = safeSlug(widget && widget.placement || 'after_content');
     return {hero:1,before_content:1,after_content:1,bottom:1}[placement] ? placement : 'after_content';
@@ -48808,21 +48895,24 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       intro: clean(widget.intro) || 'Start live, send a private written request, or reserve a time that works for you.'
     };
   }
-  function sessionWidgetButton(type){
+  function sessionWidgetButton(type, data){
     var item = sessionWidgetTypeMap[type];
     if(!item) return '';
+    var details = sessionWidgetDetails(type, data);
     return '<button type="button" class="ob-session-widget-card" data-ob-session-type="'+esc(type)+'" onclick="obContentPageSessionWidgetAction(\''+esc(type)+'\')">' +
       '<span class="ob-session-widget-icon">'+esc(item.icon)+'</span>' +
-      '<span class="ob-session-widget-copy"><strong>'+esc(item.title)+'</strong><small>'+esc(item.meta)+'</small></span>' +
+      '<span class="ob-session-widget-copy"><strong>'+esc(item.title)+'</strong><small>'+esc(details.meta || item.meta)+'</small></span>' +
+      '<span class="ob-session-widget-facts"><span class="ob-session-widget-price">'+esc(details.price || '')+'</span><span class="ob-session-widget-detail">'+esc(details.detail || '')+'</span></span>' +
       '<span class="ob-session-widget-action">'+esc(item.action)+'</span>' +
     '</button>';
   }
-  function sessionWidgetHtml(page, placement){
+  function sessionWidgetHtml(page, placement, data){
     var widget = pageSessionWidget(page);
     if(!widget || widget.placement !== placement) return '';
-    return '<section class="ob-session-widget" data-ob-session-widget="'+esc(placement)+'">' +
+    var count = widget.types.length;
+    return '<section class="ob-session-widget is-count-'+esc(String(Math.min(count, 5)))+'" data-ob-session-widget="'+esc(placement)+'" data-ob-session-count="'+esc(String(count))+'">' +
       '<div class="ob-session-widget-head"><h2>'+esc(widget.title)+'</h2><p>'+esc(widget.intro)+'</p></div>' +
-      '<div class="ob-session-widget-grid">'+widget.types.map(sessionWidgetButton).join('')+'</div>' +
+      '<div class="ob-session-widget-grid">'+widget.types.map(function(type){ return sessionWidgetButton(type, data); }).join('')+'</div>' +
     '</section>';
   }
   window.obContentPageSessionWidgetAction = function(type){
@@ -48911,14 +49001,14 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
         '<div class="expert-page-hero">' +
           '<div class="ob-cp-hero-copy"><h1>'+esc(page.title || page.nav_label || slug)+'</h1>'+(page.summary ? '<p>'+esc(page.summary)+'</p>' : '') +
           (ctaLabel ? '<div class="ob-cp-hero-actions"><button class="btn btn-primary btn-sm" onclick="showExpertPage(\''+esc(ctaPage)+'\')">'+esc(ctaLabel)+'</button></div>' : '') +
-          sessionWidgetHtml(page,'hero') + '</div>' +
+          sessionWidgetHtml(page,'hero',data) + '</div>' +
           (headerImg ? '<div class="ob-cp-hero-image"><img src="'+esc(headerImg)+'" alt="'+esc(page.title || page.nav_label || 'Page header')+'"></div>' : '') +
         '</div>' +
-        sessionWidgetHtml(page,'before_content') +
+        sessionWidgetHtml(page,'before_content',data) +
         (renderedSections[0] || '') +
-        sessionWidgetHtml(page,'after_content') +
+        sessionWidgetHtml(page,'after_content',data) +
         renderedSections.slice(1).join('') +
-        sessionWidgetHtml(page,'bottom');
+        sessionWidgetHtml(page,'bottom',data);
       if(before && before.parentNode) before.parentNode.insertBefore(pageEl, before);
       else parent.appendChild(pageEl);
       if(page.meta_title || page.meta_description){
@@ -49838,8 +49928,11 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   }
   #view-4 .ob-ai-custom-page .ob-session-widget-grid{
     display:grid;
-    gap:10px;
-    grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+    gap:12px;
+    grid-template-columns:repeat(auto-fit,minmax(176px,1fr));
+  }
+  #view-4 .ob-ai-custom-page .ob-session-widget[data-ob-session-count="1"] .ob-session-widget-grid{
+    grid-template-columns:1fr;
   }
   #view-4 .ob-ai-custom-page .ob-session-widget-card{
     align-items:flex-start;
@@ -49850,11 +49943,20 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     cursor:pointer;
     display:grid;
     gap:8px;
-    min-height:132px;
+    grid-template-rows:auto auto 1fr auto;
+    min-height:164px;
     padding:14px;
     text-align:left;
     transition:transform .16s ease,box-shadow .16s ease,border-color .16s ease;
     width:100%;
+  }
+  #view-4 .ob-ai-custom-page .ob-session-widget[data-ob-session-count="1"] .ob-session-widget-card{
+    align-items:center;
+    gap:16px;
+    grid-template-columns:46px minmax(0,1fr) minmax(150px,auto) auto;
+    grid-template-rows:auto;
+    min-height:112px;
+    padding:18px;
   }
   #view-4 .ob-ai-custom-page .ob-session-widget-card:hover{
     border-color:color-mix(in srgb,var(--terra,#C4622D),transparent 42%);
@@ -49881,6 +49983,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     line-height:1.25;
   }
   #view-4 .ob-ai-custom-page .ob-session-widget-copy small,
+  #view-4 .ob-ai-custom-page .ob-session-widget-detail,
   #view-4 .ob-ai-custom-page .ob-session-widget-action{
     color:color-mix(in srgb,var(--ob-site-text,var(--brown)),transparent 38%);
     display:block;
@@ -49888,10 +49991,63 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     line-height:1.35;
     margin-top:3px;
   }
+  #view-4 .ob-ai-custom-page .ob-session-widget-facts{
+    display:block;
+    min-width:0;
+  }
+  #view-4 .ob-ai-custom-page .ob-session-widget-price{
+    color:var(--ob-site-text,var(--brown));
+    display:block;
+    font-size:15px;
+    font-weight:850;
+    line-height:1.25;
+  }
+  #view-4 .ob-ai-custom-page .ob-session-widget-detail{
+    margin-top:4px;
+  }
   #view-4 .ob-ai-custom-page .ob-session-widget-action{
     color:var(--terra,#C4622D);
     font-weight:850;
     margin-top:auto;
+  }
+  #view-4 .ob-ai-custom-page .ob-session-widget[data-ob-session-count="1"] .ob-session-widget-action{
+    margin-top:0;
+    white-space:nowrap;
+  }
+  @media(max-width:720px){
+    #view-4 .ob-ai-custom-page .ob-session-widget{
+      border-radius:14px;
+      margin:22px auto;
+      padding:18px;
+    }
+    #view-4 .ob-ai-custom-page .expert-page-hero .ob-session-widget{
+      margin-top:22px;
+    }
+    #view-4 .ob-ai-custom-page .ob-session-widget h2{
+      font-size:21px;
+    }
+    #view-4 .ob-ai-custom-page .ob-session-widget-grid,
+    #view-4 .ob-ai-custom-page .ob-session-widget[data-ob-session-count="1"] .ob-session-widget-grid{
+      grid-template-columns:1fr;
+    }
+    #view-4 .ob-ai-custom-page .ob-session-widget-card,
+    #view-4 .ob-ai-custom-page .ob-session-widget[data-ob-session-count="1"] .ob-session-widget-card{
+      align-items:flex-start;
+      gap:10px 12px;
+      grid-template-columns:42px minmax(0,1fr);
+      grid-template-rows:auto auto auto;
+      min-height:0;
+      padding:14px;
+    }
+    #view-4 .ob-ai-custom-page .ob-session-widget-icon{
+      grid-row:1 / span 3;
+      height:42px;
+      width:42px;
+    }
+    #view-4 .ob-ai-custom-page .ob-session-widget-action{
+      margin-top:2px;
+      white-space:normal;
+    }
   }
   #view-4.ob-site-theme-dark .ob-ai-custom-page .ob-ai-public-section{
     box-shadow:0 20px 60px rgba(0,0,0,.22);

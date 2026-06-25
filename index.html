@@ -37004,7 +37004,17 @@ body.ob-ui-dark .ob-connection-note,
     if(!slug){ note('This expert does not have a slug yet.', 'err'); return; }
     window.open(location.origin + '/dash/' + encodeURIComponent(slug) + '?admin=1&expertId=' + encodeURIComponent(id || '') + '&expertName=' + encodeURIComponent(name || ''), '_blank', 'noopener');
   }
+  function canonicalDetailReady(){
+    return !!window.__obAdminExpertDetailCanonicalReady;
+  }
+  function currentDetailOpener(){
+    if(typeof window.__obAdminExpertDetailCanonicalOpen === 'function') return window.__obAdminExpertDetailCanonicalOpen;
+    var latest = window.obAdminOpenExpertDetail || window.adminViewExpertDashboard;
+    if(!latest || latest === openDetail || !canonicalDetailReady()) return null;
+    return latest;
+  }
   function install(){
+    if(canonicalDetailReady()) return;
     window.obAdminOpenExpertDashboard = openDash;
     window.obAdminOpenExpertDetail = openDetail;
     window.adminViewExpertDashboard = openDetail;
@@ -37040,8 +37050,8 @@ body.ob-ui-dark .ob-connection-note,
     var b = ev.target && ev.target.closest ? ev.target.closest('.ob-admin-view-expert') : null;
     if(!b) return;
     ev.preventDefault(); ev.stopPropagation(); if(ev.stopImmediatePropagation) ev.stopImmediatePropagation();
-    var latest = window.obAdminOpenExpertDetail;
-    if(latest && latest.__obStripeModeDetail){
+    var latest = currentDetailOpener();
+    if(latest){
       latest(b.getAttribute('data-id'), b.getAttribute('data-slug'), b.getAttribute('data-name'));
       return;
     }
@@ -44724,6 +44734,76 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       (img ? '<img src="'+esc(img)+'" alt="'+esc(section.title || 'Website image')+'">' : '') +
     '</section>';
   }
+  var sessionWidgetTypeMap = {
+    chat: { icon:'CH', title:'Chat', meta:'Live text session', action:'Start chat' },
+    voice: { icon:'VO', title:'Voice', meta:'Audio session', action:'Start voice' },
+    video: { icon:'VI', title:'Video', meta:'Face-to-face session', action:'Start video' },
+    written: { icon:'WR', title:'Written reading', meta:'Private written request', action:'Ask a question' },
+    'book-later': { icon:'BL', title:'Book later', meta:'Reserve a time', action:'Schedule' }
+  };
+  var sessionWidgetTypeOrder = ['chat','voice','video','written','book-later'];
+  function sessionWidgetPlacement(widget){
+    var placement = safeSlug(widget && widget.placement || 'after_content');
+    return {hero:1,before_content:1,after_content:1,bottom:1}[placement] ? placement : 'after_content';
+  }
+  function sessionWidgetTypes(widget){
+    var raw = Array.isArray(widget && widget.types) ? widget.types : [];
+    var seen = {};
+    var list = raw.map(function(type){ return safeSlug(type); }).filter(function(type){
+      if(!sessionWidgetTypeMap[type] || seen[type]) return false;
+      seen[type] = true;
+      return true;
+    });
+    return list.length ? list : sessionWidgetTypeOrder.slice();
+  }
+  function pageSessionWidget(page){
+    var widget = page && page.session_widget || {};
+    if(!(widget.enabled === true || widget.enabled === 1 || widget.enabled === '1' || widget.enabled === 'true')) return null;
+    var types = sessionWidgetTypes(widget);
+    if(!types.length) return null;
+    return {
+      placement: sessionWidgetPlacement(widget),
+      types: types,
+      title: clean(widget.title) || 'Choose how to connect',
+      intro: clean(widget.intro) || 'Start live, send a private written request, or reserve a time that works for you.'
+    };
+  }
+  function sessionWidgetButton(type){
+    var item = sessionWidgetTypeMap[type];
+    if(!item) return '';
+    return '<button type="button" class="ob-session-widget-card" data-ob-session-type="'+esc(type)+'" onclick="obContentPageSessionWidgetAction(\''+esc(type)+'\')">' +
+      '<span class="ob-session-widget-icon">'+esc(item.icon)+'</span>' +
+      '<span class="ob-session-widget-copy"><strong>'+esc(item.title)+'</strong><small>'+esc(item.meta)+'</small></span>' +
+      '<span class="ob-session-widget-action">'+esc(item.action)+'</span>' +
+    '</button>';
+  }
+  function sessionWidgetHtml(page, placement){
+    var widget = pageSessionWidget(page);
+    if(!widget || widget.placement !== placement) return '';
+    return '<section class="ob-session-widget" data-ob-session-widget="'+esc(placement)+'">' +
+      '<div class="ob-session-widget-head"><h2>'+esc(widget.title)+'</h2><p>'+esc(widget.intro)+'</p></div>' +
+      '<div class="ob-session-widget-grid">'+widget.types.map(sessionWidgetButton).join('')+'</div>' +
+    '</section>';
+  }
+  window.obContentPageSessionWidgetAction = function(type){
+    type = safeSlug(type);
+    if(type === 'chat' || type === 'voice' || type === 'video'){
+      window._obPendingChannel = type;
+      if(typeof window.startLiveNow === 'function') { window.startLiveNow(type); return; }
+      if(typeof window.showExpertPage === 'function') window.showExpertPage('book');
+      return;
+    }
+    if(type === 'written'){
+      if(typeof window.obOdOpenPublic === 'function') { window.obOdOpenPublic(); return; }
+      if(typeof window.showExpertPage === 'function') window.showExpertPage('book');
+      try { if(window.toast) window.toast('Written readings are not available right now.','err'); } catch(e) {}
+      return;
+    }
+    if(type === 'book-later'){
+      if(typeof window.openBookLaterModal === 'function') { window.openBookLaterModal('chat'); return; }
+      if(typeof window.showExpertPage === 'function') window.showExpertPage('book');
+    }
+  };
   function renderAiPublicExtras(data){
     data = data || window._currentExpert || {};
     var wc = parseWebsiteContent(data);
@@ -44755,15 +44835,22 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       pageEl.id = 'ep-ai-' + slug;
       pageEl.setAttribute('data-ob-ai-public-extra','page');
       var pageSections = Array.isArray(page.sections) ? page.sections : [];
+      var renderedSections = pageSections.map(sectionHtml);
       var headerImg = safeImage(page.header_image_url);
       var ctaLabel = clean(page.cta_label);
       var ctaPage = aiPageKey(page.cta_page || 'book');
       pageEl.innerHTML =
         '<div class="expert-page-hero">' +
           '<div class="ob-cp-hero-copy"><h1>'+esc(page.title || page.nav_label || slug)+'</h1>'+(page.summary ? '<p>'+esc(page.summary)+'</p>' : '') +
-          (ctaLabel ? '<div class="ob-cp-hero-actions"><button class="btn btn-primary btn-sm" onclick="showExpertPage(\''+esc(ctaPage)+'\')">'+esc(ctaLabel)+'</button></div>' : '') + '</div>' +
+          (ctaLabel ? '<div class="ob-cp-hero-actions"><button class="btn btn-primary btn-sm" onclick="showExpertPage(\''+esc(ctaPage)+'\')">'+esc(ctaLabel)+'</button></div>' : '') +
+          sessionWidgetHtml(page,'hero') + '</div>' +
           (headerImg ? '<div class="ob-cp-hero-image"><img src="'+esc(headerImg)+'" alt="'+esc(page.title || page.nav_label || 'Page header')+'"></div>' : '') +
-        '</div>' + pageSections.map(sectionHtml).join('');
+        '</div>' +
+        sessionWidgetHtml(page,'before_content') +
+        (renderedSections[0] || '') +
+        sessionWidgetHtml(page,'after_content') +
+        renderedSections.slice(1).join('') +
+        sessionWidgetHtml(page,'bottom');
       if(before && before.parentNode) before.parentNode.insertBefore(pageEl, before);
       else parent.appendChild(pageEl);
       if(page.meta_title || page.meta_description){
@@ -44902,6 +44989,43 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     var expertSlug = slugify(state.expertSlug || window._browseExpert || (window._currentExpert && window._currentExpert.slug) || 'expert-slug');
     return '/' + expertSlug + '/' + slug;
   }
+  var sessionWidgetTypes = [
+    {key:'chat', label:'Chat', meta:'Live text'},
+    {key:'voice', label:'Voice', meta:'Audio'},
+    {key:'video', label:'Video', meta:'Face to face'},
+    {key:'written', label:'Written reading', meta:'On Demand'},
+    {key:'book-later', label:'Book later', meta:'Scheduled'}
+  ];
+  var sessionWidgetTypeMap = sessionWidgetTypes.reduce(function(map, item){ map[item.key] = item; return map; }, {});
+  var sessionWidgetPlacements = [
+    {key:'hero', label:'Inside page intro'},
+    {key:'before_content', label:'Before main content'},
+    {key:'after_content', label:'After main content'},
+    {key:'bottom', label:'Page bottom'}
+  ];
+  var sessionWidgetPlacementMap = sessionWidgetPlacements.reduce(function(map, item){ map[item.key] = item; return map; }, {});
+  function defaultSessionWidgetTypes(){
+    return sessionWidgetTypes.map(function(item){ return item.key; });
+  }
+  function normalizeSessionWidget(widget){
+    widget = widget || {};
+    var seen = {};
+    var types = (Array.isArray(widget.types) ? widget.types : defaultSessionWidgetTypes()).map(slugify).filter(function(type){
+      if(!sessionWidgetTypeMap[type] || seen[type]) return false;
+      seen[type] = true;
+      return true;
+    });
+    if(!types.length) types = defaultSessionWidgetTypes();
+    var placement = slugify(widget.placement || 'after_content');
+    if(!sessionWidgetPlacementMap[placement]) placement = 'after_content';
+    return {
+      enabled: widget.enabled === true || widget.enabled === 1 || widget.enabled === '1' || widget.enabled === 'true',
+      placement: placement,
+      types: types,
+      title: line(widget.title, 90) || 'Choose how to connect',
+      intro: text(widget.intro, 220) || 'Start live, send a private written request, or reserve a time that works for you.'
+    };
+  }
   function defaultForTemplate(type){
     type = templateLabels[type] ? type : 'content';
     if(type === 'article') return {
@@ -44971,6 +45095,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       cta_page: slugify(page.cta_page || 'book') || 'book',
       meta_title: line(page.meta_title, 70),
       meta_description: line(page.meta_description, 180),
+      session_widget: normalizeSessionWidget(page.session_widget),
       sections: [{
         id: slug + '-main',
         target_page: slug,
@@ -45036,8 +45161,10 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     list.innerHTML = state.pages.map(function(page, idx){
       var active = page.id === state.active ? ' active' : '';
       var status = page.published ? (page.show_in_nav ? 'Published in nav' : 'Published, hidden from nav') : 'Draft';
+      var widget = normalizeSessionWidget(page.session_widget);
+      var widgetLabel = widget.enabled ? ' - Session widget' : '';
       return '<button type="button" class="ob-cp-list-item'+active+'" onclick="obSelectContentPage(\''+esc(page.id)+'\')">' +
-        '<span><strong>'+esc(page.nav_label || page.title)+'</strong><small>/'+esc(page.slug || '')+' · '+esc(templateLabels[page.template] || 'Page')+'</small></span>' +
+        '<span><strong>'+esc(page.nav_label || page.title)+'</strong><small>/'+esc(page.slug || '')+' - '+esc(templateLabels[page.template] || 'Page')+widgetLabel+'</small></span>' +
         '<em>'+esc(status)+'</em>' +
       '</button>';
     }).join('');
@@ -45055,6 +45182,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     }
     state.active = page.id;
     var section = page.sections && page.sections[0] ? page.sections[0] : {title:'',body:'',items:[]};
+    var widget = normalizeSessionWidget(page.session_widget);
     editor.innerHTML =
       '<div class="ob-cp-editor-top">' +
         '<div><strong>Edit Page</strong><span>'+esc(pageUrl(page.slug))+'</span></div>' +
@@ -45076,6 +45204,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
         field('CTA button text','<input id="ob-cp-cta-label-input" class="settings-field-input" value="'+esc(page.cta_label || '')+'" oninput="obContentPageField(&quot;cta_label&quot;,this.value)" placeholder="Book a session">') +
         field('CTA destination','<input class="settings-field-input" value="'+esc(page.cta_page || 'book')+'" oninput="obContentPageField(&quot;cta_page&quot;,this.value)" placeholder="book, contact, services, or page slug">') +
       '</div>' +
+      sessionWidgetEditor(widget) +
       field('Main content heading','<input id="ob-cp-section-title-input" class="settings-field-input" value="'+esc(section.title || '')+'" oninput="obContentPageSectionField(&quot;title&quot;,this.value)" placeholder="Main section heading">') +
       field('Main content','<textarea id="ob-cp-body-input" class="settings-field-input ob-cp-main" rows="10" oninput="obContentPageSectionField(&quot;body&quot;,this.value)" placeholder="Write the full article, guide, content page, or resource copy here.">'+esc(section.body || '')+'</textarea>') +
       field('Key points / FAQ items','<textarea id="ob-cp-items-input" class="settings-field-input" rows="5" oninput="obContentPageSectionField(&quot;items&quot;,this.value)" placeholder="One point per line. Useful for FAQs, guides, and resource pages.">'+esc((section.items || []).join('\\n'))+'</textarea>') +
@@ -45086,6 +45215,31 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   }
   function field(label, inputHtml){
     return '<label class="ob-cp-field"><span>'+esc(label)+'</span>'+inputHtml+'</label>';
+  }
+  function sessionWidgetEditor(widget){
+    widget = normalizeSessionWidget(widget);
+    var active = widget.enabled ? '' : ' inactive';
+    var typeHtml = sessionWidgetTypes.map(function(item){
+      var checked = widget.types.indexOf(item.key) >= 0;
+      return '<label class="ob-cp-widget-type'+(checked ? ' active' : '')+'">' +
+        '<input type="checkbox" '+(checked ? 'checked' : '')+' onchange="obContentPageSessionWidgetType(&quot;'+esc(item.key)+'&quot;,this.checked)">' +
+        '<strong>'+esc(item.label)+'</strong><small>'+esc(item.meta)+'</small>' +
+      '</label>';
+    }).join('');
+    var placementHtml = sessionWidgetPlacements.map(function(item){
+      return '<option value="'+esc(item.key)+'" '+(widget.placement === item.key ? 'selected' : '')+'>'+esc(item.label)+'</option>';
+    }).join('');
+    return '<div class="ob-cp-widget-panel'+active+'">' +
+      '<label class="ob-cp-widget-enable"><input type="checkbox" '+(widget.enabled ? 'checked' : '')+' onchange="obContentPageSessionWidgetField(&quot;enabled&quot;,this.checked)"><span><strong>Session type widget</strong><small>Choose session options and placement for this page.</small></span></label>' +
+      '<div class="ob-cp-widget-body">' +
+        '<div class="ob-cp-widget-types">'+typeHtml+'</div>' +
+        '<div class="ob-cp-grid two">' +
+          field('Widget placement','<select class="settings-field-input" onchange="obContentPageSessionWidgetField(&quot;placement&quot;,this.value)">'+placementHtml+'</select>') +
+          field('Widget headline','<input class="settings-field-input" value="'+esc(widget.title)+'" oninput="obContentPageSessionWidgetField(&quot;title&quot;,this.value)" placeholder="Choose how to connect">') +
+        '</div>' +
+        field('Widget intro','<textarea class="settings-field-input" rows="2" oninput="obContentPageSessionWidgetField(&quot;intro&quot;,this.value)" placeholder="Short line above the session buttons">'+esc(widget.intro)+'</textarea>') +
+      '</div>' +
+    '</div>';
   }
   function ensureVisibilityHost(){
     var firstPagesCard = document.querySelector('.we-tab-card[data-we-tab="pages"]');
@@ -45379,6 +45533,45 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     if(fieldName === 'items') section.items = String(value || '').split('\n').map(function(item){ return text(item, 320); }).filter(Boolean);
     else section[fieldName] = value;
   };
+  window.obContentPageSessionWidgetField = function(fieldName, value){
+    var page = activePage();
+    if(!page) return;
+    var widget = normalizeSessionWidget(page.session_widget);
+    if(fieldName === 'enabled') {
+      widget.enabled = !!value;
+      if(!widget.types.length) widget.types = defaultSessionWidgetTypes();
+      page.session_widget = widget;
+      renderList();
+      renderEditor();
+      return;
+    }
+    if(fieldName === 'placement') {
+      widget.placement = sessionWidgetPlacementMap[slugify(value)] ? slugify(value) : 'after_content';
+      page.session_widget = widget;
+      renderEditor();
+      return;
+    }
+    if(fieldName === 'title') widget.title = line(value, 90) || '';
+    else if(fieldName === 'intro') widget.intro = text(value, 220) || '';
+    page.session_widget = widget;
+  };
+  window.obContentPageSessionWidgetType = function(type, checked){
+    var page = activePage();
+    if(!page) return;
+    type = slugify(type);
+    if(!sessionWidgetTypeMap[type]) return;
+    var widget = normalizeSessionWidget(page.session_widget);
+    var next = widget.types.filter(function(item){ return item !== type; });
+    if(checked) next.push(type);
+    if(!next.length) {
+      if(typeof _showToast === 'function') _showToast('Choose at least one session type','red');
+      renderEditor();
+      return;
+    }
+    widget.types = sessionWidgetTypes.map(function(item){ return item.key; }).filter(function(item){ return next.indexOf(item) >= 0; });
+    page.session_widget = widget;
+    renderEditor();
+  };
   window.obCollectWebsiteContentPages = function(existingPages){
     if(!state.allowed) return Array.isArray(existingPages) ? existingPages : [];
     return state.pages.map(function(page, idx){
@@ -45534,6 +45727,94 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     list-style:none;
     padding:12px 14px;
   }
+  #view-4 .ob-ai-custom-page .ob-session-widget{
+    background:var(--ob-site-surface,var(--white));
+    border:1px solid color-mix(in srgb,var(--ob-site-text,var(--brown)),transparent 86%);
+    border-radius:16px;
+    box-shadow:0 18px 48px rgba(42,28,18,.08);
+    color:var(--ob-site-text,var(--brown));
+    margin:28px auto;
+    max-width:980px;
+    padding:24px;
+    text-align:left;
+  }
+  #view-4 .ob-ai-custom-page .expert-page-hero .ob-session-widget{
+    margin:28px auto 0;
+  }
+  #view-4 .ob-ai-custom-page .ob-session-widget-head{
+    margin-bottom:16px;
+  }
+  #view-4 .ob-ai-custom-page .ob-session-widget h2{
+    color:var(--ob-site-text,var(--brown))!important;
+    font-size:24px;
+    font-weight:750;
+    letter-spacing:0;
+    line-height:1.16;
+    margin:0 0 6px;
+  }
+  #view-4 .ob-ai-custom-page .ob-session-widget p{
+    color:color-mix(in srgb,var(--ob-site-text,var(--brown)),transparent 30%)!important;
+    font-size:14px;
+    line-height:1.55;
+    margin:0;
+  }
+  #view-4 .ob-ai-custom-page .ob-session-widget-grid{
+    display:grid;
+    gap:10px;
+    grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+  }
+  #view-4 .ob-ai-custom-page .ob-session-widget-card{
+    align-items:flex-start;
+    background:color-mix(in srgb,var(--ob-site-bg,var(--cream)),var(--ob-site-surface,var(--white)) 54%);
+    border:1px solid color-mix(in srgb,var(--ob-site-text,var(--brown)),transparent 88%);
+    border-radius:12px;
+    color:var(--ob-site-text,var(--brown));
+    cursor:pointer;
+    display:grid;
+    gap:8px;
+    min-height:132px;
+    padding:14px;
+    text-align:left;
+    transition:transform .16s ease,box-shadow .16s ease,border-color .16s ease;
+    width:100%;
+  }
+  #view-4 .ob-ai-custom-page .ob-session-widget-card:hover{
+    border-color:color-mix(in srgb,var(--terra,#C4622D),transparent 42%);
+    box-shadow:0 16px 36px rgba(42,28,18,.12);
+    transform:translateY(-2px);
+  }
+  #view-4 .ob-ai-custom-page .ob-session-widget-icon{
+    align-items:center;
+    background:color-mix(in srgb,var(--terra,#C4622D),transparent 84%);
+    border-radius:10px;
+    color:var(--terra,#C4622D);
+    display:flex;
+    font-size:12px;
+    font-weight:900;
+    height:36px;
+    justify-content:center;
+    letter-spacing:0;
+    width:36px;
+  }
+  #view-4 .ob-ai-custom-page .ob-session-widget-copy strong{
+    color:var(--ob-site-text,var(--brown));
+    display:block;
+    font-size:14px;
+    line-height:1.25;
+  }
+  #view-4 .ob-ai-custom-page .ob-session-widget-copy small,
+  #view-4 .ob-ai-custom-page .ob-session-widget-action{
+    color:color-mix(in srgb,var(--ob-site-text,var(--brown)),transparent 38%);
+    display:block;
+    font-size:12px;
+    line-height:1.35;
+    margin-top:3px;
+  }
+  #view-4 .ob-ai-custom-page .ob-session-widget-action{
+    color:var(--terra,#C4622D);
+    font-weight:850;
+    margin-top:auto;
+  }
   #view-4.ob-site-theme-dark .ob-ai-custom-page .ob-ai-public-section{
     box-shadow:0 20px 60px rgba(0,0,0,.22);
   }
@@ -45571,6 +45852,19 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   #ob-content-pages-card textarea.settings-field-input{min-height:0;}
   #ob-content-pages-card .ob-cp-main{min-height:170px;}
   #ob-content-pages-card .ob-cp-check{align-items:center;background:var(--cream);border:1px solid var(--gray-200);border-radius:10px;color:var(--brown);display:flex;font-size:13px;font-weight:700;gap:8px;padding:10px 12px;}
+  #ob-content-pages-card .ob-cp-widget-panel{background:var(--cream);border:1px solid var(--gray-200);border-radius:14px;display:grid;gap:12px;padding:14px;}
+  #ob-content-pages-card .ob-cp-widget-panel.inactive .ob-cp-widget-body{display:none;}
+  #ob-content-pages-card .ob-cp-widget-enable{align-items:flex-start;color:var(--brown);display:flex;font-size:13px;font-weight:800;gap:10px;}
+  #ob-content-pages-card .ob-cp-widget-enable input{margin-top:3px;}
+  #ob-content-pages-card .ob-cp-widget-enable strong{display:block;font-size:14px;line-height:1.25;}
+  #ob-content-pages-card .ob-cp-widget-enable small{color:var(--gray-400);display:block;font-size:12px;font-weight:600;line-height:1.45;margin-top:2px;}
+  #ob-content-pages-card .ob-cp-widget-body{display:grid;gap:12px;}
+  #ob-content-pages-card .ob-cp-widget-types{display:grid;gap:8px;grid-template-columns:repeat(5,minmax(0,1fr));}
+  #ob-content-pages-card .ob-cp-widget-type{background:var(--white);border:1px solid var(--gray-200);border-radius:10px;color:var(--brown);cursor:pointer;display:grid;gap:3px;min-height:76px;padding:10px;}
+  #ob-content-pages-card .ob-cp-widget-type.active{border-color:var(--terra);box-shadow:0 0 0 1px rgba(196,98,45,.22);}
+  #ob-content-pages-card .ob-cp-widget-type input{height:15px;margin:0;width:15px;}
+  #ob-content-pages-card .ob-cp-widget-type strong{font-size:12px;line-height:1.2;}
+  #ob-content-pages-card .ob-cp-widget-type small{color:var(--gray-400);font-size:10px;font-weight:700;line-height:1.25;}
   #ob-content-pages-card .ob-cp-image-row{display:grid;gap:12px;grid-template-columns:180px 1fr;align-items:stretch;}
   #ob-content-pages-card .ob-cp-image-preview{align-items:center;background:var(--cream);border:1.5px dashed var(--gray-200);border-radius:14px;color:var(--gray-400);display:flex;font-size:12px;font-weight:800;justify-content:center;min-height:112px;overflow:hidden;position:relative;text-align:center;}
   #ob-content-pages-card .ob-cp-image-preview img{height:100%;min-height:112px;object-fit:cover;width:100%;}
@@ -45598,6 +45892,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     #ob-content-pages-card .ob-cp-manager,
     #ob-content-pages-card .ob-cp-grid.two,
     #ob-content-pages-card .ob-cp-grid.compact,
+    #ob-content-pages-card .ob-cp-widget-types,
     #ob-content-pages-card .ob-cp-image-row{grid-template-columns:1fr;}
     #ob-content-pages-card .ob-cp-template{width:100%;}
   }
@@ -48009,6 +48304,8 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   }
   function install(){
     openExpertDetail.__obStripeModeDetail = true;
+    window.__obAdminExpertDetailCanonicalReady = true;
+    window.__obAdminExpertDetailCanonicalOpen = openExpertDetail;
     window.obAdminOpenExpertDashboard = openDashboard;
     window.obAdminOpenExpertDetail = openExpertDetail;
     window.adminViewExpertDashboard = openExpertDetail;

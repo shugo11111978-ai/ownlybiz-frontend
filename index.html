@@ -49545,9 +49545,10 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   }
 	  function syncContentPageAiTools(){
 	    var ready = aiReady();
+	    var atLimit = state.pages.length >= pageLimit();
 	    document.querySelectorAll('#ob-content-pages-card .ob-ai-page-wand').forEach(function(btn){
 	      btn.disabled = !ready || !state.allowed;
-	      btn.title = !state.allowed ? 'Custom pages are Pro / Scale only' : (!ready ? ((aiStatus().reason || 'AI website editing is not available yet')) : aiCreditsText());
+	      btn.title = !state.allowed ? 'Custom pages are Pro / Scale only' : (!ready ? ((aiStatus().reason || 'AI website editing is not available yet')) : (aiCreditsText() + (atLimit ? ' Page limit reached: AI will fill the selected page draft instead of adding another page.' : '')));
 	    });
 	  }
 	  window.obSyncContentPageAiTools = syncContentPageAiTools;
@@ -49658,12 +49659,23 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   function addGeneratedPage(raw, imageUrl){
     if(!raw) return null;
     var page = normalizePage(raw, state.pages.length);
-    page.id = 'page-' + Date.now();
+    var active = activePage();
+    var replaceAtLimit = state.pages.length >= pageLimit() && active;
+    page.id = replaceAtLimit ? active.id : ('page-' + Date.now());
     page.slug = uniqueSlug(page.slug || page.title, page.id);
     page.meta_title = page.meta_title || page.title;
     page.meta_description = page.meta_description || page.summary;
     if(imageUrl) page.header_image_url = imageUrl;
-    state.pages.push(page);
+    if(replaceAtLimit) {
+      page.published = !!active.published;
+      page.show_in_nav = active.show_in_nav !== false;
+      page._ai_replaced_at_limit = true;
+      var idx = state.pages.findIndex(function(item){ return item.id === active.id; });
+      if(idx >= 0) state.pages[idx] = page;
+      else state.pages.push(page);
+    } else {
+      state.pages.push(page);
+    }
     state.active = page.id;
     render();
     return page;
@@ -49684,7 +49696,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     if(prompt) prompt.value = '';
     if(image) { image.checked = aiReady('image'); image.disabled = !aiReady('image'); }
     if(result) { result.className = 'ob-ai-field-result'; result.innerHTML = ''; }
-    setPageAiStatus(aiCreditsText());
+    setPageAiStatus((state.pages.length >= pageLimit() ? 'Page limit reached. AI will fill the selected page draft instead of adding another page. ' : '') + aiCreditsText());
     modal.classList.add('open');
     setTimeout(function(){ if(prompt) prompt.focus(); }, 40);
   };
@@ -49707,7 +49719,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
 	    request('/api/ai/website-editor/preview',{method:'POST',body:{prompt:pageAiPrompt(prompt, ctx),mode:'add_custom_page',generate_media:false,generation_context:ctx}}).then(function(data){
 	      if(data.credit_status && typeof window.obAiSetWebsiteStatus === 'function') window.obAiSetWebsiteStatus(data.credit_status);
 	      var raw = pickGeneratedPage(data);
-	      if(!raw) throw new Error('AI did not return a usable custom page. Try a more specific prompt.');
+	      if(!raw) throw new Error('AI did not return a custom page draft. No page was changed; try again or shorten the request.');
 	      if(!wantImage) return { raw:raw, imageUrl:'' };
 	      return request('/api/ai/website-editor/field-preview',{method:'POST',body:{field:'custom_page_header_image',prompt:pageImagePrompt(prompt, ctx, raw),current_value:'',generation_context:ctx,image_options:{image_prompt:ctx.image_prompt,image_style:ctx.image_style,image_aspect:ctx.image_aspect,image_avoid:ctx.image_avoid}}}).then(function(img){
         if(img.credit_status && typeof window.obAiSetWebsiteStatus === 'function') window.obAiSetWebsiteStatus(img.credit_status);
@@ -49717,9 +49729,9 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       var page = addGeneratedPage(out.raw, out.imageUrl);
       if(result) {
         result.className = 'ob-ai-field-result open';
-        result.innerHTML = 'Created draft page: ' + esc(page && page.title || 'Custom page') + '. Review it, then Save All Changes.';
+        result.innerHTML = (page && page._ai_replaced_at_limit ? 'Filled selected page draft: ' : 'Created draft page: ') + esc(page && page.title || 'Custom page') + '. Review it, then Save All Changes.';
       }
-      setPageAiStatus('Page draft is ready in the editor. Review before publishing, then Save All Changes.','ok');
+      setPageAiStatus(page && page._ai_replaced_at_limit ? 'Page limit was full, so AI filled the selected page draft. Review before saving.' : 'Page draft is ready in the editor. Review before publishing, then Save All Changes.','ok');
     }).catch(function(err){
       if(err.data && err.data.credit_status && typeof window.obAiSetWebsiteStatus === 'function') window.obAiSetWebsiteStatus(err.data.credit_status);
       if(result && err.data && err.data.code === 'ai_credits_required') {

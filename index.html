@@ -48292,9 +48292,23 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       fields:[{source:'website', key:'about_title', id:'we-about-title'}]
     }
   };
-  function sectionPrompt(group, prompt){
-    return group.prompt + '\n\nExpert request: ' + clean(prompt || '') + '\n\nReturn changes only for this section. Leave all unrelated website fields empty.';
-  }
+	  function sectionPrompt(group, prompt){
+	    var ctx = sectionAiContext();
+	    return group.prompt + '\n\nExpert request: ' + clean(prompt || '') + '\n\nLength: ' + ctx.length + '. Tone: ' + ctx.tone + '. Audience: ' + ctx.audience + '.\n\nReturn changes only for this section. Leave all unrelated website fields empty.';
+	  }
+	  function controlValue(id, fallback){
+	    var el = document.getElementById(id);
+	    return clean(el && el.value || fallback || '').slice(0,180);
+	  }
+	  function sectionAiContext(){
+	    return {
+	      target:'section',
+	      length:controlValue('ob-ai-section-length','short'),
+	      tone:controlValue('ob-ai-section-tone','match current voice'),
+	      audience:controlValue('ob-ai-section-audience','first-time visitors'),
+	      preserve_claim_safety:true
+	    };
+	  }
   function applySectionPlan(plan, group){
     var changes = plan && plan.changes || {};
     var profile = changes.profile_patch || {};
@@ -48318,13 +48332,18 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     modal = document.createElement('div');
     modal.id = 'ob-ai-section-modal';
     modal.className = 'ob-ai-field-modal';
-    modal.innerHTML =
-      '<div class="ob-ai-field-card" role="dialog" aria-modal="true" aria-labelledby="ob-ai-section-title">' +
-        '<div class="ob-ai-field-head"><div><h3 id="ob-ai-section-title">AI section helper</h3><p id="ob-ai-section-copy">Describe what this section should say. AI fills the fields in this section only.</p></div><button class="ob-ai-field-close" type="button" onclick="obAiCloseSectionPrompt()">x</button></div>' +
-        '<textarea id="ob-ai-section-prompt" placeholder="Example: make this section warmer, clearer, and focused on spiritual clarity for first-time visitors."></textarea>' +
-        '<div class="ob-ai-editor-buttons" style="margin-top:10px;"><button class="ob-ai-editor-btn primary" id="ob-ai-section-run" type="button" onclick="obAiRunSectionPrompt()">Generate section draft</button></div>' +
-        '<div id="ob-ai-section-status" class="ob-ai-section-status"></div><div id="ob-ai-section-result" class="ob-ai-field-result"></div>' +
-      '</div>';
+	    modal.innerHTML =
+	      '<div class="ob-ai-field-card" role="dialog" aria-modal="true" aria-labelledby="ob-ai-section-title">' +
+	        '<div class="ob-ai-field-head"><div><h3 id="ob-ai-section-title">AI section helper</h3><p id="ob-ai-section-copy">Describe what this section should say. AI fills the fields in this section only.</p></div><button class="ob-ai-field-close" type="button" onclick="obAiCloseSectionPrompt()">x</button></div>' +
+	        '<textarea id="ob-ai-section-prompt" placeholder="Example: make this section warmer, clearer, and focused on spiritual clarity for first-time visitors."></textarea>' +
+	        '<div class="ob-ai-control-grid three">' +
+	          '<div class="ob-ai-control-field"><label for="ob-ai-section-length">Length</label><select id="ob-ai-section-length"><option value="micro">Micro</option><option value="short" selected>Short</option><option value="medium">Medium</option></select></div>' +
+	          '<div class="ob-ai-control-field"><label for="ob-ai-section-tone">Tone</label><select id="ob-ai-section-tone"><option value="match current voice">Match voice</option><option value="warm and reassuring">Warm</option><option value="clear and practical">Practical</option><option value="premium and polished">Premium</option><option value="direct and simple">Direct</option></select></div>' +
+	          '<div class="ob-ai-control-field"><label for="ob-ai-section-audience">Audience</label><select id="ob-ai-section-audience"><option value="first-time visitors">First-time visitors</option><option value="returning clients">Returning clients</option><option value="relationship clients">Relationship clients</option><option value="business clients">Business clients</option></select></div>' +
+	        '</div>' +
+	        '<div class="ob-ai-editor-buttons" style="margin-top:10px;"><button class="ob-ai-editor-btn primary" id="ob-ai-section-run" type="button" onclick="obAiRunSectionPrompt()">Generate section draft</button></div>' +
+	        '<div id="ob-ai-section-status" class="ob-ai-section-status"></div><div id="ob-ai-section-result" class="ob-ai-field-result"></div>' +
+	      '</div>';
     modal.addEventListener('click',function(ev){ if(ev.target === modal) window.obAiCloseSectionPrompt(); });
     document.body.appendChild(modal);
     return modal;
@@ -48365,7 +48384,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     if(run) { run.disabled = true; run.textContent = 'Generating...'; }
     if(result) { result.className = 'ob-ai-field-result'; result.innerHTML = ''; }
     setSectionStatus('Generating a section-level draft...');
-    request('/api/ai/website-editor/preview',{method:'POST',body:{prompt:sectionPrompt(sectionModal.group,prompt),mode:'improve',generate_media:false}}).then(function(data){
+	    request('/api/ai/website-editor/preview',{method:'POST',body:{prompt:sectionPrompt(sectionModal.group,prompt),mode:'improve',generate_media:false,generation_context:sectionAiContext()}}).then(function(data){
       editorStatus = data.credit_status || editorStatus;
       var changed = applySectionPlan(data.plan || {}, sectionModal.group);
       updateAiUi();
@@ -49398,39 +49417,50 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     state.active = page.id;
     var section = page.sections && page.sections[0] ? page.sections[0] : {title:'',body:'',items:[]};
     var widget = normalizeSessionWidget(page.session_widget);
-    editor.innerHTML =
-      '<div class="ob-cp-editor-top">' +
-        '<div><strong>Edit Page</strong><span>'+esc(pageUrl(page.slug))+'</span></div>' +
-        '<div class="ob-cp-mini-actions"><button type="button" class="ob-ai-page-wand" onclick="obAiOpenContentPagePrompt()">🪄 Draft page with AI</button><button type="button" onclick="obMoveContentPage(-1)">Up</button><button type="button" onclick="obMoveContentPage(1)">Down</button><button type="button" onclick="obDuplicateContentPage()">Duplicate</button><button type="button" class="danger" onclick="obDeleteContentPage()">Delete</button></div>' +
-      '</div>' +
-      '<div class="ob-cp-grid two">' +
-        field('Template','<select class="settings-field-input" onchange="obContentPageField(&quot;template&quot;,this.value)">'+Object.keys(templateLabels).map(function(key){ return '<option value="'+key+'"'+(page.template===key?' selected':'')+'>'+templateLabels[key]+'</option>'; }).join('')+'</select>') +
-        field('URL slug','<input class="settings-field-input" value="'+esc(page.slug)+'" oninput="obContentPageField(&quot;slug&quot;,this.value)" placeholder="my-page-slug">') +
-      '</div>' +
-      '<div class="ob-cp-grid two compact">' +
-        '<label class="ob-cp-check"><input type="checkbox" '+(page.published?'checked':'')+' onchange="obContentPageField(&quot;published&quot;,this.checked)">Published</label>' +
-        '<label class="ob-cp-check"><input type="checkbox" '+(page.show_in_nav?'checked':'')+' onchange="obContentPageField(&quot;show_in_nav&quot;,this.checked)">Show in navigation</label>' +
-      '</div>' +
-      field('Page title','<input id="ob-cp-title-input" class="settings-field-input" value="'+esc(page.title)+'" oninput="obContentPageField(&quot;title&quot;,this.value)" placeholder="Page title">') +
-      field('Navigation label','<input id="ob-cp-nav-label-input" class="settings-field-input" value="'+esc(page.nav_label)+'" oninput="obContentPageField(&quot;nav_label&quot;,this.value)" placeholder="Short menu label">') +
-      field('Subtitle / intro','<textarea id="ob-cp-summary-input" class="settings-field-input" rows="3" oninput="obContentPageField(&quot;summary&quot;,this.value)" placeholder="Short intro shown below the page title">'+esc(page.summary)+'</textarea>') +
-      '<div class="ob-cp-field"><span>Header image</span><div class="ob-cp-image-row"><div id="ob-cp-header-image-preview" class="ob-cp-image-preview" data-ob-ai-image-label="Header image">'+(page.header_image_url ? '<img src="'+esc(page.header_image_url)+'" alt="Header image preview">' : '<span>Header image</span>')+'</div><div class="ob-cp-image-tools"><label class="ob-cp-upload-btn"><input type="file" accept="image/png,image/jpeg,image/webp,image/gif" onchange="obContentPageHeaderImageFile(this)">Upload image</label><input class="settings-field-input" id="ob-cp-header-image-url" value="'+esc(page.header_image_url || '')+'" oninput="obContentPageField(&quot;header_image_url&quot;,this.value);obContentPageSyncHeaderPreview(this.value)" placeholder="https://... or upload an image"></div></div></div>' +
-      '<div class="ob-cp-grid two">' +
-        field('CTA button text','<input id="ob-cp-cta-label-input" class="settings-field-input" value="'+esc(page.cta_label || '')+'" oninput="obContentPageField(&quot;cta_label&quot;,this.value)" placeholder="Book a session">') +
-        field('CTA destination','<input class="settings-field-input" value="'+esc(page.cta_page || 'book')+'" oninput="obContentPageField(&quot;cta_page&quot;,this.value)" placeholder="book, contact, services, or page slug">') +
-      '</div>' +
-      sessionWidgetEditor(widget) +
-      field('Main content heading','<input id="ob-cp-section-title-input" class="settings-field-input" value="'+esc(section.title || '')+'" oninput="obContentPageSectionField(&quot;title&quot;,this.value)" placeholder="Main section heading">') +
-      field('Main content','<textarea id="ob-cp-body-input" class="settings-field-input ob-cp-main" rows="10" oninput="obContentPageSectionField(&quot;body&quot;,this.value)" placeholder="Write the full article, guide, content page, or resource copy here.">'+esc(section.body || '')+'</textarea>') +
-      field('Key points / FAQ items','<textarea id="ob-cp-items-input" class="settings-field-input" rows="5" oninput="obContentPageSectionField(&quot;items&quot;,this.value)" placeholder="One point per line. Useful for FAQs, guides, and resource pages.">'+esc((section.items || []).join('\\n'))+'</textarea>') +
-      '<div class="ob-cp-grid two">' +
-        field('SEO title','<input class="settings-field-input" value="'+esc(page.meta_title || '')+'" oninput="obContentPageField(&quot;meta_title&quot;,this.value)" maxlength="70" placeholder="Optional search title">') +
-        field('SEO description','<textarea class="settings-field-input" rows="2" oninput="obContentPageField(&quot;meta_description&quot;,this.value)" maxlength="180" placeholder="Optional search description">'+esc(page.meta_description || '')+'</textarea>') +
-      '</div>';
-  }
-  function field(label, inputHtml){
-    return '<label class="ob-cp-field"><span>'+esc(label)+'</span>'+inputHtml+'</label>';
-  }
+	    editor.innerHTML =
+	      '<div class="ob-cp-editor-top">' +
+	        '<div><strong>Edit Page</strong><span>'+esc(pageUrl(page.slug))+'</span></div>' +
+	        '<div class="ob-cp-mini-actions"><button type="button" class="ob-ai-page-wand" onclick="obAiOpenContentPagePrompt()">🪄 Draft page with AI</button><button type="button" onclick="obMoveContentPage(-1)">Up</button><button type="button" onclick="obMoveContentPage(1)">Down</button><button type="button" onclick="obDuplicateContentPage()">Duplicate</button><button type="button" class="danger" onclick="obDeleteContentPage()">Delete</button></div>' +
+	      '</div>' +
+	      step('Basics', 'Title, menu label, URL, and visibility',
+	        '<div class="ob-cp-grid two">' +
+	          field('Template','<select class="settings-field-input" onchange="obContentPageField(&quot;template&quot;,this.value)">'+Object.keys(templateLabels).map(function(key){ return '<option value="'+key+'"'+(page.template===key?' selected':'')+'>'+templateLabels[key]+'</option>'; }).join('')+'</select>') +
+	          field('URL slug','<input class="settings-field-input" value="'+esc(page.slug)+'" oninput="obContentPageField(&quot;slug&quot;,this.value)" placeholder="my-page-slug">') +
+	        '</div>' +
+	        '<div class="ob-cp-grid two compact">' +
+	          '<label class="ob-cp-check"><input type="checkbox" '+(page.published?'checked':'')+' onchange="obContentPageField(&quot;published&quot;,this.checked)">Published</label>' +
+	          '<label class="ob-cp-check"><input type="checkbox" '+(page.show_in_nav?'checked':'')+' onchange="obContentPageField(&quot;show_in_nav&quot;,this.checked)">Show in navigation</label>' +
+	        '</div>' +
+	        field('Page title','<input id="ob-cp-title-input" class="settings-field-input" value="'+esc(page.title)+'" oninput="obContentPageField(&quot;title&quot;,this.value)" placeholder="Page title">') +
+	        field('Navigation label','<input id="ob-cp-nav-label-input" class="settings-field-input" value="'+esc(page.nav_label)+'" oninput="obContentPageField(&quot;nav_label&quot;,this.value)" placeholder="Short menu label">') +
+	        field('Subtitle / intro','<textarea id="ob-cp-summary-input" class="settings-field-input" rows="3" oninput="obContentPageField(&quot;summary&quot;,this.value)" placeholder="Short intro shown below the page title">'+esc(page.summary)+'</textarea>'),
+	        true) +
+	      step('Hero and call to action', 'Image plus where the visitor should go next',
+	        '<div class="ob-cp-field"><span>Header image</span><div class="ob-cp-image-row"><div id="ob-cp-header-image-preview" class="ob-cp-image-preview" data-ob-ai-image-label="Header image">'+(page.header_image_url ? '<img src="'+esc(page.header_image_url)+'" alt="Header image preview">' : '<span>Header image</span>')+'</div><div class="ob-cp-image-tools"><label class="ob-cp-upload-btn"><input type="file" accept="image/png,image/jpeg,image/webp,image/gif" onchange="obContentPageHeaderImageFile(this)">Upload image</label><input class="settings-field-input" id="ob-cp-header-image-url" value="'+esc(page.header_image_url || '')+'" oninput="obContentPageField(&quot;header_image_url&quot;,this.value);obContentPageSyncHeaderPreview(this.value)" placeholder="https://... or upload an image"></div></div></div>' +
+	        '<div class="ob-cp-grid two">' +
+	          field('CTA button text','<input id="ob-cp-cta-label-input" class="settings-field-input" value="'+esc(page.cta_label || '')+'" oninput="obContentPageField(&quot;cta_label&quot;,this.value)" placeholder="Book a session">') +
+	          field('CTA destination','<input class="settings-field-input" value="'+esc(page.cta_page || 'book')+'" oninput="obContentPageField(&quot;cta_page&quot;,this.value)" placeholder="book, contact, services, or page slug">') +
+	        '</div>',
+	        true) +
+	      step('Main content', 'Body copy, heading, and FAQ/key points',
+	        field('Main content heading','<input id="ob-cp-section-title-input" class="settings-field-input" value="'+esc(section.title || '')+'" oninput="obContentPageSectionField(&quot;title&quot;,this.value)" placeholder="Main section heading">') +
+	        field('Main content','<textarea id="ob-cp-body-input" class="settings-field-input ob-cp-main" rows="8" oninput="obContentPageSectionField(&quot;body&quot;,this.value)" placeholder="Write the full article, guide, content page, or resource copy here.">'+esc(section.body || '')+'</textarea>') +
+	        field('Key points / FAQ items','<textarea id="ob-cp-items-input" class="settings-field-input" rows="4" oninput="obContentPageSectionField(&quot;items&quot;,this.value)" placeholder="One point per line. Useful for FAQs, guides, and resource pages.">'+esc((section.items || []).join('\\n'))+'</textarea>'),
+	        true) +
+	      step('Session widget', 'Choose session types and placement for this page', sessionWidgetEditor(widget), false) +
+	      step('SEO', 'Optional search title and description',
+	        '<div class="ob-cp-grid two">' +
+	          field('SEO title','<input class="settings-field-input" value="'+esc(page.meta_title || '')+'" oninput="obContentPageField(&quot;meta_title&quot;,this.value)" maxlength="70" placeholder="Optional search title">') +
+	          field('SEO description','<textarea class="settings-field-input" rows="2" oninput="obContentPageField(&quot;meta_description&quot;,this.value)" maxlength="180" placeholder="Optional search description">'+esc(page.meta_description || '')+'</textarea>') +
+	        '</div>',
+	        false);
+	  }
+	  function field(label, inputHtml){
+	    return '<label class="ob-cp-field"><span>'+esc(label)+'</span>'+inputHtml+'</label>';
+	  }
+	  function step(title, detail, bodyHtml, open){
+	    return '<details class="ob-cp-step" '+(open ? 'open' : '')+'><summary><span>'+esc(title)+'</span><small>'+esc(detail || '')+'</small></summary><div class="ob-cp-step-body">'+bodyHtml+'</div></details>';
+	  }
   function sessionWidgetEditor(widget){
     widget = normalizeSessionWidget(widget);
     var active = widget.enabled ? '' : ' inactive';
@@ -49512,15 +49542,39 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     var image = Number(c.image_cost || 24);
     return available + ' credits available. Page draft costs ' + preview + ' credits' + (aiReady('image') ? '; header image costs ' + image + ' more.' : '.');
   }
-  function syncContentPageAiTools(){
-    var ready = aiReady();
-    document.querySelectorAll('#ob-content-pages-card .ob-ai-page-wand').forEach(function(btn){
-      btn.disabled = !ready || !state.allowed;
-      btn.title = !state.allowed ? 'Custom pages are Pro / Scale only' : (!ready ? ((aiStatus().reason || 'AI website editing is not available yet')) : aiCreditsText());
-    });
-  }
-  window.obSyncContentPageAiTools = syncContentPageAiTools;
-  function ensurePageAiModal(){
+	  function syncContentPageAiTools(){
+	    var ready = aiReady();
+	    document.querySelectorAll('#ob-content-pages-card .ob-ai-page-wand').forEach(function(btn){
+	      btn.disabled = !ready || !state.allowed;
+	      btn.title = !state.allowed ? 'Custom pages are Pro / Scale only' : (!ready ? ((aiStatus().reason || 'AI website editing is not available yet')) : aiCreditsText());
+	    });
+	  }
+	  window.obSyncContentPageAiTools = syncContentPageAiTools;
+	  function pageAiControl(id, fallback, max){
+	    var el = document.getElementById(id);
+	    return line(el && el.value || fallback || '', max || 220);
+	  }
+	  function pageAiContext(prompt){
+	    var words = parseInt(pageAiControl('ob-ai-page-words','',10), 10);
+	    if(!isFinite(words)) words = 0;
+	    return {
+	      target:'custom_page',
+	      goal:pageAiControl('ob-ai-page-goal','create helpful content page',80),
+	      length:pageAiControl('ob-ai-page-length','medium',40),
+	      custom_word_count:words > 0 ? Math.max(50, Math.min(1600, words)) : null,
+	      tone:pageAiControl('ob-ai-page-tone','warm and clear',80),
+	      audience:pageAiControl('ob-ai-page-audience','first-time visitors',120),
+	      cta_intent:pageAiControl('ob-ai-page-cta','book a session',120),
+	      structure:pageAiControl('ob-ai-page-structure','intro, useful sections, key points, CTA',140),
+	      image_prompt:text((document.getElementById('ob-ai-page-image-prompt') || {}).value || '', 900),
+	      image_style:pageAiControl('ob-ai-page-image-style','warm editorial website header',160),
+	      image_aspect:pageAiControl('ob-ai-page-image-aspect','wide hero crop',60),
+	      image_avoid:text((document.getElementById('ob-ai-page-image-avoid') || {}).value || 'text, logos, fake claims, medical or financial promises', 500),
+	      preserve_claim_safety:true,
+	      raw_request:line(prompt, 1800)
+	    };
+	  }
+	  function ensurePageAiModal(){
     var modal = document.getElementById('ob-ai-page-modal');
     if(modal) return modal;
     modal = document.createElement('div');
@@ -49528,10 +49582,25 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     modal.className = 'ob-ai-field-modal';
     modal.innerHTML =
       '<div class="ob-ai-field-card" role="dialog" aria-modal="true" aria-labelledby="ob-ai-page-title">' +
-        '<div class="ob-ai-field-head"><div><h3 id="ob-ai-page-title">AI custom page builder</h3><p>Describe the page you want. AI prepares the slug, title, nav label, intro, header image, main content, CTA, key points, and SEO draft where possible.</p></div><button class="ob-ai-field-close" type="button" onclick="obAiCloseContentPagePrompt()">x</button></div>' +
-        '<textarea id="ob-ai-page-prompt" placeholder="Example: Create a page that explains psychic readings for first-time clients, with a warm intro, practical sections, and a CTA to book a session."></textarea>' +
-        '<label class="ob-ai-editor-check"><input id="ob-ai-page-image" type="checkbox"> Generate a header image when available</label>' +
-        '<div class="ob-ai-editor-buttons" style="margin-top:10px;"><button class="ob-ai-editor-btn primary" id="ob-ai-page-run" type="button" onclick="obAiRunContentPagePrompt()">Generate page draft</button></div>' +
+	        '<div class="ob-ai-field-head"><div><h3 id="ob-ai-page-title">AI custom page builder</h3><p>Describe the page you want. AI prepares the slug, title, nav label, intro, header image, main content, CTA, key points, and SEO draft where possible.</p></div><button class="ob-ai-field-close" type="button" onclick="obAiCloseContentPagePrompt()">x</button></div>' +
+	        '<textarea id="ob-ai-page-prompt" placeholder="Example: Create a page that explains psychic readings for first-time clients, with a warm intro, practical sections, and a CTA to book a session."></textarea>' +
+	        '<div class="ob-ai-control-grid three">' +
+	          '<div class="ob-ai-control-field"><label for="ob-ai-page-goal">Goal</label><select id="ob-ai-page-goal"><option value="create helpful content page">Create page</option><option value="rewrite for conversion">Conversion rewrite</option><option value="simplify for first-time visitors">Simplify</option><option value="make warmer and more personal">Warmer</option><option value="make more premium and polished">Premium</option></select></div>' +
+	          '<div class="ob-ai-control-field"><label for="ob-ai-page-length">Length</label><select id="ob-ai-page-length"><option value="short">Short</option><option value="medium" selected>Medium</option><option value="long">Long</option><option value="custom">Custom</option></select></div>' +
+	          '<div class="ob-ai-control-field"><label for="ob-ai-page-words">Words</label><input id="ob-ai-page-words" type="number" min="50" max="1600" step="50" placeholder="Optional"></div>' +
+	          '<div class="ob-ai-control-field"><label for="ob-ai-page-tone">Tone</label><select id="ob-ai-page-tone"><option value="warm and clear">Warm clear</option><option value="match current voice">Match voice</option><option value="direct and practical">Practical</option><option value="premium and polished">Premium</option><option value="gentle and spiritual">Spiritual</option></select></div>' +
+	          '<div class="ob-ai-control-field"><label for="ob-ai-page-audience">Audience</label><select id="ob-ai-page-audience"><option value="first-time visitors">First-time visitors</option><option value="returning clients">Returning clients</option><option value="relationship clients">Relationship clients</option><option value="business clients">Business clients</option></select></div>' +
+	          '<div class="ob-ai-control-field"><label for="ob-ai-page-cta">CTA</label><select id="ob-ai-page-cta"><option value="book a session">Book session</option><option value="start a written reading">Written reading</option><option value="start live chat">Live chat</option><option value="contact me">Contact</option><option value="read another page">Read more</option></select></div>' +
+	          '<div class="ob-ai-control-field full"><label for="ob-ai-page-structure">Structure</label><input id="ob-ai-page-structure" value="intro, useful sections, key points, CTA" placeholder="Example: intro, 3 practical sections, FAQ, CTA"></div>' +
+	        '</div>' +
+	        '<label class="ob-ai-editor-check"><input id="ob-ai-page-image" type="checkbox"> Generate a header image when available</label>' +
+	        '<div class="ob-ai-control-grid">' +
+	          '<div class="ob-ai-control-field full"><label for="ob-ai-page-image-prompt">Dedicated image prompt</label><textarea id="ob-ai-page-image-prompt" placeholder="Describe the page image separately from the text. Example: soft warm table scene with tarot cards and candlelight, no text, no logo."></textarea></div>' +
+	          '<div class="ob-ai-control-field"><label for="ob-ai-page-image-style">Image style</label><select id="ob-ai-page-image-style"><option value="warm editorial website header">Warm editorial</option><option value="clean professional portrait-adjacent">Professional</option><option value="calm spiritual atmosphere">Calm spiritual</option><option value="minimal premium brand image">Minimal premium</option><option value="bright friendly lifestyle">Friendly lifestyle</option></select></div>' +
+	          '<div class="ob-ai-control-field"><label for="ob-ai-page-image-aspect">Crop</label><select id="ob-ai-page-image-aspect"><option value="wide hero crop">Wide hero</option><option value="square reusable asset">Square</option><option value="portrait-friendly crop">Portrait-friendly</option></select></div>' +
+	          '<div class="ob-ai-control-field full"><label for="ob-ai-page-image-avoid">Avoid</label><input id="ob-ai-page-image-avoid" value="text, logos, fake claims, medical or financial promises"></div>' +
+	        '</div>' +
+	        '<div class="ob-ai-editor-buttons" style="margin-top:10px;"><button class="ob-ai-editor-btn primary" id="ob-ai-page-run" type="button" onclick="obAiRunContentPagePrompt()">Generate page draft</button></div>' +
         '<div id="ob-ai-page-status" class="ob-ai-section-status"></div><div id="ob-ai-page-result" class="ob-ai-field-result"></div>' +
       '</div>';
     modal.addEventListener('click',function(ev){ if(ev.target === modal) window.obAiCloseContentPagePrompt(); });
@@ -49549,17 +49618,35 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     var packs = c.packs || [];
     return packs.length ? '<div class="ob-ai-pack-row">'+packs.map(function(p){ return '<button class="ob-ai-pack-btn" type="button" onclick="obAiBuyCredits(\''+esc(p.id)+'\')">'+esc(p.label)+' - '+esc(p.credits)+' credits</button>'; }).join('')+'</div>' : '';
   }
-  function pageAiPrompt(prompt){
-    var template = (document.getElementById('ob-cp-template-picker') || {}).value || 'content';
-    return [
-      'Create exactly one complete custom content page for this expert website.',
-      'Use the selected template: ' + template + '.',
-      'Return one ai_pages item with slug, title, nav_label, summary, cta_label, cta_page, and one strong main section with title, body, and useful items.',
-      'The page must be safe for an independent expert website: no invented testimonials, no fake credentials, no guarantees, no pricing changes, no payment or Stripe changes, no booking/session/auth/admin changes.',
-      'Make the URL slug short, lowercase, and relevant. Make the CTA point to book unless the user asks otherwise.',
-      'Expert request: ' + line(prompt, 1800)
-    ].join('\n');
-  }
+	  function pageAiPrompt(prompt, ctx){
+	    var template = (document.getElementById('ob-cp-template-picker') || {}).value || 'content';
+	    ctx = ctx || pageAiContext(prompt);
+	    return [
+	      'Create exactly one complete custom content page for this expert website.',
+	      'Use the selected template: ' + template + '.',
+	      'Goal: ' + (ctx.goal || 'create helpful content page') + '.',
+	      'Target length: ' + (ctx.length || 'medium') + (ctx.custom_word_count ? ' around ' + ctx.custom_word_count + ' words' : '') + '.',
+	      'Tone: ' + (ctx.tone || 'warm and clear') + '.',
+	      'Audience: ' + (ctx.audience || 'first-time visitors') + '.',
+	      'CTA intent: ' + (ctx.cta_intent || 'book a session') + '.',
+	      'Preferred structure: ' + (ctx.structure || 'intro, useful sections, key points, CTA') + '.',
+	      'Return one ai_pages item with slug, title, nav_label, summary, cta_label, cta_page, and one strong main section with title, body, and useful items.',
+	      'The page must be safe for an independent expert website: no invented testimonials, no fake credentials, no guarantees, no pricing changes, no payment or Stripe changes, no booking/session/auth/admin changes.',
+	      'Make the URL slug short, lowercase, and relevant. Make the CTA point to book unless the user asks otherwise.',
+	      'Expert request: ' + line(prompt, 1800)
+	    ].join('\n');
+	  }
+	  function pageImagePrompt(prompt, ctx, raw){
+	    ctx = ctx || pageAiContext(prompt);
+	    var specific = ctx.image_prompt || ('Create a polished header image for this custom page. Page request: ' + prompt + '. Page title: ' + (raw && raw.title || '') + '.');
+	    return [
+	      specific,
+	      'Image style: ' + (ctx.image_style || 'warm editorial website header') + '.',
+	      'Crop: ' + (ctx.image_aspect || 'wide hero crop') + '.',
+	      'Avoid: ' + (ctx.image_avoid || 'text, logos, claims') + '.',
+	      'No text, no logo, no claims.'
+	    ].join('\n');
+	  }
   function pickGeneratedPage(data){
     var pages = data && data.plan && data.plan.changes && data.plan.changes.website_content_patch && data.plan.changes.website_content_patch.ai_pages || [];
     if(!Array.isArray(pages) || !pages.length) return null;
@@ -49609,18 +49696,19 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     if(!prompt) { setPageAiStatus('Tell AI what page you want first.','err'); return; }
     var request = typeof window.obAiWebsiteRequest === 'function' ? window.obAiWebsiteRequest : null;
     if(!request) { setPageAiStatus('AI website tools are not ready yet.','err'); return; }
-    var run = document.getElementById('ob-ai-page-run');
-    var result = document.getElementById('ob-ai-page-result');
-    var wantImage = !!((document.getElementById('ob-ai-page-image') || {}).checked) && aiReady('image');
-    if(run) { run.disabled = true; run.textContent = 'Generating...'; }
-    if(result) { result.className = 'ob-ai-field-result'; result.innerHTML = ''; }
-    setPageAiStatus(wantImage ? 'Generating page copy, then header image...' : 'Generating a complete page draft...');
-    request('/api/ai/website-editor/preview',{method:'POST',body:{prompt:pageAiPrompt(prompt),mode:'add_custom_page',generate_media:false}}).then(function(data){
-      if(data.credit_status && typeof window.obAiSetWebsiteStatus === 'function') window.obAiSetWebsiteStatus(data.credit_status);
-      var raw = pickGeneratedPage(data);
-      if(!raw) throw new Error('AI did not return a usable custom page. Try a more specific prompt.');
-      if(!wantImage) return { raw:raw, imageUrl:'' };
-      return request('/api/ai/website-editor/field-preview',{method:'POST',body:{field:'custom_page_header_image',prompt:'Create a polished header image for this custom page. Page request: '+prompt+'. Page title: '+(raw.title || '')+'. No text, no logo, no claims.',current_value:''}}).then(function(img){
+	    var run = document.getElementById('ob-ai-page-run');
+	    var result = document.getElementById('ob-ai-page-result');
+	    var wantImage = !!((document.getElementById('ob-ai-page-image') || {}).checked) && aiReady('image');
+	    var ctx = pageAiContext(prompt);
+	    if(run) { run.disabled = true; run.textContent = 'Generating...'; }
+	    if(result) { result.className = 'ob-ai-field-result'; result.innerHTML = ''; }
+	    setPageAiStatus(wantImage ? 'Generating page copy, then header image...' : 'Generating a complete page draft...');
+	    request('/api/ai/website-editor/preview',{method:'POST',body:{prompt:pageAiPrompt(prompt, ctx),mode:'add_custom_page',generate_media:false,generation_context:ctx}}).then(function(data){
+	      if(data.credit_status && typeof window.obAiSetWebsiteStatus === 'function') window.obAiSetWebsiteStatus(data.credit_status);
+	      var raw = pickGeneratedPage(data);
+	      if(!raw) throw new Error('AI did not return a usable custom page. Try a more specific prompt.');
+	      if(!wantImage) return { raw:raw, imageUrl:'' };
+	      return request('/api/ai/website-editor/field-preview',{method:'POST',body:{field:'custom_page_header_image',prompt:pageImagePrompt(prompt, ctx, raw),current_value:'',generation_context:ctx,image_options:{image_prompt:ctx.image_prompt,image_style:ctx.image_style,image_aspect:ctx.image_aspect,image_avoid:ctx.image_avoid}}}).then(function(img){
         if(img.credit_status && typeof window.obAiSetWebsiteStatus === 'function') window.obAiSetWebsiteStatus(img.credit_status);
         return { raw:raw, imageUrl:img.url || '' };
       }).catch(function(){ return { raw:raw, imageUrl:'' }; });
@@ -50119,12 +50207,19 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   #ob-content-pages-card .ob-cp-list-item em{color:var(--terra);font-size:10px;font-style:normal;font-weight:800;white-space:nowrap;}
   #ob-content-pages-card .ob-cp-empty{align-items:center;color:var(--gray-400);display:flex;font-size:13px;justify-content:center;line-height:1.5;min-height:92px;padding:16px;text-align:center;}
   #ob-content-pages-card .ob-cp-empty.tall{background:var(--cream);border:1px dashed var(--gray-200);border-radius:14px;min-height:240px;}
-  #ob-content-pages-card .ob-cp-editor{border:1px solid var(--gray-200);border-radius:14px;display:grid;gap:14px;padding:16px;}
-  #ob-content-pages-card .ob-cp-editor-top{align-items:flex-start;display:flex;gap:12px;justify-content:space-between;}
-  #ob-content-pages-card .ob-cp-editor-top strong{color:var(--brown);display:block;font-size:14px;}
-  #ob-content-pages-card .ob-cp-editor-top span{color:var(--terra);display:block;font-size:12px;margin-top:3px;}
-  #ob-content-pages-card .ob-cp-mini-actions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;}
-  #ob-content-pages-card .ob-cp-mini-actions button{background:var(--cream);border:1px solid var(--gray-200);border-radius:8px;color:var(--brown);cursor:pointer;font-size:11px;font-weight:800;padding:7px 9px;}
+	  #ob-content-pages-card .ob-cp-editor{border:1px solid var(--gray-200);border-radius:14px;display:grid;gap:14px;padding:16px;}
+	  #ob-content-pages-card .ob-cp-editor-top{align-items:flex-start;display:flex;gap:12px;justify-content:space-between;}
+	  #ob-content-pages-card .ob-cp-editor-top strong{color:var(--brown);display:block;font-size:14px;}
+	  #ob-content-pages-card .ob-cp-editor-top span{color:var(--terra);display:block;font-size:12px;margin-top:3px;}
+	  #ob-content-pages-card .ob-cp-editor-note{background:#fff7ed;border:1px solid rgba(196,98,45,.22);border-radius:10px;color:var(--brown);font-size:12px;font-weight:700;line-height:1.45;padding:10px 12px;}
+	  #ob-content-pages-card .ob-cp-step{border:1px solid var(--gray-200);border-radius:12px;background:var(--white);overflow:hidden;}
+	  #ob-content-pages-card .ob-cp-step[open]{box-shadow:0 4px 18px rgba(36,24,19,.04);}
+	  #ob-content-pages-card .ob-cp-step summary{align-items:center;color:var(--brown);cursor:pointer;display:flex;font-size:13px;font-weight:900;gap:8px;justify-content:space-between;list-style:none;padding:13px 14px;}
+	  #ob-content-pages-card .ob-cp-step summary::-webkit-details-marker{display:none;}
+	  #ob-content-pages-card .ob-cp-step summary small{color:var(--gray-400);font-size:11px;font-weight:700;line-height:1.35;text-align:right;}
+	  #ob-content-pages-card .ob-cp-step-body{border-top:1px solid var(--gray-100);display:grid;gap:12px;padding:14px;}
+	  #ob-content-pages-card .ob-cp-mini-actions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;}
+	  #ob-content-pages-card .ob-cp-mini-actions button{background:var(--cream);border:1px solid var(--gray-200);border-radius:8px;color:var(--brown);cursor:pointer;font-size:11px;font-weight:800;padding:7px 9px;}
   #ob-content-pages-card .ob-cp-mini-actions button.danger{color:#b42318;}
   #ob-content-pages-card .ob-cp-grid{display:grid;gap:12px;}
   #ob-content-pages-card .ob-cp-grid.two{grid-template-columns:1fr 1fr;}
@@ -50152,8 +50247,17 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   #ob-content-pages-card .ob-cp-image-preview img{height:100%;min-height:112px;object-fit:cover;width:100%;}
   #ob-content-pages-card .ob-cp-image-preview .ob-ai-field-wand{bottom:10px;position:absolute;right:10px;z-index:2;}
   #ob-content-pages-card .ob-cp-image-tools{display:grid;gap:10px;align-content:start;}
-  #ob-content-pages-card .ob-cp-upload-btn{align-items:center;background:var(--cream);border:1px solid var(--gray-200);border-radius:10px;color:var(--brown);cursor:pointer;display:inline-flex;font-size:12px;font-weight:800;justify-content:center;min-height:38px;padding:8px 12px;width:max-content;}
-  #ob-content-pages-card .ob-cp-upload-btn input{display:none;}
+	  #ob-content-pages-card .ob-cp-upload-btn{align-items:center;background:var(--cream);border:1px solid var(--gray-200);border-radius:10px;color:var(--brown);cursor:pointer;display:inline-flex;font-size:12px;font-weight:800;justify-content:center;min-height:38px;padding:8px 12px;width:max-content;}
+	  #ob-content-pages-card .ob-cp-upload-btn input{display:none;}
+	  .ob-ai-control-grid{display:grid;gap:10px;grid-template-columns:repeat(2,minmax(0,1fr));margin:12px 0;}
+	  .ob-ai-control-grid.three{grid-template-columns:repeat(3,minmax(0,1fr));}
+	  .ob-ai-control-field{display:grid;gap:5px;}
+	  .ob-ai-control-field.full{grid-column:1/-1;}
+	  .ob-ai-control-field label{color:rgba(36,24,19,.62);font-size:10px;font-weight:900;letter-spacing:.04em;text-transform:uppercase;}
+	  .ob-ai-control-field input,
+	  .ob-ai-control-field select,
+	  .ob-ai-control-field textarea{background:#fff;border:1px solid rgba(36,24,19,.16);border-radius:10px;color:#241813;font:inherit;font-size:13px;min-height:38px;padding:9px 10px;width:100%;}
+	  .ob-ai-control-field textarea{line-height:1.45;min-height:72px;resize:vertical;}
   #ob-cp-visibility-list{border-top:1px solid var(--gray-200);display:grid;gap:10px;margin-top:10px;padding-top:12px;}
   #ob-cp-visibility-list .ob-cp-vis-title{color:var(--gray-400);font-size:11px;font-weight:900;letter-spacing:.06em;text-transform:uppercase;}
   #ob-cp-visibility-list .ob-cp-vis-row{align-items:center;background:var(--cream);border-radius:10px;display:flex;justify-content:space-between;padding:10px 14px;}
@@ -50170,14 +50274,16 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     #view-4 .ob-ai-custom-page .ob-ai-public-section li{font-size:15px;}
     #ob-content-pages-card .ob-cp-head,
     #ob-content-pages-card .ob-cp-actions,
-    #ob-content-pages-card .ob-cp-editor-top{display:grid;}
-    #ob-content-pages-card .ob-cp-manager,
-    #ob-content-pages-card .ob-cp-grid.two,
-    #ob-content-pages-card .ob-cp-grid.compact,
-    #ob-content-pages-card .ob-cp-widget-types,
-    #ob-content-pages-card .ob-cp-image-row{grid-template-columns:1fr;}
-    #ob-content-pages-card .ob-cp-template{width:100%;}
-  }
+	    #ob-content-pages-card .ob-cp-editor-top{display:grid;}
+	    #ob-content-pages-card .ob-cp-manager,
+	    #ob-content-pages-card .ob-cp-grid.two,
+	    #ob-content-pages-card .ob-cp-grid.compact,
+	    #ob-content-pages-card .ob-cp-widget-types,
+	    #ob-content-pages-card .ob-cp-image-row,
+	    .ob-ai-control-grid,
+	    .ob-ai-control-grid.three{grid-template-columns:1fr;}
+	    #ob-content-pages-card .ob-cp-template{width:100%;}
+	  }
 </style>
 
 <script id="ob-auth-noise-guard-20260517">

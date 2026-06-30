@@ -48737,6 +48737,35 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     expertSlug = safeSlug(expertSlug) || String(location.pathname || '').replace(/^\/+|\/+$/g,'').split('/')[0] || '';
     return '/' + expertSlug + '/' + slug;
   }
+  function pendingAiPageKey(){
+    var pending = String(window._pendingExpertPage || '');
+    var slug = requestedAiPageSlug() || (pending.indexOf('ai-') === 0 ? safeSlug(pending.replace(/^ai-/, '')) : '');
+    return slug ? 'ai-' + slug : '';
+  }
+  function activatePendingAiPageIfReady(){
+    var page = pendingAiPageKey();
+    if(!page) return false;
+    window._pendingExpertPage = page;
+    var el = document.getElementById('ep-' + page);
+    if(!el) return false;
+    if(typeof window.showExpertPage === 'function') {
+      try { window.showExpertPage(page); } catch(e) { return false; }
+    } else {
+      document.querySelectorAll('#view-4 .expert-page,.expert-page').forEach(function(panel){ panel.classList.toggle('active', panel === el); });
+      try { window.scrollTo(0, 0); } catch(e) {}
+    }
+    window._currentEpPage = page;
+    window._pendingExpertPage = page;
+    if(window._obInitialExpertRoutePage === page) window._obInitialExpertRoutePage = '';
+    if(window._obInitialExpertRouteGuardPage === page) window._obInitialExpertRouteGuardPage = '';
+    return true;
+  }
+  function schedulePendingAiPageActivation(){
+    [0,80,240,700,1500,3000].forEach(function(ms){
+      setTimeout(activatePendingAiPageIfReady, ms);
+    });
+  }
+  window.obActivatePendingAiPageIfReady = activatePendingAiPageIfReady;
   function aiPageKey(slug){
     slug = safeSlug(slug || 'book') || 'book';
     var standard = {home:1,about:1,services:1,reviews:1,book:1,contact:1};
@@ -48990,6 +49019,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     var pendingSlug = pendingPage.indexOf('ai-') === 0 ? pendingPage.replace(/^ai-/, '') : '';
     var requestedSlug = requestedAiPageSlug() || safeSlug(pendingSlug);
     var hasRequestedPage = false;
+    var rawHasRequestedPage = rawPages.some(function(page){ return safeSlug(page && page.slug) === requestedSlug; });
     pages.forEach(function(page){
       var slug = safeSlug(page.slug);
       if(!slug) return;
@@ -49032,9 +49062,11 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     });
 	    if(hasRequestedPage) {
 	      window._pendingExpertPage = 'ai-' + requestedSlug;
-	      showExpertPage('ai-' + requestedSlug);
+	      if(!activatePendingAiPageIfReady()) schedulePendingAiPageActivation();
 	    } else if(requestedSlug) {
-	      window._pendingExpertPage = 'home';
+	      window._pendingExpertPage = 'ai-' + requestedSlug;
+	      schedulePendingAiPageActivation();
+	      if(!rawPages.length || rawHasRequestedPage) return;
 	      if(typeof window.showExpertPage === 'function') window.showExpertPage('home');
 	      try {
 	        var parts = String(location.pathname || '').replace(/^\/+|\/+$/g,'').split('/').filter(Boolean);

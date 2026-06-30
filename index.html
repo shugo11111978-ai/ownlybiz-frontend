@@ -48187,19 +48187,21 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   }
   function aiReady(kind){
     if(!editorStatus || !editorStatus.eligible || !editorStatus.configured) return false;
-    if(kind === 'image') return !!editorStatus.media_configured;
-    return true;
+    var c = creditSummary(editorStatus);
+    if(kind === 'image') return !!editorStatus.media_configured && c.available >= c.imageCost;
+    return c.available >= c.previewCost;
   }
   function creditStripHtml(statusData){
     statusData = statusData || {};
     var c = creditSummary(statusData);
     var ready = statusData.eligible && statusData.configured;
+    var hasDraftCredits = ready && c.available >= c.previewCost;
     var checking = /checking/i.test(String(statusData.reason || ''));
-    var title = ready ? 'AI website tools' : (checking ? 'Checking AI tools...' : (statusData.eligible ? 'AI not available yet' : 'AI website tools are Pro / Scale only'));
+    var title = ready ? (hasDraftCredits ? 'AI website tools' : 'AI credits needed') : (checking ? 'Checking AI tools...' : (statusData.eligible ? 'AI not available yet' : 'AI website tools are Pro / Scale only'));
     var detail = ready
       ? c.available + ' credits available · ' + c.included + ' of ' + c.includedLimit + ' monthly credits left · wand drafts cost ' + c.previewCost + ' credits' + (statusData.media_configured ? ' · page image costs ' + c.imageCost : '')
       : (statusData.reason || 'Upgrade to Pro or Scale to use AI website editing.');
-    var badge = ready ? '<div class="ob-help-ai-badge">🪄 Ready</div>' : '';
+    var badge = ready ? '<div class="ob-help-ai-badge">'+(hasDraftCredits ? 'Ready' : 'No credits')+'</div>' : '';
     return '<div class="ob-ai-website-credits" id="ob-ai-website-credits"><div><strong>'+esc(title)+'</strong><span>'+esc(detail)+'</span></div>'+badge+'</div>';
   }
   function ensureAiCreditStrip(){
@@ -48433,25 +48435,28 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     syncSectionWands();
     if(typeof window.obSyncContentPageAiTools === 'function') window.obSyncContentPageAiTools();
   }
-  function editorHtml(statusData){
-    statusData = statusData || {};
-    var c = statusData.credits || {};
-	    var eligible = !!statusData.eligible;
-	    var configured = !!statusData.configured;
-	    var mediaConfigured = !!statusData.media_configured;
-	    var packs = c.packs || [];
-	    var disabled = eligible && configured ? '' : 'disabled';
-	    return '<section class="ob-ai-editor" id="ob-ai-website-editor">' +
-	      '<div class="ob-ai-editor-head"><div><div class="ob-ai-editor-kicker">AI website assistant</div><div class="ob-ai-editor-title">Chat with AI to shape your expert website.</div><p class="ob-ai-editor-copy">Use a default full-site prompt or write your own. AI can improve content, safe sections, images, and look and feel, but it cannot change pricing, checkout, booking, live sessions, Stripe, auth, admin settings, publish status, or add pages in the full-site build flow.</p></div><div class="ob-ai-editor-head-actions"><div class="ob-help-ai-badge '+(eligible && configured ? '' : 'warn')+'">'+(eligible ? (configured ? 'Ready' : 'AI not available yet') : esc(statusData.reason || 'Pro and Scale only'))+'</div><button class="ob-ai-editor-close" type="button" onclick="obAiCloseWebsiteStudio()">Close</button></div></div>' +
+	  function editorHtml(statusData){
+	    statusData = statusData || {};
+	    var c = statusData.credits || {};
+		    var eligible = !!statusData.eligible;
+		    var configured = !!statusData.configured;
+		    var mediaConfigured = !!statusData.media_configured;
+		    var summary = creditSummary(statusData);
+		    var hasDraftCredits = eligible && configured && summary.available >= summary.previewCost;
+		    var packs = c.packs || [];
+		    var disabled = hasDraftCredits ? '' : 'disabled';
+		    return '<section class="ob-ai-editor" id="ob-ai-website-editor">' +
+		      '<div class="ob-ai-editor-head"><div><div class="ob-ai-editor-kicker">AI website assistant</div><div class="ob-ai-editor-title">Chat with AI to shape your expert website.</div><p class="ob-ai-editor-copy">Use a default full-site prompt or write your own. AI can improve content, safe sections, images, and look and feel, but it cannot change pricing, checkout, booking, live sessions, Stripe, auth, admin settings, publish status, or add pages in the full-site build flow.</p></div><div class="ob-ai-editor-head-actions"><div class="ob-help-ai-badge '+(hasDraftCredits ? '' : 'warn')+'">'+(eligible ? (configured ? (hasDraftCredits ? 'Ready' : 'No credits') : 'AI not available yet') : esc(statusData.reason || 'Pro and Scale only'))+'</div><button class="ob-ai-editor-close" type="button" onclick="obAiCloseWebsiteStudio()">Close</button></div></div>' +
 	      '<div class="ob-ai-credit-grid">' +
         creditTile(c.available || 0,'available credits') +
         creditTile(c.included_remaining || 0,'included this month') +
         creditTile(c.purchased_balance || 0,'purchased balance') +
         creditTile((c.preview_cost || 0)+' / '+(c.apply_cost || 0),'preview / apply') +
       '</div>' +
-	      (eligible ? '' : '<div class="ob-ai-result"><h3>Upgrade required</h3><p>'+esc(statusData.reason || 'AI website editing is available on Pro and Scale plans.')+'</p></div>') +
-	      (eligible && !configured ? '<div class="ob-ai-result"><h3>AI not available yet</h3><p>AI website editing is not ready yet. Ask admin to enable it.</p></div>' : '') +
-	      (eligible && configured && !mediaConfigured ? '<div class="ob-ai-result"><h3>Images not ready yet</h3><p>Text editing is ready. Image generation will appear here when admin enables website images.</p></div>' : '') +
+		      (eligible ? '' : '<div class="ob-ai-result"><h3>Upgrade required</h3><p>'+esc(statusData.reason || 'AI website editing is available on Pro and Scale plans.')+'</p></div>') +
+		      (eligible && !configured ? '<div class="ob-ai-result"><h3>AI not available yet</h3><p>AI website editing is not ready yet. Ask admin to enable it.</p></div>' : '') +
+		      (eligible && configured && !hasDraftCredits ? '<div class="ob-ai-result"><h3>AI credits needed</h3><p>'+esc(summary.available + ' credits available. Website drafts cost ' + summary.previewCost + ' credits.')+'</p>'+renderCreditBuyInline(statusData)+'</div>' : '') +
+		      (eligible && configured && !mediaConfigured ? '<div class="ob-ai-result"><h3>Images not ready yet</h3><p>Text editing is ready. Image generation will appear here when admin enables website images.</p></div>' : '') +
 	      '<div class="ob-ai-editor-form">' +
 	        '<select id="ob-ai-editor-mode" '+disabled+'><option value="site_setup">Build my site from my profile (no new pages)</option><option value="improve">Improve the current website</option><option value="add_section">Add a safe section</option><option value="rewrite_services">Rewrite service explanations</option><option value="brand_media">Create visual/media direction</option><option value="launch_polish">Launch polish pass</option></select>' +
 	        '<textarea id="ob-ai-editor-prompt" '+disabled+' placeholder="Example: Use what you know about me to improve my homepage, about text, services copy, contact text, visual direction, and website images. Do not add pages or change pricing, booking, payments, or publishing."></textarea>' +
@@ -48462,8 +48467,9 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   }
   function aiReadyForFields(meta){
     if(!editorStatus || !editorStatus.eligible || !editorStatus.configured) return false;
-    if(meta && meta.kind === 'image') return !!editorStatus.media_configured;
-    return true;
+    var c = creditSummary(editorStatus);
+    if(meta && meta.kind === 'image') return !!editorStatus.media_configured && c.available >= c.imageCost;
+    return c.available >= c.previewCost;
   }
   function syncFieldWands(){
     document.querySelectorAll('.ob-ai-field-wand').forEach(function(btn){ btn.remove(); });
@@ -49343,16 +49349,21 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
         image_url: imageValue(firstSection.image_url)
       }]
     };
-  }
-  function ensureEditor(){
-    if(document.getElementById('ob-content-pages-card')) return;
-    var firstPagesCard = document.querySelector('.we-tab-card[data-we-tab="pages"]');
-    if(!firstPagesCard || !firstPagesCard.parentNode) return;
-    var card = document.createElement('div');
-    card.id = 'ob-content-pages-card';
-    card.className = 'db-card we-tab-card';
-    card.setAttribute('data-we-tab','pages');
-    card.style.cssText = 'margin-bottom:16px;padding:24px;';
+	  }
+	  function ensureEditor(){
+	    var existing = document.getElementById('ob-content-pages-card');
+	    if(existing) {
+	      existing.setAttribute('data-ob-pages-section','custom');
+	      return;
+	    }
+	    var firstPagesCard = document.querySelector('.we-tab-card[data-we-tab="pages"]');
+	    if(!firstPagesCard || !firstPagesCard.parentNode) return;
+	    var card = document.createElement('div');
+	    card.id = 'ob-content-pages-card';
+	    card.className = 'db-card we-tab-card';
+	    card.setAttribute('data-we-tab','pages');
+	    card.setAttribute('data-ob-pages-section','custom');
+	    card.style.cssText = 'margin-bottom:16px;padding:24px;';
     card.innerHTML =
       '<div class="ob-cp-head">' +
         '<div><div class="ob-cp-title">Content Pages</div><div class="ob-cp-sub">Add articles, guides, FAQs, resources, or any custom page for your public expert site.</div></div>' +
@@ -49530,27 +49541,31 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   function aiStatus(){
     return typeof window.obAiWebsiteStatus === 'function' ? (window.obAiWebsiteStatus() || {}) : {};
   }
-  function aiReady(kind){
-    var s = aiStatus();
-    if(!s.eligible || !s.configured) return false;
-    if(kind === 'image') return !!s.media_configured;
-    return true;
-  }
-  function aiCreditsText(){
-    var c = aiStatus().credits || {};
-    var available = Number(c.available || 0);
-    var preview = Number(c.preview_cost || 4);
-    var image = Number(c.image_cost || 24);
-    return available + ' credits available. Page draft costs ' + preview + ' credits' + (aiReady('image') ? '; header image costs ' + image + ' more.' : '.');
-  }
+	  function aiReady(kind){
+	    var s = aiStatus();
+	    if(!s.eligible || !s.configured) return false;
+	    var c = s.credits || {};
+	    var available = Number(c.available || 0);
+	    var preview = Number(c.preview_cost || 4);
+	    var image = Number(c.image_cost || 24);
+	    if(kind === 'image') return !!s.media_configured && available >= image;
+	    return available >= preview;
+	  }
+	  function aiCreditsText(){
+	    var c = aiStatus().credits || {};
+	    var available = Number(c.available || 0);
+	    var preview = Number(c.preview_cost || 4);
+	    var image = Number(c.image_cost || 24);
+	    return available + ' credits available. Page draft costs ' + preview + ' credits' + (aiReady('image') ? '; header image costs ' + image + ' more.' : '.');
+	  }
 	  function syncContentPageAiTools(){
 	    var ready = aiReady();
 	    var atLimit = state.pages.length >= pageLimit();
-	    document.querySelectorAll('#ob-content-pages-card .ob-ai-page-wand').forEach(function(btn){
-	      btn.disabled = !ready || !state.allowed;
-	      btn.title = !state.allowed ? 'Custom pages are Pro / Scale only' : (!ready ? ((aiStatus().reason || 'AI website editing is not available yet')) : (aiCreditsText() + (atLimit ? ' Page limit reached: AI will fill the selected page draft instead of adding another page.' : '')));
-	    });
-	  }
+		    document.querySelectorAll('#ob-content-pages-card .ob-ai-page-wand').forEach(function(btn){
+		      btn.disabled = !ready || !state.allowed;
+		      btn.title = !state.allowed ? 'Custom pages are Pro / Scale only' : (!ready ? (aiCreditsText() || aiStatus().reason || 'AI website editing is not available yet') : (aiCreditsText() + (atLimit ? ' Page limit reached: AI will fill the selected page draft instead of adding another page.' : '')));
+		    });
+		  }
 	  window.obSyncContentPageAiTools = syncContentPageAiTools;
 	  function pageAiControl(id, fallback, max){
 	    var el = document.getElementById(id);
@@ -50298,9 +50313,515 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
 	    .ob-ai-control-grid.three{grid-template-columns:1fr;}
 	    #ob-content-pages-card .ob-cp-template{width:100%;}
 	  }
-</style>
+	</style>
+	<style id="ob-website-editor-workspace-20260630">
+	  #db-panel-website-editor .ob-website-workspace{
+	    max-width:1180px!important;
+	    width:100%!important;
+	  }
+	  #db-panel-website-editor .ob-website-workspace *,
+	  #db-panel-website-editor .ob-website-workspace *::before,
+	  #db-panel-website-editor .ob-website-workspace *::after{box-sizing:border-box;}
+	  #ob-website-workspace-header{margin:0 0 16px;}
+	  #ob-website-workspace-header .ob-website-workspace-top{
+	    align-items:end;
+	    display:grid;
+	    gap:14px;
+	    grid-template-columns:minmax(0,1fr) auto;
+	    margin-bottom:12px;
+	  }
+	  #ob-website-workspace-header .ob-website-kicker{
+	    color:var(--terra);
+	    font-size:11px;
+	    font-weight:900;
+	    letter-spacing:.08em;
+	    margin-bottom:5px;
+	    text-transform:uppercase;
+	  }
+	  #ob-website-workspace-header h2{
+	    color:var(--brown);
+	    font-size:30px;
+	    font-weight:900;
+	    letter-spacing:0;
+	    line-height:1.1;
+	    margin:0;
+	  }
+	  #ob-website-workspace-header p{
+	    color:var(--gray-400);
+	    font-size:13px;
+	    font-weight:700;
+	    line-height:1.45;
+	    margin:7px 0 0;
+	    overflow-wrap:anywhere;
+	  }
+	  #ob-website-workspace-actions{
+	    align-items:center;
+	    display:flex;
+	    flex-wrap:wrap;
+	    gap:8px;
+	    justify-content:flex-end;
+	  }
+	  #ob-website-workspace-actions .btn{
+	    align-items:center!important;
+	    display:inline-flex!important;
+	    justify-content:center!important;
+	    min-height:38px!important;
+	    white-space:nowrap!important;
+	  }
+	  #ob-website-status-grid{
+	    display:grid;
+	    gap:10px;
+	    grid-template-columns:repeat(4,minmax(0,1fr));
+	    margin-bottom:16px;
+	  }
+	  #ob-website-status-grid .ob-website-status-card{
+	    background:var(--white);
+	    border:1px solid var(--gray-200);
+	    border-radius:10px;
+	    color:var(--brown);
+	    display:grid;
+	    gap:3px;
+	    min-height:72px;
+	    padding:12px 13px;
+	    text-align:left;
+	    width:100%;
+	  }
+	  #ob-website-status-grid button.ob-website-status-card{
+	    cursor:pointer;
+	    font:inherit;
+	  }
+	  #ob-website-status-grid button.ob-website-status-card:hover,
+	  #ob-website-status-grid button.ob-website-status-card:focus-visible{
+	    border-color:var(--terra);
+	    box-shadow:0 0 0 3px rgba(196,98,45,.1);
+	    outline:none;
+	  }
+	  #ob-website-status-grid .ob-website-status-card span{
+	    color:var(--gray-400);
+	    font-size:10px;
+	    font-weight:900;
+	    letter-spacing:.08em;
+	    text-transform:uppercase;
+	  }
+	  #ob-website-status-grid .ob-website-status-card strong{
+	    color:var(--brown);
+	    font-size:15px;
+	    font-weight:900;
+	    line-height:1.2;
+	    overflow:hidden;
+	    text-overflow:ellipsis;
+	    white-space:nowrap;
+	  }
+	  #ob-website-status-grid .ob-website-status-card small{
+	    color:var(--gray-400);
+	    font-size:11px;
+	    font-weight:700;
+	    line-height:1.35;
+	  }
+	  #ob-website-status-grid .ob-website-status-card.ready{border-color:rgba(122,140,110,.45);}
+	  #ob-website-status-grid .ob-website-status-card.warn{border-color:rgba(180,35,24,.28);background:#fff7f5;}
+	  #db-panel-website-editor .ob-website-workspace #we-tabs{
+	    display:grid!important;
+	    grid-template-columns:repeat(4,minmax(116px,1fr))!important;
+	    margin-bottom:12px!important;
+	    overflow-x:auto!important;
+	  }
+	  #db-panel-website-editor .ob-website-workspace .we-tab{
+	    align-items:center!important;
+	    display:flex!important;
+	    justify-content:center!important;
+	    min-height:40px!important;
+	    padding:9px 12px!important;
+	  }
+	  #ob-website-local-nav{
+	    align-items:center;
+	    display:flex;
+	    gap:8px;
+	    margin:0 0 16px;
+	    overflow-x:auto;
+	    padding-bottom:2px;
+	  }
+	  #ob-website-local-nav[hidden]{display:none!important;}
+	  #ob-website-local-nav button{
+	    background:var(--white);
+	    border:1px solid var(--gray-200);
+	    border-radius:10px;
+	    color:var(--gray-400);
+	    cursor:pointer;
+	    flex:0 0 auto;
+	    font:inherit;
+	    font-size:12px;
+	    font-weight:900;
+	    min-height:36px;
+	    padding:8px 12px;
+	    white-space:nowrap;
+	  }
+	  #ob-website-local-nav button.active{
+	    background:rgba(196,98,45,.09);
+	    border-color:var(--terra);
+	    color:var(--terra);
+	  }
+	  #ob-website-local-nav button:hover,
+	  #ob-website-local-nav button:focus-visible{
+	    border-color:var(--terra);
+	    color:var(--brown);
+	    outline:none;
+	  }
+	  #db-panel-website-editor .ob-workspace-section-hidden{display:none!important;}
+	  #db-panel-website-editor .ob-website-workspace .we-tab-card[data-we-tab].we-tab-visible{
+	    animation:panelIn .16s ease-out;
+	  }
+	  #db-panel-website-editor .ob-website-workspace #ob-content-pages-card .ob-cp-manager{
+	    grid-template-columns:minmax(240px,320px) minmax(0,1fr);
+	  }
+	  #db-panel-website-editor .ob-website-workspace #ob-content-pages-card .ob-cp-list-wrap,
+	  #db-panel-website-editor .ob-website-workspace #ob-content-pages-card .ob-cp-editor{
+	    min-width:0;
+	  }
+	  #db-panel-website-editor .ob-ai-page-wand:disabled,
+	  #db-panel-website-editor .ob-ai-section-wand:disabled{
+	    cursor:not-allowed!important;
+	    opacity:.48!important;
+	  }
+	  @media(max-width:920px){
+	    #ob-website-workspace-header .ob-website-workspace-top{grid-template-columns:1fr;}
+	    #ob-website-workspace-actions{justify-content:flex-start;}
+	    #ob-website-status-grid{grid-template-columns:repeat(2,minmax(0,1fr));}
+	    #db-panel-website-editor .ob-website-workspace #ob-content-pages-card .ob-cp-manager{grid-template-columns:1fr;}
+	  }
+	  @media(max-width:620px){
+	    #ob-website-workspace-header h2{font-size:26px;}
+	    #ob-website-status-grid{grid-template-columns:1fr;}
+	    #db-panel-website-editor .ob-website-workspace #we-tabs{
+	      grid-auto-columns:minmax(112px,1fr)!important;
+	      grid-auto-flow:column!important;
+	      grid-template-columns:none!important;
+	    }
+	    #ob-website-workspace-actions .btn{flex:1 1 140px!important;}
+	  }
+	</style>
+	<script id="ob-website-editor-workspace-20260630">
+	(function(){
+	  'use strict';
+	  if(window.__obWebsiteEditorWorkspace20260630) return;
+	  window.__obWebsiteEditorWorkspace20260630 = true;
+	  var setupSection = 'basics';
+	  var pagesSection = 'custom';
+	  var enhanceTimer = 0;
+	  var setupItems = [
+	    {key:'basics', label:'Basics'},
+	    {key:'homepage', label:'Homepage'},
+	    {key:'story', label:'Story'},
+	    {key:'trust', label:'Trust'},
+	    {key:'services', label:'Services'},
+	    {key:'footer', label:'Footer'}
+	  ];
+	  var pageItems = [
+	    {key:'custom', label:'Content pages'},
+	    {key:'visibility', label:'Visibility'},
+	    {key:'system', label:'Built-in pages'},
+	    {key:'navigation', label:'Menu labels'},
+	    {key:'services', label:'Services copy'}
+	  ];
+	  function ready(fn){
+	    if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fn, {once:true});
+	    else fn();
+	  }
+	  function q(sel, root){ return (root || document).querySelector(sel); }
+	  function qa(sel, root){ return Array.prototype.slice.call((root || document).querySelectorAll(sel)); }
+	  function esc(value){
+	    return String(value == null ? '' : value).replace(/[&<>"']/g,function(c){
+	      return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+	    });
+	  }
+	  function tabFromButton(btn){
+	    var m = String(btn && btn.getAttribute('onclick') || '').match(/weTabSwitch\(['"]([^'"]+)['"]\)/);
+	    return m && m[1] || '';
+	  }
+	  function activeTab(){
+	    var active = q('#we-tabs .we-tab.active');
+	    return tabFromButton(active) || window._obCurrentWeTab || ((q('.we-tab-card.we-tab-visible') || {}).dataset || {}).weTab || 'content';
+	  }
+	  function cardText(card){
+	    return String(card && card.textContent || '').replace(/\s+/g,' ').trim().toLowerCase();
+	  }
+	  function tagSetupCards(){
+	    qa('#db-panel-website-editor .we-tab-card[data-we-tab="content"]').forEach(function(card){
+	      if(card.getAttribute('data-ob-setup-section')) return;
+	      var text = cardText(card);
+	      if(text.indexOf('profile basics') >= 0) card.setAttribute('data-ob-setup-section','basics');
+	      else if(text.indexOf('homepage action') >= 0) card.setAttribute('data-ob-setup-section','homepage');
+	      else if(text.indexOf('about page story') >= 0) card.setAttribute('data-ob-setup-section','story');
+	      else if(text.indexOf('credentials') >= 0) card.setAttribute('data-ob-setup-section','trust');
+	      else if(text.indexOf('services display') >= 0) card.setAttribute('data-ob-setup-section','services');
+	      else if(text.indexOf('footer') >= 0) card.setAttribute('data-ob-setup-section','footer');
+	    });
+	  }
+	  function tagPagesCards(){
+	    qa('#db-panel-website-editor .we-tab-card[data-we-tab="pages"]').forEach(function(card){
+	      if(card.id === 'ob-content-pages-card') {
+	        card.setAttribute('data-ob-pages-section','custom');
+	        return;
+	      }
+	      if(card.getAttribute('data-ob-pages-section')) return;
+	      var text = cardText(card);
+	      if(text.indexOf('page visibility') >= 0) card.setAttribute('data-ob-pages-section','visibility');
+	      else if(text.indexOf('navigation labels') >= 0) card.setAttribute('data-ob-pages-section','navigation');
+	      else if(text.indexOf('services page content') >= 0) card.setAttribute('data-ob-pages-section','services');
+	      else if(text.indexOf('contact page') >= 0 || text.indexOf('about page') >= 0) card.setAttribute('data-ob-pages-section','system');
+	    });
+	  }
+	  function hasSection(tab, attr, key){
+	    return !!q('#db-panel-website-editor .we-tab-card[data-we-tab="'+tab+'"]['+attr+'="'+key+'"]');
+	  }
+	  function validSection(tab){
+	    var attr = tab === 'pages' ? 'data-ob-pages-section' : 'data-ob-setup-section';
+	    var current = tab === 'pages' ? pagesSection : setupSection;
+	    if(hasSection(tab, attr, current)) return current;
+	    var first = q('#db-panel-website-editor .we-tab-card[data-we-tab="'+tab+'"]['+attr+']');
+	    current = first ? first.getAttribute(attr) : current;
+	    if(tab === 'pages') pagesSection = current || 'custom';
+	    else setupSection = current || 'basics';
+	    return current;
+	  }
+	  function ensureLocalNav(){
+	    var tabs = q('#we-tabs');
+	    if(!tabs || !tabs.parentNode) return null;
+	    var nav = q('#ob-website-local-nav');
+	    if(!nav) {
+	      nav = document.createElement('div');
+	      nav.id = 'ob-website-local-nav';
+	      nav.setAttribute('aria-label','Website editor section');
+	      tabs.parentNode.insertBefore(nav, tabs.nextSibling);
+	    }
+	    return nav;
+	  }
+	  function renderLocalNav(){
+	    tagSetupCards();
+	    tagPagesCards();
+	    var tab = activeTab();
+	    var nav = ensureLocalNav();
+	    if(!nav) return;
+	    var items = tab === 'content' ? setupItems : (tab === 'pages' ? pageItems : []);
+	    if(!items.length) {
+	      nav.hidden = true;
+	      if(nav.innerHTML) nav.innerHTML = '';
+	      return;
+	    }
+	    var attr = tab === 'pages' ? 'data-ob-pages-section' : 'data-ob-setup-section';
+	    var selected = validSection(tab);
+	    nav.hidden = false;
+	    var nextHtml = items.filter(function(item){ return hasSection(tab, attr, item.key); }).map(function(item){
+	      return '<button type="button" class="'+(item.key === selected ? 'active' : '')+'" data-ob-website-section="'+esc(tab+':'+item.key)+'">'+esc(item.label)+'</button>';
+	    }).join('');
+	    if(nav.innerHTML !== nextHtml) nav.innerHTML = nextHtml;
+	  }
+	  function applySectionVisibility(){
+	    var tab = activeTab();
+	    tagSetupCards();
+	    tagPagesCards();
+	    if(tab === 'content') setupSection = validSection('content') || setupSection;
+	    if(tab === 'pages') pagesSection = validSection('pages') || pagesSection;
+	    qa('#db-panel-website-editor .we-tab-card[data-we-tab="content"][data-ob-setup-section]').forEach(function(card){
+	      card.classList.toggle('ob-workspace-section-hidden', tab === 'content' && card.getAttribute('data-ob-setup-section') !== setupSection);
+	    });
+	    qa('#db-panel-website-editor .we-tab-card[data-we-tab="pages"][data-ob-pages-section]').forEach(function(card){
+	      card.classList.toggle('ob-workspace-section-hidden', tab === 'pages' && card.getAttribute('data-ob-pages-section') !== pagesSection);
+	    });
+	  }
+	  function profileValue(id){
+	    var el = document.getElementById(id);
+	    return String(el && el.value || '').trim();
+	  }
+	  function currentSlug(){
+	    var input = profileValue('we-profile-public-link');
+	    if(input) return input.replace(/^https?:\/\//,'').replace(/\.ownlybiz\.com.*$/,'').replace(/^\/+/,'').split('/')[0];
+	    try {
+	      if(typeof window._getMySlug === 'function') return window._getMySlug() || '';
+	    } catch(e) {}
+	    var data = window._websiteData || {};
+	    return data.slug || (data.user && data.user.slug) || '';
+	  }
+	  function contentPageCount(){
+	    var countText = (q('#ob-cp-count') || {}).textContent || '';
+	    var m = countText.match(/\d+/);
+	    if(m) return Number(m[0]);
+	    try {
+	      var wc = window._websiteData && window._websiteData.website_content;
+	      wc = typeof wc === 'string' ? JSON.parse(wc || '{}') : (wc || {});
+	      return Array.isArray(wc.ai_pages) ? wc.ai_pages.length : 0;
+	    } catch(e) { return 0; }
+	  }
+	  function aiCreditSummary(){
+	    var status = {};
+	    try {
+	      status = typeof window.obAiWebsiteStatus === 'function' ? (window.obAiWebsiteStatus() || {}) : {};
+	    } catch(e) {}
+	    var c = status.credits || {};
+	    var available = Number(c.available || 0);
+	    var preview = Number(c.preview_cost || 4);
+	    return {
+	      available: available,
+	      preview: preview,
+	      ready: !!(status.eligible && status.configured && available >= preview),
+	      configured: !!(status.eligible && status.configured)
+	    };
+	  }
+	  function basicsReady(){
+	    return !!(profileValue('we-profile-name') && profileValue('we-profile-title') && profileValue('we-profile-specialty') && profileValue('we-profile-bio') && currentSlug());
+	  }
+	  function selectedTheme(){
+	    var card = q('#we-theme-grid .we-theme-card.selected');
+	    return (card && card.textContent || '').replace(/\s+/g,' ').trim() || 'Warm Earth';
+	  }
+	  function statusCard(jump, label, value, detail, tone){
+	    var tag = jump ? 'button' : 'div';
+	    return '<'+tag+' class="ob-website-status-card '+esc(tone || '')+'" '+(jump ? 'type="button" data-ob-website-jump="'+esc(jump)+'"' : '')+'>' +
+	      '<span>'+esc(label)+'</span><strong>'+esc(value)+'</strong><small>'+esc(detail)+'</small></'+tag+'>';
+	  }
+	  function updateHeaderData(){
+	    var link = q('#ob-website-public-link');
+	    var slug = currentSlug();
+	    var linkText = slug ? '/'+slug : 'Public link not set';
+	    if(link && link.textContent !== linkText) link.textContent = linkText;
+	    var ai = aiCreditSummary();
+	    var count = contentPageCount();
+	    var ready = basicsReady();
+	    var grid = q('#ob-website-status-grid');
+	    if(grid) {
+	      var gridHtml =
+	        statusCard('content:basics','Basics',ready ? 'Ready' : 'Missing',ready ? 'Profile basics' : 'Required fields',ready ? 'ready' : 'warn') +
+	        statusCard('pages:custom','Content pages',count + ' page' + (count === 1 ? '' : 's'),'Custom public pages',count ? 'ready' : '') +
+	        statusCard('design','Style',selectedTheme(),'Theme and appearance','') +
+	        statusCard('', 'AI credits', ai.available + ' available', ai.configured ? (ai.ready ? 'Ready for drafts' : 'Need credits') : 'Unavailable', ai.ready ? 'ready' : 'warn');
+	      if(grid.innerHTML !== gridHtml) grid.innerHTML = gridHtml;
+	    }
+	  }
+	  function ensureWorkspaceHeader(){
+	    var content = q('#db-panel-website-editor .db-content');
+	    var tabs = q('#we-tabs');
+	    if(!content || !tabs) return;
+	    content.classList.add('ob-website-workspace');
+	    var header = q('#ob-website-workspace-header');
+	    if(!header) {
+	      header = document.createElement('section');
+	      header.id = 'ob-website-workspace-header';
+	      header.innerHTML =
+	        '<div class="ob-website-workspace-top">' +
+	          '<div><div class="ob-website-kicker">Edit website</div><h2>Public website</h2><p id="ob-website-public-link"></p></div>' +
+	          '<div id="ob-website-workspace-actions"></div>' +
+	        '</div>' +
+	        '<div id="ob-website-status-grid"></div>';
+	      content.insertBefore(header, tabs);
+	    }
+	    var actions = q('#ob-website-workspace-actions');
+	    var save = q('#we-save-btn');
+	    var preview = qa('button', content).find(function(btn){
+	      return String(btn.getAttribute('onclick') || '').indexOf('_openMyWebsite') >= 0;
+	    });
+	    var oldWrap = save && actions && !actions.contains(save) ? save.parentElement && save.parentElement.parentElement : null;
+	    if(preview && actions && !actions.contains(preview)) {
+	      preview.textContent = 'Preview site';
+	      actions.appendChild(preview);
+	    }
+	    if(save && actions && !actions.contains(save)) {
+	      save.textContent = 'Save changes';
+	      actions.appendChild(save);
+	    }
+	    if(preview && preview.textContent !== 'Preview site') preview.textContent = 'Preview site';
+	    if(save && save.textContent !== 'Save changes') save.textContent = 'Save changes';
+	    if(oldWrap && oldWrap.parentNode && oldWrap.id !== 'ob-website-workspace-header') oldWrap.style.display = 'none';
+	    updateHeaderData();
+	  }
+	  function renameTabs(){
+	    var labels = {content:'Setup', pages:'Pages', design:'Style', media:'Media'};
+	    qa('#we-tabs .we-tab').forEach(function(btn){
+	      var tab = tabFromButton(btn);
+	      if(labels[tab] && btn.textContent.trim() !== labels[tab]) btn.textContent = labels[tab];
+	    });
+	  }
+	  function switchEditorTab(tab){
+	    var btn = qa('#we-tabs .we-tab').find(function(item){ return tabFromButton(item) === tab; });
+	    if(btn) btn.click();
+	    else if(typeof window.weTabSwitch === 'function') {
+	      try { window.weTabSwitch(tab); } catch(e) {}
+	    }
+	  }
+	  function enhance(){
+	    ensureWorkspaceHeader();
+	    renameTabs();
+	    renderLocalNav();
+	    applySectionVisibility();
+	    updateHeaderData();
+	  }
+	  function scheduleEnhance(){
+	    clearTimeout(enhanceTimer);
+	    enhanceTimer = setTimeout(enhance, 30);
+	  }
+	  window.obWebsiteEditorSection = function(tab, key){
+	    tab = tab === 'setup' ? 'content' : tab;
+	    if(tab === 'content') setupSection = key || setupSection;
+	    if(tab === 'pages') pagesSection = key || pagesSection;
+	    applySectionVisibility();
+	    renderLocalNav();
+	    updateHeaderData();
+	  };
+	  function wrap(name, wrapper){
+	    var current = window[name];
+	    if(typeof current !== 'function' || current._obWebsiteWorkspaceWrapped) return;
+	    var next = wrapper(current);
+	    next._obWebsiteWorkspaceWrapped = true;
+	    window[name] = next;
+	  }
+	  function installWrappers(){
+	    wrap('loadWebsiteEditor', function(old){
+	      return function(){
+	        var result = old.apply(this, arguments);
+	        [80,450,1200].forEach(function(ms){ setTimeout(enhance, ms); });
+	        return result;
+	      };
+	    });
+	    wrap('weTabSwitch', function(old){
+	      return function(tab){
+	        if(tab) window._obCurrentWeTab = tab;
+	        var result;
+	        try { result = old.apply(this, arguments); } catch(e) {}
+	        if(tab === 'pages' && hasSection('pages','data-ob-pages-section','custom')) pagesSection = pagesSection || 'custom';
+	        scheduleEnhance();
+	        return result;
+	      };
+	    });
+	  }
+	  document.addEventListener('click', function(ev){
+	    var sectionBtn = ev.target.closest && ev.target.closest('[data-ob-website-section]');
+	    var jumpBtn = ev.target.closest && ev.target.closest('[data-ob-website-jump]');
+	    var raw = sectionBtn ? sectionBtn.getAttribute('data-ob-website-section') : (jumpBtn ? jumpBtn.getAttribute('data-ob-website-jump') : '');
+	    if(!raw) return;
+	    ev.preventDefault();
+	    var parts = raw.split(':');
+	    var tab = parts[0] === 'setup' ? 'content' : parts[0];
+	    var section = parts[1] || '';
+	    if(tab && tab !== activeTab()) switchEditorTab(tab);
+	    if(section) window.obWebsiteEditorSection(tab, section);
+	    else scheduleEnhance();
+	  });
+	  document.addEventListener('input', function(ev){
+	    if(ev.target && ev.target.closest && ev.target.closest('#db-panel-website-editor')) scheduleEnhance();
+	  });
+	  ready(function(){
+	    installWrappers();
+	    enhance();
+	    [200,700,1600,3200].forEach(function(ms){ setTimeout(enhance, ms); });
+	    var panel = q('#db-panel-website-editor');
+	    if(panel && window.MutationObserver) {
+	      var observer = new MutationObserver(function(){ scheduleEnhance(); });
+	      observer.observe(panel, {childList:true, subtree:true});
+	    }
+	  });
+	})();
+	</script>
 
-<script id="ob-auth-noise-guard-20260517">
+	<script id="ob-auth-noise-guard-20260517">
 (function(){
   'use strict';
   if(window.__obAuthNoiseGuard20260517) return;

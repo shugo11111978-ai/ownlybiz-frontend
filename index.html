@@ -9067,6 +9067,7 @@ if (!window.toast) {
 </div><!-- end view-5 -->
 
 
+<link rel="stylesheet" href="/assets/admin-tracking.css">
 <!-- ===== VIEW 6: ADMIN PANEL ===== -->
 <div class="view-panel" id="view-6">
   <div class="admin-layout">
@@ -9081,6 +9082,7 @@ if (!window.toast) {
 	      <div class="admin-nav-item" onclick="adminNav(this,'experts')"><span aria-hidden="true"></span> Experts</div>
 	      <div class="admin-nav-item" onclick="adminNav(this,'revenue')"><span aria-hidden="true"></span> Revenue</div>
 	      <div class="admin-nav-item" onclick="adminNav(this,'analytics')"><span aria-hidden="true"></span> Analytics</div>
+	      <div class="admin-nav-item" id="ob-admin-tracking-nav" onclick="obOpenAdminTracking(this)"><span aria-hidden="true"></span> Tracking &amp; Ads</div>
 	      <div class="admin-nav-section">Operations</div>
       <div class="admin-nav-item" onclick="adminNav(this,'payouts')"><span>💸</span> Payouts <span style="background:rgba(245,158,11,.3);color:#f59e0b;font-size:10px;padding:1px 6px;border-radius:100px;margin-left:auto;">8 pending</span></div>
 	      <div class="admin-nav-item" onclick="adminNav(this,'moderation')"><span>🛡️</span> Moderation <span style="background:rgba(239,68,68,.2);color:#f87171;font-size:10px;padding:1px 6px;border-radius:100px;margin-left:auto;">3</span></div>
@@ -9119,6 +9121,7 @@ if (!window.toast) {
 	        <div class="admin-tab" onclick="adminTabSwitch(this,'experts')">Experts</div>
 	        <div class="admin-tab" onclick="adminTabSwitch(this,'revenue')">Revenue</div>
 		        <div class="admin-tab" onclick="adminTabSwitch(this,'analytics')">Analytics</div>
+	        <div class="admin-tab" id="ob-admin-tracking-tab" onclick="obOpenAdminTracking(this)">Tracking &amp; Ads</div>
 		        <div class="admin-tab" onclick="adminTabSwitch(this,'privacy-gdpr')">Privacy</div>
 		        <div class="admin-tab" onclick="adminTabSwitch(this,'payouts')">Payouts</div>
         <div class="admin-tab" onclick="adminTabSwitch(this,'fee-config')">Fee Config</div>
@@ -9249,6 +9252,13 @@ if (!window.toast) {
 		          <div class="admin-card" style="padding:28px;color:rgba(246,241,233,.55);">
 		            Loading marketing analytics...
 		          </div>
+		        </div>
+		      </div>
+
+		      <!-- ========== TRACKING & ADS PANEL ========== -->
+		      <div class="admin-tab-panel" id="admin-panel-tracking-ads">
+		        <div class="admin-content" id="ob-admin-tracking-root">
+		          <div class="admin-card ob-tracking-loading">Loading the Tracking &amp; Ads service...</div>
 		        </div>
 		      </div>
 
@@ -9407,7 +9417,8 @@ if (!window.toast) {
 	            <div class="platform-setting-block">
 	              <div class="ps-block-title">Platform Analytics</div>
 	              <div class="ps-row"><div class="ps-label">GA4 Measurement ID</div><input type="text" class="admin-input" id="platform_ga4_id" name="platform_ga4_id" placeholder="G-XXXXXXXXXX" style="width:180px;font-family:monospace;text-transform:uppercase;"></div>
-	              <div style="font-size:11px;color:rgba(246,241,233,.42);line-height:1.5;margin-top:8px;">Used for Ownlybiz platform traffic. Expert sites can still set their own GA4 ID in expert Settings.</div>
+	              <div style="font-size:11px;color:rgba(246,241,233,.42);line-height:1.5;margin-top:8px;">Kept for compatibility with current Ownlybiz GA4 traffic. New provider setup, consent controls, event mappings, tests, and delivery logs live in Tracking &amp; Ads. Expert-site GA4 remains separate.</div>
+	              <button type="button" class="admin-action-btn" style="margin-top:10px;" onclick="obOpenAdminTracking();return false;">Open Tracking &amp; Ads</button>
 	            </div>
 	            <div class="platform-setting-block">
 	              <div class="ps-block-title">Platform Toggles</div>
@@ -29773,14 +29784,40 @@ window._handleRTCMessage=function(d){
   function getConsent(){
     try { return JSON.parse(localStorage.getItem(CONSENT_KEY) || '{}'); } catch(e){ return {}; }
   }
+  function nextConsentUpdatedAt(previousUpdatedAt, nowMs){
+    var previousMs = Date.parse(String(previousUpdatedAt || ''));
+    var nextMs = Number(nowMs);
+    if(!isFinite(nextMs)) nextMs = Date.now();
+    if(isFinite(previousMs)) nextMs = Math.max(nextMs, previousMs + 1);
+    return new Date(nextMs).toISOString();
+  }
   function setConsent(value){
-    var payload = Object.assign({necessary:true, analytics:false, marketing:false, updated_at:new Date().toISOString()}, value || {});
+    var previous = getConsent();
+    var policyVersion = 'tracking-consent-2026-07';
+    try {
+      if(window.OBPlatformTracking && typeof window.OBPlatformTracking.policyVersion === 'function') policyVersion = window.OBPlatformTracking.policyVersion() || policyVersion;
+    } catch(e) {}
+    var consentId = previous.consent_id || '';
+    try { if(!consentId) consentId = window.crypto && window.crypto.randomUUID ? window.crypto.randomUUID() : String(Date.now()) + '-' + Math.random().toString(16).slice(2); } catch(e) { consentId = String(Date.now()) + '-' + Math.random().toString(16).slice(2); }
+    var consentValue = Object.assign({}, value || {});
+    delete consentValue.updated_at;
+    var payload = Object.assign({necessary:true, analytics:false, marketing:false, updated_at:nextConsentUpdatedAt(previous.updated_at, Date.now()), policy_version:policyVersion, consent_id:consentId}, consentValue);
+    if(previous.consent_receipt_id && payload.analytics === previous.analytics && payload.marketing === previous.marketing && payload.policy_version === previous.policy_version) payload.consent_receipt_id = previous.consent_receipt_id;
+    else delete payload.consent_receipt_id;
     try { localStorage.setItem(CONSENT_KEY, JSON.stringify(payload)); } catch(e) {}
+    var dispatched = false;
+    try { window.dispatchEvent(new CustomEvent('ob:privacy-consent-changed', {detail:payload})); dispatched = true; } catch(e) {}
+    if(!dispatched){
+      try { if(window.OBPlatformTracking && typeof window.OBPlatformTracking.consentChanged === 'function') window.OBPlatformTracking.consentChanged(payload); } catch(e) {}
+    }
     return payload;
   }
 	  function hasConsentChoice(){ return !!getConsent().updated_at; }
 	  function hasAnalyticsConsent(){ return getConsent().analytics === true; }
+	  function hasMarketingConsent(){ return getConsent().marketing === true; }
+	  window.obGetPrivacyConsent = getConsent;
 	  window.obHasAnalyticsConsent = hasAnalyticsConsent;
+	  window.obHasMarketingConsent = hasMarketingConsent;
 	  function flagEnabled(value, fallback){
 	    if(value === undefined || value === null || value === '') return fallback !== false;
 	    return ['0','false','off','no','disabled'].indexOf(String(value).trim().toLowerCase()) < 0;
@@ -29869,9 +29906,9 @@ window._handleRTCMessage=function(d){
 	    var path = String(location.pathname || '').replace(/^\/+|\/+$/g, '');
 	    var first = path.split('/').filter(Boolean)[0] || '';
 	    var privateRoutes = {
-	      admin:1, dash:1, dashboard:1, login:1, signup:1, session:1, group:1,
+	      admin:1, dash:1, dashboard:1, login:1, session:1, group:1,
 	      settings:1, messages:1, analytics:1, payments:1, packages:1,
-	      reviews:1, clients:1, sessions:1, pricing:1, legal:1, terms:1,
+	      reviews:1, clients:1, sessions:1, legal:1, terms:1,
 	      verify:1, 'verify-email':1, reset:1, 'reset-password':1, checkout:1,
 	      payment:1, wallet:1, stripe:1, connect:1, auth:1
 	    };
@@ -30311,6 +30348,7 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
   if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();
 </script>
+<script src="/assets/platform-tracking.js"></script>
 <script>
 /* SEO + analytics production patch 2026-04-26 */
 (function(){
@@ -30568,10 +30606,16 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
 	  function loadGa4(id, scope){
 	    id = gaId(id);
 	    if(!id) return;
-	    if(!analyticsAllowed()){
-	      pendingGa4.push({id:id, scope:scope || 'platform'});
+	    scope = scope || 'platform';
+	    if(scope === 'platform' && window.OBPlatformTracking && typeof window.OBPlatformTracking.setLegacyGa4 === 'function'){
+	      window.OBPlatformTracking.setLegacyGa4(id);
 	      return;
 	    }
+	    if(!analyticsAllowed()){
+	      pendingGa4.push({id:id, scope:scope});
+	      return;
+	    }
+	    try { if(window.OBPlatformTracking && window.OBPlatformTracking.updateGoogleConsent) window.OBPlatformTracking.updateGoogleConsent(); } catch(e) {}
 	    window.dataLayer = window.dataLayer || [];
     window.gtag = window.gtag || function(){ window.dataLayer.push(arguments); };
     if(!document.getElementById('ob-gtag-js')){
@@ -30584,7 +30628,7 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
     }
     var key = '_obGa4Configured_' + id;
     if(!window[key]){
-      window.gtag('config', id, { send_page_view: false, page_path: location.pathname + location.search, page_title: document.title, ob_scope: scope || 'platform' });
+      window.gtag('config', id, { send_page_view: false, page_path: location.pathname || '/', page_title: document.title, ob_scope: scope });
       window[key] = true;
     }
 	  }
@@ -30620,22 +30664,38 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
     } catch(e) { return ''; }
   }
 	  var lastTrack = '';
+	  function sanitizedTrackingUrl(value){
+	    try {
+	      if(window.OBPlatformTracking && typeof window.OBPlatformTracking.sanitizeUrl === 'function') return window.OBPlatformTracking.sanitizeUrl(value);
+	      var u = new URL(value || location.href, location.origin);
+	      u.search = '';
+	      u.hash = '';
+	      return u.origin + u.pathname;
+	    } catch(e) { return location.origin + (location.pathname || '/'); }
+	  }
+	  function sanitizedTrackingPath(value){
+	    try { return new URL(value || location.pathname || '/', location.origin).pathname || '/'; }
+	    catch(e) { return location.pathname || '/'; }
+	  }
 	  function trackPageview(extra){
 	    extra = extra || {};
 	    var consented = analyticsAllowed();
 	    if(!consented && !internalAnalyticsAllowed(extra)) return;
 	    var slug = extra.expert_slug || publicSlug();
-    var key = location.href + '|' + (extra.page_type || '') + '|' + slug;
+    var safeUrl = sanitizedTrackingUrl(location.href);
+    var safePath = sanitizedTrackingPath(extra.path || location.pathname || '/');
+    var safeReferrer = document.referrer ? sanitizedTrackingUrl(document.referrer) : '';
+    var key = safeUrl + '|' + safePath + '|' + (extra.page_type || '') + '|' + slug;
     if(key === lastTrack) return;
     lastTrack = key;
     var payload = {
       visitor_id: visitorId(),
       session_id: sessionId(),
       host: location.hostname,
-      path: extra.path || (location.pathname || '/') + (location.search || ''),
-      url: location.href,
+      path: safePath,
+      url: safeUrl,
       title: document.title,
-      referrer: document.referrer || '',
+      referrer: safeReferrer,
       expert_slug: slug || '',
       privacy_mode: consented ? 'consented' : 'cookieless'
     };

@@ -7,9 +7,15 @@
   var CONSENT_KEY = 'ob_privacy_consent_v1';
   var ATTRIBUTION_KEY = 'ob_tracking_attribution_v1';
   var ANALYTICS_CLIENT_KEY = 'ob_tracking_analytics_client_id_v1';
+  var ANALYTICS_SESSION_KEY = 'ob_tracking_analytics_session_id_v1';
+  var ANALYTICS_SESSION_ACTIVITY_KEY = 'ob_tracking_analytics_session_activity_v1';
+  var ANALYTICS_SESSION_TIMEOUT_MS = 30 * 60 * 1000;
+  var analyticsSessionGeneration = 0;
   var CLICK_KEYS = ['gclid','gbraid','wbraid','fbclid','ttclid','li_fat_id'];
   var CAMPAIGN_ATTRIBUTION_KEYS = {utm_source:'campaign_source',utm_medium:'campaign_medium',utm_campaign:'campaign_name'};
   var LOW_RISK_EVENTS = {page_view:1,view_pricing:1,primary_cta_clicked:1,signup_started:1,plan_selected:1};
+  // Keep view_pricing custom: GA4 ecommerce recommendations require a valid items array, which a general pricing-page view cannot guarantee.
+  var GA4_BROWSER_EVENT_NAMES = {page_view:'page_view',view_pricing:'view_pricing',primary_cta_clicked:'select_content',signup_started:'begin_signup',plan_selected:'select_item'};
   var PLATFORM_EVENT_NAMES = {page_view:1,view_pricing:1,primary_cta_clicked:1,signup_started:1,plan_selected:1,lead_generated:1,signup_completed:1,email_verified:1,checkout_started:1,purchase:1,website_published:1,subscription_renewed:1,subscription_cancelled:1,refund_issued:1};
   var ALLOWED_PLATFORM_ROUTES = {'':1,'index.html':1,pricing:1,features:1,how:1,experts:1,blog:1,contact:1,signup:1};
   var PROVIDER_ORDER = ['meta','google_ads','ga4','gtm','tiktok','linkedin','custom_webhook'];
@@ -173,6 +179,7 @@
     ephemeralAttribution:{},
     pageEventId:uuid(),
     analyticsClientId:'',
+    analyticsSessionId:'',
     receiptQueue:null,
     receiptPending:{},
     receiptRejected:{},
@@ -274,6 +281,7 @@
     };
   }
   function consentReceiptReady(){ var consent=consentSnapshot(); return !!consent.consent_receipt_id && !currentConsentRejected(consent); }
+  function analyticsIdentityAllowed(){ return analyticsConsent() && (!platformConsentContext() || consentReceiptReady()); }
   function writeConsentReceipt(updatedAt, receiptId, version, expectedSignature){
     if(!receiptId) return false;
     try {
@@ -302,6 +310,7 @@
     try { localStorage.setItem(CONSENT_KEY,JSON.stringify(reset)); } catch(e) {}
     state.routeDedupe = {};
     syncAnalyticsClient();
+    syncAnalyticsSession();
     clearAttribution();
     updateGoogleConsent();
     revokeProviderRuntime();
@@ -437,8 +446,26 @@
     clearProviderCookie('_fbp');
     clearProviderCookie('_fbc');
   }
+  function clearAnalyticsIdentifiersFromDataLayer(){
+    if(!Array.isArray(window.dataLayer)) return;
+    window.dataLayer.forEach(function(entry){
+      if(!entry) return;
+      try {
+        if(entry.event === 'ownlybiz_event'){
+          delete entry.analytics_client_id;
+          delete entry.analytics_session_id;
+        }
+        var command = entry[0];
+        var parameters = entry[2];
+        if((command === 'config' || command === 'event') && parameters && typeof parameters === 'object'){
+          delete parameters.client_id;
+          delete parameters.session_id;
+        }
+      } catch(e) {}
+    });
+  }
   function syncAnalyticsClient(){
-    if(!analyticsConsent()){
+    if(!analyticsIdentityAllowed()){
       state.analyticsClientId = '';
       try {
         localStorage.removeItem(ANALYTICS_CLIENT_KEY);
@@ -454,6 +481,36 @@
         localStorage.setItem(ANALYTICS_CLIENT_KEY, id);
       }
       state.analyticsClientId = id;
+      return id;
+    } catch(e) { return ''; }
+  }
+  function syncAnalyticsSession(){
+    if(!analyticsIdentityAllowed()){
+      var hadSessionId = !!state.analyticsSessionId;
+      try { hadSessionId = hadSessionId || /^[1-9]\d{0,14}$/.test(String(sessionStorage.getItem(ANALYTICS_SESSION_KEY) || '').trim()); } catch(e) {}
+      if(hadSessionId && analyticsSessionGeneration === 0) analyticsSessionGeneration = 1;
+      state.analyticsSessionId = '';
+      try {
+        sessionStorage.removeItem(ANALYTICS_SESSION_KEY);
+        sessionStorage.removeItem(ANALYTICS_SESSION_ACTIVITY_KEY);
+        sessionStorage.removeItem('ob_analytics_sid');
+      } catch(e) {}
+      clearAnalyticsIdentifiersFromDataLayer();
+      return '';
+    }
+    try {
+      var now = Date.now();
+      var id = String(sessionStorage.getItem(ANALYTICS_SESSION_KEY) || '').trim();
+      var lastActivity = Number(sessionStorage.getItem(ANALYTICS_SESSION_ACTIVITY_KEY) || 0);
+      var expired = !Number.isFinite(lastActivity) || lastActivity <= 0 || lastActivity > now || now - lastActivity >= ANALYTICS_SESSION_TIMEOUT_MS;
+      if(!/^[1-9]\d{0,14}$/.test(id) || expired) {
+        var nextSessionId = Math.floor(now / 1000) + analyticsSessionGeneration;
+        analyticsSessionGeneration = (analyticsSessionGeneration + 1) % 1000;
+        id = String(nextSessionId);
+        sessionStorage.setItem(ANALYTICS_SESSION_KEY, id);
+      }
+      sessionStorage.setItem(ANALYTICS_SESSION_ACTIVITY_KEY, String(now));
+      state.analyticsSessionId = id;
       return id;
     } catch(e) { return ''; }
   }
@@ -545,6 +602,7 @@
             state.receiptRejected[dispatchedSignature] = true;
             updateGoogleConsent();
             syncAnalyticsClient();
+            syncAnalyticsSession();
             clearAttribution();
             revokeProviderRuntime();
             return consentSnapshot();
@@ -575,8 +633,10 @@
       browser_event_id:cleanClickId(eventId) || state.pageEventId,
       attribution:marketingConsent() ? attribution() : (analyticsConsent() ? campaignAttribution() : {})
     };
-    var analyticsId = analyticsConsent() ? (state.analyticsClientId || syncAnalyticsClient()) : '';
+    var analyticsId = analyticsIdentityAllowed() ? syncAnalyticsClient() : '';
     if(analyticsId) result.analytics_client_id = analyticsId;
+    var analyticsSessionId = analyticsIdentityAllowed() ? syncAnalyticsSession() : '';
+    if(analyticsSessionId) result.analytics_session_id = analyticsSessionId;
     return result;
   }
   function revokeProviderRuntime(){
@@ -590,6 +650,7 @@
     var marketingChosen = marketingConsent();
     var marketingAllowed = marketingChosen && (!platformConsentContext() || consentReceiptReady());
     syncAnalyticsClient();
+    syncAnalyticsSession();
     if(marketingChosen){
       captureLandingAttribution();
       promoteAttribution();
@@ -646,9 +707,13 @@
     if(['disabled','disconnected','revoked'].indexOf(status) >= 0) return false;
     return !!Object.keys(cfg).length || status === 'connected' || status === 'ready';
   }
+  function normalizeBrowserMode(value){
+    value = String(value || 'managed').toLowerCase();
+    return value === 'gtm' || value === 'gtm_meta' ? value : 'managed';
+  }
   function browserMode(){
     var cfg = state.config || {};
-    return String(cfg.browser_mode || (cfg.settings && cfg.settings.browser_mode) || 'managed').toLowerCase() === 'gtm' ? 'gtm' : 'managed';
+    return normalizeBrowserMode(cfg.browser_mode || (cfg.settings && cfg.settings.browser_mode));
   }
   function globalEnabled(){
     var cfg = state.config || {};
@@ -688,7 +753,10 @@
       if(!window[key]){
         window.gtag('js', new Date());
         var options = {send_page_view:false,page_path:sanitizePath(location.pathname),page_title:cleanText(document.title,160)};
-        if(scope === 'ga4' && analyticsConsent()) options.client_id = state.analyticsClientId || syncAnalyticsClient();
+        if(scope === 'ga4' && analyticsIdentityAllowed()){
+          options.client_id = syncAnalyticsClient();
+          options.session_id = syncAnalyticsSession();
+        }
         window.gtag('config', id, options);
         window[key] = true;
       }
@@ -753,8 +821,10 @@
   function activate(){
     updateGoogleConsent();
     if(!state.config || !globalEnabled() || !scopeAllowed() || !consentReceiptReady() || (!analyticsConsent() && !marketingConsent())) return;
-    if(browserMode() === 'gtm'){
+    var mode = browserMode();
+    if(mode === 'gtm' || mode === 'gtm_meta'){
       ensureGtm();
+      if(mode === 'gtm_meta' && marketingConsent()) ensureMeta();
       return;
     }
     if(analyticsConsent()){
@@ -905,6 +975,7 @@
       event:'ownlybiz_event',
       schema_version:schemaVersion(),
       event_name:eventName,
+      ga4_event_name:GA4_BROWSER_EVENT_NAMES[eventName] || '',
       event_id:eventId,
       event_source:'browser',
       path:sanitizePath(location.pathname),
@@ -912,16 +983,49 @@
       details:details,
       properties:details
     };
+    if(analyticsIdentityAllowed()){
+      var analyticsClientId = state.analyticsClientId || syncAnalyticsClient();
+      var analyticsSessionId = syncAnalyticsSession();
+      if(analyticsClientId) payload.analytics_client_id = analyticsClientId;
+      if(analyticsSessionId) payload.analytics_session_id = analyticsSessionId;
+    }
     if(Object.keys(ecommerce).length) payload.ecommerce = ecommerce;
     Object.keys(details).forEach(function(key){ payload[key] = details[key]; });
     return payload;
+  }
+  function sendDirectMetaEvent(eventName, eventId, properties){
+    if(!marketingConsent() || !connectionEnabled('meta')) return;
+    var details = safeProperties(eventName,properties);
+    var metaParams = Object.assign({event_id:eventId,page_path:sanitizePath(location.pathname),page_location:sanitizeUrl(location.href)},mappedBrowserCommerceDetails('meta',details));
+    ensureMeta().then(function(){
+      var mode = browserMode();
+      if(!marketingConsent() || !consentReceiptReady() || !globalEnabled() || !scopeAllowed() || (mode !== 'managed' && mode !== 'gtm_meta')) return;
+      try {
+        var mapped = mappingValue('meta',eventName);
+        if(eventName === 'page_view' && !mapped) window.fbq('track','PageView',metaParams,{eventID:eventId});
+        else if(mapped) window.fbq('track',mapped,metaParams,{eventID:eventId});
+        else window.fbq('trackCustom',eventName,metaParams,{eventID:eventId});
+      } catch(e) {}
+    });
+  }
+  function sendGtmEvent(eventName,eventId,properties){
+    var mode = browserMode();
+    if((mode !== 'gtm' && mode !== 'gtm_meta') || (!analyticsConsent() && !marketingConsent()) || !connectionEnabled('gtm')) return;
+    ensureGtm().then(function(){
+      var currentMode = browserMode();
+      if((!analyticsConsent() && !marketingConsent()) || !consentReceiptReady() || !globalEnabled() || !scopeAllowed() || (currentMode !== 'gtm' && currentMode !== 'gtm_meta')) return;
+      window.dataLayer.push(browserEventObject(eventName,eventId,properties));
+    });
   }
   function sendManagedEvent(eventName, eventId, properties){
     var details = safeProperties(eventName,properties);
     var params = Object.assign({event_id:eventId,page_path:sanitizePath(location.pathname),page_location:sanitizeUrl(location.href)},details);
     var ga4Params = Object.assign({},params,ecommerceDetails(eventName,details));
+    if(analyticsIdentityAllowed()){
+      ga4Params.client_id = syncAnalyticsClient();
+      ga4Params.session_id = syncAnalyticsSession();
+    }
     var googleAdsParams = googleAdsBrowserParams(params,details);
-    var metaParams = Object.assign({event_id:eventId,page_path:sanitizePath(location.pathname),page_location:sanitizeUrl(location.href)},mappedBrowserCommerceDetails('meta',details));
     var tiktokParams = Object.assign({event_id:eventId,page_path:sanitizePath(location.pathname),page_location:sanitizeUrl(location.href)},mappedBrowserCommerceDetails('tiktok',details));
     if(analyticsConsent()){
       var measurement = managedGa4Id();
@@ -939,15 +1043,7 @@
         try { window.gtag('event','conversion',Object.assign({},googleAdsParams,{send_to:conversionId + '/' + adsLabel,transaction_id:eventId})); } catch(e) {}
       });
     }
-    if(connectionEnabled('meta')) ensureMeta().then(function(){
-      if(!marketingConsent() || !consentReceiptReady() || !globalEnabled() || !scopeAllowed() || browserMode() !== 'managed') return;
-      try {
-        var mapped = mappingValue('meta',eventName);
-        if(eventName === 'page_view' && !mapped) window.fbq('track','PageView',metaParams,{eventID:eventId});
-        else if(mapped) window.fbq('track',mapped,metaParams,{eventID:eventId});
-        else window.fbq('trackCustom',eventName,metaParams,{eventID:eventId});
-      } catch(e) {}
-    });
+    sendDirectMetaEvent(eventName,eventId,details);
     if(connectionEnabled('tiktok')) ensureTikTok().then(function(){
       if(!marketingConsent() || !consentReceiptReady() || !globalEnabled() || !scopeAllowed() || browserMode() !== 'managed') return;
       try {
@@ -960,11 +1056,10 @@
   function sendBrowserEvent(eventName, eventId, properties){
     if(!globalEnabled() || !scopeAllowed()) return;
     activate();
-    if(browserMode() === 'gtm'){
-      if((analyticsConsent() || marketingConsent()) && connectionEnabled('gtm')) ensureGtm().then(function(){
-        if((!analyticsConsent() && !marketingConsent()) || !consentReceiptReady() || !globalEnabled() || !scopeAllowed() || browserMode() !== 'gtm') return;
-        window.dataLayer.push(browserEventObject(eventName,eventId,properties));
-      });
+    var mode = browserMode();
+    if(mode === 'gtm' || mode === 'gtm_meta'){
+      sendGtmEvent(eventName,eventId,properties);
+      if(mode === 'gtm_meta') sendDirectMetaEvent(eventName,eventId,properties);
       return;
     }
     sendManagedEvent(eventName,eventId,properties);
@@ -1216,7 +1311,7 @@
   var ADMIN_PROVIDERS = {
     meta:{
       label:'Meta Ads',
-      summary:'Meta Pixel for consented browser events plus Conversions API credentials for server events.',
+      summary:'Meta Pixel for consented browser events plus Conversions API credentials for server events. The direct Meta path runs in Managed and GTM + Ownlybiz Meta modes.',
       fields:[
         {key:'pixel_id',label:'Pixel ID',placeholder:'123456789012345'},
         {key:'access_token',label:'Conversions API access token',secret:true,placeholder:'Server-side token'},
@@ -1251,7 +1346,7 @@
     },
     gtm:{
       label:'Google Tag Manager',
-      summary:'Advanced browser delivery. GTM mode loads only this container and pushes Ownlybiz canonical events.',
+      summary:'Advanced browser delivery. GTM-only mode loads only this container; GTM + Ownlybiz Meta also preserves Ownlybiz direct Meta Pixel delivery.',
       fields:[{key:'container_id',label:'Container ID',placeholder:'GTM-XXXXXXX'}]
     },
     tiktok:{
@@ -1779,13 +1874,13 @@
     if(!root) return;
     var environmentCopy = adminEnvironmentCopy();
     var enabled = bool(settingValue('enabled',adminOverview().enabled),false);
-    var mode = String(settingValue('browser_mode',adminOverview().browser_mode || 'managed')).toLowerCase() === 'gtm' ? 'gtm' : 'managed';
+    var mode = normalizeBrowserMode(settingValue('browser_mode',adminOverview().browser_mode || 'managed'));
     var version = cleanText(settingValue('policy_version',adminOverview().policy_version || 'tracking-consent-2026-07'),80);
     root.innerHTML =
       '<section class="ob-tracking-banner"><div><strong>' + esc(environmentCopy.bannerTitle) + '</strong><p>' + esc(environmentCopy.bannerBody) + '</p></div><span class="ob-tracking-env">' + esc(environmentCopy.environment) + '</span></section>' +
-      '<section class="ob-tracking-section"><div class="ob-tracking-section-head"><div><h2>Tracking controls</h2><p class="ob-tracking-muted">One global kill switch, one browser delivery mode, and one consent contract. Managed and GTM browser delivery cannot run together.</p></div><button class="ob-tracking-btn" type="button" onclick="loadAdminTracking(true)">Refresh</button></div>' +
+      '<section class="ob-tracking-section"><div class="ob-tracking-section-head"><div><h2>Tracking controls</h2><p class="ob-tracking-muted">One global kill switch and one consent contract across Managed, GTM-only, or GTM + Ownlybiz Meta browser delivery.</p></div><button class="ob-tracking-btn" type="button" onclick="loadAdminTracking(true)">Refresh</button></div>' +
         '<div class="ob-tracking-grid"><div class="ob-tracking-control"><label>Global service</label><label class="ob-tracking-check"><input id="ob-tracking-enabled" type="checkbox" ' + (enabled ? 'checked' : '') + '> Enabled</label><span class="ob-tracking-muted">Turning this off stops browser and server delivery.</span></div>' +
-          '<div class="ob-tracking-control"><label for="ob-tracking-browser-mode">Browser delivery</label><select id="ob-tracking-browser-mode" class="ob-tracking-select"><option value="managed" ' + (mode === 'managed' ? 'selected' : '') + '>Managed by Ownlybiz</option><option value="gtm" ' + (mode === 'gtm' ? 'selected' : '') + '>Google Tag Manager</option></select><span class="ob-tracking-muted">GTM mode loads only the selected container.</span></div>' +
+          '<div class="ob-tracking-control"><label for="ob-tracking-browser-mode">Browser delivery</label><select id="ob-tracking-browser-mode" class="ob-tracking-select"><option value="managed" ' + (mode === 'managed' ? 'selected' : '') + '>Managed by Ownlybiz</option><option value="gtm" ' + (mode === 'gtm' ? 'selected' : '') + '>Google Tag Manager only</option><option value="gtm_meta" ' + (mode === 'gtm_meta' ? 'selected' : '') + '>GTM + Ownlybiz Meta</option></select><span class="ob-tracking-muted">Hybrid mode sends canonical browser events to GTM while keeping the direct Ownlybiz Meta Pixel path. Do not add another Meta Pixel tag inside GTM.</span></div>' +
           '<div class="ob-tracking-control"><label for="ob-tracking-policy-version">Consent policy version</label><input id="ob-tracking-policy-version" class="ob-tracking-input" value="' + esc(version) + '" placeholder="tracking-consent-2026-07"><span class="ob-tracking-muted">Receipts bind every event to this version.</span></div>' +
           '<div class="ob-tracking-control"><label>Consent enforcement</label><label class="ob-tracking-check"><input type="checkbox" checked disabled> Required</label><span class="ob-tracking-muted">Fresh or denied visitors produce no third-party tag request.</span></div></div>' +
         '<div class="ob-tracking-actions" style="margin-top:14px;"><button class="ob-tracking-btn primary" type="button" onclick="obSaveTrackingSettings()">Save tracking controls</button><button class="ob-tracking-btn" type="button" onclick="obOpenConsentManager();return false;">Preview consent choices</button></div></section>' +
@@ -1863,9 +1958,10 @@
     return '';
   }
   window.obSaveTrackingSettings = function(){
+    var selectedBrowserMode = (document.getElementById('ob-tracking-browser-mode') || {}).value;
     var payload = {
       enabled:!!((document.getElementById('ob-tracking-enabled') || {}).checked),
-      browser_mode:(document.getElementById('ob-tracking-browser-mode') || {}).value === 'gtm' ? 'gtm' : 'managed',
+      browser_mode:normalizeBrowserMode(selectedBrowserMode),
       policy_version:cleanText((document.getElementById('ob-tracking-policy-version') || {}).value || 'tracking-consent-2026-07',80),
       consent_required:true
     };

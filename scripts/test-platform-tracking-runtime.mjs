@@ -8,6 +8,8 @@ const indexSource = readFileSync(new URL('../index.html', import.meta.url), 'utf
 const CONSENT_KEY = 'ob_privacy_consent_v1';
 const ATTRIBUTION_KEY = 'ob_tracking_attribution_v1';
 const ANALYTICS_CLIENT_KEY = 'ob_tracking_analytics_client_id_v1';
+const ANALYTICS_SESSION_KEY = 'ob_tracking_analytics_session_id_v1';
+const ANALYTICS_SESSION_ACTIVITY_KEY = 'ob_tracking_analytics_session_activity_v1';
 
 assert(source.includes("'https://ownlybiz-backend-production.up.railway.app'"), 'tracking runtime fallback must target the production backend');
 assert(indexSource.includes('window.OWNLYBIZ_IS_STAGING=false;'), 'production shell must keep the staging flag disabled');
@@ -25,6 +27,8 @@ assert(source.includes("testEventPlaceholder:'Optional staging test event code'"
 assert(source.includes("testEventPlaceholder:'Optional test event code - may appear in live measurement tools'"), 'source must include the production-safe test-code warning');
 assert(!indexSource.includes('Loading the staging Tracking &amp; Ads service'), 'Tracking Admin loading placeholder must not hardcode staging');
 assert(indexSource.includes('Loading the Tracking &amp; Ads service'), 'Tracking Admin loading placeholder must remain environment-neutral');
+assert(source.includes('<option value="gtm_meta"'), 'Tracking Admin must expose the explicit GTM + Ownlybiz Meta mode');
+assert(source.includes('Do not add another Meta Pixel tag inside GTM.'), 'hybrid Admin copy must warn against duplicate Meta tags');
 
 const monotonicFunctionMatch = indexSource.match(/(function nextConsentUpdatedAt\(previousUpdatedAt, nowMs\)\{[\s\S]*?\n  \})\n  function setConsent/);
 assert(monotonicFunctionMatch, 'index consent timestamp helper must remain testable');
@@ -221,6 +225,14 @@ function createHarness({ path = '/pricing', search = '?gclid=GCLID_123&fbclid=FB
 
 const wait = (ms = 35) => new Promise(resolve => setTimeout(resolve, ms));
 const requestBodies = (harness, suffix) => harness.requests.filter(item => new URL(item.url).pathname.endsWith(suffix)).map(item => JSON.parse(item.init.body || '{}'));
+const dataLayerAnalyticsIdentifiers = harness => harness.window.dataLayer.reduce((values, entry) => {
+  if(!entry) return values;
+  if(entry.event === 'ownlybiz_event') values.push(entry.analytics_client_id, entry.analytics_session_id);
+  const command = entry[0];
+  const parameters = entry[2];
+  if((command === 'config' || command === 'event') && parameters && typeof parameters === 'object') values.push(parameters.client_id, parameters.session_id);
+  return values;
+}, []).filter(Boolean).map(String);
 
 async function freshConsentTest() {
   const h = createHarness();
@@ -228,6 +240,8 @@ async function freshConsentTest() {
   assert.deepEqual(h.scriptRequests, [], 'fresh consent must load no provider script');
   assert.equal(h.localStorage.getItem(ATTRIBUTION_KEY), null, 'fresh click IDs stay memory-only');
   assert.equal(h.localStorage.getItem(ANALYTICS_CLIENT_KEY), null, 'fresh consent creates no analytics client id');
+  assert.equal(h.sessionStorage.getItem(ANALYTICS_SESSION_KEY), null, 'fresh consent creates no analytics session id');
+  assert.equal(h.sessionStorage.getItem(ANALYTICS_SESSION_ACTIVITY_KEY), null, 'fresh consent creates no analytics session activity marker');
   assert.equal(requestBodies(h, '/api/tracking/event').length, 0, 'fresh consent emits no canonical browser event');
   assert.equal(Object.keys(h.window.OBPlatformTracking.context().attribution).length, 0, 'fresh context exposes no attribution');
   const totals = h.window.OBPlatformTracking._deliveryHealthTotals({ sent: 4, success: 2, delivered: 1, failed: 3, error: 2, retry: 5, dead: 7, permanent_failure: 11 });
@@ -241,7 +255,11 @@ async function analyticsConsentTest() {
   assert(h.scriptRequests.some(url => url.includes('googletagmanager.com/gtag/js?id=G-TEST12345')), 'analytics consent loads GA4');
   assert(!h.scriptRequests.some(url => /facebook|tiktok|linkedin/.test(url)), 'analytics-only consent loads no ad provider');
   const clientId = h.localStorage.getItem(ANALYTICS_CLIENT_KEY);
+  const sessionId = h.sessionStorage.getItem(ANALYTICS_SESSION_KEY);
   assert.match(clientId, /^\d{1,20}\.\d{1,20}$/, 'analytics client id uses GA numeric format');
+  assert.match(sessionId, /^[1-9]\d{0,14}$/, 'analytics session id uses the bounded positive numeric format accepted by the backend');
+  assert(Math.abs(Number(sessionId) - Math.floor(Date.now() / 1000)) <= 1, 'new analytics session id uses epoch seconds');
+  assert.match(h.sessionStorage.getItem(ANALYTICS_SESSION_ACTIVITY_KEY), /^\d{13}$/, 'analytics session activity uses a separate millisecond timestamp');
   assert.equal(h.localStorage.getItem(ATTRIBUTION_KEY), null, 'analytics-only campaign context remains ephemeral and does not persist marketing attribution');
   const events = requestBodies(h, '/api/tracking/event');
   assert(events.length >= 2, 'pricing route emits page_view and view_pricing after receipt');
@@ -251,6 +269,7 @@ async function analyticsConsentTest() {
     assert(!event.referrer.includes('?') && !event.referrer.includes('#'), 'referrer is sanitized');
     assert(event.tracking_context.consent_receipt_id, 'event is bound to canonical consent receipt');
     assert.equal(event.tracking_context.analytics_client_id, clientId);
+    assert.equal(event.tracking_context.analytics_session_id, sessionId);
     assert.deepEqual(event.tracking_context.attribution, { utm_source: 'google', utm_medium: 'cpc', utm_campaign: 'summer_launch' });
     ['gclid','gbraid','wbraid','fbclid','fbp','fbc','ttclid','li_fat_id'].forEach(key => {
       assert(!Object.prototype.hasOwnProperty.call(event.tracking_context.attribution,key), `analytics-only event context excludes ${key}`);
@@ -264,6 +283,7 @@ async function analyticsConsentTest() {
   const signup = requestBodies(h, '/api/auth/signup').at(-1);
   assert(signup.tracking_context.consent_receipt_id, 'expert signup receives verified tracking context');
   assert.equal(signup.tracking_context.analytics_client_id, clientId);
+  assert.equal(signup.tracking_context.analytics_session_id, sessionId);
   assert.deepEqual(signup.tracking_context.attribution, { utm_source: 'google', utm_medium: 'cpc', utm_campaign: 'summer_launch' }, 'analytics-only expert signup carries validated UTM context into authoritative funnel events');
   ['gclid','gbraid','wbraid','fbclid','fbp','fbc','ttclid','li_fat_id'].forEach(key => {
     assert(!Object.prototype.hasOwnProperty.call(signup.tracking_context.attribution,key), `analytics-only expert signup excludes ${key}`);
@@ -272,17 +292,93 @@ async function analyticsConsentTest() {
   h.window.switchView(2);
   await wait();
   assert(requestBodies(h, '/api/tracking/event').some(item => item.event_name === 'signup_started'), 'SPA signup entry emits signup_started once');
+  assert(dataLayerAnalyticsIdentifiers(h).includes(clientId), 'managed Google configuration contains the consented client ID before withdrawal');
+  assert(dataLayerAnalyticsIdentifiers(h).includes(sessionId), 'managed Google events contain the consented session ID before withdrawal');
 
   const revoked = { necessary: true, analytics: false, marketing: false, updated_at: '2026-07-11T10:05:00.000Z', policy_version: 'tracking-consent-2026-07', consent_id: 'consent-analytics' };
   h.localStorage.setItem(CONSENT_KEY, JSON.stringify(revoked));
   h.window.OBPlatformTracking.consentChanged(revoked);
   await wait();
   assert.equal(h.localStorage.getItem(ANALYTICS_CLIENT_KEY), null, 'analytics revoke clears analytics client id');
+  assert.equal(h.sessionStorage.getItem(ANALYTICS_SESSION_KEY), null, 'analytics revoke clears analytics session id');
+  assert.equal(h.sessionStorage.getItem(ANALYTICS_SESSION_ACTIVITY_KEY), null, 'analytics revoke clears analytics session activity');
+  assert.equal(h.window.OBPlatformTracking._state.analyticsClientId, '', 'analytics revoke clears the exposed client state');
+  assert.equal(h.window.OBPlatformTracking._state.analyticsSessionId, '', 'analytics revoke clears the exposed session state');
+  assert(!Object.prototype.hasOwnProperty.call(h.window.OBPlatformTracking._state, 'lastAnalyticsSessionId'), 'exposed state retains no withdrawn session identifier');
+  assert(!dataLayerAnalyticsIdentifiers(h).includes(clientId), 'analytics revoke removes the withdrawn client ID from dataLayer history');
+  assert(!dataLayerAnalyticsIdentifiers(h).includes(sessionId), 'analytics revoke removes the withdrawn session ID from dataLayer history');
   assert.equal(h.localStorage.getItem(ATTRIBUTION_KEY), null, 'revoke clears attribution');
   const before = requestBodies(h, '/api/tracking/event').length;
   await h.window.OBPlatformTracking.track('page_view');
   await wait();
   assert.equal(requestBodies(h, '/api/tracking/event').length, before, 'revoke blocks future canonical browser events');
+}
+
+async function analyticsSessionInactivityTest() {
+  const h = createHarness({ path: '/features', consent: { necessary: true, analytics: true, marketing: false, updated_at: '2026-07-11T10:10:00.000Z', policy_version: 'tracking-consent-2026-07', consent_id: 'consent-analytics-inactivity' } });
+  await wait(70);
+  const initialSessionId = h.sessionStorage.getItem(ANALYTICS_SESSION_KEY);
+  const initialClientId = h.localStorage.getItem(ANALYTICS_CLIENT_KEY);
+  h.sessionStorage.setItem(ANALYTICS_SESSION_ACTIVITY_KEY, String(Date.now() - (30 * 60 * 1000) - 1));
+  await h.window.OBPlatformTracking.track('page_view');
+  await wait(40);
+  const rotatedSessionId = h.sessionStorage.getItem(ANALYTICS_SESSION_KEY);
+  assert.match(rotatedSessionId, /^[1-9]\d{0,14}$/, 'post-timeout analytics session remains backend-compatible');
+  assert.notEqual(rotatedSessionId, initialSessionId, 'analytics session rotates after 30 minutes of inactivity');
+  assert.equal(h.localStorage.getItem(ANALYTICS_CLIENT_KEY), initialClientId, 'inactivity rotates the session without rotating the visitor client ID');
+  const latestEvent = requestBodies(h, '/api/tracking/event').at(-1);
+  assert.equal(latestEvent.tracking_context.analytics_session_id, rotatedSessionId, 'canonical event receives the rotated session ID');
+  const gaEvent = h.window.dataLayer.filter(item => item && item[0] === 'event').at(-1);
+  assert.equal(gaEvent[2].session_id, rotatedSessionId, 'managed GA4 event receives the same rotated session ID');
+}
+
+async function managedRegrantIdentityTest() {
+  const initialConsent = { necessary: true, analytics: true, marketing: false, updated_at: '2026-07-11T10:20:00.000Z', policy_version: 'tracking-consent-2026-07', consent_id: 'consent-managed-regrant' };
+  const h = createHarness({ path: '/features', consent: initialConsent, consentDelays: [0, 0, 120] });
+  await wait(80);
+  const originalClientId = h.localStorage.getItem(ANALYTICS_CLIENT_KEY);
+  const originalSessionId = h.sessionStorage.getItem(ANALYTICS_SESSION_KEY);
+  assert(originalClientId && originalSessionId, 'initial verified analytics consent creates managed Google identity');
+
+  const revoked = { necessary: true, analytics: false, marketing: false, updated_at: '2026-07-11T10:21:00.000Z', policy_version: 'tracking-consent-2026-07', consent_id: 'consent-managed-regrant' };
+  h.localStorage.setItem(CONSENT_KEY, JSON.stringify(revoked));
+  h.window.OBPlatformTracking.consentChanged(revoked);
+  await wait(50);
+  assert.equal(h.localStorage.getItem(ANALYTICS_CLIENT_KEY), null, 'managed withdrawal clears the old client before regrant');
+  assert.equal(h.sessionStorage.getItem(ANALYTICS_SESSION_KEY), null, 'managed withdrawal clears the old session before regrant');
+  assert.deepEqual(dataLayerAnalyticsIdentifiers(h), [], 'managed withdrawal leaves no Google identity in dataLayer history');
+
+  const eventRequestsBeforeRegrant = requestBodies(h, '/api/tracking/event').length;
+  const googleEventsBeforeRegrant = h.window.dataLayer.filter(entry => entry && entry[0] === 'event').length;
+  const regranted = { necessary: true, analytics: true, marketing: false, updated_at: '2026-07-11T10:22:00.000Z', policy_version: 'tracking-consent-2026-07', consent_id: 'consent-managed-regrant' };
+  h.localStorage.setItem(CONSENT_KEY, JSON.stringify(regranted));
+  h.window.OBPlatformTracking.consentChanged(regranted);
+  const pendingTrack = h.window.OBPlatformTracking.track('page_view', { page_type: 'features' });
+  await wait(30);
+  assert(!JSON.parse(h.localStorage.getItem(CONSENT_KEY)).consent_receipt_id, 'renewed consent remains unverified while its receipt request is pending');
+  assert.equal(h.localStorage.getItem(ANALYTICS_CLIENT_KEY), null, 'pending renewed consent creates no analytics client ID');
+  assert.equal(h.sessionStorage.getItem(ANALYTICS_SESSION_KEY), null, 'pending renewed consent creates no analytics session ID');
+  assert.equal(h.window.OBPlatformTracking._state.analyticsClientId, '', 'pending renewed consent exposes no client state');
+  assert.equal(h.window.OBPlatformTracking._state.analyticsSessionId, '', 'pending renewed consent exposes no session state');
+  assert.deepEqual(dataLayerAnalyticsIdentifiers(h), [], 'pending renewed consent exposes no identity through dataLayer');
+  assert.equal(requestBodies(h, '/api/tracking/event').length, eventRequestsBeforeRegrant, 'pending renewed consent emits no canonical event');
+  assert.equal(h.window.dataLayer.filter(entry => entry && entry[0] === 'event').length, googleEventsBeforeRegrant, 'pending renewed consent emits no managed Google event');
+
+  await pendingTrack;
+  await wait(35);
+  const renewedClientId = h.localStorage.getItem(ANALYTICS_CLIENT_KEY);
+  const renewedSessionId = h.sessionStorage.getItem(ANALYTICS_SESSION_KEY);
+  assert(renewedClientId && renewedClientId !== originalClientId, 'verified regrant rotates the managed Google client ID');
+  assert(renewedSessionId && renewedSessionId !== originalSessionId, 'verified regrant rotates the managed Google session ID');
+  const gaEvent = h.window.dataLayer.filter(entry => entry && entry[0] === 'event' && entry[1] === 'page_view').at(-1);
+  assert(gaEvent, 'verified regrant emits the pending managed GA4 event');
+  const gaParams = gaEvent[2];
+  assert.equal(gaParams.client_id, renewedClientId, 'managed GA4 event overrides any pre-withdrawal Google client with the renewed client ID');
+  assert.equal(gaParams.session_id, renewedSessionId, 'managed GA4 event uses the renewed session ID');
+  const canonical = requestBodies(h, '/api/tracking/event').find(event => event.event_id === gaParams.event_id);
+  assert(canonical, 'managed GA4 and canonical collector preserve the same event ID after regrant');
+  assert.equal(canonical.tracking_context.analytics_client_id, renewedClientId, 'managed GA4 and collector share the renewed client ID');
+  assert.equal(canonical.tracking_context.analytics_session_id, renewedSessionId, 'managed GA4 and collector share the renewed session ID');
 }
 
 async function stalePolicyTest() {
@@ -294,6 +390,9 @@ async function stalePolicyTest() {
   assert.equal(stored.policy_version, 'tracking-consent-2026-07');
   assert.equal(stored.consent_id, 'consent-policy-stable', 'policy mismatch preserves stable necessary consent ID');
   assert.notEqual(stored.consent_receipt_id, 'obsolete-receipt', 'policy mismatch discards the obsolete receipt');
+  assert.equal(h.localStorage.getItem(ANALYTICS_CLIENT_KEY), null, 'policy mismatch clears the analytics client id');
+  assert.equal(h.sessionStorage.getItem(ANALYTICS_SESSION_KEY), null, 'policy mismatch clears the analytics session id');
+  assert.equal(h.sessionStorage.getItem(ANALYTICS_SESSION_ACTIVITY_KEY), null, 'policy mismatch clears analytics session activity');
   assert(h.consentOpenCount >= 1, 'policy mismatch reopens the consent manager');
   assert.deepEqual(h.scriptRequests, [], 'policy transition loads no provider script');
   assert.equal(requestBodies(h, '/api/tracking/event').length, 0, 'policy transition emits no funnel event');
@@ -399,6 +498,9 @@ async function staleReceiptAndCrossTabStorageTests() {
   await wait(80);
   assert(h.scriptRequests.some(url => url.includes('connect.facebook.net')), 'other-tab grant activates marketing providers after its receipt is accepted');
   assert(h.localStorage.getItem(ANALYTICS_CLIENT_KEY), 'other-tab analytics grant creates the analytics client ID');
+  assert(h.sessionStorage.getItem(ANALYTICS_SESSION_KEY), 'other-tab analytics grant creates the analytics session ID');
+  const firstAnalyticsClientId = h.localStorage.getItem(ANALYTICS_CLIENT_KEY);
+  const firstAnalyticsSessionId = h.sessionStorage.getItem(ANALYTICS_SESSION_KEY);
   assert(h.localStorage.getItem(ATTRIBUTION_KEY), 'other-tab marketing grant promotes safe click attribution');
   assert.equal(requestBodies(h, '/api/tracking/consent').length, 1, 'other-tab grant produces one receipt write in this document');
 
@@ -406,6 +508,7 @@ async function staleReceiptAndCrossTabStorageTests() {
   h.localStorage.setItem(CONSENT_KEY, JSON.stringify(revoked));
   h.window.dispatchEvent({ type: 'storage', key: CONSENT_KEY, storageArea: h.localStorage, newValue: JSON.stringify(revoked) });
   assert.equal(h.localStorage.getItem(ANALYTICS_CLIENT_KEY), null, 'other-tab revoke immediately clears analytics ID');
+  assert.equal(h.sessionStorage.getItem(ANALYTICS_SESSION_KEY), null, 'other-tab revoke immediately clears analytics session ID');
   assert.equal(h.localStorage.getItem(ATTRIBUTION_KEY), null, 'other-tab revoke immediately clears marketing attribution');
   assert(h.window.fbq.queue.some(args => Array.from(args)[0] === 'consent' && Array.from(args)[1] === 'revoke'), 'other-tab revoke immediately revokes Meta runtime consent');
   assert(h.window.ttq.some(args => Array.isArray(args) && args[0] === 'revokeConsent'), 'other-tab revoke immediately revokes TikTok runtime consent');
@@ -429,6 +532,8 @@ async function staleReceiptAndCrossTabStorageTests() {
   await wait(110);
   const grantsAfterReceipt = h.window.fbq.queue.filter(args => Array.from(args)[0] === 'consent' && Array.from(args)[1] === 'grant').length;
   assert(grantsAfterReceipt > grantsBeforeReceipt, 'Meta runtime grant occurs after the regrant receipt is accepted');
+  assert.notEqual(h.localStorage.getItem(ANALYTICS_CLIENT_KEY), firstAnalyticsClientId, 'analytics regrant rotates the cleared client ID');
+  assert.notEqual(h.sessionStorage.getItem(ANALYTICS_SESSION_KEY), firstAnalyticsSessionId, 'analytics regrant rotates the cleared session ID');
   assert.equal(requestBodies(h, '/api/tracking/consent').length, 3, 'cross-tab regrant adds exactly one serialized receipt write');
   assert.equal(JSON.parse(h.localStorage.getItem(CONSENT_KEY)).consent_receipt_id, 'receipt-3-consent-cross-tab');
 }
@@ -444,6 +549,7 @@ async function marketingConsentTest() {
   assert.equal(h.window.lintrk.q.length, 0, 'LinkedIn base tag fires no browser canonical conversion');
   assert(!h.scriptRequests.some(url => url.includes('gtag/js?id=G-TEST12345')), 'marketing-only consent does not load GA4');
   assert.equal(h.localStorage.getItem(ANALYTICS_CLIENT_KEY), null);
+  assert.equal(h.sessionStorage.getItem(ANALYTICS_SESSION_KEY), null);
   const saved = JSON.parse(h.localStorage.getItem(ATTRIBUTION_KEY));
   assert.equal(saved.gclid, 'GCLID_123');
   assert.equal(saved.fbclid, 'FBCLID_456');
@@ -461,6 +567,10 @@ async function privateRouteAndGtmTests() {
   await wait(60);
   assert.deepEqual(privateHarness.scriptRequests, [], 'admin route loads zero platform provider scripts');
   assert.equal(requestBodies(privateHarness, '/api/tracking/event').length, 0, 'admin route emits zero platform events');
+  const hybridPrivateHarness = createHarness({ path: '/admin/dashboard', mode: 'gtm_meta', search: '?gclid=PRIVATE_HYBRID_ID', consent: { necessary: true, analytics: true, marketing: true, updated_at: '2026-07-11T12:00:01.000Z', policy_version: 'tracking-consent-2026-07', consent_id: 'consent-private-hybrid' } });
+  await wait(60);
+  assert.deepEqual(hybridPrivateHarness.scriptRequests, [], 'hybrid mode preserves the admin-route provider exclusion');
+  assert.equal(requestBodies(hybridPrivateHarness, '/api/tracking/event').length, 0, 'hybrid mode preserves the admin-route event exclusion');
 
   const authHarness = createHarness({ path: '/', search: '?gclid=AUTH_PRIVATE', authToken: 'authenticated-expert-token', consent: { necessary: true, analytics: true, marketing: true, updated_at: '2026-07-11T12:15:00.000Z', policy_version: 'tracking-consent-2026-07', consent_id: 'consent-auth-private' } });
   await wait(80);
@@ -490,6 +600,110 @@ async function privateRouteAndGtmTests() {
   const contract = gtmHarness.window.dataLayer.find(item => item && item.event === 'ownlybiz_event');
   assert(contract && contract.event_id && contract.event_name === 'page_view', 'GTM receives standardized Ownlybiz event');
   assert(!('consent_id' in contract.consent), 'stable necessary consent ID is not exposed to GTM');
+  assert.equal(contract.analytics_client_id, gtmHarness.localStorage.getItem(ANALYTICS_CLIENT_KEY), 'analytics-consented GTM contract exposes the shared client ID');
+  assert.equal(contract.analytics_session_id, gtmHarness.sessionStorage.getItem(ANALYTICS_SESSION_KEY), 'analytics-consented GTM contract exposes the shared session ID');
+
+  const exclusiveMarketing = createHarness({ path: '/features', mode: 'gtm', consent: { necessary: true, analytics: false, marketing: true, updated_at: '2026-07-11T13:01:00.000Z', policy_version: 'tracking-consent-2026-07', consent_id: 'consent-gtm-marketing' } });
+  await wait(70);
+  assert(exclusiveMarketing.scriptRequests.some(url => url.includes('/gtm.js?id=GTM-TEST123')), 'exclusive GTM mode loads its container with marketing consent');
+  assert(!exclusiveMarketing.scriptRequests.some(url => /facebook|gtag\/js|tiktok|linkedin/.test(url)), 'exclusive GTM mode never loads the direct Meta or other managed runtimes');
+  const exclusiveMarketingContract = exclusiveMarketing.window.dataLayer.find(item => item && item.event === 'ownlybiz_event');
+  assert(exclusiveMarketingContract && !('analytics_client_id' in exclusiveMarketingContract) && !('analytics_session_id' in exclusiveMarketingContract), 'marketing-only GTM contract exposes no analytics identity');
+
+  const hybridAnalytics = createHarness({ path: '/features', mode: 'gtm_meta', consent: { necessary: true, analytics: true, marketing: false, updated_at: '2026-07-11T13:02:00.000Z', policy_version: 'tracking-consent-2026-07', consent_id: 'consent-hybrid-analytics' } });
+  await wait(70);
+  assert(hybridAnalytics.scriptRequests.some(url => url.includes('/gtm.js?id=GTM-TEST123')), 'hybrid mode loads GTM with analytics consent');
+  assert(!hybridAnalytics.scriptRequests.some(url => /facebook|gtag\/js|tiktok|linkedin/.test(url)), 'analytics-only hybrid mode does not load direct Meta or other managed runtimes');
+  const hybridAnalyticsContract = hybridAnalytics.window.dataLayer.find(item => item && item.event === 'ownlybiz_event');
+  assert.equal(hybridAnalyticsContract.analytics_client_id, hybridAnalytics.localStorage.getItem(ANALYTICS_CLIENT_KEY));
+  assert.equal(hybridAnalyticsContract.analytics_session_id, hybridAnalytics.sessionStorage.getItem(ANALYTICS_SESSION_KEY));
+
+  const hybridMarketing = createHarness({ path: '/features', mode: 'gtm_meta', consent: { necessary: true, analytics: false, marketing: true, updated_at: '2026-07-11T13:03:00.000Z', policy_version: 'tracking-consent-2026-07', consent_id: 'consent-hybrid-marketing' } });
+  await wait(80);
+  assert(hybridMarketing.scriptRequests.some(url => url.includes('/gtm.js?id=GTM-TEST123')), 'marketing-only hybrid mode loads GTM');
+  assert(hybridMarketing.scriptRequests.some(url => url.includes('connect.facebook.net')), 'marketing-only hybrid mode preserves direct Meta');
+  assert(!hybridMarketing.scriptRequests.some(url => /gtag\/js|tiktok|linkedin/.test(url)), 'hybrid mode does not load the other managed provider runtimes');
+  const hybridMarketingContract = hybridMarketing.window.dataLayer.find(item => item && item.event === 'ownlybiz_event' && item.event_name === 'page_view');
+  assert(hybridMarketingContract && !('analytics_client_id' in hybridMarketingContract) && !('analytics_session_id' in hybridMarketingContract), 'marketing-only hybrid contract exposes no analytics identity');
+  const hybridMetaCall = hybridMarketing.window.fbq.queue.find(args => {
+    const values = Array.from(args || []);
+    return values[0] === 'track' && values[1] === 'PageView';
+  });
+  assert(hybridMetaCall, 'hybrid mode sends the canonical page view through the direct Meta Pixel');
+  assert.equal(Array.from(hybridMetaCall)[3].eventID, hybridMarketingContract.event_id, 'hybrid GTM and direct Meta reuse the exact canonical event ID');
+
+  const hybridWithdrawal = createHarness({ path: '/features', mode: 'gtm_meta', consent: { necessary: true, analytics: true, marketing: true, updated_at: '2026-07-11T13:04:00.000Z', policy_version: 'tracking-consent-2026-07', consent_id: 'consent-hybrid-withdrawal' } });
+  await wait(80);
+  const originalHybridClientId = hybridWithdrawal.localStorage.getItem(ANALYTICS_CLIENT_KEY);
+  const originalHybridSessionId = hybridWithdrawal.sessionStorage.getItem(ANALYTICS_SESSION_KEY);
+  assert(dataLayerAnalyticsIdentifiers(hybridWithdrawal).includes(originalHybridClientId) && dataLayerAnalyticsIdentifiers(hybridWithdrawal).includes(originalHybridSessionId), 'hybrid GTM contract contains consented analytics identity before withdrawal');
+  const marketingOnlyConsent = { necessary: true, analytics: false, marketing: true, updated_at: '2026-07-11T13:05:00.000Z', policy_version: 'tracking-consent-2026-07', consent_id: 'consent-hybrid-withdrawal' };
+  hybridWithdrawal.localStorage.setItem(CONSENT_KEY, JSON.stringify(marketingOnlyConsent));
+  hybridWithdrawal.window.OBPlatformTracking.consentChanged(marketingOnlyConsent);
+  await wait(100);
+  assert.equal(hybridWithdrawal.localStorage.getItem(ANALYTICS_CLIENT_KEY), null, 'hybrid analytics withdrawal clears the shared client ID while marketing remains granted');
+  assert.equal(hybridWithdrawal.sessionStorage.getItem(ANALYTICS_SESSION_KEY), null, 'hybrid analytics withdrawal clears the shared session ID while marketing remains granted');
+  assert.equal(hybridWithdrawal.sessionStorage.getItem(ANALYTICS_SESSION_ACTIVITY_KEY), null, 'hybrid analytics withdrawal clears the session activity marker');
+  assert.equal(hybridWithdrawal.window.OBPlatformTracking._state.analyticsClientId, '', 'hybrid analytics withdrawal clears exposed client state');
+  assert.equal(hybridWithdrawal.window.OBPlatformTracking._state.analyticsSessionId, '', 'hybrid analytics withdrawal clears exposed session state');
+  assert(!Object.prototype.hasOwnProperty.call(hybridWithdrawal.window.OBPlatformTracking._state, 'lastAnalyticsSessionId'), 'hybrid exposed state retains no withdrawn session ID');
+  assert(!dataLayerAnalyticsIdentifiers(hybridWithdrawal).includes(originalHybridClientId), 'hybrid withdrawal scrubs the old client ID from GTM dataLayer history');
+  assert(!dataLayerAnalyticsIdentifiers(hybridWithdrawal).includes(originalHybridSessionId), 'hybrid withdrawal scrubs the old session ID from GTM dataLayer history');
+  await hybridWithdrawal.window.OBPlatformTracking.track('page_view');
+  await wait(50);
+  const marketingOnlyHybridContract = hybridWithdrawal.window.dataLayer.filter(item => item && item.event === 'ownlybiz_event' && item.event_name === 'page_view').at(-1);
+  assert(marketingOnlyHybridContract && !('analytics_client_id' in marketingOnlyHybridContract) && !('analytics_session_id' in marketingOnlyHybridContract), 'post-withdrawal hybrid GTM events expose no analytics identity');
+  const marketingOnlyHybridMetaCall = hybridWithdrawal.window.fbq.queue.filter(args => {
+    const values = Array.from(args || []);
+    return values[0] === 'track' && values[1] === 'PageView';
+  }).at(-1);
+  assert.equal(Array.from(marketingOnlyHybridMetaCall)[3].eventID, marketingOnlyHybridContract.event_id, 'post-withdrawal hybrid events preserve GTM and direct Meta event-ID parity');
+
+  const regrantedHybridConsent = { necessary: true, analytics: true, marketing: true, updated_at: '2026-07-11T13:06:00.000Z', policy_version: 'tracking-consent-2026-07', consent_id: 'consent-hybrid-withdrawal' };
+  hybridWithdrawal.localStorage.setItem(CONSENT_KEY, JSON.stringify(regrantedHybridConsent));
+  hybridWithdrawal.window.OBPlatformTracking.consentChanged(regrantedHybridConsent);
+  await wait(110);
+  assert.notEqual(hybridWithdrawal.localStorage.getItem(ANALYTICS_CLIENT_KEY), originalHybridClientId, 'hybrid analytics regrant rotates the cleared client ID');
+  assert.notEqual(hybridWithdrawal.sessionStorage.getItem(ANALYTICS_SESSION_KEY), originalHybridSessionId, 'hybrid analytics regrant rotates the cleared session ID');
+}
+
+async function ga4EventNameContractTests() {
+  const consent = { necessary: true, analytics: true, marketing: false, updated_at: '2026-07-11T15:00:00.000Z', policy_version: 'tracking-consent-2026-07', consent_id: 'consent-ga4-event-names' };
+  const h = createHarness({ path: '/features', mode: 'gtm', consent });
+  await wait(80);
+  const unsafe = { email: 'person@example.test', source: 'person@example.test', ga4_event_name: 'purchase' };
+  await h.window.OBPlatformTracking.track('view_pricing', { ...unsafe, page_type: 'pricing' });
+  await h.window.OBPlatformTracking.track('primary_cta_clicked', { ...unsafe, cta_id: 'start-now', destination: '/signup', placement: 'hero', page_type: 'features' });
+  await h.window.OBPlatformTracking.track('signup_started', { ...unsafe, plan_id: 'pro', interval: 'monthly', placement: 'hero', page_type: 'signup' });
+  await h.window.OBPlatformTracking.track('plan_selected', { ...unsafe, plan_id: 'pro', interval: 'monthly', selection_surface: 'signup', placement: 'signup', page_type: 'signup' });
+  await wait(50);
+
+  const expected = {
+    page_view: 'page_view',
+    view_pricing: 'view_pricing',
+    primary_cta_clicked: 'select_content',
+    signup_started: 'begin_signup',
+    plan_selected: 'select_item'
+  };
+  const contracts = h.window.dataLayer.filter(item => item && item.event === 'ownlybiz_event');
+  const canonicalEvents = requestBodies(h, '/api/tracking/event');
+  const sessionId = h.sessionStorage.getItem(ANALYTICS_SESSION_KEY);
+  for(const [eventName, ga4EventName] of Object.entries(expected)) {
+    const contract = contracts.find(item => item.event_name === eventName);
+    assert(contract, `GTM receives ${eventName}`);
+    assert.equal(contract.ga4_event_name, ga4EventName, `${eventName} receives its fixed GA4 event alias`);
+    assert.equal(contract.event_name, eventName, `${eventName} keeps its canonical event name`);
+    assert.equal(contract.analytics_session_id, sessionId, `${eventName} keeps the shared analytics session`);
+    const canonical = canonicalEvents.find(item => item.event_id === contract.event_id);
+    assert(canonical, `${eventName} keeps one shared canonical event ID`);
+    assert.equal(canonical.event_name, eventName, `${eventName} remains unchanged in the canonical collector`);
+    assert.equal(canonical.tracking_context.analytics_session_id, sessionId, `${eventName} uses the same server-bound session`);
+    assert(!Object.prototype.hasOwnProperty.call(canonical, 'ga4_event_name'), 'GA4 alias does not replace or alter the canonical collector contract');
+    assert(!Object.prototype.hasOwnProperty.call(contract.details, 'ga4_event_name'), 'GA4 alias cannot be overridden through event properties');
+  }
+  const serializedContracts = JSON.stringify(contracts);
+  assert(!/person@example\.test|GCLID_123|FBCLID_456|reset_token|verify_token|"purchase"/.test(serializedContracts), 'GA4 alias contract contains no PII, click IDs, query secrets, or caller-provided override');
+  assert.equal(contracts.find(item => item.event_name === 'view_pricing').ga4_event_name, 'view_pricing', 'pricing views stay custom because this event does not guarantee a valid GA4 ecommerce items array');
 }
 
 function trackingClickTarget(kind, value) {
@@ -599,11 +813,15 @@ async function dimensionContractTests() {
   assert.equal(contract.details.interval, 'annual');
   assert.equal(contract.properties.plan_id, 'scale', 'legacy nested properties remain');
   assert.equal(JSON.stringify(contract.ecommerce.items), JSON.stringify([{ item_id: 'scale', item_name: 'scale', item_category: 'ownlybiz_subscription', item_variant: 'annual' }]));
-  assert(!('tracking_context' in contract), 'GTM receives no consent receipt, GA client ID, or click-ID context');
+  assert(!('tracking_context' in contract), 'GTM receives no consent receipt or click-ID context');
+  assert.equal(contract.analytics_client_id, gtm.localStorage.getItem(ANALYTICS_CLIENT_KEY), 'GTM receives the consented shared analytics client ID');
+  assert.equal(contract.analytics_session_id, gtm.sessionStorage.getItem(ANALYTICS_SESSION_KEY), 'GTM receives the consented shared analytics session ID');
   assert(!/GCLID|FBCLID|reset_token|verify_token/.test(JSON.stringify(contract)), 'GTM contract has no click IDs or query secrets');
 
   const canonical = requestBodies(gtm, '/api/tracking/event').find(event => event.event_name === 'plan_selected');
   assert.equal(JSON.stringify(contract.details), JSON.stringify(canonical.properties), 'GTM and canonical collector use identical safe details');
+  assert.equal(contract.analytics_client_id, canonical.tracking_context.analytics_client_id, 'GTM and canonical collector share one analytics client ID');
+  assert.equal(contract.analytics_session_id, canonical.tracking_context.analytics_session_id, 'GTM and canonical collector share one analytics session ID');
 
   const indexHarness = createHarness({ path: '/index.html', consent: { ...consent, consent_id: 'index-consent' } });
   await wait(80);
@@ -719,11 +937,14 @@ function adminEnvironmentCopyTests() {
 
 await freshConsentTest();
 await analyticsConsentTest();
+await analyticsSessionInactivityTest();
+await managedRegrantIdentityTest();
 await marketingConsentTest();
 await stalePolicyTest();
 await consentReceiptRaceTest();
 await staleReceiptAndCrossTabStorageTests();
 await privateRouteAndGtmTests();
+await ga4EventNameContractTests();
 await dimensionContractTests();
 adminDimensionRenderingTests();
 adminEnvironmentCopyTests();

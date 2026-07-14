@@ -29,6 +29,9 @@ assert(!indexSource.includes('Loading the staging Tracking &amp; Ads service'), 
 assert(indexSource.includes('Loading the Tracking &amp; Ads service'), 'Tracking Admin loading placeholder must remain environment-neutral');
 assert(source.includes('<option value="gtm_meta"'), 'Tracking Admin must expose the explicit GTM + Ownlybiz Meta mode');
 assert(source.includes('Do not add another Meta Pixel tag inside GTM.'), 'hybrid Admin copy must warn against duplicate Meta tags');
+assert(indexSource.includes('if(appConsentSuppressedContext() && !manual)'), 'automatic consent suppression must not block an explicit Cookie Preferences request');
+assert(indexSource.includes('window.obOpenConsentManager = function(){ return openConsent({manual:true}); };'), 'Cookie Preferences buttons must open the consent manager explicitly');
+assert(indexSource.includes('(appConsentSuppressedContext() && !window._obConsentManualOpen)'), 'the consent guard must keep an explicitly opened manager visible on legal and Admin pages');
 
 const monotonicFunctionMatch = indexSource.match(/(function nextConsentUpdatedAt\(previousUpdatedAt, nowMs\)\{[\s\S]*?\n  \})\n  function setConsent/);
 assert(monotonicFunctionMatch, 'index consent timestamp helper must remain testable');

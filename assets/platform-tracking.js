@@ -16,6 +16,11 @@
   var LOW_RISK_EVENTS = {page_view:1,view_pricing:1,primary_cta_clicked:1,signup_started:1,plan_selected:1};
   // Keep view_pricing custom: GA4 ecommerce recommendations require a valid items array, which a general pricing-page view cannot guarantee.
   var GA4_BROWSER_EVENT_NAMES = {page_view:'page_view',view_pricing:'view_pricing',primary_cta_clicked:'select_content',signup_started:'begin_signup',plan_selected:'select_item'};
+  var META_STANDARD_EVENTS = {
+    AddPaymentInfo:1,AddToCart:1,AddToWishlist:1,CompleteRegistration:1,Contact:1,
+    CustomizeProduct:1,Donate:1,FindLocation:1,InitiateCheckout:1,Lead:1,PageView:1,
+    Purchase:1,Schedule:1,Search:1,StartTrial:1,SubmitApplication:1,Subscribe:1,ViewContent:1
+  };
   var PLATFORM_EVENT_NAMES = {page_view:1,view_pricing:1,primary_cta_clicked:1,signup_started:1,plan_selected:1,lead_generated:1,signup_completed:1,email_verified:1,checkout_started:1,purchase:1,website_published:1,subscription_renewed:1,subscription_cancelled:1,refund_issued:1};
   var ALLOWED_PLATFORM_ROUTES = {'':1,'index.html':1,pricing:1,features:1,how:1,experts:1,blog:1,contact:1,signup:1};
   var PROVIDER_ORDER = ['meta','google_ads','ga4','gtm','tiktok','linkedin','custom_webhook'];
@@ -1003,7 +1008,8 @@
       try {
         var mapped = mappingValue('meta',eventName);
         if(eventName === 'page_view' && !mapped) window.fbq('track','PageView',metaParams,{eventID:eventId});
-        else if(mapped) window.fbq('track',mapped,metaParams,{eventID:eventId});
+        else if(mapped && META_STANDARD_EVENTS[mapped]) window.fbq('track',mapped,metaParams,{eventID:eventId});
+        else if(mapped) window.fbq('trackCustom',mapped,metaParams,{eventID:eventId});
         else window.fbq('trackCustom',eventName,metaParams,{eventID:eventId});
       } catch(e) {}
     });
@@ -1014,6 +1020,7 @@
     ensureGtm().then(function(){
       var currentMode = browserMode();
       if((!analyticsConsent() && !marketingConsent()) || !consentReceiptReady() || !globalEnabled() || !scopeAllowed() || (currentMode !== 'gtm' && currentMode !== 'gtm_meta')) return;
+      window.dataLayer.push({ecommerce:null});
       window.dataLayer.push(browserEventObject(eventName,eventId,properties));
     });
   }

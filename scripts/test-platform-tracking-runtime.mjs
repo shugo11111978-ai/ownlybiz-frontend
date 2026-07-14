@@ -64,7 +64,13 @@ function providers() {
   return {
     ga4: { enabled: true, status: 'connected', config: { measurement_id: 'G-TEST12345' }, mappings: { page_view: 'page_view', plan_selected: 'select_item' } },
     google_ads: { enabled: true, status: 'connected', config: { conversion_id: 'AW-123456789', plan_custom_variable_tag: 'selected_plan', interval_custom_variable_tag: 'billing_interval' }, mappings: { page_view: { label: 'PAGEVIEW' }, plan_selected: { label: 'PLANSELECT' } } },
-    meta: { enabled: true, status: 'connected', config: { pixel_id: '123456789012345' }, mappings: { page_view: 'PageView', plan_selected: 'ViewContent' } },
+    meta: { enabled: true, status: 'connected', config: { pixel_id: '123456789012345' }, mappings: {
+      page_view: 'PageView', view_pricing: 'ViewContent', primary_cta_clicked: 'PrimaryCTAClicked',
+      signup_started: 'SignupStarted', plan_selected: 'PlanSelected', lead_generated: 'Lead',
+      signup_completed: 'CompleteRegistration', email_verified: 'EmailVerified',
+      checkout_started: 'InitiateCheckout', purchase: 'Purchase', subscription_renewed: 'SubscriptionRenewed',
+      subscription_cancelled: 'SubscriptionCancelled', refund_issued: 'Refund', website_published: 'WebsitePublished'
+    } },
     gtm: { enabled: true, status: 'connected', config: { container_id: 'GTM-TEST123' } },
     tiktok: { enabled: true, status: 'connected', config: { pixel_code: 'TIKTOK123' }, mappings: { page_view: 'PageView', plan_selected: 'ViewContent' } },
     linkedin: { enabled: true, status: 'connected', config: { partner_id: '123456' }, mappings: { page_view: '987654' } },
@@ -670,6 +676,53 @@ async function privateRouteAndGtmTests() {
   assert.notEqual(hybridWithdrawal.sessionStorage.getItem(ANALYTICS_SESSION_KEY), originalHybridSessionId, 'hybrid analytics regrant rotates the cleared session ID');
 }
 
+async function metaPixelEventContractTests() {
+  const h = createHarness({ path: '/features', mode: 'gtm_meta', consent: { necessary: true, analytics: false, marketing: true, updated_at: '2026-07-11T13:30:00.000Z', policy_version: 'tracking-consent-2026-07', consent_id: 'consent-meta-event-contract' } });
+  await wait(80);
+  await h.window.OBPlatformTracking.track('view_pricing', { page_type: 'pricing' });
+  await h.window.OBPlatformTracking.track('primary_cta_clicked', { cta_id: 'start-now', destination: 'signup', placement: 'hero', page_type: 'features' });
+  await h.window.OBPlatformTracking.track('signup_started', { plan_id: 'pro', interval: 'monthly', placement: 'hero', page_type: 'signup' });
+  await h.window.OBPlatformTracking.track('plan_selected', { plan_id: 'pro', interval: 'monthly', selection_surface: 'signup', placement: 'signup', page_type: 'signup' });
+  await wait(50);
+
+  const expected = {
+    page_view: { command: 'track', providerName: 'PageView' },
+    view_pricing: { command: 'track', providerName: 'ViewContent' },
+    primary_cta_clicked: { command: 'trackCustom', providerName: 'PrimaryCTAClicked' },
+    signup_started: { command: 'trackCustom', providerName: 'SignupStarted' },
+    plan_selected: { command: 'trackCustom', providerName: 'PlanSelected' }
+  };
+  const contracts = h.window.dataLayer.filter(item => item && item.event === 'ownlybiz_event');
+  const canonicalEvents = requestBodies(h, '/api/tracking/event');
+  for(const contract of contracts) {
+    const contractIndex = h.window.dataLayer.indexOf(contract);
+    assert(contractIndex > 0 && h.window.dataLayer[contractIndex - 1] && h.window.dataLayer[contractIndex - 1].ecommerce === null, `${contract.event_name} clears stale GTM ecommerce state before dispatch`);
+  }
+  for(const [eventName, meta] of Object.entries(expected)) {
+    const contract = contracts.find(item => item.event_name === eventName);
+    assert(contract, `GTM receives ${eventName} for Meta event-ID parity`);
+    const canonical = canonicalEvents.find(item => item.event_id === contract.event_id);
+    assert(canonical && canonical.event_name === eventName, `${eventName} keeps one canonical collector event`);
+    const pixelCall = h.window.fbq.queue.find(args => {
+      const values = Array.from(args || []);
+      return values[0] === meta.command && values[1] === meta.providerName && values[3] && values[3].eventID === contract.event_id;
+    });
+    assert(pixelCall, `${eventName} uses Meta ${meta.command} as ${meta.providerName} with the canonical event ID`);
+  }
+
+  delete h.window.OBPlatformTracking._state.config.providers.meta.mappings.primary_cta_clicked;
+  const fallbackBefore = canonicalEvents.length;
+  await h.window.OBPlatformTracking.track('primary_cta_clicked', { cta_id: 'fallback-cta', destination: 'signup', placement: 'footer', page_type: 'features' });
+  await wait(40);
+  const fallbackCanonical = requestBodies(h, '/api/tracking/event').slice(fallbackBefore).find(item => item.event_name === 'primary_cta_clicked');
+  assert(fallbackCanonical, 'unmapped Meta fallback keeps the canonical collector event');
+  const fallbackPixelCall = h.window.fbq.queue.find(args => {
+    const values = Array.from(args || []);
+    return values[0] === 'trackCustom' && values[1] === 'primary_cta_clicked' && values[3] && values[3].eventID === fallbackCanonical.event_id;
+  });
+  assert(fallbackPixelCall, 'unmapped Meta canonical event falls back to trackCustom with the same event ID');
+}
+
 async function ga4EventNameContractTests() {
   const consent = { necessary: true, analytics: true, marketing: false, updated_at: '2026-07-11T15:00:00.000Z', policy_version: 'tracking-consent-2026-07', consent_id: 'consent-ga4-event-names' };
   const h = createHarness({ path: '/features', mode: 'gtm', consent });
@@ -745,7 +798,7 @@ async function dimensionContractTests() {
   });
   const metaCall = h.window.fbq.queue.find(args => {
     const values = Array.from(args || []);
-    return values[0] === 'track' && values[1] === 'ViewContent';
+    return values[0] === 'trackCustom' && values[1] === 'PlanSelected';
   });
   assert(metaCall, 'Meta receives mapped plan event');
   const metaParams = Array.from(metaCall)[2];
@@ -947,6 +1000,7 @@ await stalePolicyTest();
 await consentReceiptRaceTest();
 await staleReceiptAndCrossTabStorageTests();
 await privateRouteAndGtmTests();
+await metaPixelEventContractTests();
 await ga4EventNameContractTests();
 await dimensionContractTests();
 adminDimensionRenderingTests();

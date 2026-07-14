@@ -988,6 +988,10 @@
       details:details,
       properties:details
     };
+    if(eventName === 'primary_cta_clicked' && details.cta_id){
+      payload.content_type = 'primary_cta';
+      payload.content_id = details.cta_id;
+    }
     if(analyticsIdentityAllowed()){
       var analyticsClientId = state.analyticsClientId || syncAnalyticsClient();
       var analyticsSessionId = syncAnalyticsSession();

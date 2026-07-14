@@ -701,6 +701,10 @@ async function metaPixelEventContractTests() {
   for(const [eventName, meta] of Object.entries(expected)) {
     const contract = contracts.find(item => item.event_name === eventName);
     assert(contract, `GTM receives ${eventName} for Meta event-ID parity`);
+    if(eventName === 'primary_cta_clicked') {
+      assert.equal(contract.content_type, 'primary_cta', 'GTM CTA event includes GA4 recommended content type');
+      assert.equal(contract.content_id, 'start-now', 'GTM CTA event includes GA4 recommended content ID');
+    }
     const canonical = canonicalEvents.find(item => item.event_id === contract.event_id);
     assert(canonical && canonical.event_name === eventName, `${eventName} keeps one canonical collector event`);
     const pixelCall = h.window.fbq.queue.find(args => {

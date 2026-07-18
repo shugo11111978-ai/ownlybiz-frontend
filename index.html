@@ -44890,6 +44890,20 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
 .ob-admin-live-badge.warn{background:rgba(245,158,11,.18);color:#fcd34d}
 .ob-admin-live-badge.danger{background:rgba(239,68,68,.18);color:#fca5a5}
 .ob-admin-live-error{border:1px solid rgba(248,113,113,.3);background:rgba(127,29,29,.22);color:#fecaca;border-radius:14px;padding:14px;font-size:13px}
+.ob-support-open{border:1px solid rgba(196,98,45,.72);background:#c4622d;color:#fff;border-radius:9px;padding:8px 13px;font-size:12px;font-weight:900;cursor:pointer;white-space:nowrap}
+.ob-support-open:hover{background:#d36f37}
+.ob-support-detail{display:grid;gap:16px}
+.ob-support-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.ob-support-back,.ob-support-status{border:1px solid rgba(255,255,255,.16);background:rgba(255,255,255,.08);color:#fff;border-radius:9px;padding:9px 13px;font-size:12px;font-weight:900;cursor:pointer}
+.ob-support-status{background:#fff;color:#2b2119;border-color:#eadfd5}
+.ob-support-message,.ob-support-reply{border:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.055);border-radius:14px;padding:16px;color:rgba(246,241,233,.88);font-size:14px;line-height:1.65;white-space:pre-wrap}
+.ob-support-meta{color:rgba(246,241,233,.58);font-size:12px;line-height:1.55}
+.ob-support-compose{display:grid;gap:10px;border:1px solid rgba(196,98,45,.34);background:rgba(196,98,45,.08);border-radius:14px;padding:16px}
+.ob-support-compose textarea{width:100%;min-height:130px;resize:vertical;box-sizing:border-box;border:1px solid rgba(255,255,255,.18);border-radius:10px;background:#fff;color:#2b2119;padding:12px;font:inherit;line-height:1.55}
+.ob-support-compose-actions{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.ob-support-send{border:0;background:#c4622d;color:#fff;border-radius:9px;padding:10px 15px;font-size:12px;font-weight:900;cursor:pointer}
+.ob-support-send:disabled,.ob-support-status:disabled{opacity:.55;cursor:wait}
+.ob-support-feedback{min-height:18px;color:#fcd34d;font-size:12px}
 #ob-ops-action-center{margin:18px 0 20px;padding:18px;border:1px solid rgba(96,165,250,.24);border-radius:22px;background:linear-gradient(135deg,rgba(9,25,42,.94),rgba(21,21,25,.92));color:#f8fbff}
 #ob-ops-action-center h3{margin:0 0 6px;font-size:20px;color:#fff}
 #ob-ops-action-center p{margin:0 0 14px;color:rgba(248,251,255,.66);font-size:13px;line-height:1.45}
@@ -44918,6 +44932,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   function role(){ try { return (JSON.parse(sessionStorage.getItem('ob_u') || localStorage.getItem('ob_u') || '{}').role || '').toLowerCase(); } catch(e){ return ''; } }
   function base(){ var b=''; try{ b = window.OWNLY_API || window.OWNLYBIZ_API_URL || window.BASE || BASE || ''; }catch(e){} return (b || 'https://ownlybiz-backend-production.up.railway.app').replace(/\/+$/,''); }
   var readCache = {};
+  var supportFlash = '';
   function api(path, opts){
     opts = opts || {};
     var method = String(opts.method || 'GET').toUpperCase();
@@ -45105,9 +45120,83 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     loading('support');
     try {
       var d = await api('/admin/support');
-      var rows = (d.tickets || []).map(function(t){ return '<tr><td>' + esc(t.subject || t.title || '-') + '<br><small>' + esc(t.user_email || '') + '</small></td><td>' + esc(t.status || '-') + '</td><td>' + esc(t.priority || '-') + '</td><td>' + esc(dt(t.created_at)) + '</td></tr>'; });
-      setContent('support', note('Live support tickets. Reply/resolve actions are real, so this view only lists tickets until you intentionally open one.') + table(['Ticket','Status','Priority','Created'], rows, 'No support tickets returned.'));
+      var rows = (d.tickets || []).map(function(t){
+        return '<tr><td>' + esc(t.subject || t.title || '-') + '<br><small>' + esc(t.user_email || '') + '</small></td><td>' + esc(t.status || '-') + '</td><td>' + esc(t.priority || '-') + '</td><td>' + esc(dt(t.created_at)) + '</td><td><button type="button" class="ob-support-open" data-ticket-id="' + esc(t.id || '') + '">Open</button></td></tr>';
+      });
+      setContent('support', note('Live support tickets. Open a ticket to read the full thread, reply, or change its status. Reply and status actions affect real records.') + table(['Ticket','Status','Priority','Created','Action'], rows, 'No support tickets returned.'));
+      var c = contentNode('support');
+      if(c) c.querySelectorAll('[data-ticket-id]').forEach(function(button){
+        button.addEventListener('click', function(){ openSupportTicket(button.getAttribute('data-ticket-id')); });
+      });
     } catch(err) { setContent('support', errorBox(err)); }
+  }
+
+  async function openSupportTicket(ticketId){
+    if(!ticketId) return;
+    setContent('support', note('Loading the live ticket thread...'));
+    try {
+      var d = await api('/admin/support/' + encodeURIComponent(ticketId));
+      var t = d.ticket || {};
+      var replies = d.replies || [];
+      var flashHtml = supportFlash ? '<div class="ob-admin-live-note">' + esc(supportFlash) + '</div>' : '';
+      supportFlash = '';
+      var replyHtml = replies.length ? replies.map(function(r){
+        return '<div class="ob-support-reply"><div class="ob-support-meta" style="margin-bottom:7px;">' + esc(r.author_name || 'Admin') + ' · ' + esc(dt(r.created_at)) + '</div>' + esc(r.message || '') + '</div>';
+      }).join('') : '<div class="ob-admin-live-empty">No replies yet.</div>';
+      setContent('support', '<div class="ob-support-detail">' + flashHtml +
+        '<div class="ob-support-toolbar"><button type="button" class="ob-support-back" id="ob-support-back">← Back to tickets</button><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">' + badge(t.status || 'open', (t.status === 'resolved' || t.status === 'closed') ? 'ok' : 'warn') + '<button type="button" class="ob-support-status" id="ob-support-status">' + ((t.status === 'resolved' || t.status === 'closed') ? 'Reopen ticket' : 'Resolve ticket') + '</button></div></div>' +
+        '<div><h3 style="margin:0 0 7px;color:#fff;font-size:23px;">' + esc(t.subject || 'Support ticket') + '</h3><div class="ob-support-meta">Ticket ' + esc(t.id || ticketId) + ' · ' + esc(t.priority || 'normal') + ' priority · created ' + esc(dt(t.created_at)) + (t.user_email ? '<br>' + esc(t.user_name || 'User') + ' · ' + esc(t.user_email) : '') + '</div></div>' +
+        '<div class="ob-support-message">' + esc(t.message || 'No message body') + '</div>' +
+        '<div><h4 style="margin:0 0 10px;color:#fff;">Replies</h4><div style="display:grid;gap:10px;">' + replyHtml + '</div></div>' +
+        '<div class="ob-support-compose"><label for="ob-support-reply" style="color:#fff;font-weight:900;">Reply</label><textarea id="ob-support-reply" placeholder="Write your response..."></textarea><div class="ob-support-compose-actions"><div class="ob-support-feedback" id="ob-support-feedback">Review carefully before sending. This writes to the live support thread.</div><button type="button" class="ob-support-send" id="ob-support-send">Send reply</button></div></div>' +
+      '</div>');
+      var back = document.getElementById('ob-support-back');
+      var statusButton = document.getElementById('ob-support-status');
+      var sendButton = document.getElementById('ob-support-send');
+      if(back) back.addEventListener('click', renderSupport);
+      if(statusButton) statusButton.addEventListener('click', async function(){
+        var nextStatus = (t.status === 'resolved' || t.status === 'closed') ? 'open' : 'resolved';
+        if(!window.confirm((nextStatus === 'resolved' ? 'Resolve' : 'Reopen') + ' this live support ticket?')) return;
+        statusButton.disabled = true;
+        try {
+          await api('/admin/support/' + encodeURIComponent(ticketId), {method:'PUT', body:{status:nextStatus}});
+          delete readCache['/admin/support'];
+          delete readCache['/admin/support/' + encodeURIComponent(ticketId)];
+          await openSupportTicket(ticketId);
+        } catch(err) {
+          statusButton.disabled = false;
+          var feedback = document.getElementById('ob-support-feedback');
+          if(feedback) feedback.textContent = err.message || 'Could not update ticket status.';
+        }
+      });
+      if(sendButton) sendButton.addEventListener('click', async function(){
+        var textarea = document.getElementById('ob-support-reply');
+        var feedback = document.getElementById('ob-support-feedback');
+        var message = textarea ? textarea.value.trim() : '';
+        if(!message){ if(feedback) feedback.textContent = 'Write a reply before sending.'; return; }
+        if(!window.confirm('Send this reply to the live support thread?')) return;
+        sendButton.disabled = true;
+        if(textarea) textarea.disabled = true;
+        if(feedback) feedback.textContent = 'Sending reply...';
+        try {
+          var result = await api('/admin/support/' + encodeURIComponent(ticketId) + '/reply', {method:'POST', body:{message:message}});
+          supportFlash = result.delivery && result.delivery.queued
+            ? 'Reply saved and queued for email delivery to ' + result.delivery.recipient + '.'
+            : 'Reply saved to the support thread, but no requester email was available for delivery.';
+          delete readCache['/admin/support'];
+          delete readCache['/admin/support/' + encodeURIComponent(ticketId)];
+          await openSupportTicket(ticketId);
+        } catch(err) {
+          sendButton.disabled = false;
+          if(textarea) textarea.disabled = false;
+          if(feedback) feedback.textContent = err.message || 'Could not send reply.';
+        }
+      });
+    } catch(err) {
+      setContent('support', '<button type="button" class="ob-support-back" id="ob-support-back">← Back to tickets</button><div style="margin-top:14px;">' + errorBox(err) + '</div>');
+      var back = document.getElementById('ob-support-back');
+      if(back) back.addEventListener('click', renderSupport);
+    }
   }
 
   async function renderPromotions(){

@@ -196,7 +196,8 @@
     adminOverview:null,
     adminEvents:[],
     adminDeliveries:[],
-    adminEventFilters:{event_name:'',event_source:'',plan_id:'',interval:'',campaign_source:'',campaign_medium:'',campaign_name:''}
+    adminEventFilters:{event_name:'',event_source:'',plan_id:'',interval:'',campaign_source:'',campaign_medium:'',campaign_name:''},
+    adminCatalogFilters:{query:'',source:'',stage:''}
   };
   var nativeFetch = window.fetch.bind(window);
 
@@ -1305,6 +1306,9 @@
     _providerDetailCapability:providerDetailCapability,
     _googleMappingChannels:googleMappingChannels,
     _mappingCell:mappingCell,
+    _mappingMatrix:mappingMatrix,
+    _eventProviderState:eventProviderState,
+    _eventProviderTile:eventProviderTile,
     _providerCard:providerCard,
     _adminEnvironmentCopy:adminEnvironmentCopy,
     _validateConnection:validateConnection,
@@ -1638,13 +1642,13 @@
     var source = cleanText(event.source || (LOW_RISK_EVENTS[eventName] ? 'browser' : 'server'),20).toLowerCase();
     var connected = connectionStatus(provider);
     var on = bool(adminConnection(provider).enabled,['connected','ready','active','configured'].indexOf(connected) >= 0);
-    var setup = on ? 'Setup on' : 'Setup off';
-    if(provider === 'gtm') return setup + (source === 'browser' ? ' · flat + nested dataLayer details' : ' · browser only; server event not sent');
+    var setup = on ? 'Connected' : 'Connection off';
+    if(provider === 'gtm') return setup + (source === 'browser' ? ' · flat and nested dataLayer details' : ' · browser only; server event not sent');
     if(provider === 'linkedin') return setup + ' · canonical conversion via server-side CAPI; browser tag is attribution only';
     if(provider === 'custom_webhook') return setup + (source === 'server' ? ' · canonical safe JSON' : ' · server delivery only');
-    if(provider === 'ga4') return setup + ' · event parameters; GA4 custom definitions not auto-verified';
+    if(provider === 'ga4') return setup + ' · event parameters; GA4 custom definitions are not auto-verified';
     if(provider === 'google_ads') return setup + ' · mapped conversion; reporting fields depend on destination support';
-    if(provider === 'meta' || provider === 'tiktok') return setup + ' · supported event/custom-data fields only';
+    if(provider === 'meta' || provider === 'tiktok') return setup + ' · supported event and custom-data fields only';
     return setup;
   }
   function googleMappingChannels(event,mapping){
@@ -1716,12 +1720,80 @@
       return '<span class="' + esc(capability.state) + '"><b>' + esc(field.label) + ':</b> ' + esc(capability.label) + '<small>' + esc(capability.note || '') + '</small></span>';
     }).join('') + '</div>';
   }
+  function eventSource(event){
+    var eventName = event && (event.name || event.event_name) || '';
+    return cleanText(event && event.source || (LOW_RISK_EVENTS[eventName] ? 'browser' : 'server'),20).toLowerCase() === 'browser' ? 'browser' : 'server';
+  }
+  function eventStage(event){
+    return cleanText(event && event.stage || 'Other',40) || 'Other';
+  }
+  function eventProviderState(provider,event){
+    var eventName = event && (event.name || event.event_name) || '';
+    var source = eventSource(event);
+    var status = connectionStatus(provider);
+    var on = bool(adminConnection(provider).enabled,['connected','ready','active','configured'].indexOf(status) >= 0);
+    if(!on) return {state:'off',label:'Off'};
+    if(provider === 'gtm' && source !== 'browser') return {state:'unavailable',label:'Not available'};
+    if(provider === 'google_ads' && !googleMappingChannels(event,mappingEntry(provider,eventName)).ready) return {state:'setup',label:'Needs mapping'};
+    if(provider === 'linkedin'){
+      var linkedinMapping = mappingEntry(provider,eventName);
+      if(!(linkedinMapping.conversion_action_id || linkedinMapping.label || linkedinMapping.browser_label)) return {state:'setup',label:'Needs mapping'};
+    }
+    return {state:'active',label:'Active'};
+  }
+  function eventProviderTile(provider,event){
+    var meta = ADMIN_PROVIDERS[provider];
+    var stateCopy = eventProviderState(provider,event);
+    var fields = catalogDetailFields(event).filter(function(field){ return !field.operational; });
+    return '<article class="ob-event-provider-card ' + esc(stateCopy.state) + '">' +
+      '<div class="ob-event-provider-head"><strong>' + esc(meta.label) + '</strong><span class="ob-event-provider-status ' + esc(stateCopy.state) + '">' + esc(stateCopy.label) + '</span></div>' +
+      '<div class="ob-event-provider-mapping"><span>Destination event</span><strong>' + mappingCell(provider,event.name || event.event_name) + '</strong></div>' +
+      '<p>' + esc(providerCapability(provider,event)) + '</p>' +
+      (fields.length ? '<details class="ob-event-provider-coverage"><summary>Field coverage <span>' + fields.length + ' safe field' + (fields.length === 1 ? '' : 's') + '</span></summary>' + providerDetailStatusHtml(provider,event) + '</details>' : '') +
+    '</article>';
+  }
+  function eventProviderSummary(event){
+    var totals = PROVIDER_ORDER.reduce(function(result,provider){
+      var providerState = eventProviderState(provider,event).state;
+      if(providerState === 'active') result.active += 1;
+      else if(providerState === 'setup') result.setup += 1;
+      return result;
+    },{active:0,setup:0});
+    return totals.active + ' active' + (totals.setup ? ' \u00b7 ' + totals.setup + ' mapping' + (totals.setup === 1 ? '' : 's') + ' needed' : '');
+  }
+  function eventCatalogCard(event){
+    var eventName = cleanText(event.name || event.event_name,64);
+    var label = cleanText(event.label || event.description || eventName.replace(/_/g,' '),120);
+    var source = eventSource(event);
+    var stage = eventStage(event);
+    var search = [eventName,label,source,stage].concat(PROVIDER_ORDER.map(function(provider){ return ADMIN_PROVIDERS[provider].label; })).join(' ').toLowerCase();
+    return '<details class="ob-event-catalog-card" data-catalog-source="' + esc(source) + '" data-catalog-stage="' + esc(stage.toLowerCase()) + '" data-catalog-search="' + esc(search) + '">' +
+      '<summary><span class="ob-event-catalog-summary-layout"><span class="ob-event-catalog-title"><strong>' + esc(label) + '</strong><code>' + esc(eventName) + '</code></span>' +
+        '<span class="ob-event-catalog-badges"><span class="ob-event-stage">' + esc(stage) + '</span><span class="ob-event-source ' + esc(source) + '">' + esc(source) + '</span></span>' +
+        '<span class="ob-event-provider-summary">' + esc(eventProviderSummary(event)) + '</span><span class="ob-event-catalog-action"><span class="closed">View mapping</span><span class="open">Hide mapping</span></span></span></summary>' +
+      '<div class="ob-event-catalog-content"><div class="ob-event-catalog-insight"><div><strong>Safe reporting fields</strong><p>These are the privacy-safe details available for this event.</p></div>' + detailChipsHtml(event) + '</div>' +
+        '<div class="ob-event-provider-grid">' + PROVIDER_ORDER.map(function(provider){ return eventProviderTile(provider,event); }).join('') + '</div></div>' +
+    '</details>';
+  }
   function mappingMatrix(){
-    return '<div class="ob-tracking-table-wrap"><table class="ob-tracking-table"><thead><tr><th>Event</th><th>Source</th>' + PROVIDER_ORDER.map(function(provider){ return '<th>' + esc(ADMIN_PROVIDERS[provider].label) + '</th>'; }).join('') + '</tr></thead><tbody>' +
-      eventCatalog().map(function(event){
-        var source = cleanText(event.source || (LOW_RISK_EVENTS[event.name] ? 'browser' : 'server'),20).toLowerCase();
-        return '<tr><td><strong>' + esc(event.name) + '</strong><div class="ob-tracking-muted">' + esc(event.label || event.description || '') + '</div><div class="ob-detail-label">What you will know</div>' + detailChipsHtml(event) + '</td><td><span class="ob-event-source ' + esc(source) + '">' + esc(source) + '</span></td>' + PROVIDER_ORDER.map(function(provider){ return '<td><div>' + mappingCell(provider,event.name) + '</div><div class="ob-capability-note">' + esc(providerCapability(provider,event)) + '</div>' + providerDetailStatusHtml(provider,event) + '</td>'; }).join('') + '</tr>';
-      }).join('') + '</tbody></table></div>';
+    var events = eventCatalog();
+    var filters = state.adminCatalogFilters || {query:'',source:'',stage:''};
+    var stages = [];
+    events.forEach(function(event){ var stage=eventStage(event); if(stages.indexOf(stage) < 0) stages.push(stage); });
+    var browserCount = events.filter(function(event){ return eventSource(event) === 'browser'; }).length;
+    var serverCount = events.length - browserCount;
+    return '<div id="ob-tracking-event-catalog" class="ob-event-catalog">' +
+      '<div class="ob-event-catalog-overview"><span><strong>' + events.length + '</strong> canonical events</span><span><strong>' + browserCount + '</strong> browser</span><span><strong>' + serverCount + '</strong> server</span></div>' +
+      '<div class="ob-event-catalog-toolbar" aria-label="Event catalog filters">' +
+        '<label class="ob-event-catalog-search"><span>Find an event</span><input class="ob-tracking-input" data-catalog-filter="query" type="search" value="' + esc(filters.query || '') + '" placeholder="Search by event name" oninput="obFilterTrackingCatalog(\'query\',this.value)"></label>' +
+        '<label><span>Source</span><select class="ob-tracking-select" data-catalog-filter="source" onchange="obFilterTrackingCatalog(\'source\',this.value)"><option value="">All sources</option><option value="browser" ' + (filters.source === 'browser' ? 'selected' : '') + '>Browser events</option><option value="server" ' + (filters.source === 'server' ? 'selected' : '') + '>Server events</option></select></label>' +
+        '<label><span>Funnel stage</span><select class="ob-tracking-select" data-catalog-filter="stage" onchange="obFilterTrackingCatalog(\'stage\',this.value)"><option value="">All stages</option>' + stages.map(function(stage){ var value=stage.toLowerCase(); return '<option value="' + esc(value) + '" ' + (filters.stage === value ? 'selected' : '') + '>' + esc(stage) + '</option>'; }).join('') + '</select></label>' +
+        '<button class="ob-tracking-btn" type="button" onclick="obResetTrackingCatalogFilters()">Reset filters</button>' +
+      '</div>' +
+      '<div class="ob-event-catalog-results"><span id="ob-event-catalog-visible" aria-live="polite">Showing ' + events.length + ' of ' + events.length + ' events</span><span>Open an event to inspect its platform mapping and field coverage.</span></div>' +
+      '<div class="ob-event-catalog-list">' + events.map(eventCatalogCard).join('') + '</div>' +
+      '<div class="ob-tracking-empty ob-event-catalog-empty" hidden>No events match these filters.</div>' +
+    '</div>';
   }
   function eventItemName(item){
     var name = cleanText(item && (item.event_name || item.name),64).toLowerCase();
@@ -1850,6 +1922,42 @@
     state.adminEventFilters = {event_name:'',event_source:'',plan_id:'',interval:'',campaign_source:'',campaign_medium:'',campaign_name:''};
     renderAdminTracking();
   };
+  function applyTrackingCatalogFilters(){
+    var root = document.getElementById('ob-tracking-event-catalog');
+    if(!root) return;
+    var filters = state.adminCatalogFilters || {query:'',source:'',stage:''};
+    var query = cleanText(filters.query,80).toLowerCase();
+    var visible = 0;
+    var cards = root.querySelectorAll('.ob-event-catalog-card');
+    cards.forEach(function(card){
+      var matches = (!query || String(card.getAttribute('data-catalog-search') || '').indexOf(query) >= 0) &&
+        (!filters.source || card.getAttribute('data-catalog-source') === filters.source) &&
+        (!filters.stage || card.getAttribute('data-catalog-stage') === filters.stage);
+      card.hidden = !matches;
+      if(matches) visible += 1;
+    });
+    var result = document.getElementById('ob-event-catalog-visible');
+    if(result) result.textContent = 'Showing ' + visible + ' of ' + cards.length + ' events';
+    var empty = root.querySelector('.ob-event-catalog-empty');
+    if(empty) empty.hidden = visible !== 0;
+  }
+  window.obFilterTrackingCatalog = function(key,value){
+    if(['query','source','stage'].indexOf(key) < 0) return;
+    value = cleanText(value,80).toLowerCase();
+    if(key === 'source' && ['','browser','server'].indexOf(value) < 0) value = '';
+    if(key === 'stage'){
+      var stages = eventCatalog().map(function(event){ return eventStage(event).toLowerCase(); });
+      if(value && stages.indexOf(value) < 0) value = '';
+    }
+    state.adminCatalogFilters[key] = value;
+    applyTrackingCatalogFilters();
+  };
+  window.obResetTrackingCatalogFilters = function(){
+    state.adminCatalogFilters = {query:'',source:'',stage:''};
+    var root = document.getElementById('ob-tracking-event-catalog');
+    if(root) root.querySelectorAll('[data-catalog-filter]').forEach(function(control){ control.value=''; });
+    applyTrackingCatalogFilters();
+  };
   function deliveriesTable(){
     var items = state.adminDeliveries || [];
     if(!items.length) return '<div class="ob-tracking-empty">No provider deliveries recorded yet.</div>';
@@ -1897,7 +2005,7 @@
         '<div class="ob-tracking-actions" style="margin-top:14px;"><button class="ob-tracking-btn primary" type="button" onclick="obSaveTrackingSettings()">Save tracking controls</button><button class="ob-tracking-btn" type="button" onclick="obOpenConsentManager();return false;">Preview consent choices</button></div></section>' +
       '<section class="ob-tracking-section"><div class="ob-tracking-section-head"><div><h2>Service health</h2><p class="ob-tracking-muted">Safe totals only; no tokens or customer payloads are displayed.</p></div></div>' + statsHtml() + '</section>' +
       '<section class="ob-tracking-section"><div class="ob-tracking-section-head"><div><h2>Advertising and analytics platforms</h2><p class="ob-tracking-muted">Named services are first-class connections. Custom Webhook is only for a generic endpoint you control.</p></div></div><div class="ob-provider-grid">' + PROVIDER_ORDER.map(providerCard).join('') + '</div></section>' +
-      '<section class="ob-tracking-section"><div class="ob-tracking-section-head"><div><h2>Full-funnel event catalog and mapping</h2><p class="ob-tracking-muted">Schema ' + esc(schemaVersion()) + ' is locked to low-cardinality, privacy-safe details. Browser events stop at low-risk funnel behavior; signup completion, checkout, purchase, and activation come from authoritative backend workflows.</p></div></div>' + mappingMatrix() + '</section>' +
+      '<section class="ob-tracking-section"><div class="ob-tracking-section-head"><div><h2>Event catalog</h2><p class="ob-tracking-muted">Browse the full funnel without the spreadsheet. Open one event to see its platform mapping and privacy-safe field coverage. Schema ' + esc(schemaVersion()) + ' keeps browser behavior low-risk and sensitive milestones server-authoritative.</p></div></div>' + mappingMatrix() + '</section>' +
       '<section class="ob-tracking-section"><div class="ob-tracking-section-head"><div><h2>Recent canonical events</h2><p class="ob-tracking-muted">Expandable details use the locked safe schema. Raw attribution, click IDs, user data, emails, tokens, and URL queries are never rendered here.</p></div></div>' + recentEventsTable() + '</section>' +
       '<section class="ob-tracking-section"><div class="ob-tracking-section-head"><div><h2>Provider delivery log</h2><p class="ob-tracking-muted">Retries reuse the original event ID for provider deduplication.</p></div></div>' + deliveriesTable() + '</section>';
   }

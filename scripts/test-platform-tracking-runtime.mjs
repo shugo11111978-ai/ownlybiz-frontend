@@ -949,6 +949,14 @@ function adminDimensionRenderingTests() {
   api._state.adminOverview.connections.linkedin.mappings = { plan_selected: '987654' };
   const linkedInMapped = api._mappingCell('linkedin','plan_selected');
   assert(linkedInMapped.includes('Server rule 987654') && !linkedInMapped.includes('Canonical/custom'), 'LinkedIn Admin shows the mapped server conversion rule explicitly');
+  const catalog = api._mappingMatrix();
+  assert(catalog.includes('ob-event-catalog-toolbar') && catalog.includes('Search by event name'), 'Admin catalog provides friendly search and filter controls');
+  assert(catalog.includes('ob-event-catalog-card') && catalog.includes('View mapping'), 'Admin catalog collapses each event behind an explicit drill-down');
+  assert(catalog.includes('ob-event-provider-grid') && catalog.includes('Field coverage'), 'Expanded event details preserve provider mapping and field coverage');
+  assert(!catalog.includes('<table') && !catalog.includes('<th>Meta Ads'), 'Admin catalog no longer renders the horizontally-scrolling provider matrix');
+  assert.equal(api._eventProviderState('google_ads', catalogEvent).state, 'active', 'Mapped Google browser event is summarized as active');
+  api._state.adminOverview.connections.google_ads.mappings.plan_selected = {};
+  assert.equal(api._eventProviderState('google_ads', catalogEvent).state, 'setup', 'Unmapped Google event is clearly summarized as needing mapping');
 
   api._state.adminEvents = [
     { event_name: 'plan_selected', source: 'browser', event_id: 'event-safe-12345', path: '/signup?secret=never', consent: { analytics: true, marketing: false }, details: { plan_id: 'pro', interval: 'annual', selection_surface: 'signup', campaign_source: 'google', campaign_medium: 'cpc', campaign_name: 'summer_launch' }, attribution: { gclid: 'PRIVATE-GCLID' }, user_data: { email: 'secret@example.com' } },

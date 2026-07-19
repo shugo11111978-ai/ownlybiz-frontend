@@ -5358,11 +5358,12 @@ if (!window.toast) {
       <div style="background:var(--white);border:1.5px solid var(--gray-200);border-radius:20px;padding:48px;max-width:440px;width:100%;text-align:center;">
         <div class="mkt-logo" style="margin-bottom:24px;display:inline-block;">Own<span>lybiz</span></div>
         <h2 style="font-family:var(--font-head);font-size:28px;color:var(--brown);margin-bottom:6px;">Welcome back</h2>
-        <p style="font-size:14px;color:var(--gray-400);margin-bottom:28px;">Sign in to your expert dashboard</p>
+        <p style="font-size:14px;color:var(--gray-400);margin-bottom:28px;">Sign in to your Ownlybiz dashboard</p>
         <div style="font-size:12px;color:var(--gray-400);margin-bottom:16px;">Sign in with email.</div>
         <input type="email" class="form-input" id="mkt-login-email" placeholder="your@email.com" style="margin-bottom:12px;">
         <input type="password" class="form-input" id="mkt-login-pass" placeholder="Password" style="margin-bottom:16px;">
         <button class="btn btn-primary" id="mkt-login-btn" style="width:100%;" onclick="handleMarketingLogin()">Sign In →</button>
+        <div id="ob-admin-login-mfa" style="display:none;margin-top:14px;text-align:left;"></div>
         <div id="mkt-login-error" style="display:none;margin-top:12px;padding:10px 16px;background:rgba(185,28,28,.1);border:1px solid rgba(185,28,28,.3);border-radius:10px;color:#b91c1c;font-size:13px;font-weight:600;"></div>
         <p style="font-size:13px;color:var(--gray-400);margin-top:20px;">Don't have an account? <span style="color:var(--terra);font-weight:600;cursor:pointer;" onclick="switchView(2)">Start free →</span></p>
         <p style="font-size:12px;color:var(--gray-400);margin-top:8px;"><a href="#" style="color:var(--gray-400);">Forgot password?</a></p>
@@ -13505,20 +13506,25 @@ async function savePaymentConfig() {
       if (errEl) errEl.style.display = 'none';
 
       try {
-        console.log('[OB] Login:', email);
         var r = await fetch(BASE + '/api/auth/login', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ email: email, password: pass })
         });
         var d = await r.json().catch(function(){ return {}; });
-        console.log('[OB] Login response:', r.status, d);
+        console.log('[OB] Login response:', r.status, d && d.mfa_required ? 'admin verification required' : (r.ok ? 'authenticated' : 'failed'));
         if (!r.ok) {
           var loginErr = new Error(d.error || 'Invalid email or password');
           loginErr.status = r.status;
           loginErr.data = d;
           throw loginErr;
         }
+
+        if (d.mfa_required) {
+          if (typeof window.obCompleteAdminMfaLogin !== 'function') throw new Error('Admin verification is not ready. Refresh and try again.');
+          d = await window.obCompleteAdminMfaLogin(d);
+        }
+        if (!d || !d.token || !d.user) throw new Error('Login could not be completed.');
 
         // Save to sessionStorage + unified client token
         sessionStorage.setItem('ob_t', d.token);
@@ -28427,20 +28433,24 @@ window._handleRTCMessage=function(d){
     });
   }
   function updateStepUpStatusText(status){
-    var el = document.getElementById('ob-stripe-stepup-status');
-    if(!el) return;
-    if(!window.PublicKeyCredential || !navigator.credentials){
-      el.textContent = 'This browser does not support passkeys. Use Safari/Chrome/Edge with Touch ID, Face ID, Windows Hello, Android screen lock, or a security key.';
-      el.style.color = '#fecaca';
-      return;
-    }
-    if(status && status.passkey_enrolled){
-      el.textContent = status.verified ? ('Passkey verified until ' + new Date(status.verified_until).toLocaleTimeString()) : ('Passkey ready: ' + status.passkey_count + ' registered.');
-      el.style.color = status.verified ? '#86efac' : 'rgba(246,241,233,.72)';
-    } else {
-      el.textContent = 'No admin passkey registered yet. Register one before saving live Stripe keys.';
-      el.style.color = '#fcd34d';
-    }
+    ['ob-stripe-stepup-status','ob-admin-login-mfa-status'].forEach(function(id){
+      var el = document.getElementById(id);
+      if(!el) return;
+      if(!window.PublicKeyCredential || !navigator.credentials){
+        el.textContent = 'This browser does not support passkeys. Use Safari, Chrome, or Edge with Touch ID, Face ID, Windows Hello, Android screen lock, or a security key.';
+        el.style.color = '#fecaca';
+        return;
+      }
+      if(status && status.passkey_enrolled){
+        el.textContent = 'Protected: password plus ' + status.passkey_count + ' passkey' + (status.passkey_count === 1 ? '' : 's') + ' required for admin login. Recovery codes remaining: ' + Number(status.recovery_codes_remaining || 0) + '.';
+        el.style.color = '#86efac';
+      } else {
+        el.textContent = 'Not enabled yet. Register a passkey to require two-factor verification on every new admin login.';
+        el.style.color = '#fcd34d';
+      }
+      var registerButton=document.getElementById('ob-admin-register-passkey-btn');
+      if(registerButton) registerButton.textContent=status&&status.passkey_enrolled?'Register another passkey':'Enable with a passkey';
+    });
   }
   function refreshStripeStepUpStatus(){
     if(!token() || !isAdminUser()) return Promise.resolve(null);
@@ -28453,13 +28463,14 @@ window._handleRTCMessage=function(d){
       return null;
     });
   }
+  window.obRefreshAdminPasskeyStatus = refreshStripeStepUpStatus;
   function promptAdminPasswordForPasskey(){
     return new Promise(function(resolve){
       var overlay = document.createElement('div');
       overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.62);z-index:999999;display:flex;align-items:center;justify-content:center;padding:18px;';
       overlay.innerHTML = '<div style="width:min(420px,100%);background:#15100d;border:1px solid rgba(246,241,233,.16);border-radius:14px;padding:18px;color:#f6f1e9;box-shadow:0 24px 70px rgba(0,0,0,.4);">'
-        + '<h3 style="margin:0 0 8px;font-size:18px;">Register admin passkey</h3>'
-        + '<p style="margin:0 0 14px;color:rgba(246,241,233,.66);font-size:13px;line-height:1.5;">Enter your current admin password, then your browser will ask for Touch ID, Face ID/passkey, Windows Hello, Android screen lock, or security key.</p>'
+        + '<h3 style="margin:0 0 8px;font-size:18px;">Confirm your admin password</h3>'
+        + '<p style="margin:0 0 14px;color:rgba(246,241,233,.66);font-size:13px;line-height:1.5;">This protects passkey enrollment and recovery-code changes. When registering a passkey, your browser will then ask for Touch ID, Face ID, Windows Hello, Android screen lock, or a security key.</p>'
         + '<input id="ob-passkey-password-input" type="password" autocomplete="current-password" placeholder="Current admin password" style="width:100%;box-sizing:border-box;padding:11px 12px;border-radius:10px;border:1px solid rgba(246,241,233,.18);background:rgba(255,255,255,.06);color:#fff;margin-bottom:14px;">'
         + '<div style="display:flex;gap:10px;justify-content:flex-end;"><button id="ob-passkey-cancel" type="button" class="admin-action-btn">Cancel</button><button id="ob-passkey-submit" type="button" class="admin-action-btn">Continue</button></div>'
         + '</div>';
@@ -28472,6 +28483,23 @@ window._handleRTCMessage=function(d){
       setTimeout(function(){ input.focus(); }, 50);
     });
   }
+  function showAdminRecoveryCodes(codes){
+    codes = Array.isArray(codes) ? codes.filter(Boolean) : [];
+    if(!codes.length) return;
+    var overlay=document.createElement('div');
+    overlay.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.72);z-index:1000001;display:flex;align-items:center;justify-content:center;padding:18px;';
+    var codeText=codes.join('\n');
+    overlay.innerHTML='<div style="width:min(520px,100%);max-height:92vh;overflow:auto;background:#15100d;border:1px solid rgba(246,241,233,.18);border-radius:16px;padding:22px;color:#f6f1e9;box-shadow:0 28px 80px rgba(0,0,0,.5);">'
+      +'<h3 style="margin:0 0 8px;font-size:21px;">Save your admin recovery codes</h3><p style="margin:0 0 14px;color:rgba(246,241,233,.7);font-size:13px;line-height:1.55;">Each code works once if your passkey is unavailable. Store them in a password manager or another secure offline place. They will not be shown again.</p>'
+      +'<pre id="ob-admin-recovery-code-list" style="white-space:pre-wrap;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:12px;padding:16px;font:700 15px/1.7 ui-monospace,monospace;letter-spacing:.06em;user-select:all;">'+codeText+'</pre>'
+      +'<div id="ob-admin-recovery-copy-status" style="min-height:18px;color:#86efac;font-size:12px;margin:8px 0;"></div><div style="display:flex;gap:9px;flex-wrap:wrap;justify-content:flex-end;"><button type="button" id="ob-admin-recovery-copy" class="admin-action-btn">Copy codes</button><button type="button" id="ob-admin-recovery-download" class="admin-action-btn">Download .txt</button><button type="button" id="ob-admin-recovery-close" class="admin-action-btn">I saved them</button></div></div>';
+    document.body.appendChild(overlay);
+    var status=overlay.querySelector('#ob-admin-recovery-copy-status');
+    overlay.querySelector('#ob-admin-recovery-copy').onclick=function(){navigator.clipboard.writeText(codeText).then(function(){status.textContent='Copied to clipboard.';}).catch(function(){status.textContent='Select and copy the codes manually.';});};
+    overlay.querySelector('#ob-admin-recovery-download').onclick=function(){var blob=new Blob(['Ownlybiz Admin recovery codes\nGenerated '+new Date().toISOString()+'\n\n'+codeText+'\n'],{type:'text/plain'}),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='ownlybiz-admin-recovery-codes.txt';a.click();setTimeout(function(){URL.revokeObjectURL(a.href);},1000);status.textContent='Downloaded. Store the file securely.';};
+    overlay.querySelector('#ob-admin-recovery-close').onclick=function(){overlay.remove();};
+  }
+  window.obShowAdminRecoveryCodes = showAdminRecoveryCodes;
   window.obRegisterStripePasskey = async function(){
     try {
       if(!window.PublicKeyCredential || !navigator.credentials) throw new Error('This browser does not support passkeys.');
@@ -28479,11 +28507,29 @@ window._handleRTCMessage=function(d){
       if(!password) return;
       var start = await stepUpFetch('register-options', { current_password: password });
       var credential = await navigator.credentials.create({ publicKey: creationOptionsFromJson(start.options) });
-      await stepUpFetch('register-verify', { response: credentialToJson(credential), label: 'Admin passkey' });
-      toastSafe('Admin passkey registered for live Stripe changes','ok');
+      var result = await stepUpFetch('register-verify', { response: credentialToJson(credential), label: 'Admin login passkey' });
+      toastSafe('Admin two-factor login is now protected by your passkey','ok');
+      showAdminRecoveryCodes(result.recovery_codes || []);
       await refreshStripeStepUpStatus();
     } catch(e) {
       toastSafe(e.message || 'Passkey registration failed','err');
+    }
+  };
+  window.obRegisterAdminPasskey = window.obRegisterStripePasskey;
+  window.obGenerateAdminRecoveryCodes = async function(){
+    try {
+      var password = await promptAdminPasswordForPasskey();
+      if(!password) return;
+      var result = await fetch(API + '/admin/settings/admin-login-2fa/recovery-codes', {
+        method:'POST',
+        headers:{'Content-Type':'application/json',Authorization:'Bearer ' + token()},
+        body:JSON.stringify({current_password:password})
+      }).then(function(r){return r.json().then(function(d){if(!r.ok||d.success===false)throw new Error(d.error||'Could not create recovery codes');return d;});});
+      showAdminRecoveryCodes(result.recovery_codes || []);
+      toastSafe('New recovery codes created. Older codes no longer work.','ok');
+      await refreshStripeStepUpStatus();
+    } catch(e) {
+      toastSafe(e.message || 'Could not create recovery codes','err');
     }
   };
   window.obVerifyStripeLiveStepUp = async function(){
@@ -41742,6 +41788,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   function renderSecurity(settings){
     var p=settings.security_policy||{}, level=settings.security_level||p.level||'light';
     var html='<div style="margin-bottom:24px"><h1 style="font-family:var(--font-head);font-size:34px;margin:0;color:var(--cream,#fff8ed);">Security Center</h1><p style="color:rgba(255,250,240,.52);font-size:14px;margin:6px 0 0;max-width:860px;line-height:1.6">Control signup, booking, live-session, upload, and login abuse protection from one place. Light is the default go-live mode; medium and heavy add friction only when needed.</p></div>'+
+    '<div class="ob-prod-security-card" style="margin-bottom:18px;border-color:rgba(134,239,172,.28);"><div class="ob-prod-security-title">Admin two-factor login</div><p class="ob-prod-security-sub">Require your password plus a device passkey for every new Admin login. Depending on your device, verification uses Touch ID, Face ID, Windows Hello, Android screen lock, or a hardware security key. Biometrics stay on your device and are never sent to Ownlybiz.</p><div id="ob-admin-login-mfa-status" style="margin:14px 0;color:rgba(246,241,233,.68);font-size:13px;line-height:1.55;">Checking passkey status...</div><div style="display:flex;gap:9px;flex-wrap:wrap;"><button type="button" id="ob-admin-register-passkey-btn" class="ob-prod-sec-btn primary" onclick="obRegisterAdminPasskey()">Enable with a passkey</button><button type="button" class="ob-prod-sec-btn" onclick="obGenerateAdminRecoveryCodes()">Create new recovery codes</button><button type="button" class="ob-prod-sec-btn" onclick="obVerifyStripeLiveStepUp()">Test passkey</button></div><div class="ob-prod-sec-note">Registering the first passkey immediately protects future Admin logins. Save the one-time recovery codes before closing the confirmation.</div></div>'+
     '<div class="ob-prod-security-grid"><div class="ob-prod-security-card"><div class="ob-prod-security-title">Protection level</div><p class="ob-prod-security-sub">Choose how much friction Ownlybiz adds. Stripe subscription and Connect readiness stay separate from abuse controls.</p><div class="ob-prod-sec-levels">'+
     levelCard('light','Light','Backend rate limits, optional Turnstile on signup/reset/verification resend, and progressive email verification.',level)+levelCard('medium','Medium','Light plus Turnstile on booking and live-session requests, with tighter limits.',level)+levelCard('heavy','Heavy','Medium plus Turnstile on login and the strictest limits. Use temporarily during active abuse.',level)+
     '</div><input type="hidden" id="sec-level" value="'+esc(level)+'"><div class="ob-prod-sec-note">Recommended start: Light. Move higher only if there is abuse or spam.</div></div>'+
@@ -41750,6 +41797,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     '<div class="ob-prod-security-card"><div class="ob-prod-security-title">Email verification and delivery</div><p class="ob-prod-security-sub">Configure real transactional email delivery. This powers signup/welcome, password reset, expert approval, sessions, bookings, reviews, support/contact, and email verification links.</p>'+row('Verification mode','For conversion, keep progressive at launch; tighten before publishing or during abuse.','<select class="ob-prod-sec-select" id="sec-email-mode"><option value="progressive">Progressive: verify before risky actions</option><option value="experts_before_publish">Experts before publish</option><option value="all_before_risk">Experts and clients before risk</option><option value="off">Off</option></select>')+row('Provider','Recommended: Resend or Postmark. SendGrid, Mailgun, and SMTP remain available.','<select class="ob-prod-sec-select" id="sec-email-provider"><option value="resend">Resend</option><option value="postmark">Postmark</option><option value="sendgrid">SendGrid</option><option value="mailgun">Mailgun</option><option value="smtp">SMTP</option><option value="off">Off</option></select>')+row('API token','Stored server-side and masked after save.','<input class="ob-prod-sec-input" id="sec-email-api-key" type="password" value="" placeholder="'+(settings.platform_email_api_key?'Saved on server':'Provider API token')+'" autocomplete="new-password">')+row('From identity','Use a verified sending domain.','<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px"><input class="ob-prod-sec-input" id="sec-email-from-name" value="'+esc(settings.platform_email_from_name||'Ownlybiz')+'" placeholder="Ownlybiz"><input class="ob-prod-sec-input" id="sec-email-from-address" value="'+esc(settings.platform_email_from_address||'')+'" placeholder="hello@mail.ownlybiz.com"></div>')+row('Reply and test','Reply-to plus test recipient.','<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px"><input class="ob-prod-sec-input" id="sec-email-reply-to" value="'+esc(settings.platform_email_reply_to||'')+'" placeholder="support@ownlybiz.com"><input class="ob-prod-sec-input" id="sec-email-test-to" value="'+esc(settings.platform_email_test_to||'')+'" placeholder="your test email"></div>')+row('Mailgun domain','Only needed for Mailgun.','<input class="ob-prod-sec-input" id="sec-email-mailgun-domain" value="'+esc(settings.platform_email_mailgun_domain||'')+'" placeholder="mg.ownlybiz.com">')+row('SMTP fallback','Only needed for SMTP. Password is masked after save.','<div style="display:grid;grid-template-columns:1fr 90px;gap:10px;margin-bottom:10px"><input class="ob-prod-sec-input" id="sec-smtp-host" value="'+esc(settings.smtp_host||'')+'" placeholder="smtp.provider.com"><input class="ob-prod-sec-input" id="sec-smtp-port" value="'+esc(settings.smtp_port||587)+'" placeholder="587"></div><div style="display:grid;grid-template-columns:1fr 1fr;gap:10px"><input class="ob-prod-sec-input" id="sec-smtp-user" value="'+esc(settings.smtp_user||'')+'" placeholder="SMTP username"><input class="ob-prod-sec-input" id="sec-smtp-pass" type="password" value="" placeholder="'+(settings.smtp_pass?'Saved on server':'SMTP password')+'" autocomplete="new-password"></div>')+'<div class="ob-prod-sec-note">Real delivery status: '+(settings.platform_email_configured?'configured':'not configured')+'. Provider token stays backend-only.</div></div>'+
     '<div class="ob-prod-security-card"><div class="ob-prod-security-title">Cloudflare edge setup</div><p class="ob-prod-security-sub">For scale, Cloudflare should sit in front of ownlybiz.com, expert subdomains, custom domains where possible, and API traffic.</p>'+row('Zone ID','Optional note for future API automation.','<input class="ob-prod-sec-input" id="sec-cf-zone" value="'+esc(settings.security_cloudflare_zone_id||'')+'" placeholder="Cloudflare Zone ID">')+row('API token','Optional and masked after save.','<input class="ob-prod-sec-input" id="sec-cf-token" type="password" value="" placeholder="'+(settings.security_cloudflare_api_token?'Saved on server':'Cloudflare API token')+'" autocomplete="new-password">')+'<div class="ob-prod-sec-note">Do not expose provider secrets in the browser. The Admin UI receives only masked values after save.</div></div></div><div class="ob-prod-sec-actions"><button class="ob-prod-sec-btn primary" onclick="saveAdminSecurity()">Save Security Settings</button><button class="ob-prod-sec-btn" onclick="loadAdminSecurity(true)">Refresh</button><button class="ob-prod-sec-btn" onclick="testAdminTurnstile()">Check Turnstile setup</button><button class="ob-prod-sec-btn" onclick="testAdminEmail()">Send email test</button></div>';
 	    var target=document.getElementById('admin-security-content'); if(target) target.innerHTML=html;
+	    if(typeof window.obRefreshAdminPasskeyStatus==='function') window.obRefreshAdminPasskeyStatus();
 	    ['sec-turnstile-secret','sec-email-api-key','sec-smtp-pass','sec-cf-token'].forEach(function(id){
 	      var el=document.getElementById(id);
 	      if(!el) return;
@@ -45270,7 +45318,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       +     '</div>'
       +     '<div id="ob-stripe-live-stepup-card" style="margin-top:16px;border:1px solid rgba(248,113,113,.28);background:rgba(127,29,29,.13);border-radius:12px;padding:14px;">'
       +       '<div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;">'
-      +         '<div><strong style="display:block;color:#fecaca;font-size:13px;margin-bottom:4px;">Live Stripe key protection</strong><div style="color:rgba(246,241,233,.62);font-size:12px;line-height:1.5;">Before saving live keys, verify with a passkey: Touch ID on Mac, Face ID/passkeys on Apple devices, Windows Hello, Android screen lock, or a security key. First setup requires your current admin password.</div><div id="ob-stripe-stepup-status" style="margin-top:8px;color:rgba(246,241,233,.58);font-size:12px;">Checking passkey status...</div></div>'
+      +         '<div><strong style="display:block;color:#fecaca;font-size:13px;margin-bottom:4px;">Admin passkey protection</strong><div style="color:rgba(246,241,233,.62);font-size:12px;line-height:1.5;">The same passkey protects Admin login and authorizes live Stripe-key changes: Touch ID, Face ID, Windows Hello, Android screen lock, or a security key. First setup requires your current admin password.</div><div id="ob-stripe-stepup-status" style="margin-top:8px;color:rgba(246,241,233,.58);font-size:12px;">Checking passkey status...</div></div>'
       +         '<div style="display:flex;gap:8px;flex-wrap:wrap;"><button type="button" class="admin-action-btn" onclick="obRegisterStripePasskey()">Register passkey</button><button type="button" class="admin-action-btn" onclick="obVerifyStripeLiveStepUp()">Verify now</button></div>'
       +       '</div>'
       +     '</div>'
@@ -61147,6 +61195,106 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
 		    };
 	    window.showExpertPage.__obMarketplaceWrapped = true;
 	  }
+})();
+</script>
+
+<script id="ownlybiz-admin-login-passkey-20260719">
+(function(){
+  if(window.__obAdminLoginPasskey20260719) return;
+  window.__obAdminLoginPasskey20260719 = true;
+  var API = (window.OWNLYBIZ_API_URL || 'https://ownlybiz-backend-production.up.railway.app').replace(/\/+$/,'');
+  function b64urlToBuffer(value){
+    value=String(value||'').replace(/-/g,'+').replace(/_/g,'/');
+    while(value.length%4)value+='=';
+    var binary=atob(value), bytes=new Uint8Array(binary.length);
+    for(var i=0;i<binary.length;i++)bytes[i]=binary.charCodeAt(i);
+    return bytes.buffer;
+  }
+  function bufferToB64url(buffer){
+    var bytes=new Uint8Array(buffer||[]), binary='';
+    for(var i=0;i<bytes.length;i+=0x8000)binary+=String.fromCharCode.apply(null,bytes.subarray(i,i+0x8000));
+    return btoa(binary).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/g,'');
+  }
+  function requestOptions(options){
+    var out=Object.assign({},options||{});
+    out.challenge=b64urlToBuffer(out.challenge);
+    out.allowCredentials=(out.allowCredentials||[]).map(function(item){return Object.assign({},item,{id:b64urlToBuffer(item.id)});});
+    return out;
+  }
+  function credentialJson(credential){
+    var response=credential.response||{};
+    return {
+      id:credential.id,
+      type:credential.type,
+      rawId:bufferToB64url(credential.rawId),
+      authenticatorAttachment:credential.authenticatorAttachment||undefined,
+      response:{
+        clientDataJSON:bufferToB64url(response.clientDataJSON),
+        authenticatorData:bufferToB64url(response.authenticatorData),
+        signature:bufferToB64url(response.signature),
+        userHandle:response.userHandle?bufferToB64url(response.userHandle):null
+      },
+      clientExtensionResults:credential.getClientExtensionResults?credential.getClientExtensionResults():{}
+    };
+  }
+  function post(path,body){
+    return fetch(API+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})}).then(function(r){
+      return r.json().catch(function(){return {};}).then(function(d){
+        if(!r.ok||!d.token){var err=new Error(d.error||'Admin verification failed.');err.code=d.code||'';throw err;}
+        return d;
+      });
+    });
+  }
+  function panel(){
+    var el=document.getElementById('ob-admin-login-mfa');
+    if(!el){
+      el=document.createElement('div');el.id='ob-admin-login-mfa';
+      var btn=document.getElementById('mkt-login-btn');
+      if(btn&&btn.parentNode)btn.insertAdjacentElement('afterend',el);
+    }
+    return el;
+  }
+  window.obCompleteAdminMfaLogin=function(initial){
+    return new Promise(function(resolve,reject){
+      var root=panel(), recovery=!!initial.recovery_available;
+      var pass=document.getElementById('mkt-login-pass');if(pass)pass.value='';
+      root.style.display='block';
+      root.innerHTML='<div style="border:1px solid rgba(196,98,45,.28);background:rgba(196,98,45,.07);border-radius:14px;padding:16px;">'
+        +'<div style="font-size:12px;text-transform:uppercase;letter-spacing:.12em;color:var(--terra);font-weight:800;margin-bottom:6px;">Admin two-factor verification</div>'
+        +'<div style="font-size:13px;color:var(--brown);line-height:1.55;margin-bottom:12px;">Your password is correct. Now verify with Touch ID, Face ID, Windows Hello, Android screen lock, or your security key.</div>'
+        +'<button type="button" id="ob-admin-mfa-passkey" class="btn btn-primary" style="width:100%;">Verify with fingerprint or passkey</button>'
+        +(recovery?'<button type="button" id="ob-admin-mfa-recovery-toggle" style="width:100%;border:0;background:none;color:var(--terra);font-weight:700;margin-top:10px;cursor:pointer;">Use a recovery code</button><div id="ob-admin-mfa-recovery-box" style="display:none;margin-top:10px;"><input id="ob-admin-mfa-recovery-code" class="form-input" autocomplete="one-time-code" autocapitalize="characters" spellcheck="false" placeholder="XXXX-XXXX-XXXX" style="margin-bottom:8px;text-transform:uppercase;"><button type="button" id="ob-admin-mfa-recovery-submit" class="btn btn-white" style="width:100%;">Verify recovery code</button></div>':'')
+        +'<button type="button" id="ob-admin-mfa-cancel" style="width:100%;border:0;background:none;color:var(--gray-400);font-size:12px;margin-top:10px;cursor:pointer;">Cancel</button>'
+        +'<div id="ob-admin-mfa-message" role="alert" style="min-height:18px;margin-top:8px;color:#b91c1c;font-size:12px;font-weight:600;"></div></div>';
+      var passkeyBtn=root.querySelector('#ob-admin-mfa-passkey');
+      var recoveryBtn=root.querySelector('#ob-admin-mfa-recovery-submit');
+      var message=root.querySelector('#ob-admin-mfa-message');
+      function busy(on,label){
+        if(passkeyBtn){passkeyBtn.disabled=on;passkeyBtn.textContent=on?(label||'Verifying…'):'Verify with fingerprint or passkey';}
+        if(recoveryBtn)recoveryBtn.disabled=on;
+      }
+      function done(data){root.style.display='none';root.innerHTML='';resolve(data);}
+      function fail(err){busy(false);message.textContent=(err&&err.message)||'Verification failed. Try again.';}
+      passkeyBtn.onclick=function(){
+        if(!window.PublicKeyCredential||!navigator.credentials){fail(new Error('Passkeys are not supported in this browser. Use a saved recovery code or a modern Safari, Chrome, or Edge browser.'));return;}
+        busy(true,'Waiting for your device…');message.textContent='';
+        Promise.resolve().then(function(){return navigator.credentials.get({publicKey:requestOptions(initial.options)});}).then(function(credential){
+          if(!credential)throw new Error('Passkey verification was cancelled.');
+          return post('/api/auth/login/passkey/verify',{mfa_token:initial.mfa_token,response:credentialJson(credential)});
+        }).then(done).catch(fail);
+      };
+      var toggle=root.querySelector('#ob-admin-mfa-recovery-toggle');
+      if(toggle)toggle.onclick=function(){var box=root.querySelector('#ob-admin-mfa-recovery-box');box.style.display=box.style.display==='none'?'block':'none';if(box.style.display==='block'){var input=root.querySelector('#ob-admin-mfa-recovery-code');if(input)input.focus();}};
+      if(recoveryBtn)recoveryBtn.onclick=function(){
+        var input=root.querySelector('#ob-admin-mfa-recovery-code'),code=(input&&input.value||'').trim();
+        if(!code){fail(new Error('Enter one of your saved recovery codes.'));return;}
+        busy(true,'Verifying recovery code…');message.textContent='';
+        post('/api/auth/login/recovery',{mfa_token:initial.mfa_token,recovery_code:code}).then(done).catch(fail);
+      };
+      root.querySelector('#ob-admin-mfa-cancel').onclick=function(){root.style.display='none';root.innerHTML='';reject(new Error('Admin verification cancelled.'));};
+      setTimeout(function(){try{passkeyBtn.focus();}catch(e){}},40);
+    });
+  };
 })();
 </script>
 	</html>

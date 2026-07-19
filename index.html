@@ -13475,6 +13475,91 @@ async function savePaymentConfig() {
       }
       return message || 'Login failed. Check your credentials.';
     };
+    window.obIsExpiredAuthToken = window.obIsExpiredAuthToken || function(token) {
+      try {
+        var part = String(token || '').split('.')[1];
+        if (!part) return false;
+        part = part.replace(/-/g, '+').replace(/_/g, '/');
+        while (part.length % 4) part += '=';
+        var payload = JSON.parse(decodeURIComponent(Array.prototype.map.call(atob(part), function(ch) {
+          return '%' + ('00' + ch.charCodeAt(0).toString(16)).slice(-2);
+        }).join('')));
+        return !!(payload && payload.exp && (Number(payload.exp) * 1000) <= (Date.now() + 5000));
+      } catch(e) {
+        return false;
+      }
+    };
+    window.obResolveAuthToken = window.obResolveAuthToken || function() {
+      try {
+        if (sessionStorage.getItem('ob_support_session') === '1') {
+          return sessionStorage.getItem('ob_t') || sessionStorage.getItem('ownlybiz_token') || '';
+        }
+        var candidates = [
+          sessionStorage.getItem('ob_t'),
+          localStorage.getItem('ob_t'),
+          localStorage.getItem('ob_client_token'),
+          sessionStorage.getItem('ownlybiz_token'),
+          localStorage.getItem('ownlybiz_token')
+        ];
+        for (var i = 0; i < candidates.length; i++) {
+          if (candidates[i] && !window.obIsExpiredAuthToken(candidates[i])) return candidates[i];
+        }
+      } catch(e) {}
+      return '';
+    };
+    window.obSyncAuthTokenKeys = window.obSyncAuthTokenKeys || function(token) {
+      token = String(token || '').trim();
+      if (!token) return '';
+      window.__obAdminSessionExpiredHandled = false;
+      try {
+        sessionStorage.setItem('ob_t', token);
+        sessionStorage.setItem('ownlybiz_token', token);
+        localStorage.setItem('ob_t', token);
+        localStorage.setItem('ob_client_token', token);
+        localStorage.setItem('ownlybiz_token', token);
+      } catch(e) {}
+      return token;
+    };
+    window.obClearAuthSession = window.obClearAuthSession || function() {
+      var tokenKeys = ['ob_t', 'ownlybiz_token', 'ob_client_token'];
+      var userKeys = ['ob_u', 'ownlybiz_user'];
+      try {
+        tokenKeys.concat(userKeys, ['ob_support_session', 'ob_support_session_meta']).forEach(function(key) {
+          sessionStorage.removeItem(key);
+        });
+        tokenKeys.concat(userKeys).forEach(function(key) { localStorage.removeItem(key); });
+      } catch(e) {}
+      window.clientLoggedIn = false;
+    };
+    window.obHandleAdminSessionExpired = window.obHandleAdminSessionExpired || function() {
+      if (window.__obAdminSessionExpiredHandled) return;
+      window.__obAdminSessionExpiredHandled = true;
+      var nextPath = String((window.location && window.location.pathname) || '/admin/dashboard');
+      if (nextPath.indexOf('/admin') !== 0) nextPath = '/admin/dashboard';
+      window.obClearAuthSession();
+      try { sessionStorage.setItem('ob_next', nextPath); } catch(e) {}
+      try { if (typeof window.switchView === 'function') window.switchView(1); } catch(e) {}
+      try { if (typeof window.showMktPage === 'function') window.showMktPage('login'); } catch(e) {}
+      try { window.history.replaceState({obRoute:true}, '', '/login'); } catch(e) {}
+      setTimeout(function() {
+        var error = document.getElementById('mkt-login-error');
+        if (error) {
+          error.textContent = 'Your Admin session expired. Sign in again, then complete passkey verification.';
+          error.style.display = 'block';
+        }
+      }, 30);
+    };
+    (function normalizeStoredAuthTokens() {
+      try {
+        if (sessionStorage.getItem('ob_support_session') === '1') return;
+        var resolved = window.obResolveAuthToken();
+        var hadToken = sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') ||
+          localStorage.getItem('ob_client_token') || sessionStorage.getItem('ownlybiz_token') ||
+          localStorage.getItem('ownlybiz_token');
+        if (resolved) window.obSyncAuthTokenKeys(resolved);
+        else if (hadToken) window.obClearAuthSession();
+      } catch(e) {}
+    })();
     window.obPublicLoaderCanFetchProfile = window.obPublicLoaderCanFetchProfile || function(slug) {
       slug = String(slug || '').trim().toLowerCase();
       if(!slug || slug === 'expert-slug' || slug.indexOf('/') >= 0) return false;
@@ -13526,12 +13611,8 @@ async function savePaymentConfig() {
         }
         if (!d || !d.token || !d.user) throw new Error('Login could not be completed.');
 
-        // Save to sessionStorage + unified client token
-        sessionStorage.setItem('ob_t', d.token);
-        try {
-          localStorage.setItem('ob_t', d.token);
-          localStorage.setItem('ob_client_token', d.token);
-        } catch(e) {}
+        // Keep current and legacy token readers synchronized during the migration.
+        window.obSyncAuthTokenKeys(d.token);
         if (typeof checkClientAuth === 'function') setTimeout(checkClientAuth, 500);
         sessionStorage.setItem('ob_u', JSON.stringify(d.user));
         try { localStorage.setItem('ob_u', JSON.stringify(d.user)); } catch(e) {}
@@ -14816,10 +14897,10 @@ async function savePaymentConfig() {
 
   /* ── auth store ───────────────────────────────────── */
   const Auth = {
-    get tok()     { return sessionStorage.getItem('ob_t'); },
+    get tok()     { return window.obResolveAuthToken ? window.obResolveAuthToken() : sessionStorage.getItem('ob_t'); },
     get user()    { try{ return JSON.parse(sessionStorage.getItem('ob_u')||'null'); }catch{ return null; } },
-    save(t,u)     { sessionStorage.setItem('ob_t',t); try{localStorage.setItem('ob_client_token',t);}catch(e){} sessionStorage.setItem('ob_u',JSON.stringify(u)); },
-    clear()       { sessionStorage.removeItem('ob_t'); sessionStorage.removeItem('ob_u'); try{localStorage.removeItem('ob_t');localStorage.removeItem('ob_u');localStorage.removeItem('ob_client_token');}catch(e){} window.clientLoggedIn=false; },
+    save(t,u)     { if(window.obSyncAuthTokenKeys) window.obSyncAuthTokenKeys(t); else sessionStorage.setItem('ob_t',t); sessionStorage.setItem('ob_u',JSON.stringify(u)); },
+    clear()       { if(window.obClearAuthSession) window.obClearAuthSession(); else { sessionStorage.removeItem('ob_t'); sessionStorage.removeItem('ob_u'); } },
     get ok()      { return !!this.tok; },
     get isExpert(){ return this.user?.role==='expert'; },
     get isAdmin() { return this.user?.role==='admin'; },
@@ -14837,6 +14918,9 @@ async function savePaymentConfig() {
       const err = new Error(d.error || `HTTP ${r.status}`);
       err.status = r.status;
       err.data = d;
+      if(r.status === 401 && String(path || '').indexOf('/admin') === 0 && window.obHandleAdminSessionExpired) {
+        window.obHandleAdminSessionExpired();
+      }
       throw err;
     }
     return d;
@@ -15148,55 +15232,11 @@ async function savePaymentConfig() {
   /* ── Marketing login form ─────────────────────────── */
   function _wireLoginForm() {
     const page = $('mkt-page-login'); if(!page) return;
-    const eInp = page.querySelector('input[type=email],[placeholder*="email"i],[id*="email"i]');
-    const pInp = page.querySelector('input[type=password],[placeholder*="password"i],[id*="pass"i]');
     const btn  = page.querySelector('button.btn-primary,button[type=submit],.login-btn');
     if (!btn) return;
-    btn.onclick = async () => {
-      const email=eInp?.value?.trim(); const pass=pInp?.value;
-      if(!email||!pass) return toast('Enter email and password','err');
-      btnLoad(btn,true);
-      try {
-        const d=await api('POST','/auth/login',{email,password:pass});
-        Auth.save(d.token,d.user);
-        WS.connect();
-        toast(`Welcome back, ${d.user.name}! 👋`);
-        setTimeout(()=>{
-          try {
-            const nextPath = sessionStorage.getItem('ob_next') || '';
-            if(nextPath && nextPath.charAt(0) === '/' && nextPath.indexOf('//') !== 0) {
-              sessionStorage.removeItem('ob_next');
-              window.location.href = nextPath;
-              return;
-            }
-          } catch(e) {}
-          if(d.user.role==='admin') {
-            try { window.history.replaceState({}, '', '/admin/dashboard'); } catch(e) {}
-            switchView(6);
-            loadAdminDashboard();
-          }
-          else if(d.user.role==='expert') {
-            api('GET','/experts/me/dashboard').then(function(ed){
-              var slug = ed && ed.profile && ed.profile.slug ? ed.profile.slug : '';
-              if(slug) {
-                window._myExpertSlug = slug;
-                window._dashSlug = slug;
-                try { window.history.replaceState({}, '', '/dash/' + encodeURIComponent(slug)); } catch(e) {}
-                if(typeof window.loadDashboard === 'function') { window.loadDashboard(slug); return; }
-              }
-              switchView(3);
-              loadExpertDashboard();
-            }).catch(function(){
-              switchView(3);
-              loadExpertDashboard();
-            });
-          }
-          else {
-            switchView(4);
-          }
-        },400);
-      } catch(err){ toast(window.obFriendlyLoginError ? window.obFriendlyLoginError(err) : err.message,'err'); }
-      finally{ btnLoad(btn,false); }
+    btn.onclick = function() {
+      if (typeof window.handleMarketingLogin === 'function') return window.handleMarketingLogin();
+      if (typeof toast === 'function') toast('Login is still loading. Refresh and try again.', 'err');
     };
     // Add sign-up link if missing
     const su = page.querySelector('.signup-link,.goto-signup');
@@ -16928,8 +16968,9 @@ async function savePaymentConfig() {
       document.body.appendChild(nav);
       if(window.innerWidth>=768){document.body.style.paddingTop='44px';};
     }
-    window.obLogout = function() {
-      sessionStorage.removeItem('ob_t'); sessionStorage.removeItem('ob_u');
+  window.obLogout = function() {
+      if(window.obClearAuthSession) window.obClearAuthSession();
+      else { sessionStorage.removeItem('ob_t'); sessionStorage.removeItem('ob_u'); }
       removeNav();
       if (typeof logout === 'function') logout();
       else if (typeof switchView === 'function') switchView(1);
@@ -41695,7 +41736,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
 
   function apiBase(){ return String(window.OWNLY_API || window.OWNLYBIZ_API_URL || window.API_BASE || PROD_API).replace(/\/+$/,''); }
   function api(path){ return apiBase() + path; }
-  function token(){ if(window.obSupportSessionActive && window.obSupportSessionActive()) return sessionStorage.getItem('ob_t') || sessionStorage.getItem('ownlybiz_token') || ''; return localStorage.getItem('ownlybiz_token') || localStorage.getItem('ob_t') || sessionStorage.getItem('ob_t') || ''; }
+  function token(){ if(typeof window.obResolveAuthToken==='function') return window.obResolveAuthToken(); if(window.obSupportSessionActive && window.obSupportSessionActive()) return sessionStorage.getItem('ob_t') || sessionStorage.getItem('ownlybiz_token') || ''; return sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || localStorage.getItem('ownlybiz_token') || ''; }
   function auth(){ var t=token(); return t ? {Authorization:'Bearer '+t} : {}; }
   function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
   function dash(){ return /^\/dash\//.test(location.pathname || ''); }
@@ -41769,7 +41810,14 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   };
 
   function adminApi(method,path,body){
-    return nativeFetch(api('/api'+path),{method:method,headers:Object.assign({'Content-Type':'application/json'},auth()),body:body?JSON.stringify(body):undefined}).then(function(r){return r.json().catch(function(){return {};}).then(function(d){if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d;});});
+    return nativeFetch(api('/api'+path),{method:method,headers:Object.assign({'Content-Type':'application/json'},auth()),body:body?JSON.stringify(body):undefined}).then(function(r){return r.json().catch(function(){return {};}).then(function(d){
+      if(!r.ok){
+        var err=new Error(d.error||('HTTP '+r.status));err.status=r.status;err.data=d;
+        if(r.status===401&&window.obHandleAdminSessionExpired)window.obHandleAdminSessionExpired();
+        throw err;
+      }
+      return d;
+    });});
   }
   function row(label,sub,control){return '<div class="ob-prod-sec-row"><div class="ob-prod-sec-label"><strong>'+label+'</strong><span>'+sub+'</span></div><div>'+control+'</div></div>';}
   function levelCard(key,label,copy,current){return '<button type="button" class="ob-prod-sec-level '+(key===current?'active':'')+'" data-security-level="'+key+'"><strong>'+label+'</strong><span>'+copy+'</span></button>';}
@@ -42291,7 +42339,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   function legacyHidden(){ try { return legacyHiddenKeys().some(function(k){ return localStorage.getItem(k)==='1'; }); } catch(e) { return false; } }
   function setLegacyHidden(value){ try { legacyHiddenKeys().forEach(function(k){ if(value) localStorage.setItem(k,'1'); else localStorage.removeItem(k); }); if(!value) legacyMinKeys().forEach(function(k){ sessionStorage.removeItem(k); }); } catch(e) {} }
   function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
-  function token(){ if(window.obSupportSessionActive && window.obSupportSessionActive()) return sessionStorage.getItem('ob_t') || sessionStorage.getItem('ownlybiz_token') || ''; return localStorage.getItem('ownlybiz_token') || localStorage.getItem('ob_t') || sessionStorage.getItem('ownlybiz_token') || sessionStorage.getItem('ob_t') || ''; }
+  function token(){ if(typeof window.obResolveAuthToken==='function') return window.obResolveAuthToken(); if(window.obSupportSessionActive && window.obSupportSessionActive()) return sessionStorage.getItem('ob_t') || sessionStorage.getItem('ownlybiz_token') || ''; return sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || sessionStorage.getItem('ownlybiz_token') || localStorage.getItem('ownlybiz_token') || ''; }
   function authHeaders(){ var t=token(); return t ? {Authorization:'Bearer '+t} : {}; }
   function removeLegacy(){ legacyIds.forEach(function(id){ var el=document.getElementById(id); if(el) el.remove(); }); var card=document.getElementById('ob-prod-publish-card'); if(card) card.remove(); }
   function activeIndex(s){ return Math.max(0, Math.min(steps.length - 1, Number(s.active || 0))); }
@@ -43273,7 +43321,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   function apiBase(){ return String(window.OWNLY_API || window.OWNLYBIZ_API_URL || window.API_BASE || PROD_API).replace(/\/+$/,''); }
   function api(path){ return apiBase() + path; }
   function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
-  function token(){ if(window.obSupportSessionActive && window.obSupportSessionActive()) return sessionStorage.getItem('ob_t') || sessionStorage.getItem('ownlybiz_token') || ''; return localStorage.getItem('ownlybiz_token') || localStorage.getItem('ob_t') || sessionStorage.getItem('ownlybiz_token') || sessionStorage.getItem('ob_t') || ''; }
+  function token(){ if(typeof window.obResolveAuthToken==='function') return window.obResolveAuthToken(); if(window.obSupportSessionActive && window.obSupportSessionActive()) return sessionStorage.getItem('ob_t') || sessionStorage.getItem('ownlybiz_token') || ''; return sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || sessionStorage.getItem('ownlybiz_token') || localStorage.getItem('ownlybiz_token') || ''; }
   function authHeaders(){ var t=token(); return t ? {Authorization:'Bearer '+t} : {}; }
   function storedUser(){
     var keys=['ownlybiz_user','ob_u'];
@@ -49921,7 +49969,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   var nativeFetch = window.fetch && window.fetch.bind(window);
   if(!nativeFetch) return;
   function token(){
-    try { return sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || localStorage.getItem('ob_client_token') || ''; }
+    try { return typeof window.obResolveAuthToken === 'function' ? window.obResolveAuthToken() : (sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || localStorage.getItem('ob_client_token') || ''); }
     catch(e) { return ''; }
   }
   function userRole(){
@@ -50021,7 +50069,14 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
         });
       }
     }
-    return nativeFetch(input, init);
+    return nativeFetch(input, init).then(function(response){
+      if(response && response.status === 401 && url && isOwnlyApi(url) &&
+        url.pathname.indexOf('/api/admin/') === 0 && !isPublicAdminEndpoint(url.pathname) &&
+        isAdminContext() && window.obHandleAdminSessionExpired) {
+        window.obHandleAdminSessionExpired();
+      }
+      return response;
+    });
   };
 })();
 </script>

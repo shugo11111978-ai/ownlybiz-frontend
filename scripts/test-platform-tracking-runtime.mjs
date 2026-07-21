@@ -341,6 +341,7 @@ async function ensemindConsentBoundaryTests() {
   const ensemindNodes = h.scriptNodes.filter(node => node.src === ENSEMIND_SCRIPT_URL);
   assert.equal(ensemindNodes.length, 1, 'analytics consent loads Ensemind exactly once');
   assert.equal(ensemindNodes[0]['data-hub'], ENSEMIND_TAG_ID, 'Ensemind script carries the exact approved data-hub tag');
+  assert.equal(ensemindNodes[0].crossorigin, 'anonymous', 'Ensemind uses CORS mode so the vendor CORP response can execute cross-origin');
   assert.equal(ensemindNodes[0].async, true, 'Ensemind remains asynchronous');
   h.window.OBPlatformTracking.consentChanged(JSON.parse(h.localStorage.getItem(CONSENT_KEY)));
   await wait(20);

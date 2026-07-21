@@ -771,7 +771,7 @@
   function ensureEnsemind(){
     if(!ensemindEligible()) return Promise.resolve(false);
     state.ensemindInjected = true;
-    return loadScript('ob-platform-ensemind',ENSEMIND_SCRIPT_URL,{'data-hub':ENSEMIND_TAG_ID}).then(function(script){
+    return loadScript('ob-platform-ensemind',ENSEMIND_SCRIPT_URL,{'data-hub':ENSEMIND_TAG_ID,crossorigin:'anonymous'}).then(function(script){
       if(!script) state.ensemindInjected = false;
       return !!script;
     });

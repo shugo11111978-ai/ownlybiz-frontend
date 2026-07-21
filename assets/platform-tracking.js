@@ -10,8 +10,6 @@
   var ANALYTICS_SESSION_KEY = 'ob_tracking_analytics_session_id_v1';
   var ANALYTICS_SESSION_ACTIVITY_KEY = 'ob_tracking_analytics_session_activity_v1';
   var ANALYTICS_SESSION_TIMEOUT_MS = 30 * 60 * 1000;
-  var ENSEMIND_TAG_ID = 'et_8342ad5679ff3ac95f4f3702';
-  var ENSEMIND_SCRIPT_URL = 'https://ensemind.com/tag.js';
   var analyticsSessionGeneration = 0;
   var CLICK_KEYS = ['gclid','gbraid','wbraid','fbclid','ttclid','li_fat_id'];
   var CAMPAIGN_ATTRIBUTION_KEYS = {utm_source:'campaign_source',utm_medium:'campaign_medium',utm_campaign:'campaign_name'};
@@ -195,8 +193,6 @@
     lastPlanSelectionFingerprint:'',
     scripts:{},
     providerInit:{},
-    ensemindInjected:false,
-    ensemindReloading:false,
     adminOverview:null,
     adminEvents:[],
     adminDeliveries:[],
@@ -389,11 +385,6 @@
     if(!ALLOWED_PLATFORM_ROUTES[root]) return false;
     if(document.querySelector('#view-3.active,#view-4.active,#view-5.active,#view-6.active,#view-7.active')) return false;
     return true;
-  }
-  function privacySignalActive(){
-    try {
-      return !!(navigator.globalPrivacyControl || navigator.doNotTrack === '1' || navigator.doNotTrack === 'yes');
-    } catch(e) { return false; }
   }
   function captureLandingAttribution(){
     if(!platformHost()) return {};
@@ -740,7 +731,7 @@
     var version = cleanText(cfg.schema_version || (cfg.data_layer && cfg.data_layer.schema_version) || overview.schema_version || '2026-07-12.v1',40);
     return /^[A-Za-z0-9._-]{1,40}$/.test(version) ? version : '2026-07-12.v1';
   }
-  function loadScript(id, src, attributes){
+  function loadScript(id, src){
     if(document.getElementById(id)) return Promise.resolve(document.getElementById(id));
     if(state.scripts[id]) return state.scripts[id];
     state.scripts[id] = new Promise(function(resolve){
@@ -748,33 +739,11 @@
       script.id = id;
       script.async = true;
       script.src = src;
-      Object.keys(attributes || {}).forEach(function(name){ script.setAttribute(name,attributes[name]); });
       script.onload = function(){ resolve(script); };
       script.onerror = function(){ resolve(null); };
       document.head.appendChild(script);
     });
     return state.scripts[id];
-  }
-  function ensemindEligible(){
-    return !!state.config && globalEnabled() && scopeAllowed() && analyticsConsent() && consentReceiptReady() && !privacySignalActive();
-  }
-  function enforceEnsemindBoundary(){
-    if(!state.ensemindInjected || ensemindEligible()) return false;
-    if(state.ensemindReloading) return true;
-    state.ensemindReloading = true;
-    setTimeout(function(){
-      try { if(location && typeof location.reload === 'function') location.reload(); }
-      catch(e) { state.ensemindReloading = false; }
-    },0);
-    return true;
-  }
-  function ensureEnsemind(){
-    if(!ensemindEligible()) return Promise.resolve(false);
-    state.ensemindInjected = true;
-    return loadScript('ob-platform-ensemind',ENSEMIND_SCRIPT_URL,{'data-hub':ENSEMIND_TAG_ID,crossorigin:'anonymous'}).then(function(script){
-      if(!script) state.ensemindInjected = false;
-      return !!script;
-    });
   }
   function gaId(value){ value = cleanText(value,40).toUpperCase(); return /^G-[A-Z0-9]{4,20}$/.test(value) ? value : ''; }
   function adsId(value){ value = cleanText(value,40).toUpperCase(); return /^AW-[0-9]{4,20}$/.test(value) ? value : ''; }
@@ -857,9 +826,7 @@
   }
   function activate(){
     updateGoogleConsent();
-    if(enforceEnsemindBoundary()) return;
     if(!state.config || !globalEnabled() || !scopeAllowed() || !consentReceiptReady() || (!analyticsConsent() && !marketingConsent())) return;
-    if(analyticsConsent()) ensureEnsemind();
     var mode = browserMode();
     if(mode === 'gtm' || mode === 'gtm_meta'){
       ensureGtm();

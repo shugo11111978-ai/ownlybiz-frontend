@@ -61270,6 +61270,9 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     for(var i=0;i<bytes.length;i+=0x8000)binary+=String.fromCharCode.apply(null,bytes.subarray(i,i+0x8000));
     return btoa(binary).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/g,'');
   }
+  function htmlText(value){
+    return String(value||'').replace(/[&<>"']/g,function(character){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[character];});
+  }
   function requestOptions(options){
     var out=Object.assign({},options||{});
     out.challenge=b64urlToBuffer(out.challenge);
@@ -61292,10 +61295,10 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
       clientExtensionResults:credential.getClientExtensionResults?credential.getClientExtensionResults():{}
     };
   }
-  function post(path,body){
+  function post(path,body,requireToken){
     return fetch(API+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})}).then(function(r){
       return r.json().catch(function(){return {};}).then(function(d){
-        if(!r.ok||!d.token){var err=new Error(d.error||'Admin verification failed.');err.code=d.code||'';throw err;}
+        if(!r.ok||(requireToken!==false&&!d.token)){var err=new Error(d.error||'Admin verification failed.');err.code=d.code||'';throw err;}
         return d;
       });
     });
@@ -61311,32 +61314,58 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
   }
   window.obCompleteAdminMfaLogin=function(initial){
     return new Promise(function(resolve,reject){
-      var root=panel(), recovery=!!initial.recovery_available;
+      var root=panel(), recovery=!!initial.recovery_available, emailRecovery=!!initial.email_recovery_available;
       var pass=document.getElementById('mkt-login-pass');if(pass)pass.value='';
       root.style.display='block';
       root.innerHTML='<div style="border:1px solid rgba(196,98,45,.28);background:rgba(196,98,45,.07);border-radius:14px;padding:16px;">'
         +'<div style="font-size:12px;text-transform:uppercase;letter-spacing:.12em;color:var(--terra);font-weight:800;margin-bottom:6px;">Admin two-factor verification</div>'
-        +'<div style="font-size:13px;color:var(--brown);line-height:1.55;margin-bottom:12px;">Your password is correct. Now verify with Touch ID, Face ID, Windows Hello, Android screen lock, or your security key.</div>'
-        +'<button type="button" id="ob-admin-mfa-passkey" class="btn btn-primary" style="width:100%;">Verify with fingerprint or passkey</button>'
+        +'<div style="font-size:13px;color:var(--brown);line-height:1.55;margin-bottom:12px;">Your password is correct. Use a passkey saved on this device. On iPhone, that normally verifies with Face ID.</div>'
+        +'<button type="button" id="ob-admin-mfa-passkey" class="btn btn-primary" style="width:100%;">Use Face ID or passkey</button>'
+        +(emailRecovery?'<button type="button" id="ob-admin-mfa-email-request" class="btn btn-white" style="width:100%;margin-top:10px;">Email me a one-time recovery code</button><div id="ob-admin-mfa-email-box" style="display:none;margin-top:10px;"><div style="font-size:12px;color:var(--brown);line-height:1.45;margin-bottom:8px;">Enter the eight-digit code sent to '+htmlText(initial.email_hint||'your admin email')+'. After signing in, open Admin → Security and register this iPhone.</div><input id="ob-admin-mfa-email-code" class="form-input" autocomplete="one-time-code" inputmode="numeric" pattern="[0-9]*" maxlength="8" placeholder="8-digit code" style="margin-bottom:8px;text-align:center;letter-spacing:.18em;"><button type="button" id="ob-admin-mfa-email-submit" class="btn btn-white" style="width:100%;">Verify emailed code</button></div>':'')
         +(recovery?'<button type="button" id="ob-admin-mfa-recovery-toggle" style="width:100%;border:0;background:none;color:var(--terra);font-weight:700;margin-top:10px;cursor:pointer;">Use a recovery code</button><div id="ob-admin-mfa-recovery-box" style="display:none;margin-top:10px;"><input id="ob-admin-mfa-recovery-code" class="form-input" autocomplete="one-time-code" autocapitalize="characters" spellcheck="false" placeholder="XXXX-XXXX-XXXX" style="margin-bottom:8px;text-transform:uppercase;"><button type="button" id="ob-admin-mfa-recovery-submit" class="btn btn-white" style="width:100%;">Verify recovery code</button></div>':'')
         +'<button type="button" id="ob-admin-mfa-cancel" style="width:100%;border:0;background:none;color:var(--gray-400);font-size:12px;margin-top:10px;cursor:pointer;">Cancel</button>'
         +'<div id="ob-admin-mfa-message" role="alert" style="min-height:18px;margin-top:8px;color:#b91c1c;font-size:12px;font-weight:600;"></div></div>';
       var passkeyBtn=root.querySelector('#ob-admin-mfa-passkey');
+      var emailRequestBtn=root.querySelector('#ob-admin-mfa-email-request');
+      var emailSubmitBtn=root.querySelector('#ob-admin-mfa-email-submit');
       var recoveryBtn=root.querySelector('#ob-admin-mfa-recovery-submit');
       var message=root.querySelector('#ob-admin-mfa-message');
       function busy(on,label){
-        if(passkeyBtn){passkeyBtn.disabled=on;passkeyBtn.textContent=on?(label||'Verifying…'):'Verify with fingerprint or passkey';}
+        if(passkeyBtn){passkeyBtn.disabled=on;passkeyBtn.textContent=on?(label||'Verifying…'):'Use Face ID or passkey';}
+        if(emailRequestBtn)emailRequestBtn.disabled=on;
+        if(emailSubmitBtn)emailSubmitBtn.disabled=on;
         if(recoveryBtn)recoveryBtn.disabled=on;
       }
       function done(data){root.style.display='none';root.innerHTML='';resolve(data);}
-      function fail(err){busy(false);message.textContent=(err&&err.message)||'Verification failed. Try again.';}
+      function fail(err){busy(false);message.style.color='#b91c1c';message.textContent=(err&&err.message)||'Verification failed. Try again.';}
+      function passkeyFailure(err){
+        if(emailRecovery&&err&&(err.name==='NotAllowedError'||/not allowed|cancel|timed out/i.test(String(err.message||'')))){
+          return new Error('This device could not find your Ownlybiz passkey. Close the QR prompt and use the emailed recovery code below.');
+        }
+        return err;
+      }
       passkeyBtn.onclick=function(){
         if(!window.PublicKeyCredential||!navigator.credentials){fail(new Error('Passkeys are not supported in this browser. Use a saved recovery code or a modern Safari, Chrome, or Edge browser.'));return;}
         busy(true,'Waiting for your device…');message.textContent='';
         Promise.resolve().then(function(){return navigator.credentials.get({publicKey:requestOptions(initial.options)});}).then(function(credential){
           if(!credential)throw new Error('Passkey verification was cancelled.');
           return post('/api/auth/login/passkey/verify',{mfa_token:initial.mfa_token,response:credentialJson(credential)});
-        }).then(done).catch(fail);
+        }).then(done).catch(function(err){fail(passkeyFailure(err));});
+      };
+      if(emailRequestBtn)emailRequestBtn.onclick=function(){
+        busy(true,'Sending secure code…');message.textContent='';
+        post('/api/auth/login/email-recovery/request',{mfa_token:initial.mfa_token},false).then(function(data){
+          busy(false);
+          var box=root.querySelector('#ob-admin-mfa-email-box');if(box)box.style.display='block';
+          message.style.color='#166534';message.textContent='Recovery code sent to '+String(data.email_hint||initial.email_hint||'your admin email')+'.';
+          var input=root.querySelector('#ob-admin-mfa-email-code');if(input)input.focus();
+        }).catch(fail);
+      };
+      if(emailSubmitBtn)emailSubmitBtn.onclick=function(){
+        var input=root.querySelector('#ob-admin-mfa-email-code'),code=String(input&&input.value||'').replace(/\D/g,'');
+        if(code.length!==8){fail(new Error('Enter the eight-digit code from the email.'));return;}
+        busy(true,'Verifying emailed code…');message.textContent='';
+        post('/api/auth/login/email-recovery/verify',{mfa_token:initial.mfa_token,recovery_code:code}).then(done).catch(fail);
       };
       var toggle=root.querySelector('#ob-admin-mfa-recovery-toggle');
       if(toggle)toggle.onclick=function(){var box=root.querySelector('#ob-admin-mfa-recovery-box');box.style.display=box.style.display==='none'?'block':'none';if(box.style.display==='block'){var input=root.querySelector('#ob-admin-mfa-recovery-code');if(input)input.focus();}};

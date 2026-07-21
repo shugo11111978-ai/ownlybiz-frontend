@@ -10,9 +10,13 @@ const ATTRIBUTION_KEY = 'ob_tracking_attribution_v1';
 const ANALYTICS_CLIENT_KEY = 'ob_tracking_analytics_client_id_v1';
 const ANALYTICS_SESSION_KEY = 'ob_tracking_analytics_session_id_v1';
 const ANALYTICS_SESSION_ACTIVITY_KEY = 'ob_tracking_analytics_session_activity_v1';
+const ENSEMIND_TAG_ID = 'et_8342ad5679ff3ac95f4f3702';
+const ENSEMIND_SCRIPT_URL = 'https://ensemind.com/tag.js';
 
 assert(source.includes("'https://ownlybiz-backend-production.up.railway.app'"), 'tracking runtime fallback must target the production backend');
 assert(indexSource.includes('window.OWNLYBIZ_IS_STAGING=false;'), 'production shell must keep the staging flag disabled');
+assert(source.includes(`var ENSEMIND_TAG_ID = '${ENSEMIND_TAG_ID}'`), 'Ensemind public tag ID must match the approved installation link');
+assert(source.includes(`var ENSEMIND_SCRIPT_URL = '${ENSEMIND_SCRIPT_URL}'`), 'Ensemind runtime must load from the approved vendor origin');
 
 assert(!/real test conversion/i.test(source), 'LinkedIn UI must never imply that local validation sends a real conversion');
 assert(source.includes('LinkedIn configuration validated locally. No conversion was sent.'), 'LinkedIn result copy must state local-only validation');
@@ -78,10 +82,11 @@ function providers() {
   };
 }
 
-function createHarness({ path = '/pricing', search = '?gclid=GCLID_123&fbclid=FBCLID_456&utm_source=google&utm_medium=cpc&utm_campaign=summer_launch&reset_token=never-store-me', consent = null, mode = 'managed', authToken = '', activeView = 1, configPolicy = 'tracking-consent-2026-07', consentDelays = [], consentResults = [] } = {}) {
-  const origin = 'https://ownlybiz.com';
+function createHarness({ path = '/pricing', search = '?gclid=GCLID_123&fbclid=FBCLID_456&utm_source=google&utm_medium=cpc&utm_campaign=summer_launch&reset_token=never-store-me', consent = null, mode = 'managed', authToken = '', activeView = 1, configPolicy = 'tracking-consent-2026-07', consentDelays = [], consentResults = [], hostname = 'ownlybiz.com', globalPrivacyControl = false, doNotTrack = '0' } = {}) {
+  const origin = `https://${hostname}`;
   const requests = [];
   const scriptRequests = [];
+  const scriptNodes = [];
   const elementsById = new Map();
   const localStorage = new Store(consent ? { [CONSENT_KEY]: JSON.stringify(consent) } : {});
   const sessionStorage = new Store();
@@ -127,14 +132,17 @@ function createHarness({ path = '/pricing', search = '?gclid=GCLID_123&fbclid=FB
     return response({ success: true, url: 'https://checkout.test/session' });
   }
 
+  let reloadCount = 0;
   const location = {
-    hostname: 'ownlybiz.com',
+    hostname,
     origin,
     pathname: path,
     search,
     hash: '#sentinel-fragment',
-    href: origin + path + search + '#sentinel-fragment'
+    href: origin + path + search + '#sentinel-fragment',
+    reload() { reloadCount += 1; }
   };
+  const navigator = { globalPrivacyControl, doNotTrack };
   const document = {
     readyState: 'complete',
     title: 'Ownlybiz',
@@ -142,7 +150,7 @@ function createHarness({ path = '/pricing', search = '?gclid=GCLID_123&fbclid=FB
     head: {
       appendChild(node) {
         if(node.id) elementsById.set(node.id, node);
-        if(node.src) scriptRequests.push(node.src);
+        if(node.src) { scriptRequests.push(node.src); scriptNodes.push(node); }
         setTimeout(() => node.onload && node.onload(), 0);
         return node;
       }
@@ -176,6 +184,7 @@ function createHarness({ path = '/pricing', search = '?gclid=GCLID_123&fbclid=FB
     history,
     localStorage,
     sessionStorage,
+    navigator,
     fetch: fetchMock,
     crypto: { randomUUID },
     dataLayer: [],
@@ -201,6 +210,7 @@ function createHarness({ path = '/pricing', search = '?gclid=GCLID_123&fbclid=FB
     history,
     localStorage,
     sessionStorage,
+    navigator,
     fetch: fetchMock,
     crypto: window.crypto,
     CustomEvent: window.CustomEvent,
@@ -226,9 +236,10 @@ function createHarness({ path = '/pricing', search = '?gclid=GCLID_123&fbclid=FB
   vm.runInContext(source, context, { filename: 'platform-tracking.js' });
 
   return {
-    window, document, localStorage, sessionStorage, requests, scriptRequests, config, location,
+    window, document, localStorage, sessionStorage, requests, scriptRequests, scriptNodes, config, location,
     get consentOpenCount() { return consentOpenCount; },
-    get maxConsentRequestsInFlight() { return maxConsentRequestsInFlight; }
+    get maxConsentRequestsInFlight() { return maxConsentRequestsInFlight; },
+    get reloadCount() { return reloadCount; }
   };
 }
 
@@ -321,6 +332,52 @@ async function analyticsConsentTest() {
   await h.window.OBPlatformTracking.track('page_view');
   await wait();
   assert.equal(requestBodies(h, '/api/tracking/event').length, before, 'revoke blocks future canonical browser events');
+}
+
+async function ensemindConsentBoundaryTests() {
+  const analyticsConsent = { necessary: true, analytics: true, marketing: false, updated_at: '2026-07-21T06:00:00.000Z', policy_version: 'tracking-consent-2026-07', consent_id: 'consent-ensemind' };
+  const h = createHarness({ path: '/features', consent: analyticsConsent });
+  await wait(90);
+  const ensemindNodes = h.scriptNodes.filter(node => node.src === ENSEMIND_SCRIPT_URL);
+  assert.equal(ensemindNodes.length, 1, 'analytics consent loads Ensemind exactly once');
+  assert.equal(ensemindNodes[0]['data-hub'], ENSEMIND_TAG_ID, 'Ensemind script carries the exact approved data-hub tag');
+  assert.equal(ensemindNodes[0].async, true, 'Ensemind remains asynchronous');
+  h.window.OBPlatformTracking.consentChanged(JSON.parse(h.localStorage.getItem(CONSENT_KEY)));
+  await wait(20);
+  assert.equal(h.scriptRequests.filter(url => url === ENSEMIND_SCRIPT_URL).length, 1, 'repeated activation never duplicates Ensemind');
+
+  const necessaryOnly = createHarness({ path: '/features', consent: { ...analyticsConsent, analytics: false, consent_id: 'consent-ensemind-necessary' } });
+  await wait(70);
+  assert(!necessaryOnly.scriptRequests.includes(ENSEMIND_SCRIPT_URL), 'necessary-only consent loads no Ensemind runtime');
+
+  const marketingOnly = createHarness({ path: '/features', consent: { ...analyticsConsent, analytics: false, marketing: true, consent_id: 'consent-ensemind-marketing' } });
+  await wait(70);
+  assert(!marketingOnly.scriptRequests.includes(ENSEMIND_SCRIPT_URL), 'marketing-only consent does not substitute for Analytics consent');
+
+  const dnt = createHarness({ path: '/features', consent: { ...analyticsConsent, consent_id: 'consent-ensemind-dnt' }, doNotTrack: '1' });
+  const gpc = createHarness({ path: '/features', consent: { ...analyticsConsent, consent_id: 'consent-ensemind-gpc' }, globalPrivacyControl: true });
+  await wait(80);
+  assert(!dnt.scriptRequests.includes(ENSEMIND_SCRIPT_URL), 'Do Not Track prevents the Ensemind script from loading');
+  assert(!gpc.scriptRequests.includes(ENSEMIND_SCRIPT_URL), 'Global Privacy Control prevents the Ensemind script from loading');
+
+  const login = createHarness({ path: '/login', consent: { ...analyticsConsent, consent_id: 'consent-ensemind-login' } });
+  const customDomain = createHarness({ path: '/', hostname: 'luna.ownly.cards', consent: { ...analyticsConsent, consent_id: 'consent-ensemind-luna' } });
+  await wait(70);
+  assert(!login.scriptRequests.includes(ENSEMIND_SCRIPT_URL), 'login route never loads Ensemind');
+  assert(!customDomain.scriptRequests.includes(ENSEMIND_SCRIPT_URL), 'Luna/custom expert domains never load Ensemind');
+
+  const revoked = { necessary: true, analytics: false, marketing: false, updated_at: '2026-07-21T06:01:00.000Z', policy_version: 'tracking-consent-2026-07', consent_id: analyticsConsent.consent_id };
+  h.localStorage.setItem(CONSENT_KEY, JSON.stringify(revoked));
+  h.window.OBPlatformTracking.consentChanged(revoked);
+  await wait(20);
+  assert.equal(h.reloadCount, 1, 'withdrawing Analytics consent reloads once to remove Ensemind listeners');
+
+  const privateTransition = createHarness({ path: '/features', consent: { ...analyticsConsent, consent_id: 'consent-ensemind-private-transition' } });
+  await wait(80);
+  assert(privateTransition.scriptRequests.includes(ENSEMIND_SCRIPT_URL), 'public page starts with consented Ensemind');
+  privateTransition.window.switchView(3);
+  await wait(20);
+  assert.equal(privateTransition.reloadCount, 1, 'entering a private SPA view reloads once to remove Ensemind listeners');
 }
 
 async function analyticsSessionInactivityTest() {
@@ -1005,6 +1062,7 @@ function adminEnvironmentCopyTests() {
 
 await freshConsentTest();
 await analyticsConsentTest();
+await ensemindConsentBoundaryTests();
 await analyticsSessionInactivityTest();
 await managedRegrantIdentityTest();
 await marketingConsentTest();

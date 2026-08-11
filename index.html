@@ -6609,6 +6609,37 @@ if (!window.toast) {
                 <div style="font-size:11px;color:var(--gray-400);margin-top:2px;">Readings</div>
               </div>
             </div>
+            <!-- Client relationship and payment insights -->
+            <div class="db-card ob-client-insights-card" id="cd-insights-card" style="margin-bottom:16px;">
+              <div class="ob-client-insights-heading">
+                <div>
+                  <div class="ob-client-insights-title">Client overview</div>
+                  <div class="ob-client-insights-subtitle">Payment, relationship, and engagement details</div>
+                </div>
+              </div>
+              <div class="ob-client-insights-grid" aria-live="polite">
+                <div class="ob-client-insight">
+                  <div class="ob-client-insight-label">Payment method</div>
+                  <div class="ob-client-insight-value" id="cd-payment-method">Checking...</div>
+                  <div class="ob-client-insight-meta" id="cd-payment-meta">Saved billing method</div>
+                </div>
+                <div class="ob-client-insight">
+                  <div class="ob-client-insight-label">Relationship</div>
+                  <div class="ob-client-insight-value" id="cd-relationship">Checking...</div>
+                  <div class="ob-client-insight-meta" id="cd-relationship-meta">Client account details</div>
+                </div>
+                <div class="ob-client-insight">
+                  <div class="ob-client-insight-label">Last active</div>
+                  <div class="ob-client-insight-value" id="cd-last-active">Checking...</div>
+                  <div class="ob-client-insight-meta" id="cd-last-active-meta">Most recent activity</div>
+                </div>
+                <div class="ob-client-insight">
+                  <div class="ob-client-insight-label">Engagement</div>
+                  <div class="ob-client-insight-value" id="cd-engagement">Checking...</div>
+                  <div class="ob-client-insight-meta" id="cd-engagement-meta">Session preferences</div>
+                </div>
+              </div>
+            </div>
             <!-- Session history -->
             <div class="db-card" style="padding:0;overflow:hidden;">
               <div style="padding:16px 20px;border-bottom:1.5px solid var(--gray-200);display:flex;align-items:center;justify-content:space-between;">
@@ -17799,6 +17830,75 @@ function _clientSafe(v) {
   });
 }
 
+function _clientTitle(v) {
+  return String(v || '').replace(/[_-]+/g, ' ').replace(/\b\w/g, function(letter){ return letter.toUpperCase(); }).trim();
+}
+
+function _clientSetText(id, value) {
+  var el = document.getElementById(id);
+  if(el) el.textContent = value == null || value === '' ? '—' : String(value);
+}
+
+function _clientDateTime(ts) {
+  if(!ts) return '';
+  var raw = Number(ts);
+  var date = Number.isFinite(raw) ? new Date(raw < 9999999999 ? raw * 1000 : raw) : new Date(ts);
+  if(!Number.isFinite(date.getTime())) return '';
+  return date.toLocaleDateString([], {year:'numeric', month:'short', day:'numeric'});
+}
+
+function resetClientInsights() {
+  _clientSetText('cd-payment-method', 'Checking...');
+  _clientSetText('cd-payment-meta', 'Saved billing method');
+  _clientSetText('cd-relationship', 'Checking...');
+  _clientSetText('cd-relationship-meta', 'Client account details');
+  _clientSetText('cd-last-active', 'Checking...');
+  _clientSetText('cd-last-active-meta', 'Most recent activity');
+  _clientSetText('cd-engagement', 'Checking...');
+  _clientSetText('cd-engagement-meta', 'Session preferences');
+}
+
+function renderClientInsights(detail) {
+  detail = detail || {};
+  var client = detail.client || {};
+  var stats = detail.stats || {};
+  var insights = detail.insights || {};
+  var payment = detail.payment_method || {};
+
+  _clientSetText('cd-payment-method', payment.label || 'No saved payment method');
+  var paymentMeta = [];
+  if(payment.expiry_month && payment.expiry_year) paymentMeta.push('Expires ' + String(payment.expiry_month).padStart(2,'0') + '/' + String(payment.expiry_year).slice(-2));
+  if(Number(stats.total_card_charged || 0) > 0) paymentMeta.push('$' + Number(stats.total_card_charged).toFixed(2) + ' paid by card');
+  if(Number(stats.total_credit_applied || 0) > 0) paymentMeta.push('$' + Number(stats.total_credit_applied).toFixed(2) + ' prepaid credit used');
+  if(Number(stats.total_promo_savings || 0) > 0) paymentMeta.push('$' + Number(stats.total_promo_savings).toFixed(2) + ' promotion savings');
+  _clientSetText('cd-payment-meta', paymentMeta.length ? paymentMeta.join(' · ') : (payment.status === 'unavailable' ? 'Billing details could not be refreshed' : 'No recorded card or credit payments'));
+
+  var source = _clientTitle(client.relationship_source || 'direct');
+  var status = _clientTitle(client.relationship_status || 'registered');
+  _clientSetText('cd-relationship', source + ' client');
+  var relationshipMeta = [];
+  if(client.first_seen_at) relationshipMeta.push('Since ' + _clientDateTime(client.first_seen_at));
+  relationshipMeta.push(status);
+  relationshipMeta.push(client.is_verified ? 'Email verified' : 'Email not verified');
+  if(client.is_active === false) relationshipMeta.push('Account inactive');
+  _clientSetText('cd-relationship-meta', relationshipMeta.join(' · '));
+
+  var lastActivity = insights.last_activity_at || client.last_seen_at || client.first_seen_at;
+  _clientSetText('cd-last-active', lastActivity ? _clientDateTime(lastActivity) : 'No recorded activity');
+  var lastActiveMeta = lastActivity ? _clientTimeAgo(lastActivity) : 'Activity will appear after the first interaction';
+  if(client.last_seen_at && Number(client.last_seen_at) !== Number(lastActivity)) lastActiveMeta += ' · Account seen ' + _clientTimeAgo(client.last_seen_at);
+  _clientSetText('cd-last-active-meta', lastActiveMeta);
+
+  var preferred = _clientTitle(insights.preferred_channel || '');
+  _clientSetText('cd-engagement', preferred ? preferred + ' most used' : 'No session preference yet');
+  var engagementMeta = [];
+  if(Number(stats.avg_duration_min || 0) > 0) engagementMeta.push(Number(stats.avg_duration_min) + ' min average session');
+  var channels = (insights.channels_used || []).map(_clientTitle).filter(Boolean);
+  if(channels.length) engagementMeta.push(channels.join(', ') + ' used');
+  engagementMeta.push((Number(stats.total_sessions || 0) + Number(stats.total_readings || 0)) + ' completed activities');
+  _clientSetText('cd-engagement-meta', engagementMeta.join(' · '));
+}
+
 function _clientTimeAgo(ts) {
   var d = typeof ts === 'number' && ts < 9999999999 ? ts * 1000 : ts;
   var diff = (Date.now() - new Date(d).getTime()) / 1000;
@@ -17855,6 +17955,7 @@ function openClientDetail(clientId) {
     document.getElementById("cd-name").textContent = "Loading...";
   }
   document.getElementById("cd-email").textContent = "";
+  resetClientInsights();
   document.getElementById("cd-sessions-list").innerHTML = '<div style="padding:30px;text-align:center;color:var(--gray-400)">Loading client activity...</div>';
 
   var tok = sessionStorage.getItem("ob_t");
@@ -17875,6 +17976,7 @@ function openClientDetail(clientId) {
       document.getElementById("cd-stat-revenue").textContent = "$" + parseFloat(s.total_revenue||0).toFixed(2);
       document.getElementById("cd-stat-minutes").textContent = s.total_minutes;
       document.getElementById("cd-stat-avg").textContent = s.total_readings || readings.length || 0;
+      renderClientInsights(d);
       var totalActivity = sessions.length + readings.length;
       document.getElementById("cd-session-count").textContent = totalActivity + " item" + (totalActivity!==1?"s":"");
       // Activity list
@@ -17883,45 +17985,9 @@ function openClientDetail(clientId) {
         list.innerHTML = '<div style="padding:30px;text-align:center;color:var(--gray-400);font-size:13px;">No activity yet</div>';
         return;
       }
-      var sessionRows = sessions.map(function(sess) {
-        var channel = sess.channel || "chat";
-        var icon = channel === "voice" ? "V" : channel === "video" ? "VC" : "C";
-        var dur = (sess.duration || sess.duration_seconds) ? Math.ceil((sess.duration || sess.duration_seconds) / 60) + " min" : "—";
-        var charged = sess.total_charged ? "$" + parseFloat(sess.total_charged).toFixed(2) : "$0";
-        var date = sess.created_at ? new Date(sess.created_at * 1000).toLocaleDateString() : "—";
-        var time = sess.created_at ? new Date(sess.created_at * 1000).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}) : "";
-        var statusColor = sess.status === "ended" ? "#22c55e" : sess.status === "active" ? "#f59e0b" : sess.status === "cancelled" ? "#ef4444" : "#9ca3af";
-        var statusLabel = sess.status === "ended" ? "Completed" : sess.status === "active" ? "Active" : sess.status === "cancelled" ? "Cancelled" : sess.status;
-        return {ts:sess.created_at || 0, html:'<div style="display:flex;align-items:center;gap:14px;padding:14px 20px;border-bottom:1px solid var(--gray-100);flex-wrap:wrap;">' +
-          '<div style="font-size:18px;flex-shrink:0;">' + _clientSafe(icon) + '</div>' +
-          '<div style="flex:1;min-width:120px;"><div style="font-weight:600;font-size:13px;color:var(--brown);">' + _clientSafe(channel.charAt(0).toUpperCase() + channel.slice(1)) + ' Session</div><div style="font-size:11px;color:var(--gray-400);">' + _clientSafe(date) + ' · ' + _clientSafe(time) + '</div></div>' +
-          '<div style="font-size:13px;color:var(--brown);min-width:50px;text-align:center;">' + _clientSafe(dur) + '</div>' +
-          '<div style="font-weight:700;font-size:13px;color:var(--terra);min-width:60px;text-align:center;">' + _clientSafe(charged) + '</div>' +
-          '<div><span style="font-size:11px;font-weight:600;padding:3px 10px;border-radius:100px;background:' + statusColor + '20;color:' + statusColor + ';">' + _clientSafe(statusLabel) + '</span></div>' +
-        '</div>'};
-      });
-      var readingRows = readings.map(function(reading) {
-        var amount = reading.price_cents ? (parseFloat(reading.price_cents || 0) / 100) : parseFloat(reading.price_amount || 0);
-        var charged = amount ? "$" + amount.toFixed(2) : "$0";
-        var ts = reading.delivered_at || reading.paid_at || reading.created_at || 0;
-        var date = ts ? new Date(ts * 1000).toLocaleDateString() : "—";
-        var time = ts ? new Date(ts * 1000).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}) : "";
-        var status = reading.status || reading.payment_status || "pending";
-        var statusColor = status === "delivered" ? "#22c55e" : (status === "declined" || status === "refunded" ? "#ef4444" : "#f59e0b");
-        var statusLabel = status === "delivered" ? "Delivered" : status.replace(/_/g," ");
-        var action = String(reading.payment_status || "").toLowerCase() === "paid" && String(reading.status || "").toLowerCase() !== "refunded" && amount > 0
-          ? '<button type="button" class="ob-session-refund-btn" onclick="obOpenOnDemandRefundRequest(&quot;' + _clientSafe(clientId) + '&quot;,&quot;' + _clientSafe(reading.id || "") + '&quot;,' + amount.toFixed(2) + ')">Request refund</button>'
-          : '<span class="ob-session-refund-pill muted">' + _clientSafe(String(reading.payment_status || "").toLowerCase() === "refunded" || String(reading.status || "").toLowerCase() === "refunded" ? "Refunded" : "Written reading") + '</span>';
-        return {ts:ts, html:'<div style="display:flex;align-items:center;gap:14px;padding:14px 20px;border-bottom:1px solid var(--gray-100);flex-wrap:wrap;">' +
-          '<div style="font-size:13px;font-weight:900;flex-shrink:0;color:var(--terra);">WR</div>' +
-          '<div style="flex:1;min-width:120px;"><div style="font-weight:600;font-size:13px;color:var(--brown);">' + _clientSafe(reading.public_label || "Written Reading") + '</div><div style="font-size:11px;color:var(--gray-400);">' + _clientSafe(reading.topic || "Private request") + ' · ' + _clientSafe(date) + ' · ' + _clientSafe(time) + '</div></div>' +
-          '<div style="font-size:13px;color:var(--brown);min-width:50px;text-align:center;">Async</div>' +
-          '<div style="font-weight:700;font-size:13px;color:var(--terra);min-width:60px;text-align:center;">' + _clientSafe(charged) + '</div>' +
-          '<div><span style="font-size:11px;font-weight:600;padding:3px 10px;border-radius:100px;background:' + statusColor + '20;color:' + statusColor + ';text-transform:capitalize;">' + _clientSafe(statusLabel) + '</span></div>' +
-          '<div class="ob-session-refund-action">' + action + '</div>' +
-        '</div>'};
-      });
-      list.innerHTML = sessionRows.concat(readingRows).sort(function(a,b){ return (b.ts || 0) - (a.ts || 0); }).map(function(row){ return row.html; }).join("");
+      if(typeof window.obRenderClientActivity === 'function') {
+        window.obRenderClientActivity(clientId, sessions, [], readings);
+      }
     })
     .catch(function(e) {
       document.getElementById("cd-name").textContent = "Failed to load";
@@ -50841,6 +50907,22 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
 })();
 </script>
 <style>
+.ob-client-insights-card{padding:0;overflow:hidden}
+.ob-client-insights-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 20px;border-bottom:1px solid var(--gray-200,#e7dfd4)}
+.ob-client-insights-title{font-size:14px;font-weight:800;color:var(--brown,#241a15)}
+.ob-client-insights-subtitle{font-size:11px;color:var(--gray-400,#78716c);margin-top:2px}
+.ob-client-insights-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr))}
+.ob-client-insight{min-width:0;padding:16px 18px;border-right:1px solid var(--gray-100,#eee7de)}
+.ob-client-insight:last-child{border-right:0}
+.ob-client-insight-label{font-size:10px;font-weight:900;letter-spacing:.07em;text-transform:uppercase;color:var(--gray-400,#78716c);margin-bottom:7px}
+.ob-client-insight-value{font-size:14px;line-height:1.35;font-weight:800;color:var(--brown,#241a15);overflow-wrap:anywhere}
+.ob-client-insight-meta{font-size:11px;line-height:1.45;color:var(--gray-400,#78716c);margin-top:5px;overflow-wrap:anywhere}
+.ob-client-activity-row{display:flex;align-items:center;gap:14px;padding:14px 20px;border-bottom:1px solid var(--gray-100,#eee7de);flex-wrap:wrap}
+.ob-client-activity-row.is-chat{cursor:pointer;transition:background .15s ease,box-shadow .15s ease}
+.ob-client-activity-row.is-chat:hover{background:var(--cream,#f7f1e8)}
+.ob-client-activity-row.is-chat:focus-visible{outline:2px solid var(--terra,#c4622d);outline-offset:-3px;background:var(--cream,#f7f1e8)}
+.ob-client-channel-badge{display:flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:9px;background:rgba(196,98,45,.1);color:var(--terra,#c4622d);font-size:10px;font-weight:900;letter-spacing:.03em;flex-shrink:0}
+.ob-client-transcript-hint{display:block;color:var(--terra,#c4622d);font-size:10px;font-weight:800;margin-top:3px}
 .ob-session-refund-action{display:flex;align-items:center;justify-content:flex-end;min-width:140px}
 .ob-session-refund-btn{border:1px solid rgba(196,98,45,.35);background:#fffdf8;color:var(--terra,#c4622d);border-radius:999px;padding:7px 12px;font-size:11px;font-weight:900;cursor:pointer;box-shadow:0 8px 18px rgba(42,28,18,.07)}
 .ob-session-refund-btn:hover{background:rgba(196,98,45,.1)}
@@ -50859,7 +50941,24 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
 .ob-session-refund-dialog textarea{width:100%;min-height:110px;border:1px solid var(--gray-200,#e7dfd4);border-radius:12px;background:var(--cream,#f7f1e8);color:var(--brown,#241a15);padding:12px;font:500 14px var(--font-body,Arial,sans-serif);resize:vertical;box-sizing:border-box}
 .ob-session-refund-help{font-size:12px;color:var(--gray-500,#5f554d);line-height:1.45}
 .ob-session-refund-dialog .actions{display:flex;justify-content:flex-end;gap:10px;margin-top:14px;flex-wrap:wrap}
-@media(max-width:700px){.ob-session-refund-action{width:100%;justify-content:flex-start}.ob-session-refund-dialog{border-radius:14px}}
+.ob-client-transcript-modal{position:fixed;inset:0;z-index:999999;background:rgba(11,9,8,.68);display:flex;align-items:center;justify-content:center;padding:18px}
+.ob-client-transcript-dialog{width:min(760px,100%);max-height:min(820px,88vh);background:var(--white,#fffdf8);color:var(--brown,#241a15);border:1px solid var(--gray-200,#e7dfd4);border-radius:18px;box-shadow:0 28px 90px rgba(0,0,0,.38);display:flex;flex-direction:column;overflow:hidden}
+.ob-client-transcript-header{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;padding:20px 22px 16px;border-bottom:1px solid var(--gray-200,#e7dfd4)}
+.ob-client-transcript-title{margin:0;font-size:20px;line-height:1.2;color:var(--brown,#241a15)}
+.ob-client-transcript-meta{font-size:12px;color:var(--gray-400,#78716c);margin-top:5px}
+.ob-client-transcript-close{border:1px solid var(--gray-200,#e7dfd4);background:var(--cream,#f7f1e8);color:var(--brown,#241a15);border-radius:999px;padding:8px 13px;font-size:12px;font-weight:800;cursor:pointer;flex-shrink:0}
+.ob-client-transcript-close:hover{border-color:rgba(196,98,45,.35);color:var(--terra,#c4622d)}
+.ob-client-transcript-body{overflow-y:auto;overscroll-behavior:contain;padding:22px;background:linear-gradient(180deg,rgba(247,241,232,.62),rgba(255,253,248,.96));min-height:240px}
+.ob-client-transcript-loading,.ob-client-transcript-empty{padding:54px 20px;text-align:center;color:var(--gray-400,#78716c);font-size:13px;line-height:1.5}
+.ob-client-transcript-error{padding:18px;border:1px solid rgba(220,38,38,.2);background:rgba(220,38,38,.06);border-radius:12px;color:#b91c1c;font-size:13px;line-height:1.5}
+.ob-client-transcript-message{display:flex;flex-direction:column;align-items:flex-start;margin:0 0 16px}
+.ob-client-transcript-message.is-expert{align-items:flex-end}
+.ob-client-transcript-sender{font-size:10px;font-weight:800;color:var(--gray-400,#78716c);margin:0 5px 5px}
+.ob-client-transcript-bubble{max-width:min(620px,82%);padding:11px 14px;border-radius:15px 15px 15px 4px;background:var(--white,#fffdf8);border:1px solid var(--gray-200,#e7dfd4);color:var(--brown,#241a15);font-size:13px;line-height:1.55;white-space:pre-wrap;overflow-wrap:anywhere;box-shadow:0 5px 14px rgba(42,28,18,.05)}
+.ob-client-transcript-message.is-expert .ob-client-transcript-bubble{border-radius:15px 15px 4px 15px;background:var(--terra,#c4622d);border-color:var(--terra,#c4622d);color:#fff}
+.ob-client-transcript-attachment{display:inline-block;margin-top:8px;color:inherit;font-size:11px;font-weight:800;text-decoration:underline;text-underline-offset:2px}
+@media(max-width:980px){.ob-client-insights-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.ob-client-insight:nth-child(2){border-right:0}.ob-client-insight:nth-child(-n+2){border-bottom:1px solid var(--gray-100,#eee7de)}}
+@media(max-width:700px){.ob-client-insights-grid{grid-template-columns:1fr}.ob-client-insight{border-right:0;border-bottom:1px solid var(--gray-100,#eee7de)}.ob-client-insight:last-child{border-bottom:0}.ob-session-refund-action{width:100%;justify-content:flex-start}.ob-session-refund-dialog{border-radius:14px}.ob-client-transcript-modal{align-items:flex-end;padding:0}.ob-client-transcript-dialog{width:100%;max-height:92vh;border-radius:18px 18px 0 0}.ob-client-transcript-header{padding:17px 18px 14px}.ob-client-transcript-body{padding:16px}.ob-client-transcript-bubble{max-width:90%}}
 </style>
 <script id="ownlybiz-session-refund-detail-flow">
 (function(){
@@ -50868,6 +50967,8 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   var BASE = (window.OWNLYBIZ_API_URL || window._OB_BACKEND || 'https://ownlybiz-backend-production.up.railway.app').replace(/\/+$/,'');
   var sessionCache = {};
   var refreshState = {};
+  var transcriptReturnFocus = null;
+  var transcriptBodyOverflow = '';
   function token(){ return sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || ''; }
   function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
   function attr(s){ return esc(s).replace(/"/g,'&quot;'); }
@@ -50910,7 +51011,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     if(sess.status !== 'ended') return '';
     if(String(sess.payment_status || '') !== 'paid') return '<span class="ob-session-refund-pill muted">Not paid</span>';
     if(amount <= 0) return '<span class="ob-session-refund-pill muted">' + (Number(sess.credit_applied || 0) > 0 ? 'Paid by credit' : 'No card charge') + '</span>';
-    var requestButton = '<button type="button" class="ob-session-refund-btn" onclick="obOpenSessionRefundRequest(&quot;' + attr(clientId) + '&quot;,&quot;' + attr(sess.id) + '&quot;,' + amount.toFixed(2) + ')">' + (status === 'declined' || status === 'failed' ? 'Request again' : 'Request refund') + '</button>';
+    var requestButton = '<button type="button" class="ob-session-refund-btn" onclick="event.stopPropagation();obOpenSessionRefundRequest(&quot;' + attr(clientId) + '&quot;,&quot;' + attr(sess.id) + '&quot;,' + amount.toFixed(2) + ')">' + (status === 'declined' || status === 'failed' ? 'Request again' : 'Request refund') + '</button>';
     if(status === 'declined' || status === 'failed') return '<div style="display:flex;gap:8px;align-items:center;justify-content:flex-end;flex-wrap:wrap;"><span class="ob-session-refund-pill declined">Refund declined</span>' + requestButton + '</div>';
     return requestButton;
   }
@@ -50924,7 +51025,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     if(paymentStatus === 'refunded' || requestStatus === 'refunded') return '<span class="ob-session-refund-pill approved">Refunded</span>';
     if(paymentStatus !== 'paid') return '<span class="ob-session-refund-pill muted">Not paid</span>';
     if(amount <= 0) return '<span class="ob-session-refund-pill muted">No card charge</span>';
-    var requestButton = '<button type="button" class="ob-session-refund-btn" onclick="obOpenOnDemandRefundRequest(&quot;' + attr(clientId) + '&quot;,&quot;' + attr(reading.id || '') + '&quot;,' + amount.toFixed(2) + ')">' + (status === 'declined' || status === 'failed' ? 'Request again' : 'Request refund') + '</button>';
+    var requestButton = '<button type="button" class="ob-session-refund-btn" onclick="event.stopPropagation();obOpenOnDemandRefundRequest(&quot;' + attr(clientId) + '&quot;,&quot;' + attr(reading.id || '') + '&quot;,' + amount.toFixed(2) + ')">' + (status === 'declined' || status === 'failed' ? 'Request again' : 'Request refund') + '</button>';
     if(status === 'declined' || status === 'failed') return '<div style="display:flex;gap:8px;align-items:center;justify-content:flex-end;flex-wrap:wrap;"><span class="ob-session-refund-pill declined">Refund declined</span>' + requestButton + '</div>';
     return requestButton;
   }
@@ -50955,7 +51056,8 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     sessionCache[clientId] = sessions;
     var sessionRows = sessions.map(function(sess){
       var channel = sess.channel || 'chat';
-      var icon = channel === 'voice' ? '🎙️' : channel === 'video' ? '🎥' : '💬';
+      var isChat = channel === 'chat';
+      var channelBadge = channel === 'voice' ? 'VO' : channel === 'video' ? 'VI' : 'CH';
       var duration = (sess.duration || sess.duration_seconds) ? Math.ceil((sess.duration || sess.duration_seconds) / 60) + ' min' : '—';
       var card = Number(sess.card_charged || sess.refundable_amount || 0);
       var charged = Number(sess.total_charged || 0);
@@ -50964,9 +51066,12 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       var time = sess.created_at ? new Date(sess.created_at * 1000).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}) : '';
       var st = statusLabel(sess.status);
       var request = requestForSession(requests, sess.id);
-      return {ts:Number(sess.created_at || 0), html:'<div data-ob-session-row="1" data-session-id="' + attr(sess.id || '') + '" style="display:flex;align-items:center;gap:14px;padding:14px 20px;border-bottom:1px solid var(--gray-100);flex-wrap:wrap;">' +
-        '<div style="font-size:18px;flex-shrink:0;">' + icon + '</div>' +
-        '<div style="flex:1;min-width:140px;"><div style="font-weight:600;font-size:13px;color:var(--brown);">' + esc(channel.charAt(0).toUpperCase() + channel.slice(1)) + ' Session</div><div style="font-size:11px;color:var(--gray-400);">' + esc(date + ' · ' + time) + '</div></div>' +
+      var openAttrs = isChat
+        ? ' role="button" tabindex="0" aria-label="Open chat conversation" onclick="obOpenClientTranscript(&quot;' + attr(clientId) + '&quot;,&quot;' + attr(sess.id || '') + '&quot;)" onkeydown="if(event.key===&quot;Enter&quot;||event.key===&quot; &quot;){event.preventDefault();obOpenClientTranscript(&quot;' + attr(clientId) + '&quot;,&quot;' + attr(sess.id || '') + '&quot;)}"'
+        : '';
+      return {ts:Number(sess.created_at || 0), html:'<div class="ob-client-activity-row' + (isChat ? ' is-chat' : '') + '" data-ob-session-row="1" data-session-id="' + attr(sess.id || '') + '"' + openAttrs + '>' +
+        '<div class="ob-client-channel-badge" aria-hidden="true">' + channelBadge + '</div>' +
+        '<div style="flex:1;min-width:140px;"><div style="font-weight:600;font-size:13px;color:var(--brown);">' + esc(channel.charAt(0).toUpperCase() + channel.slice(1)) + ' Session</div><div style="font-size:11px;color:var(--gray-400);">' + esc(date + ' · ' + time) + '</div>' + (isChat ? '<span class="ob-client-transcript-hint">View conversation</span>' : '') + '</div>' +
         '<div style="font-size:13px;color:var(--brown);min-width:50px;text-align:center;">' + esc(duration) + '</div>' +
         '<div style="font-weight:700;font-size:13px;color:var(--terra);min-width:78px;text-align:center;">' + money(charged) + sub + '</div>' +
         '<div><span style="font-size:11px;font-weight:600;padding:3px 10px;border-radius:100px;background:' + st[1] + '20;color:' + st[1] + ';">' + esc(st[0]) + '</span></div>' +
@@ -50992,6 +51097,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     });
     list.innerHTML = sessionRows.concat(readingRows).sort(function(a,b){ return Number(b.ts || 0) - Number(a.ts || 0); }).map(function(row){ return row.html; }).join('');
   }
+  window.obRenderClientActivity = renderSessionRows;
   function refreshSessionRefunds(clientId, options){
     if(!clientId || !token()) return Promise.resolve();
     var now = Date.now();
@@ -51006,6 +51112,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       api('GET','/api/credits/clients/' + encodeURIComponent(clientId) + '/refund-requests').catch(function(){ return {requests:[]}; })
     ]).then(function(results){
       renderSessionRows(clientId, (results[0] && results[0].sessions) || [], (results[1] && results[1].requests) || [], (results[0] && results[0].on_demand_requests) || []);
+      if(typeof window.renderClientInsights === 'function') window.renderClientInsights(results[0] || {});
       if(typeof window.obCreditRenderClientDetail === 'function') window.obCreditRenderClientDetail(clientId);
     }).catch(function(){}).finally(function(){ state.inFlight = false; });
     return state.promise;
@@ -51014,6 +51121,94 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     var el = document.getElementById('ob-session-refund-modal');
     if(el && el.parentNode) el.parentNode.removeChild(el);
   }
+  function safeAttachmentUrl(value){
+    var url = String(value || '').trim();
+    if(/^https:\/\//i.test(url) || /^http:\/\//i.test(url) || /^\/(?!\/)/.test(url)) return url;
+    return '';
+  }
+  function transcriptTimestamp(value){
+    if(!value) return '';
+    var numeric = Number(value);
+    var date = Number.isFinite(numeric) ? new Date(numeric < 9999999999 ? numeric * 1000 : numeric) : new Date(value);
+    if(!Number.isFinite(date.getTime())) return '';
+    return date.toLocaleString([], {year:'numeric',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
+  }
+  function transcriptMeta(session, messageCount){
+    var parts = [];
+    if(session && session.created_at) parts.push(transcriptTimestamp(session.created_at));
+    var seconds = Number(session && (session.duration_secs || session.duration_seconds || session.duration) || 0);
+    if(seconds > 0) parts.push(Math.ceil(seconds / 60) + ' min');
+    parts.push(Number(messageCount || 0) + ' message' + (Number(messageCount || 0) === 1 ? '' : 's'));
+    return parts.join(' · ');
+  }
+  function closeTranscript(){
+    var modal = document.getElementById('ob-client-transcript-modal');
+    if(modal && modal.parentNode) modal.parentNode.removeChild(modal);
+    document.removeEventListener('keydown', onTranscriptKeydown);
+    document.body.style.overflow = transcriptBodyOverflow;
+    if(transcriptReturnFocus && typeof transcriptReturnFocus.focus === 'function') {
+      try { transcriptReturnFocus.focus(); } catch(_) {}
+    }
+    transcriptReturnFocus = null;
+  }
+  function onTranscriptKeydown(event){
+    if(event.key === 'Escape') closeTranscript();
+  }
+  function transcriptMessagesHtml(payload){
+    var session = payload && payload.session || {};
+    var messages = payload && payload.messages || [];
+    if(!messages.length) return '<div class="ob-client-transcript-empty">No messages were recorded for this chat session.</div>';
+    return messages.map(function(message){
+      var isExpert = String(message.sender_id || '') === String(session.expert_id || '');
+      var sender = isExpert ? 'You' : (message.sender_name || session.client_name || 'Client');
+      var sentAt = transcriptTimestamp(message.sent_at);
+      var content = String(message.content == null ? '' : message.content);
+      var fileUrl = safeAttachmentUrl(message.file_url);
+      var body = content || (fileUrl ? 'Attachment' : 'Non-text message');
+      var attachment = fileUrl ? '<a class="ob-client-transcript-attachment" href="' + attr(fileUrl) + '" target="_blank" rel="noopener noreferrer">View attachment</a>' : '';
+      return '<div class="ob-client-transcript-message' + (isExpert ? ' is-expert' : ' is-client') + '">' +
+        '<div class="ob-client-transcript-sender">' + esc(sender + (sentAt ? ' · ' + sentAt : '')) + '</div>' +
+        '<div class="ob-client-transcript-bubble">' + esc(body) + attachment + '</div>' +
+      '</div>';
+    }).join('');
+  }
+  window.obOpenClientTranscript = function(clientId, sessionId){
+    if(!clientId || !sessionId) return;
+    closeTranscript();
+    transcriptReturnFocus = document.activeElement;
+    transcriptBodyOverflow = document.body.style.overflow || '';
+    document.body.style.overflow = 'hidden';
+    var cachedSession = (sessionCache[clientId] || []).filter(function(session){ return String(session && session.id || '') === String(sessionId); })[0] || {};
+    var modal = document.createElement('div');
+    modal.id = 'ob-client-transcript-modal';
+    modal.className = 'ob-client-transcript-modal';
+    modal.innerHTML =
+      '<div class="ob-client-transcript-dialog" role="dialog" aria-modal="true" aria-labelledby="ob-client-transcript-title">' +
+        '<div class="ob-client-transcript-header"><div><h3 class="ob-client-transcript-title" id="ob-client-transcript-title">Chat conversation</h3><div class="ob-client-transcript-meta" id="ob-client-transcript-meta">' + esc(transcriptMeta(cachedSession, 0)) + '</div></div><button type="button" class="ob-client-transcript-close" id="ob-client-transcript-close">Close</button></div>' +
+        '<div class="ob-client-transcript-body" id="ob-client-transcript-body"><div class="ob-client-transcript-loading">Loading the complete conversation...</div></div>' +
+      '</div>';
+    modal.addEventListener('click', function(event){ if(event.target === modal) closeTranscript(); });
+    document.body.appendChild(modal);
+    document.addEventListener('keydown', onTranscriptKeydown);
+    var closeButton = document.getElementById('ob-client-transcript-close');
+    if(closeButton) closeButton.onclick = closeTranscript;
+    api('GET','/api/experts/me/clients/' + encodeURIComponent(clientId) + '/sessions/' + encodeURIComponent(sessionId) + '/transcript').then(function(payload){
+      var session = payload && payload.session || {};
+      if(String(session.client_id || '') !== String(clientId)) throw new Error('This conversation does not belong to the selected client.');
+      var messages = payload && payload.messages || [];
+      var meta = document.getElementById('ob-client-transcript-meta');
+      var body = document.getElementById('ob-client-transcript-body');
+      if(meta) meta.textContent = transcriptMeta(session, messages.length);
+      if(body) {
+        body.innerHTML = transcriptMessagesHtml(payload);
+        body.scrollTop = 0;
+      }
+    }).catch(function(error){
+      var body = document.getElementById('ob-client-transcript-body');
+      if(body) body.innerHTML = '<div class="ob-client-transcript-error">Could not load this conversation. ' + esc(error.message || 'Please try again.') + '</div>';
+    });
+    setTimeout(function(){ if(closeButton) closeButton.focus(); }, 40);
+  };
   function openRefundDialog(opts){
     opts = opts || {};
     closeDialog();

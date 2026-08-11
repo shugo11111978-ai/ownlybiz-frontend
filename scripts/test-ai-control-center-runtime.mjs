@@ -26,6 +26,14 @@ for (const feature of ['help', 'ai_chat', 'website_editor', 'website_copy', 'ema
   assert(runtime.includes(`featureRouteControls('${feature}'`), `${feature} must expose provider and model controls`);
 }
 
+assert(runtime.includes('+ Create dedicated connection…'), 'text features must offer an inline dedicated provider connection');
+assert(runtime.includes('+ Create dedicated media connection…'), 'media features must offer an inline dedicated provider connection');
+assert(runtime.includes('data-ai-dedicated-key'), 'dedicated connection setup must collect its key in a password field');
+assert(runtime.includes('window.obAiCreateDedicatedConnection'), 'dedicated feature connections must be created through the shared provider contract');
+assert(runtime.includes('Press Save AI settings to store the key securely.'), 'new dedicated keys must remain pending until the explicit settings save');
+assert(runtime.includes("autocomplete=\"new-password\" spellcheck=\"false\""), 'dedicated key fields must use secret-safe browser attributes');
+assert(runtime.includes("box.children.length >= 7"), 'feature-level creation must respect the backend provider limit');
+assert(runtime.includes('key ready to save'), 'unsaved dedicated keys must have a clear state label');
 assert(runtime.includes("request('/api/ai/admin/models?provider_id='"), 'model selectors must load provider-backed catalogs');
 assert(runtime.includes('data-ai-feature-model'), 'feature models must use select-backed persisted values');
 assert(runtime.includes('data-ai-feature-temperature'), 'response-style presets must persist by feature');
@@ -39,4 +47,4 @@ assert(!runtime.includes("getElementById('ai-chat-model')"), 'legacy free-text A
 assert((html.match(/victorious-wisdom-production-a6b0\.up\.railway\.app/g) || []).length > 0, 'staging frontend must retain the staging backend host');
 assert.equal((html.match(/ownlybiz-backend-production\.up\.railway\.app/g) || []).length, 0, 'staging frontend must not reference the production backend host');
 
-console.log(`AI Control Center frontend smoke passed: ${parsedScripts}/${scriptTags.length} executable scripts parsed, feature model selects, presets, advanced endpoint, usage table, and staging host boundary.`);
+console.log(`AI Control Center frontend smoke passed: ${parsedScripts}/${scriptTags.length} executable scripts parsed, feature model selects, dedicated keys, presets, advanced endpoint, usage table, and staging host boundary.`);

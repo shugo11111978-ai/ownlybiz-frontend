@@ -47646,6 +47646,13 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
 	  .ob-ai-control-help { color:rgba(255,250,240,.52); font-size:11px; line-height:1.45; margin-top:-3px; }
 	  .ob-ai-model-row { align-items:end; display:grid; gap:10px; grid-template-columns:minmax(180px,.8fr) minmax(220px,1fr) auto; }
 	  .ob-ai-refresh-models { min-height:42px; white-space:nowrap; }
+	  .ob-ai-dedicated-panel { background:rgba(190,242,100,.075); border:1px solid rgba(190,242,100,.22); border-radius:14px; display:grid; gap:12px; margin-top:12px; padding:14px; }
+	  .ob-ai-dedicated-panel[hidden] { display:none!important; }
+	  .ob-ai-dedicated-head { align-items:flex-start; display:flex; gap:14px; justify-content:space-between; }
+	  .ob-ai-dedicated-head h4 { color:#FAF7F2; font-size:15px; font-weight:950; margin:0 0 4px; }
+	  .ob-ai-dedicated-head p { color:rgba(255,250,240,.62)!important; font-size:12px!important; line-height:1.45!important; margin:0!important; }
+	  .ob-ai-dedicated-grid { display:grid; gap:12px; grid-template-columns:repeat(2,minmax(0,1fr)); }
+	  .ob-ai-dedicated-status { color:rgba(255,250,240,.66); font-size:11px; line-height:1.4; min-height:16px; }
 	  .ob-ai-tuning-grid { display:grid; gap:12px; grid-template-columns:repeat(2,minmax(0,1fr)); margin-top:2px; }
 	  .ob-ai-disclosure { background:rgba(255,250,240,.04); border:1px solid rgba(255,250,240,.10); border-radius:14px; margin-top:12px; }
 	  .ob-ai-disclosure summary { color:rgba(255,250,240,.82); cursor:pointer; font-size:12px; font-weight:950; list-style:none; padding:13px 14px; }
@@ -47957,6 +47964,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     .ob-ai-credit-grid,
     .ob-ai-editor-row { grid-template-columns:1fr; }
 	    .ob-ai-model-row,
+	    .ob-ai-dedicated-grid,
 	    .ob-ai-tuning-grid,
 	    .ob-ai-usage-toolbar,
 	    .ob-ai-advanced-grid { grid-template-columns:1fr; }
@@ -47964,6 +47972,10 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     .ob-ai-editor-head { display:block; }
     .ob-ai-editor-head-actions { margin-top:10px; }
   }
+	@media(max-width:600px){
+	  .ob-ai-dedicated-head { display:grid; }
+	  .ob-ai-dedicated-head > .ob-ai-btn { justify-self:start; }
+	}
 </style>
 <script id="ob-ai-website-editor-20260517">
 (function(){
@@ -48118,6 +48130,16 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
 	    if(type === 'fireworks') return 'https://api.fireworks.ai/inference/v1/chat/completions';
 	    return kind === 'image' ? 'https://api.openai.com/v1/images/generations' : 'https://api.openai.com/v1/chat/completions';
 	  }
+	  function providerDefaultModel(type, kind, current){
+	    type = String(type || 'openai');
+	    if(kind === 'image') return type === 'openai' ? 'gpt-image-1' : (current || 'gpt-image-1');
+	    if(type === 'anthropic') return 'claude-sonnet-4-20250514';
+	    if(type === 'gemini') return 'gemini-2.5-flash';
+	    if(type === 'groq') return 'llama-3.3-70b-versatile';
+	    if(type === 'together') return 'meta-llama/Llama-3.3-70B-Instruct-Turbo';
+	    if(type === 'fireworks') return 'accounts/fireworks/models/llama-v3p3-70b-instruct';
+	    return current || 'gpt-4o-mini';
+	  }
 	  function allowsCustomModel(type){
 	    return type === 'custom' || type === 'openai_compatible';
 	  }
@@ -48161,17 +48183,44 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
 	    return label + ' - ' + model + ' - ' + key;
 	  }
 	  function routeOptions(providers, selected, kind){
-	    return optionHtml((providers || []).filter(function(p){ return kind === 'image' ? p.kind === 'image' : p.kind !== 'image'; }), selected);
+	    var createLabel = kind === 'image' ? '+ Create dedicated media connection…' : '+ Create dedicated connection…';
+	    return optionHtml((providers || []).filter(function(p){ return kind === 'image' ? p.kind === 'image' : p.kind !== 'image'; }), selected) + '<option value="__create_dedicated__">'+esc(createLabel)+'</option>';
+	  }
+	  function featureConnectionMeta(feature){
+	    var rows = {
+	      help:['AI Site Assistant','Dashboard assistant'],
+	      ai_chat:['AI Chat','AI Chat'],
+	      website_editor:['Website Editor','Website Editor'],
+	      website_copy:['Copy polish','Copy polish'],
+	      email_center:['Email Center','Email Center'],
+	      email_center_media:['Email image assets','Email images'],
+	      website_media:['Website Media','Website Media']
+	    };
+	    return rows[feature] || [String(feature || 'AI feature'),'Dedicated AI'];
+	  }
+	  function dedicatedConnectionHtml(feature, kind, provider, model){
+	    var meta = featureConnectionMeta(feature);
+	    var providerType = provider.provider_type || (kind === 'image' ? 'openai' : 'openai');
+	    var endpoint = provider.base_url || providerDefaultEndpoint(providerType,kind);
+	    return '<section class="ob-ai-dedicated-panel" data-ai-dedicated-panel="'+esc(feature)+'" data-ai-dedicated-kind="'+esc(kind)+'" aria-labelledby="ai-dedicated-title-'+esc(feature)+'" hidden>' +
+	      '<div class="ob-ai-dedicated-head"><div><h4 id="ai-dedicated-title-'+esc(feature)+'">Dedicated connection for '+esc(meta[0])+'</h4><p>This key will be used only by this feature unless you intentionally select the connection somewhere else.</p></div><button class="ob-ai-btn secondary" type="button" onclick="obAiCancelDedicatedConnection(&quot;'+esc(feature)+'&quot;)">Cancel</button></div>' +
+	      '<div class="ob-ai-dedicated-grid"><div class="ob-ai-field"><label for="ai-dedicated-provider-'+esc(feature)+'">Provider</label><select id="ai-dedicated-provider-'+esc(feature)+'" data-ai-dedicated-provider onchange="obAiDedicatedProviderChanged(&quot;'+esc(feature)+'&quot;,this)">'+providerTypeOptions(providerType)+'</select></div><div class="ob-ai-field"><label for="ai-dedicated-label-'+esc(feature)+'">Connection name</label><input id="ai-dedicated-label-'+esc(feature)+'" data-ai-dedicated-label value="'+esc(meta[1]+' dedicated')+'" maxlength="90"></div></div>' +
+	      '<div class="ob-ai-field"><label for="ai-dedicated-key-'+esc(feature)+'">Dedicated API key/token</label><input id="ai-dedicated-key-'+esc(feature)+'" data-ai-dedicated-key type="password" value="" placeholder="Paste the provider key for this feature" autocomplete="new-password" spellcheck="false"><div class="ob-ai-control-help">The key is sent only when Save AI settings is pressed, then remains server-side and returns masked.</div></div>' +
+	      '<input data-ai-dedicated-model type="hidden" value="'+esc(model || provider.model || providerDefaultModel(providerType,kind,''))+'">' +
+	      '<details class="ob-ai-disclosure"><summary>Advanced connection details</summary><div class="ob-ai-disclosure-body"><div class="ob-ai-field"><label for="ai-dedicated-endpoint-'+esc(feature)+'">Endpoint URL</label><input id="ai-dedicated-endpoint-'+esc(feature)+'" data-ai-dedicated-endpoint value="'+esc(endpoint)+'" autocomplete="off"><div class="ob-ai-control-help">Keep the official value unless this connection intentionally uses a gateway or compatible provider.</div></div></div></details>' +
+	      '<div class="ob-ai-dedicated-status" data-ai-dedicated-status role="status" aria-live="polite">The current feature model is kept when compatible. Live models load after the connection is saved.</div>' +
+	      '<div class="ob-ai-actions"><button class="ob-ai-btn primary" type="button" onclick="obAiCreateDedicatedConnection(&quot;'+esc(feature)+'&quot;)">Add and use dedicated connection</button></div>' +
+	    '</section>';
 	  }
 	  function featureRouteControls(feature, targetId, selected, providers, featureModels, featureTuning, kind){
 	    var provider = aiProviderRoute(providers, selected, kind);
 	    var model = featureModels[feature] || provider.model || '';
 	    var tuning = featureTuning[feature] || {temperature:0.2,max_tokens:900};
 	    return '<div class="ob-ai-model-row">' +
-	      '<div class="ob-ai-field"><label for="'+esc(targetId)+'">Provider connection</label><select id="'+esc(targetId)+'" data-ai-route-feature="'+esc(feature)+'" onchange="obAiRouteChanged(&quot;'+esc(feature)+'&quot;,this.value)">'+routeOptions(providers,selected,kind)+'</select></div>' +
+	      '<div class="ob-ai-field"><label for="'+esc(targetId)+'">Provider connection</label><select id="'+esc(targetId)+'" data-ai-route-feature="'+esc(feature)+'" data-ai-route-kind="'+esc(kind)+'" data-ai-current-route="'+esc(selected)+'" onchange="obAiRouteChanged(&quot;'+esc(feature)+'&quot;,this)">'+routeOptions(providers,selected,kind)+'</select><div class="ob-ai-control-help">Use Master, reuse a saved connection, or create a dedicated key for this feature.</div></div>' +
 	      '<div class="ob-ai-field"><label for="ai-feature-model-'+esc(feature)+'">Model</label><select id="ai-feature-model-'+esc(feature)+'" data-ai-feature-model="'+esc(feature)+'" data-ai-model-provider="'+esc(provider.id || '')+'">'+modelCatalogOptions(model,provider)+'</select><div class="ob-ai-control-help" data-ai-model-note="'+esc(feature)+'">Models refresh from the selected provider when available.</div></div>' +
 	      '<button class="ob-ai-btn secondary ob-ai-refresh-models" type="button" onclick="obAiRefreshFeatureModels(&quot;'+esc(feature)+'&quot;,true)">Refresh models</button>' +
-	    '</div>' + (kind === 'image' ? '' :
+	    '</div>' + dedicatedConnectionHtml(feature,kind,provider,model) + (kind === 'image' ? '' :
 	      '<div class="ob-ai-tuning-grid"><div class="ob-ai-field"><label for="ai-feature-temperature-'+esc(feature)+'">Response style</label><select id="ai-feature-temperature-'+esc(feature)+'" data-ai-feature-temperature="'+esc(feature)+'">'+behaviorOptions(tuning.temperature)+'</select><div class="ob-ai-control-help">Lower is steadier; higher allows more variation. Precise is safest for support and live chat.</div></div><div class="ob-ai-field"><label for="ai-feature-tokens-'+esc(feature)+'">Response length</label><select id="ai-feature-tokens-'+esc(feature)+'" data-ai-feature-tokens="'+esc(feature)+'">'+lengthOptions(tuning.max_tokens)+'</select><div class="ob-ai-control-help">This is the maximum response budget, not a guaranteed length. Longer limits can use more provider tokens.</div></div></div>');
 	  }
 	  function ownerOverviewHtml(config, editor, providers, routes, credit){
@@ -48182,7 +48231,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
 	    return '<section class="ob-ai-admin-panel">' + featureHead('owner workflow','Set up AI in three steps') +
 	      '<p>The everyday controls are separated from developer connection details. Nothing changes until Save AI settings is pressed.</p>' +
 	      '<div class="ob-ai-owner-grid">' +
-	        '<div class="ob-ai-owner-card"><div class="ob-ai-step-number">1</div><h3>Connect a provider</h3><p>Add the provider key once under Advanced. The official endpoint is filled automatically for standard providers.</p></div>' +
+	        '<div class="ob-ai-owner-card"><div class="ob-ai-step-number">1</div><h3>Connect a provider</h3><p>Use one Master key, or create a dedicated key directly inside any feature. Official endpoints are filled automatically.</p></div>' +
 	        '<div class="ob-ai-owner-card"><div class="ob-ai-step-number">2</div><h3>Assign models</h3><p>Choose the provider, live model, response style, and response length for each feature under Features.</p></div>' +
 	        '<div class="ob-ai-owner-card"><div class="ob-ai-step-number">3</div><h3>Watch usage</h3><p>Usage shows which experts use AI Chat, their request and token totals, credits, status, and last activity.</p></div>' +
 	      '</div>' +
@@ -48198,7 +48247,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   function providerCard(provider, idx){
     provider = provider || {};
     return '<details class="ob-ai-disclosure ob-ai-provider-card" data-provider-index="'+idx+'">' +
-      '<summary><span class="ob-ai-provider-name">'+esc(provider.label || provider.id || 'Provider')+'</span> · <span class="ob-ai-mini">'+esc(provider.api_key_saved ? 'key saved' : 'no key saved')+'</span></summary><div class="ob-ai-disclosure-body">' +
+      '<summary><span class="ob-ai-provider-name">'+esc(provider.label || provider.id || 'Provider')+'</span> · <span class="ob-ai-mini" data-ai-provider-key-state>'+esc(provider.api_key_saved ? 'key saved' : (provider.api_key ? 'key ready to save' : 'no key saved'))+'</span></summary><div class="ob-ai-disclosure-body">' +
       '<div class="ob-ai-provider-top"><div class="ob-ai-mini">Advanced provider route. Features can share this connection while choosing their own model.</div><button class="ob-ai-btn danger" type="button" onclick="obAiRemoveProvider(this)">Remove</button></div>' +
       '<div class="ob-ai-admin-grid"><div class="ob-ai-field"><label>Provider id</label><input data-ai-field="id" value="'+esc(provider.id || '')+'" placeholder="primary_text"></div><div class="ob-ai-field"><label>Label</label><input data-ai-field="label" value="'+esc(provider.label || '')+'" placeholder="OpenAI primary"></div></div>' +
       '<div class="ob-ai-admin-grid three"><div class="ob-ai-field"><label>Kind</label><select data-ai-field="kind"><option value="chat" '+(provider.kind !== 'image' ? 'selected' : '')+'>Chat / text</option><option value="image" '+(provider.kind === 'image' ? 'selected' : '')+'>Image / media</option></select></div><div class="ob-ai-field"><label>Provider type</label><select data-ai-field="provider_type" onchange="obAiProviderTypeChanged(this)">'+providerTypeOptions(provider.provider_type || (provider.kind === 'image' ? 'openai' : 'openai_compatible'))+'</select></div><div class="ob-ai-field"><label>Default route model</label><select data-ai-field="model" data-ai-model-provider="'+esc(provider.id || '')+'">'+modelCatalogOptions(provider.model,provider)+'</select></div></div>' +
@@ -48302,7 +48351,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
 	      return '<section class="ob-ai-feature-card"><div class="ob-ai-feature-card-head"><div><h3>'+esc(title)+'</h3><p>'+esc(detail)+'</p></div><span class="ob-ai-feature-badge">'+esc(badge)+'</span></div>'+controls+(disclosure || '')+'</section>';
 	    }
 	    var featuresHtml = '<section class="ob-ai-admin-panel">' + featureHead('feature setup','Models and behavior by feature') +
-	      '<p>Each feature can share a provider connection while choosing its own available model, response style, and response length.</p><div class="ob-ai-feature-list">' +
+	      '<p>Each feature can use the Master key, share an existing provider connection, or create its own dedicated key while choosing its model and behavior.</p><div class="ob-ai-feature-list">' +
 	      featureCard('AI Site Assistant','Read-only dashboard help for experts.','Dashboard',
 	        '<div class="ob-ai-field"><label><input id="ai-enabled" type="checkbox" '+(config.enabled ? 'checked' : '')+'> Enable the dashboard assistant</label></div>'+featureRouteControls('help','aiw-route-help',routes.help,providers,featureModels,featureTuning,'chat'),
 	        '<details class="ob-ai-disclosure"><summary>Assistant training and guidelines</summary><div class="ob-ai-disclosure-body"><div class="ob-ai-field"><label for="ai-system-instructions">Guidelines</label><textarea id="ai-system-instructions">'+esc(config.system_instructions || '')+'</textarea></div></div></details>') +
@@ -48325,7 +48374,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
 	      '<div class="ob-ai-actions"><button class="ob-ai-btn secondary" type="button" onclick="obAiRefreshModelsForProvider(&quot;master_text&quot;,true)">Refresh available models</button></div>' +
 	      '<details class="ob-ai-disclosure"><summary>Advanced connection details</summary><div class="ob-ai-disclosure-body"><div class="ob-ai-field"><label for="ai-provider-label">Admin label</label><input id="ai-provider-label" value="'+esc(config.provider_label || masterProvider.label || 'Master AI')+'"></div><div class="ob-ai-field"><label for="ai-base-url">Default endpoint URL</label><input id="ai-base-url" value="'+esc(config.base_url || masterProvider.base_url || providerDefaultEndpoint(config.provider_type,'chat'))+'" autocomplete="off"><div class="ob-ai-control-help">The endpoint is the provider API address. Keep the official default unless you intentionally use a compatible gateway or custom provider.</div></div><div id="ai-master-custom-model-field" class="ob-ai-field" style="'+(masterAllowsCustomModel ? '' : 'display:none;')+'"><label for="ai-custom-model">Custom model ID</label><input id="ai-custom-model" value="" placeholder="Only when the provider catalog cannot list the model"><div class="ob-ai-control-help">Use this exception only for a custom or compatible gateway whose model is missing from Refresh available models.</div></div><div class="ob-ai-tuning-grid"><div class="ob-ai-field"><label for="ai-temperature">Fallback response style</label><select id="ai-temperature">'+behaviorOptions(config.temperature == null ? masterProvider.temperature : config.temperature)+'</select></div><div class="ob-ai-field"><label for="ai-max-tokens">Fallback response length</label><select id="ai-max-tokens">'+lengthOptions(config.max_tokens || masterProvider.max_tokens || 900)+'</select></div></div></div></details></section>' +
 	      '<section class="ob-ai-admin-panel">' + featureHead('additional connections','Provider routes') +
-	        '<p>Add another connection only when a feature needs a different provider account, key, gateway, or media service. Model choice normally belongs under Features.</p><div id="aiw-providers">'+additionalProviders.map(providerCard).join('')+'</div><div class="ob-ai-actions"><button class="ob-ai-btn secondary" type="button" onclick="obAiAddProvider()">Add provider connection</button></div></section>' +
+	        '<p>Dedicated connections created inside Features appear here for advanced editing, reuse, or removal. You can also create a shared connection manually.</p><div id="aiw-providers">'+additionalProviders.map(providerCard).join('')+'</div><div class="ob-ai-actions"><button class="ob-ai-btn secondary" type="button" onclick="obAiAddProvider()">Add shared provider connection</button></div></section>' +
 	      '<section class="ob-ai-admin-panel">' + featureHead('credits','Website and Email Center limits') +
 	        '<p>Ownlybiz credits are separate from provider billing and are enforced server-side for eligible expert tools.</p><div class="ob-ai-admin-grid three"><div class="ob-ai-field"><label>Pro included/month</label><input id="aiw-pro-monthly" type="number" min="0" step="10" value="'+esc(credit.included_pro_monthly || 0)+'"></div><div class="ob-ai-field"><label>Scale included/month</label><input id="aiw-scale-monthly" type="number" min="0" step="10" value="'+esc(credit.included_scale_monthly || 0)+'"></div><div class="ob-ai-field"><label>Preview cost</label><input id="aiw-preview-cost" type="number" min="1" step="1" value="'+esc(credit.preview_cost || 4)+'"></div></div><div class="ob-ai-admin-grid"><div class="ob-ai-field"><label>Apply cost</label><input id="aiw-apply-cost" type="number" min="1" step="1" value="'+esc(credit.apply_cost || 8)+'"></div><div class="ob-ai-field"><label>Generated image cost</label><input id="aiw-image-cost" type="number" min="1" step="1" value="'+esc(credit.image_cost || 24)+'"></div></div><div id="aiw-packs">'+(credit.packs || []).map(packCard).join('')+'</div><div class="ob-ai-actions"><button class="ob-ai-btn secondary" type="button" onclick="obAiAddPack()">Add credit pack</button></div></section>' +
 	      '<div class="ob-ai-advanced-grid"><section class="ob-ai-admin-panel"><h2>Provider key links</h2><p>Create a provider key, then paste it into the Master connection or an additional provider. Never paste Stripe, Railway, Vercel, Gmail, or customer data.</p><div class="ob-ai-link-list">'+links.map(function(link){ return '<a target="_blank" rel="noopener" href="'+esc(link.url)+'">'+esc(link.label)+'</a>'; }).join('')+'</div></section><section class="ob-ai-admin-panel"><h2>Safety boundary</h2><div class="ob-ai-safe-list"><div class="ob-ai-safe-pill">Public AI Chat cannot disclose AI, provider, platform, or Ownlybiz identity.</div><div class="ob-ai-safe-pill">Medical, legal, financial, emergency, refund, guarantee, and harmful requests remain constrained server-side.</div><div class="ob-ai-safe-pill">Website AI cannot access payments, booking flow, live sessions, authentication, admin settings, or publish status.</div></div></section></div>';
@@ -48438,18 +48487,163 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     });
     return Promise.all(ids.map(function(id){ return window.obAiRefreshModelsForProvider(id, !!force); }));
   };
-  window.obAiRefreshFeatureModels = function(feature, force){
-    var select = document.querySelector('[data-ai-feature-model="'+String(feature).replace(/"/g,'')+'"]');
-    return select ? window.obAiRefreshModelsForProvider(select.getAttribute('data-ai-model-provider'), !!force) : Promise.resolve(null);
-  };
-  window.obAiRouteChanged = function(feature, providerId){
-    var select = document.querySelector('[data-ai-feature-model="'+String(feature).replace(/"/g,'')+'"]');
-    if(!select) return;
-    var provider = providerFromUi(providerId);
-    select.setAttribute('data-ai-model-provider', providerId || '');
-    updateModelSelect(select, provider, window.__obAiModelCatalogs[providerId] || {});
-    window.obAiRefreshModelsForProvider(providerId, false);
-  };
+	window.obAiRefreshFeatureModels = function(feature, force){
+	  var select = document.querySelector('[data-ai-feature-model="'+String(feature).replace(/"/g,'')+'"]');
+	  return select ? window.obAiRefreshModelsForProvider(select.getAttribute('data-ai-model-provider'), !!force) : Promise.resolve(null);
+	};
+	function dedicatedPanelFor(feature){
+	  return document.querySelector('[data-ai-dedicated-panel="'+String(feature).replace(/"/g,'')+'"]');
+	}
+	function dedicatedPanelStatus(panel, message, isError){
+	  var node = panel && panel.querySelector('[data-ai-dedicated-status]');
+	  if(node) {
+	    node.textContent = message || '';
+	    node.style.color = isError ? '#fecaca' : '';
+	  }
+	}
+	function nextDedicatedProviderId(feature){
+	  var base = ('dedicated_' + String(feature || 'feature').toLowerCase().replace(/[^a-z0-9_-]/g,'_')).slice(0,34);
+	  var used = collectProviders().map(function(provider){ return provider.id; });
+	  var id = base;
+	  var suffix = 2;
+	  while(used.indexOf(id) >= 0) {
+	    id = (base.slice(0,34 - String(suffix).length) + '_' + suffix).slice(0,40);
+	    suffix += 1;
+	  }
+	  return id;
+	}
+	function appendProviderRouteOption(select, provider){
+	  if(!select || !provider) return;
+	  var exists = Array.prototype.slice.call(select.options || []).some(function(option){ return option.value === provider.id; });
+	  if(exists) return;
+	  var option = document.createElement('option');
+	  option.value = provider.id;
+	  option.textContent = (provider.label || provider.id) + ' (' + (provider.kind || 'chat') + ')';
+	  var createOption = Array.prototype.slice.call(select.options || []).find(function(one){ return one.value === '__create_dedicated__'; });
+	  select.insertBefore(option, createOption || null);
+	}
+	window.obAiOpenDedicatedConnection = function(feature){
+	  var panel = dedicatedPanelFor(feature);
+	  var route = document.querySelector('[data-ai-route-feature="'+String(feature).replace(/"/g,'')+'"]');
+	  var modelSelect = document.querySelector('[data-ai-feature-model="'+String(feature).replace(/"/g,'')+'"]');
+	  if(!panel || !route) return;
+	  var kind = route.getAttribute('data-ai-route-kind') || 'chat';
+	  var provider = providerFromUi(route.value);
+	  var type = provider.provider_type || (kind === 'image' ? 'openai' : 'openai');
+	  var providerInput = panel.querySelector('[data-ai-dedicated-provider]');
+	  var endpointInput = panel.querySelector('[data-ai-dedicated-endpoint]');
+	  var modelInput = panel.querySelector('[data-ai-dedicated-model]');
+	  var keyInput = panel.querySelector('[data-ai-dedicated-key]');
+	  if(providerInput) providerInput.value = type;
+	  if(endpointInput) endpointInput.value = provider.base_url || providerDefaultEndpoint(type,kind);
+	  if(modelInput) modelInput.value = clean(modelSelect && modelSelect.value || provider.model || providerDefaultModel(type,kind,''));
+	  if(keyInput) keyInput.value = '';
+	  dedicatedPanelStatus(panel,'The current feature model is kept when compatible. Live models load after the connection is saved.',false);
+	  panel.hidden = false;
+	  panel.scrollIntoView({behavior:'smooth',block:'nearest'});
+	  if(providerInput) providerInput.focus();
+	};
+	window.obAiCancelDedicatedConnection = function(feature){
+	  var panel = dedicatedPanelFor(feature);
+	  if(!panel) return;
+	  var keyInput = panel.querySelector('[data-ai-dedicated-key]');
+	  if(keyInput) keyInput.value = '';
+	  dedicatedPanelStatus(panel,'',false);
+	  panel.hidden = true;
+	  var route = document.querySelector('[data-ai-route-feature="'+String(feature).replace(/"/g,'')+'"]');
+	  if(route) route.focus();
+	};
+	window.obAiDedicatedProviderChanged = function(feature, select){
+	  var panel = dedicatedPanelFor(feature);
+	  if(!panel) return;
+	  var kind = panel.getAttribute('data-ai-dedicated-kind') || 'chat';
+	  var type = clean(select && select.value || 'openai');
+	  var endpoint = panel.querySelector('[data-ai-dedicated-endpoint]');
+	  var model = panel.querySelector('[data-ai-dedicated-model]');
+	  if(endpoint) endpoint.value = providerDefaultEndpoint(type,kind);
+	  if(model) model.value = providerDefaultModel(type,kind,'');
+	  dedicatedPanelStatus(panel,'The official endpoint and a compatible starting model were selected. Live models load after Save AI settings.',false);
+	};
+	window.obAiCreateDedicatedConnection = function(feature){
+	  var panel = dedicatedPanelFor(feature);
+	  var box = document.getElementById('aiw-providers');
+	  var route = document.querySelector('[data-ai-route-feature="'+String(feature).replace(/"/g,'')+'"]');
+	  var modelSelect = document.querySelector('[data-ai-feature-model="'+String(feature).replace(/"/g,'')+'"]');
+	  if(!panel || !box || !route || !modelSelect) return;
+	  if(box.children.length >= 7) {
+	    dedicatedPanelStatus(panel,'The provider connection limit has been reached. Remove an unused connection under Advanced setup first.',true);
+	    return;
+	  }
+	  var keyInput = panel.querySelector('[data-ai-dedicated-key]');
+	  var key = clean(keyInput && keyInput.value || '');
+	  if(key.length < 8) {
+	    dedicatedPanelStatus(panel,'Enter the provider API key or token for this dedicated connection.',true);
+	    if(keyInput) keyInput.focus();
+	    return;
+	  }
+	  var kind = panel.getAttribute('data-ai-dedicated-kind') || 'chat';
+	  var typeInput = panel.querySelector('[data-ai-dedicated-provider]');
+	  var labelInput = panel.querySelector('[data-ai-dedicated-label]');
+	  var endpointInput = panel.querySelector('[data-ai-dedicated-endpoint]');
+	  var modelInput = panel.querySelector('[data-ai-dedicated-model]');
+	  var type = clean(typeInput && typeInput.value || 'openai');
+	  var label = clean(labelInput && labelInput.value || featureConnectionMeta(feature)[1]+' dedicated');
+	  var provider = {
+	    id:nextDedicatedProviderId(feature),
+	    label:label,
+	    kind:kind,
+	    provider_type:type,
+	    base_url:clean(endpointInput && endpointInput.value || providerDefaultEndpoint(type,kind)),
+	    model:clean(modelInput && modelInput.value || providerDefaultModel(type,kind,'')),
+	    temperature:0.2,
+	    max_tokens:1200,
+	    size:'1024x1024'
+	  };
+	  box.insertAdjacentHTML('beforeend',providerCard(provider,box.children.length));
+	  var card = box.lastElementChild;
+	  var storedKeyInput = card && card.querySelector('[data-ai-field="api_key"]');
+	  var keyState = card && card.querySelector('[data-ai-provider-key-state]');
+	  if(storedKeyInput) storedKeyInput.value = key;
+	  if(keyState) keyState.textContent = 'key ready to save';
+	  document.querySelectorAll('[data-ai-route-feature]').forEach(function(one){
+	    if((one.getAttribute('data-ai-route-kind') || 'chat') === kind) appendProviderRouteOption(one,provider);
+	  });
+	  route.value = provider.id;
+	  route.setAttribute('data-ai-current-route',provider.id);
+	  modelSelect.setAttribute('data-ai-model-provider',provider.id);
+	  modelSelect.innerHTML = '';
+	  var modelOption = document.createElement('option');
+	  modelOption.value = provider.model;
+	  modelOption.textContent = provider.model;
+	  modelSelect.appendChild(modelOption);
+	  var note = modelSelect.closest('.ob-ai-field') && modelSelect.closest('.ob-ai-field').querySelector('.ob-ai-control-help');
+	  if(note) note.textContent = 'Dedicated connection ready. Save AI settings to secure the key and load live models.';
+	  keyInput.value = '';
+	  panel.hidden = true;
+	  status('admin-ai-status',label+' is assigned to '+featureConnectionMeta(feature)[0]+'. Press Save AI settings to store the key securely.','ok');
+	  route.focus();
+	};
+	window.obAiRouteChanged = function(feature, routeControl){
+	  var route = routeControl && routeControl.nodeType === 1 ? routeControl : document.querySelector('[data-ai-route-feature="'+String(feature).replace(/"/g,'')+'"]');
+	  var providerId = clean(route ? route.value : routeControl || '');
+	  if(!route) return;
+	  if(providerId === '__create_dedicated__') {
+	    var previous = route.getAttribute('data-ai-current-route');
+	    var firstRoute = Array.prototype.slice.call(route.options || []).find(function(option){ return option.value !== '__create_dedicated__'; });
+	    route.value = previous || (firstRoute ? firstRoute.value : '');
+	    window.obAiOpenDedicatedConnection(feature);
+	    return;
+	  }
+	  route.setAttribute('data-ai-current-route',providerId);
+	  var panel = dedicatedPanelFor(feature);
+	  if(panel) panel.hidden = true;
+	  var select = document.querySelector('[data-ai-feature-model="'+String(feature).replace(/"/g,'')+'"]');
+	  if(!select) return;
+	  var provider = providerFromUi(providerId);
+	  select.setAttribute('data-ai-model-provider', providerId || '');
+	  updateModelSelect(select, provider, window.__obAiModelCatalogs[providerId] || {});
+	  window.obAiRefreshModelsForProvider(providerId, false);
+	};
   window.obAiRefreshProviderCardModels = function(btn, force){
     var card = btn && btn.closest('.ob-ai-provider-card');
     var idInput = card && card.querySelector('[data-ai-field="id"]');
@@ -48491,7 +48685,25 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     var added = box.lastElementChild;
     if(added) { added.open = true; added.scrollIntoView({behavior:'smooth',block:'nearest'}); }
   };
-  window.obAiRemoveProvider = function(btn){ var card = btn && btn.closest('.ob-ai-provider-card'); if(card) card.remove(); };
+	window.obAiRemoveProvider = function(btn){
+	  var card = btn && btn.closest('.ob-ai-provider-card');
+	  if(!card) return;
+	  var idInput = card.querySelector('[data-ai-field="id"]');
+	  var providerId = clean(idInput && idInput.value || '');
+	  card.remove();
+	  if(!providerId) return;
+	  document.querySelectorAll('[data-ai-route-feature]').forEach(function(route){
+	    var wasSelected = route.getAttribute('data-ai-current-route') === providerId;
+	    var option = Array.prototype.slice.call(route.options || []).find(function(one){ return one.value === providerId; });
+	    if(option) option.remove();
+	    if(!wasSelected) return;
+	    var fallback = Array.prototype.slice.call(route.options || []).find(function(one){ return one.value && one.value !== '__create_dedicated__'; });
+	    if(!fallback) return;
+	    route.value = fallback.value;
+	    route.setAttribute('data-ai-current-route',fallback.value);
+	    window.obAiRouteChanged(route.getAttribute('data-ai-route-feature'),route);
+	  });
+	};
 	  window.obAiAddPack = function(){
 	    var box = document.getElementById('aiw-packs');
 	    if(!box) return;
@@ -55574,9 +55786,9 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
   #view-6 #admin-panel-email-center .ob-admin-ec-actionbar,#view-6 #admin-panel-email-center .ob-admin-ec-menu-panel{background:var(--ob-admin-panel)!important;border-color:var(--ob-admin-border)!important}
   body.ob-ui-light #view-6 #admin-panel-email-center .ob-admin-ec-actionbar,body.ob-ui-light #view-6 #admin-panel-email-center .ob-admin-ec-menu-panel{box-shadow:0 18px 42px rgba(42,28,18,.12)!important}
 
-  #view-6 #admin-panel-ai .ob-ai-console-hero,#view-6 #admin-panel-ai .ob-ai-admin-panel,#view-6 #admin-panel-ai .ob-ai-owner-card,#view-6 #admin-panel-ai .ob-ai-route-card,#view-6 #admin-panel-ai .ob-ai-provider-card,#view-6 #admin-panel-ai .ob-ai-pack-card,#view-6 #admin-panel-ai .ob-ai-stat-tile,#view-6 #admin-panel-ai .ob-ai-route-note,#view-6 #admin-panel-ai .ob-ai-safe-pill,#view-6 #admin-panel-ai .ob-ai-usage-row{background:var(--ob-admin-panel-soft)!important;border-color:var(--ob-admin-border)!important;color:var(--ob-admin-body)!important}
-  #view-6 #admin-panel-ai .ob-ai-console-hero h1,#view-6 #admin-panel-ai .ob-ai-feature-title,#view-6 #admin-panel-ai .ob-ai-admin-panel h2,#view-6 #admin-panel-ai .ob-ai-owner-card h3,#view-6 #admin-panel-ai .ob-ai-route-card strong,#view-6 #admin-panel-ai .ob-ai-stat-tile b,#view-6 #admin-panel-ai .ob-ai-provider-name,#view-6 #admin-panel-ai .ob-ai-usage-row strong{color:var(--ob-admin-heading)!important}
-  #view-6 #admin-panel-ai .ob-ai-console-hero p,#view-6 #admin-panel-ai .ob-ai-admin-panel p,#view-6 #admin-panel-ai .ob-ai-owner-card p,#view-6 #admin-panel-ai .ob-ai-route-card small,#view-6 #admin-panel-ai .ob-ai-stat-tile span,#view-6 #admin-panel-ai .ob-ai-mini,#view-6 #admin-panel-ai .ob-ai-status,#view-6 #admin-panel-ai .ob-ai-usage-row span,#view-6 #admin-panel-ai .ob-ai-usage-row small{color:var(--ob-admin-muted)!important}
+  #view-6 #admin-panel-ai .ob-ai-console-hero,#view-6 #admin-panel-ai .ob-ai-admin-panel,#view-6 #admin-panel-ai .ob-ai-owner-card,#view-6 #admin-panel-ai .ob-ai-route-card,#view-6 #admin-panel-ai .ob-ai-provider-card,#view-6 #admin-panel-ai .ob-ai-pack-card,#view-6 #admin-panel-ai .ob-ai-stat-tile,#view-6 #admin-panel-ai .ob-ai-route-note,#view-6 #admin-panel-ai .ob-ai-safe-pill,#view-6 #admin-panel-ai .ob-ai-usage-row,#view-6 #admin-panel-ai .ob-ai-dedicated-panel{background:var(--ob-admin-panel-soft)!important;border-color:var(--ob-admin-border)!important;color:var(--ob-admin-body)!important}
+  #view-6 #admin-panel-ai .ob-ai-console-hero h1,#view-6 #admin-panel-ai .ob-ai-feature-title,#view-6 #admin-panel-ai .ob-ai-admin-panel h2,#view-6 #admin-panel-ai .ob-ai-owner-card h3,#view-6 #admin-panel-ai .ob-ai-route-card strong,#view-6 #admin-panel-ai .ob-ai-stat-tile b,#view-6 #admin-panel-ai .ob-ai-provider-name,#view-6 #admin-panel-ai .ob-ai-usage-row strong,#view-6 #admin-panel-ai .ob-ai-dedicated-head h4{color:var(--ob-admin-heading)!important}
+  #view-6 #admin-panel-ai .ob-ai-console-hero p,#view-6 #admin-panel-ai .ob-ai-admin-panel p,#view-6 #admin-panel-ai .ob-ai-owner-card p,#view-6 #admin-panel-ai .ob-ai-route-card small,#view-6 #admin-panel-ai .ob-ai-stat-tile span,#view-6 #admin-panel-ai .ob-ai-mini,#view-6 #admin-panel-ai .ob-ai-status,#view-6 #admin-panel-ai .ob-ai-usage-row span,#view-6 #admin-panel-ai .ob-ai-usage-row small,#view-6 #admin-panel-ai .ob-ai-dedicated-head p,#view-6 #admin-panel-ai .ob-ai-dedicated-status{color:var(--ob-admin-muted)!important}
   #view-6 #admin-panel-ai .ob-ai-field label,#view-6 #admin-panel-ai .ob-ai-check,#view-6 #admin-panel-ai .ob-ai-safe-pill{color:var(--ob-admin-body)!important}
   #view-6 #admin-panel-ai .ob-ai-field input,#view-6 #admin-panel-ai .ob-ai-field select,#view-6 #admin-panel-ai .ob-ai-field textarea,#view-6 #admin-panel-ai .ob-ai-owner-card select,#view-6 #admin-panel-ai .ob-ai-owner-card input,#view-6 #admin-panel-ai #aiw-test-feature{background:var(--ob-admin-control)!important;border-color:var(--ob-admin-border)!important;color:var(--ob-admin-control-text)!important}
   #view-6 #admin-panel-ai .ob-ai-tab,#view-6 #admin-panel-ai .ob-ai-btn{background:var(--ob-admin-panel-elev)!important;border-color:var(--ob-admin-border)!important;color:var(--ob-admin-heading)!important}

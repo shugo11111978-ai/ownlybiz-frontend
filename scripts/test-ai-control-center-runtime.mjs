@@ -44,7 +44,7 @@ assert(runtime.includes('<summary>Advanced connection details</summary>'), 'endp
 assert(!runtime.includes("getElementById('ai-chat-source')"), 'legacy free-text AI Chat source control must not drive the redesigned runtime');
 assert(!runtime.includes("getElementById('ai-chat-model')"), 'legacy free-text AI Chat model input must not drive the redesigned runtime');
 
-assert((html.match(/victorious-wisdom-production-a6b0\.up\.railway\.app/g) || []).length > 0, 'staging frontend must retain the staging backend host');
-assert.equal((html.match(/ownlybiz-backend-production\.up\.railway\.app/g) || []).length, 0, 'staging frontend must not reference the production backend host');
+assert((html.match(/ownlybiz-backend-production\.up\.railway\.app/g) || []).length > 0, 'production frontend must retain the production backend host');
+assert.equal((html.match(/victorious-wisdom-production-a6b0\.up\.railway\.app/g) || []).length, 0, 'production frontend must not reference the staging backend host');
 
-console.log(`AI Control Center frontend smoke passed: ${parsedScripts}/${scriptTags.length} executable scripts parsed, feature model selects, dedicated keys, presets, advanced endpoint, usage table, and staging host boundary.`);
+console.log(`AI Control Center frontend smoke passed: ${parsedScripts}/${scriptTags.length} executable scripts parsed, feature model selects, dedicated keys, presets, advanced endpoint, usage table, and production host boundary.`);

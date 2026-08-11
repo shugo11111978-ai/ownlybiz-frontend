@@ -1,4 +1,4 @@
-const BACKEND = (process.env.OWNLYBIZ_API_URL || process.env.OWNLY_API || 'https://ownlybiz-backend-production.up.railway.app').replace(/\/+$/, '');
+const BACKEND = (process.env.OWNLYBIZ_API_URL || process.env.OWNLY_API || 'https://victorious-wisdom-production-a6b0.up.railway.app').replace(/\/+$/, '');
 
 function cleanId(value) {
   return String(Array.isArray(value) ? value[0] : value || '')

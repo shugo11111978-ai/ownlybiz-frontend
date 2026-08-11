@@ -3,7 +3,7 @@
   if(window.__obPlatformTracking20260711) return;
   window.__obPlatformTracking20260711 = true;
 
-  var API_ROOT = String(window.OWNLYBIZ_API_URL || window._OB_BACKEND || 'https://ownlybiz-backend-production.up.railway.app').replace(/\/+$/,'') + '/api';
+  var API_ROOT = String(window.OWNLYBIZ_API_URL || window._OB_BACKEND || 'https://victorious-wisdom-production-a6b0.up.railway.app').replace(/\/+$/,'') + '/api';
   var CONSENT_KEY = 'ob_privacy_consent_v1';
   var ATTRIBUTION_KEY = 'ob_tracking_attribution_v1';
   var ANALYTICS_CLIENT_KEY = 'ob_tracking_analytics_client_id_v1';

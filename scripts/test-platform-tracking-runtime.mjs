@@ -11,8 +11,8 @@ const ANALYTICS_CLIENT_KEY = 'ob_tracking_analytics_client_id_v1';
 const ANALYTICS_SESSION_KEY = 'ob_tracking_analytics_session_id_v1';
 const ANALYTICS_SESSION_ACTIVITY_KEY = 'ob_tracking_analytics_session_activity_v1';
 
-assert(source.includes("'https://ownlybiz-backend-production.up.railway.app'"), 'tracking runtime fallback must target the production backend');
-assert(indexSource.includes('window.OWNLYBIZ_IS_STAGING=false;'), 'production shell must keep the staging flag disabled');
+assert(source.includes("'https://victorious-wisdom-production-a6b0.up.railway.app'"), 'tracking runtime fallback must target the staging backend');
+assert(indexSource.includes('window.OWNLYBIZ_IS_STAGING=true;'), 'staging shell must keep the staging flag enabled');
 
 assert(!/real test conversion/i.test(source), 'LinkedIn UI must never imply that local validation sends a real conversion');
 assert(source.includes('LinkedIn configuration validated locally. No conversion was sent.'), 'LinkedIn result copy must state local-only validation');
@@ -187,8 +187,8 @@ function createHarness({ path = '/pricing', search = '?gclid=GCLID_123&fbclid=FB
     addEventListener(type, fn) { (windowListeners[type] ||= []).push(fn); },
     dispatchEvent(event) { (windowListeners[event.type] || []).forEach(fn => fn(event)); },
     CustomEvent: class CustomEvent { constructor(type, options = {}) { this.type = type; this.detail = options.detail; } },
-    OWNLYBIZ_IS_STAGING: false,
-    OWNLYBIZ_API_URL: 'https://ownlybiz-backend-production.up.railway.app',
+    OWNLYBIZ_IS_STAGING: true,
+    OWNLYBIZ_API_URL: 'https://victorious-wisdom-production-a6b0.up.railway.app',
     obPlatformRouteRoots: { 'index.html': 1, pricing: 1, signup: 1, admin: 1, dash: 1, blog: 1, experts: 1, contact: 1, features: 1, how: 1 },
     switchView(n) { currentActiveView = Number(n) || currentActiveView; },
     obOpenConsentManager() { consentOpenCount += 1; }
@@ -288,7 +288,7 @@ async function analyticsConsentTest() {
     assert.equal(event.properties.campaign_name, 'summer_launch');
     assert(!('gclid' in event.properties) && !('fbclid' in event.properties), 'click IDs never enter canonical event properties');
   }
-  await h.window.fetch('https://ownlybiz-backend-production.up.railway.app/api/auth/signup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ role: 'expert', email: 'expert@example.test' }) });
+  await h.window.fetch('https://victorious-wisdom-production-a6b0.up.railway.app/api/auth/signup', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ role: 'expert', email: 'expert@example.test' }) });
   const signup = requestBodies(h, '/api/auth/signup').at(-1);
   assert(signup.tracking_context.consent_receipt_id, 'expert signup receives verified tracking context');
   assert.equal(signup.tracking_context.analytics_client_id, clientId);
@@ -585,7 +585,7 @@ async function privateRouteAndGtmTests() {
   await wait(80);
   assert.deepEqual(authHarness.scriptRequests, [], 'authenticated root bootstrap loads zero provider scripts before private routing settles');
   assert.equal(requestBodies(authHarness, '/api/tracking/event').length, 0, 'authenticated root bootstrap emits zero acquisition events');
-  await authHarness.window.fetch('https://ownlybiz-backend-production.up.railway.app/api/billing/checkout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source: 'plan', plan_id: 'pro' }) });
+  await authHarness.window.fetch('https://victorious-wisdom-production-a6b0.up.railway.app/api/billing/checkout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source: 'plan', plan_id: 'pro' }) });
   const checkout = requestBodies(authHarness, '/api/billing/checkout').at(-1);
   assert(checkout.tracking_context && checkout.tracking_context.consent_receipt_id, 'authenticated plan checkout still receives consented tracking context');
 

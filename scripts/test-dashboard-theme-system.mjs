@@ -48,7 +48,9 @@ check('theme system loads after Ops Monitor styles', markerIndex > html.indexOf(
 [
   '.ob-admin-live-card', '.ob-admin-live-table', '.ob-admin-live-empty', '.ob-support-message',
   '.payout-queue-row', '.ob-ai-feature-card', '.ob-ai-control-help', '.ob-ai-savebar',
-  '.db-nav-section', '.db-stripe-badge-label', '.stat-sum-label', '#ob-ops-panel'
+  '.search-input', '.filter-select', '.ob-admin-fee-save-bar', '#admin-panel-promotions',
+  '.db-nav-section', '.db-stripe-badge-label', '.stat-sum-label', '.chat-msg.client .chat-bubble',
+  '.client-status-badge.status-active', '.btn.btn-primary', '#ob-ops-panel'
 ].forEach((selector) => check(`shared repair covers ${selector}`, systemCss.includes(selector)));
 
 contrastCheck('Admin dark primary', 'faf7f2', '1a1614');
@@ -61,6 +63,10 @@ contrastCheck('Admin dark primary action', '11150d', 'c8ff3d');
 contrastCheck('Admin light primary action', 'fffaf2', '9b3d1c');
 contrastCheck('Expert dark shared labels', 'b9b0a4', '21140f');
 contrastCheck('Gold avatar label', '241a15', 'c49a3c');
+contrastCheck('Sage avatar label', '241a15', '7a8c6e');
+contrastCheck('Purple avatar label', '241a15', '9b7bc4');
+contrastCheck('Terracotta avatar label', 'fffaf2', '8a3a1d');
+contrastCheck('Blue avatar label', 'fffaf2', '3f6388');
 contrastCheck('Dark success state', '9cf2bd', '163b2a');
 contrastCheck('Dark warning state', 'ffdc73', '3b2d0d');
 contrastCheck('Dark danger state', 'ffb4b4', '451b1b');
@@ -80,4 +86,4 @@ if (failures.length) {
 }
 
 console.log('Dashboard theme-system smoke passed.');
-console.log('Semantic roles, cascade order, staging boundary, and 18 contrast pairs verified.');
+console.log('Semantic roles, cascade order, staging boundary, and 22 contrast pairs verified.');

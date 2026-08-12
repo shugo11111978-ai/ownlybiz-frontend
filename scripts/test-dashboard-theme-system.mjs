@@ -37,6 +37,11 @@ check('theme system loads after legacy Admin live styles', markerIndex > html.in
 check('theme system loads after Expert accessibility styles', markerIndex > html.indexOf('ownlybiz-v3-accessibility-stability'));
 check('theme system loads after AI feature styles', markerIndex > html.indexOf('ob-ai-website-editor-20260517-css'));
 check('theme system loads after Ops Monitor styles', markerIndex > html.indexOf('#ob-ops-panel{display:none'));
+check('legacy Expert Email Center card consumes the dashboard surface token', html.includes('.ob-email-card {\n    background:var(--white,#14110f);'));
+check('legacy Expert Email Center secondary action consumes semantic foreground and surface tokens', html.includes('.ob-email-actions .btn:not(.btn-primary) { background:var(--white,#14110f); border-color:var(--line,rgba(255,255,255,.12)); color:var(--brown,#fffaf2); }'));
+check('legacy Expert Email Center light status uses readable semantic colors', systemCss.includes('#db-panel-email-center .ob-email-pill{background:#eef7e6!important;color:#245b26!important}'));
+check('Expert disabled controls use readable light semantic colors', systemCss.includes(':disabled{background:#eee4da!important;border-color:#cdbfb2!important;color:#6f6259!important;opacity:1!important}'));
+check('Expert disabled controls use readable dark semantic colors', systemCss.includes(':disabled{background:#26211e!important;border-color:#514a44!important;color:#a79e93!important;opacity:1!important}'));
 
 [
   '--surface-page', '--surface-raised', '--surface-subtle', '--text-primary', '--text-secondary', '--text-muted',
@@ -75,6 +80,8 @@ contrastCheck('Light warning state', '7a4600', 'fff3cd');
 contrastCheck('Light danger state', '8e2525', 'fdecec');
 contrastCheck('Dark disabled state', 'a79e93', '26211e');
 contrastCheck('Light disabled state', '6f6259', 'eee4da');
+contrastCheck('Expert Email Center light status', '245b26', 'eef7e6');
+contrastCheck('Expert Email Center light provider link', '803615', 'fffdf8');
 
 check('production backend constant remains present', html.includes('https://ownlybiz-backend-production.up.railway.app'));
 check('staging backend is not introduced into production', !html.includes('https://victorious-wisdom-production-a6b0.up.railway.app'));
@@ -86,4 +93,4 @@ if (failures.length) {
 }
 
 console.log('Dashboard theme-system smoke passed.');
-console.log('Semantic roles, cascade order, production boundary, and 22 contrast pairs verified.');
+console.log('Semantic roles, cascade order, production boundary, and 24 contrast pairs verified.');

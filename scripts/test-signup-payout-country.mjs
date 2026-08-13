@@ -7,6 +7,8 @@ const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 assert.match(html, /id="signup-payout-country"/, 'signup has a payout-country field');
 assert.match(html, /class="tos-details ob-payout-country-details"/, 'signup uses the existing expandable-details pattern');
 assert.match(html, /id="signup-payout-country-summary"/, 'expandable country guidance retains the existing visible text');
+assert.match(html, /\.ob-payout-country-details summary::after/, 'expandable country guidance has a visible chevron');
+assert.match(html, /\.ob-payout-country-details\[open\] summary::after/, 'country guidance chevron changes direction when expanded');
 assert.match(html, /aria-describedby="signup-payout-country-summary"/, 'country selector describes its live guidance accessibly');
 assert.match(html, /Stripe payouts and paid subscription plans are available/, 'expanded country guidance explains Stripe eligibility');
 assert.doesNotMatch(html, /class="ob-payout-country-help"/, 'question-mark tooltip is removed');

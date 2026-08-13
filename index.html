@@ -5419,6 +5419,13 @@ if (!window.toast) {
           <label class="form-label">Password</label>
           <input type="password" class="form-input" id="signup-pass" placeholder="Create a strong password (min 8 chars)">
         </div>
+	        <div class="form-group">
+	          <label class="form-label" for="signup-payout-country">Legal payout country</label>
+	          <select class="form-input" id="signup-payout-country" onchange="obUpdateSignupPayoutCountry()" disabled>
+	            <option value="">Loading countries...</option>
+	          </select>
+	          <div id="signup-payout-country-note" style="font-size:12px;color:var(--gray-400);line-height:1.5;margin-top:7px;">Choose the country where your Stripe payout account will be legally based. This is separate from where your clients live.</div>
+	        </div>
 	        <div class="tos-row">
 	          <input type="checkbox" id="tos-check">
 	          <div class="tos-text">
@@ -17015,12 +17022,63 @@ async function savePaymentConfig() {
   })();
 
   // ── Signup step 1 ─────────────────────────────────────
+  window._obSignupPayoutCountries = [];
+  window.obUpdateSignupPayoutCountry = function() {
+    var select = document.getElementById('signup-payout-country');
+    var note = document.getElementById('signup-payout-country-note');
+    if (!select || !note) return;
+    var country = (window._obSignupPayoutCountries || []).find(function(item){ return item.code === select.value; });
+    try { sessionStorage.setItem('ob_signup_payout_country', select.value || ''); } catch(e) {}
+    if (!country) {
+      note.textContent = 'Choose the country where your Stripe payout account will be legally based. This is separate from where your clients live.';
+      note.style.color = 'var(--gray-400)';
+      return;
+    }
+    if (country.supported) {
+      note.textContent = 'Supported for Ownlybiz paid plans and Stripe payouts.';
+      note.style.color = '#15803d';
+    } else {
+      note.textContent = 'Starter signup is available for manual review. Paid plans are not available for this country yet.';
+      note.style.color = '#b45309';
+    }
+  };
+  window.obLoadSignupPayoutCountries = async function() {
+    var select = document.getElementById('signup-payout-country');
+    var note = document.getElementById('signup-payout-country-note');
+    if (!select) return;
+    var BASE = (window.OWNLYBIZ_API_URL || window._OB_BACKEND || 'https://victorious-wisdom-production-a6b0.up.railway.app').replace(/\/$/, '');
+    try {
+      var response = await fetch(BASE + '/api/billing/payout-countries', { cache:'no-store' });
+      var payload = await response.json();
+      if (!response.ok || !Array.isArray(payload.countries) || !payload.countries.length) throw new Error(payload.error || 'Countries are unavailable');
+      window._obSignupPayoutCountries = payload.countries;
+      var saved = '';
+      try { saved = sessionStorage.getItem('ob_signup_payout_country') || ''; } catch(e) {}
+      select.innerHTML = '<option value="">Choose your country</option>' + payload.countries.map(function(country){
+        return '<option value="' + String(country.code || '').replace(/[^A-Z]/g, '') + '">' + String(country.label || country.code || '').replace(/[&<>"']/g, function(ch){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]; }) + '</option>';
+      }).join('');
+      select.disabled = false;
+      if (saved && payload.countries.some(function(country){ return country.code === saved; })) select.value = saved;
+      window.obUpdateSignupPayoutCountry();
+    } catch(err) {
+      select.innerHTML = '<option value="">Countries could not load</option>';
+      select.disabled = true;
+      if (note) {
+        note.textContent = 'We could not load payout countries. Please refresh before creating your account.';
+        note.style.color = '#b91c1c';
+      }
+    }
+  };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', window.obLoadSignupPayoutCountries);
+  else setTimeout(window.obLoadSignupPayoutCountries, 0);
+
   window.realExpertSignup = async function() {
     console.log('[OB] realExpertSignup called');
     var fname = (document.getElementById('signup-fname')||{value:''}).value.trim();
     var lname = (document.getElementById('signup-lname')||{value:''}).value.trim();
     var email = (document.getElementById('signup-email')||{value:''}).value.trim();
     var pass  = (document.getElementById('signup-pass') ||{value:''}).value;
+    var payoutCountry = (document.getElementById('signup-payout-country') || {value:''}).value;
     var errEl = document.getElementById('signup-step1-error');
     var btn   = document.getElementById('signup-step1-btn');
     var tos   = document.getElementById('tos-check');
@@ -17028,6 +17086,7 @@ async function savePaymentConfig() {
     if (!fname)                       return obErr(errEl, 'Please enter your first name');
     if (!email || !email.includes('@')) return obErr(errEl, 'Please enter a valid email');
     if (pass.length < 8)              return obErr(errEl, 'Password must be 8+ characters');
+    if (!/^[A-Z]{2}$/.test(payoutCountry)) return obErr(errEl, 'Please choose your legal payout country');
     if (tos && !tos.checked)          return obErr(errEl, 'Please accept the Terms of Service');
 
     var name = fname + (lname ? ' '+lname : '');
@@ -17043,6 +17102,7 @@ async function savePaymentConfig() {
 	          email:email,
 	          password:pass,
 	          role:'expert',
+	          payout_country:payoutCountry,
 	          terms_accepted:!!(tos && tos.checked),
 	          terms_version:'expert-independent-2026-06-23',
 	          marketing_opt_in:!!(document.getElementById('signup-email-optin') && document.getElementById('signup-email-optin').checked),
@@ -17065,6 +17125,10 @@ async function savePaymentConfig() {
       try { localStorage.setItem('ob_client_token', d.token); } catch(e) {}
       if (typeof checkClientAuth === 'function') setTimeout(checkClientAuth, 500);
       sessionStorage.setItem('ob_u', JSON.stringify(d.user));
+      if (d.payout_country_eligibility) {
+        window._obSignupPayoutEligibility = d.payout_country_eligibility;
+        try { sessionStorage.setItem('ob_signup_payout_eligibility', JSON.stringify(d.payout_country_eligibility)); } catch(e) {}
+      }
       console.log('[OB] Logged in as:', d.user.name, d.user.role);
       if (btn) btn.textContent = '✓ Account created!';
       // Store slug for later use in step 7
@@ -32080,6 +32144,15 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
 	  function selectedPlan(){
 	    return plansById(planState.plans)[planState.selected] || planDefaults[0];
 	  }
+	  function signupPayoutEligibility(){
+	    if(planState.billing && planState.billing.payout_country_eligibility) return planState.billing.payout_country_eligibility;
+	    if(window._obSignupPayoutEligibility) return window._obSignupPayoutEligibility;
+	    try {
+	      var stored = JSON.parse(sessionStorage.getItem('ob_signup_payout_eligibility') || 'null');
+	      if(stored) window._obSignupPayoutEligibility = stored;
+	      return stored;
+	    } catch(e) { return null; }
+	  }
 	  function normalizePlanId(id){
 	    id = String(id || 'starter').toLowerCase();
 	    return id === 'free' ? 'starter' : id;
@@ -32211,11 +32284,35 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
   function updateSignupCta(){
     var p = selectedPlan();
     var btn = document.getElementById('ob-launch-plan-btn') || document.querySelector('#step-7 .btn.btn-primary');
-    if(btn) btn.textContent = p.id === 'starter' ? 'Launch on Starter ->' : 'Continue to secure checkout';
+    var eligibility = signupPayoutEligibility();
+    var paidBlocked = p.id !== 'starter' && (!eligibility || eligibility.status !== 'supported');
+    var countryName = eligibility && (eligibility.country_label || eligibility.country) || 'your country';
+    if(btn) {
+      btn.textContent = p.id === 'starter' ? 'Launch on Starter ->' : (paidBlocked ? 'Paid plan unavailable for ' + countryName : 'Continue to secure checkout');
+      btn.disabled = paidBlocked;
+      btn.dataset.obCountryBlocked = paidBlocked ? '1' : '';
+    }
     var hint = document.getElementById('ob-launch-plan-hint');
     if(hint) hint.textContent = p.id === 'starter'
       ? (planState.starterRequiresApproval ? 'Starter launches after admin approval. We will email you when your dashboard is ready.' : 'Starter is active immediately. You keep ' + Math.round(p.expert_keep_pct || 88) + '% of each paid session.')
-      : p.name + ' activates after Stripe confirms the subscription. You keep ' + Math.round(p.expert_keep_pct || 0) + '%.';
+      : (paidBlocked
+        ? (eligibility && eligibility.status === 'unsupported'
+          ? 'Paid plans are not available for ' + countryName + ' yet. Choose Starter to submit your account for manual review.'
+          : 'Your payout country is required before a paid plan can open Stripe Checkout.')
+        : p.name + ' activates after Stripe confirms the subscription. You keep ' + Math.round(p.expert_keep_pct || 0) + '%.');
+    var countryNote = document.getElementById('ob-signup-country-eligibility-note');
+    if(countryNote) {
+      if(!eligibility || eligibility.status === 'missing') {
+        countryNote.textContent = 'A legal payout country is required before paid checkout.';
+        countryNote.style.cssText = 'display:block;margin:14px 0 0;padding:12px 14px;border-radius:10px;background:rgba(245,158,11,.10);border:1px solid rgba(245,158,11,.30);color:#92400e;font-size:12px;line-height:1.5;text-align:left;';
+      } else if(eligibility.supported) {
+        countryNote.textContent = countryName + ' is supported for paid plans and Stripe payouts.';
+        countryNote.style.cssText = 'display:block;margin:14px 0 0;padding:12px 14px;border-radius:10px;background:rgba(34,197,94,.09);border:1px solid rgba(34,197,94,.25);color:#166534;font-size:12px;line-height:1.5;text-align:left;';
+      } else {
+        countryNote.textContent = countryName + ' is not currently supported for paid plans. Starter remains available and will be reviewed manually.';
+        countryNote.style.cssText = 'display:block;margin:14px 0 0;padding:12px 14px;border-radius:10px;background:rgba(245,158,11,.10);border:1px solid rgba(245,158,11,.30);color:#92400e;font-size:12px;line-height:1.5;text-align:left;';
+      }
+    }
     var checkline = document.getElementById('launch-plan-checkline');
     if(checkline) checkline.textContent = p.id === 'starter' ? 'Free to start — no credit card required' : 'Secure Stripe subscription before plan activation';
   }
@@ -32244,7 +32341,8 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
       + '<div class="ob-plan-title" style="font-size:20px;">Select your plan</div>'
       + '<div class="ob-plan-sub">Starter has no monthly subscription. Paid plans lower the platform fee after Stripe confirms payment.</div>'
       + '<div class="ob-plan-grid">'+plansHtml+'</div>'
-      + '<div class="ob-plan-interval-group"><button type="button" class="ob-plan-interval-btn" data-ob-plan-interval="monthly" onclick="obSetSignupPlan((window.obSignupPlanState&&window.obSignupPlanState.selected)||\'starter\',\'monthly\')">Monthly</button><button type="button" class="ob-plan-interval-btn" data-ob-plan-interval="annual" onclick="obSetSignupPlan((window.obSignupPlanState&&window.obSignupPlanState.selected)||\'starter\',\'annual\')">Annual</button></div>';
+      + '<div class="ob-plan-interval-group"><button type="button" class="ob-plan-interval-btn" data-ob-plan-interval="monthly" onclick="obSetSignupPlan((window.obSignupPlanState&&window.obSignupPlanState.selected)||\'starter\',\'monthly\')">Monthly</button><button type="button" class="ob-plan-interval-btn" data-ob-plan-interval="annual" onclick="obSetSignupPlan((window.obSignupPlanState&&window.obSignupPlanState.selected)||\'starter\',\'annual\')">Annual</button></div>'
+      + '<div id="ob-signup-country-eligibility-note"></div>';
     var checklist = step.querySelector('.launch-checklist');
     if(checklist && checklist.parentNode) checklist.parentNode.insertBefore(card, checklist);
     else step.appendChild(card);
@@ -52947,11 +53045,16 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
 	  }
 	  function infoGrid(user, profile){
     var sm = profile.__stripe_mode || {};
+    var payout = profile.__payout_country_eligibility || {};
+    var payoutCountry = payout.country ? ((payout.country_label || payout.country) + ' (' + payout.country + ')') : 'Not provided';
+    var payoutStatus = payout.status === 'supported' ? 'Supported for paid plans' : (payout.status === 'unsupported' ? 'Not supported for paid plans' : 'Country required');
     var rows = [
       ['Email', user.email || '-'],
       ['Slug', profile.slug ? 'ownlybiz.com/' + profile.slug : '-'],
       ['Title', profile.title || '-'],
       ['Location', profile.location || '-'],
+      ['Payout country', payoutCountry],
+      ['Paid plan eligibility', payoutStatus],
       ['Plan', profile.subscription_plan || 'starter'],
       ['Subscription', profile.subscription_status || '-'],
       ['Website', Number(profile.website_published || 0) ? 'Published' : 'Not published'],
@@ -53156,6 +53259,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     var ai = profileData.ai_chat || {};
     var stripeMode = profileData.stripe_mode || {};
     profile.__stripe_mode = stripeMode;
+    profile.__payout_country_eligibility = profileData.payout_country_eligibility || {};
     var slug = profile.slug || '';
     var name = user.name || 'Expert';
     var enabled = Number(ai.enabled || 0) === 1;

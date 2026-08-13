@@ -5,6 +5,10 @@ import vm from 'node:vm';
 const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 
 assert.match(html, /id="signup-payout-country"/, 'signup has a payout-country field');
+assert.match(html, /class="ob-payout-country-help"/, 'signup has payout-country help');
+assert.match(html, /aria-label="Why we ask for your legal payout country"/, 'payout-country help has an accessible label');
+assert.match(html, /Stripe payouts and paid subscription plans are available/, 'payout-country help explains Stripe eligibility');
+assert.match(html, /id="signup-payout-country-note"/, 'existing live payout-country note remains present');
 assert.match(html, /\/api\/billing\/payout-countries/, 'signup loads the server country catalog');
 assert.match(html, /payout_country:payoutCountry/, 'signup sends payout country to the backend');
 assert.match(html, /Starter signup is available for manual review/, 'unsupported signup explains Starter review');

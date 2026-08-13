@@ -7,12 +7,14 @@ const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 assert.match(html, /id="signup-payout-country"/, 'signup has a payout-country field');
 assert.match(html, /class="tos-details ob-payout-country-details"/, 'signup uses the existing expandable-details pattern');
 assert.match(html, /id="signup-payout-country-summary"/, 'expandable country guidance retains the existing visible text');
-assert.match(html, /\.ob-payout-country-details summary::after/, 'expandable country guidance has a visible chevron');
-assert.match(html, /\.ob-payout-country-details\[open\] summary::after/, 'country guidance chevron changes direction when expanded');
+assert.match(html, /class="ob-payout-country-toggle"/, 'expandable country guidance has a bold text affordance');
+assert.match(html, />Learn more</, 'collapsed country guidance identifies the expandable action');
+assert.match(html, />Show less</, 'expanded country guidance identifies the collapse action');
+assert.doesNotMatch(html, /\.ob-payout-country-details summary::after/, 'country guidance does not add a second arrow');
 assert.match(html, /aria-describedby="signup-payout-country-summary"/, 'country selector describes its live guidance accessibly');
 assert.match(html, /Stripe payouts and paid subscription plans are available/, 'expanded country guidance explains Stripe eligibility');
 assert.doesNotMatch(html, /class="ob-payout-country-help"/, 'question-mark tooltip is removed');
-assert.match(html, /noteSummary\.textContent = 'Paid plans and Stripe payouts are not available for this country yet\.'/,
+assert.match(html, /noteSummaryText\.textContent = 'Paid plans and Stripe payouts are not available for this country yet\.'/,
   'step-one unsupported guidance does not mention manual approval');
 assert.match(html, /\/api\/billing\/payout-countries/, 'signup loads the server country catalog');
 assert.match(html, /payout_country:payoutCountry/, 'signup sends payout country to the backend');

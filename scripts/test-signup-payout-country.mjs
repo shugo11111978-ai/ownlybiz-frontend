@@ -5,13 +5,16 @@ import vm from 'node:vm';
 const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 
 assert.match(html, /id="signup-payout-country"/, 'signup has a payout-country field');
-assert.match(html, /class="ob-payout-country-help"/, 'signup has payout-country help');
-assert.match(html, /aria-label="Why we ask for your legal payout country"/, 'payout-country help has an accessible label');
-assert.match(html, /Stripe payouts and paid subscription plans are available/, 'payout-country help explains Stripe eligibility');
-assert.match(html, /id="signup-payout-country-note"/, 'existing live payout-country note remains present');
+assert.match(html, /class="tos-details ob-payout-country-details"/, 'signup uses the existing expandable-details pattern');
+assert.match(html, /id="signup-payout-country-summary"/, 'expandable country guidance retains the existing visible text');
+assert.match(html, /aria-describedby="signup-payout-country-summary"/, 'country selector describes its live guidance accessibly');
+assert.match(html, /Stripe payouts and paid subscription plans are available/, 'expanded country guidance explains Stripe eligibility');
+assert.doesNotMatch(html, /class="ob-payout-country-help"/, 'question-mark tooltip is removed');
+assert.match(html, /noteSummary\.textContent = 'Paid plans and Stripe payouts are not available for this country yet\.'/,
+  'step-one unsupported guidance does not mention manual approval');
 assert.match(html, /\/api\/billing\/payout-countries/, 'signup loads the server country catalog');
 assert.match(html, /payout_country:payoutCountry/, 'signup sends payout country to the backend');
-assert.match(html, /Starter signup is available for manual review/, 'unsupported signup explains Starter review');
+assert.match(html, /Choose Starter to submit your account for manual review/, 'the later plan step explains Starter review');
 assert.match(html, /paidBlocked = p\.id !== 'starter'/, 'only paid signup plans are country-gated');
 assert.match(html, /btn\.disabled = paidBlocked/, 'unsupported paid checkout button is disabled');
 assert.match(html, /\['Payout country', payoutCountry\]/, 'Admin Expert Info shows payout country');

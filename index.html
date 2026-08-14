@@ -266,7 +266,7 @@
 
   var BASE = (window.OWNLYBIZ_API_URL || window._OB_BACKEND || 'https://victorious-wisdom-production-a6b0.up.railway.app').replace(/\/+$/,'');
   var CREDIT_AMOUNTS = [10,20,30,50,75,100,150,200,250,500];
-  var state = { settings:null, summary:null, amount:0, promo:null, sessionPromo:null, promoError:null, promotions:[], promoEligible:null, promoPlan:'starter', intent:null, stripe:null, elements:null, expressElements:null, cardElement:null, expressElement:null, paymentMounted:false, paymentMounting:false, confirming:false, context:null, pauseSessionId:null, bookingCreditRequest:0, bookingPayMode:'minute', bookLaterCreditRequest:0, bookLaterPayMode:'minute', mountSeq:0, mountTimer:null };
+  var state = { settings:null, summary:null, amount:0, promo:null, sessionPromo:null, promoError:null, promotions:[], promoEligible:null, promoPlan:'starter', intent:null, stripe:null, elements:null, expressElements:null, cardElement:null, expressElement:null, paymentMounted:false, paymentMounting:false, confirming:false, context:null, bookingCreditRequest:0, bookingPayMode:'minute', bookLaterCreditRequest:0, bookLaterPayMode:'minute', mountSeq:0, mountTimer:null };
   var creditPaymentConfigPromise = null;
 
   function token(){ return sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || localStorage.getItem('ob_client_token') || ''; }
@@ -279,7 +279,7 @@
     var mode = normalizeCreditMode(window._obSelectedPaymentMode || window._obActiveSessionCreditMode || (state.bookingPayMode === 'topup' ? 'prepaid' : 'minute'));
     var code = window._obSessionPromoCode || '';
     if(mode === 'prepaid') return code ? 'Prepaid credit selected · promo ' + code : 'Prepaid credit selected';
-    return code ? 'Card authorized · promo ' + code : (Number(freeMinutes || 0) > 0 ? 'Card authorized · after intro' : 'Card authorized');
+    return code ? '$5 temporary authorization approved · promo ' + code : '$5 temporary authorization approved';
   }
   window.obCreditPreSessionPaymentLabel = preSessionPaymentLabel;
   function expertId(){
@@ -354,26 +354,6 @@
     if(!id) return '';
     var map = sessionCreditModeStore();
     return map[String(id)] || '';
-  }
-  async function pauseBillingForTopup(){
-    var sid = activeSessionId();
-    if(!sid || state.pauseSessionId === sid) return;
-    try{
-      await appApi('POST','/api/sessions/' + encodeURIComponent(sid) + '/billing-pause',{reason:'credit_topup'});
-      state.pauseSessionId = sid;
-    }catch(e){
-      console.warn('[credit] billing pause skipped', e && e.message ? e.message : e);
-    }
-  }
-  async function resumeBillingForTopup(){
-    var sid = state.pauseSessionId;
-    state.pauseSessionId = null;
-    if(!sid) return;
-    try{
-      await appApi('POST','/api/sessions/' + encodeURIComponent(sid) + '/billing-resume',{reason:'credit_topup'});
-    }catch(e){
-      console.warn('[credit] billing resume skipped', e && e.message ? e.message : e);
-    }
   }
   function addStyle(){
     if(document.getElementById('ob-credit-style-v1')) return;
@@ -1044,11 +1024,11 @@
         '<h3>Choose how to pay</h3>' +
         '<p class="ob-credit-sub">Choose a payment option first. The checkout below updates to match your choice.</p>' +
         '<div class="ob-payment-mode-grid">' +
-          '<button type="button" class="ob-payment-mode-btn" data-ob-payment-mode="minute" onclick="obBookingPaymentMode(&quot;minute&quot;)"><strong>Pay by minute</strong><span>Apple Pay, Google Pay, or card. Charged after exact time.</span></button>' +
+          '<button type="button" class="ob-payment-mode-btn" data-ob-payment-mode="minute" onclick="obBookingPaymentMode(&quot;minute&quot;)"><strong>Pay by minute</strong><span>Card or eligible wallet. A temporary $5 authorization confirms your payment method before the live session.</span></button>' +
           '<button type="button" class="ob-payment-mode-btn" data-ob-payment-mode="topup" onclick="obBookingPaymentMode(&quot;topup&quot;)"><strong>Prepaid credit</strong><span>Add credit first. Credit is used automatically and has no expiration.</span></button>' +
         '</div>' +
         '<div class="ob-credit-row"><div><strong>Prepaid balance</strong><div style="font-size:12px;color:var(--gray-400)">Used only when you choose prepaid credit</div></div><span class="ob-credit-balance-pill">' + money(balance) + '</span></div>' +
-        (balance > 0 ? '<button type="button" class="ob-credit-btn secondary" style="width:100%;margin-top:6px" onclick="obCreditStartWithCredit()">Use prepaid balance</button>' : '<div id="ob-credit-booking-empty-note" class="ob-credit-note" style="margin-top:6px">Pay by minute is selected. Use the checkout below to start.</div>');
+        (balance > 0 ? '<button type="button" class="ob-credit-btn secondary" style="width:100%;margin-top:6px" onclick="obCreditStartWithCredit()">Use prepaid balance</button>' : '<div id="ob-credit-booking-empty-note" class="ob-credit-note" style="margin-top:6px">Pay by minute is selected. A temporary $5 authorization confirms your payment method; you only pay for time used.</div>');
       setBookingPaymentMode(state.bookingPayMode || 'minute');
     }).catch(function(){
       if(mount.dataset.obCreditRequest !== requestId || mount.dataset.obCreditReady === '1') return;
@@ -1268,7 +1248,7 @@
     if(emptyNote) {
       emptyNote.textContent = state.bookLaterPayMode === 'prepaid'
         ? 'Add prepaid credit first, then confirm the booking with credit.'
-        : 'Pay by minute is selected. Save a card or use an eligible wallet below; you will only be charged after the session.';
+        : 'Pay by minute is selected. Save your payment method now; the $5 authorization happens only when it is time to join.';
     }
     sessionPromoStatus('book_later');
   }
@@ -1344,11 +1324,11 @@
         '<h3>Choose how to pay</h3>' +
         '<p class="ob-credit-sub">Choose a payment option first. The checkout below updates to match your choice.</p>' +
         '<div class="ob-payment-mode-grid">' +
-          '<button type="button" class="ob-payment-mode-btn" data-ob-bfl-payment-mode="minute" onclick="obBookLaterPaymentMode(&quot;minute&quot;)"><strong>Pay by minute</strong><span>Apple Pay, Google Pay, or card. Charged after exact time.</span></button>' +
+          '<button type="button" class="ob-payment-mode-btn" data-ob-bfl-payment-mode="minute" onclick="obBookLaterPaymentMode(&quot;minute&quot;)"><strong>Pay by minute</strong><span>Save a card or eligible wallet now. A temporary $5 authorization is confirmed shortly before the live session.</span></button>' +
           '<button type="button" class="ob-payment-mode-btn" data-ob-bfl-payment-mode="prepaid" onclick="obBookLaterPaymentMode(&quot;topup&quot;)"><strong>Prepaid credit</strong><span>Add credit first. Credit is used automatically and has no expiration.</span></button>' +
         '</div>' +
         '<div class="ob-credit-row"><div><strong>Prepaid balance</strong><div style="font-size:12px;color:var(--gray-400)">Used only when you choose prepaid credit</div></div><span class="ob-credit-balance-pill">' + money(balance) + '</span></div>' +
-        (balance > 0 ? '<button type="button" class="ob-credit-btn secondary" style="width:100%;margin-top:6px" onclick="obBookLaterUseCredit()">Use prepaid balance</button>' : '<div id="ob-credit-bfl-empty-note" class="ob-credit-note" style="margin-top:6px">' + (signedIn ? 'Pay by minute is selected. Use the checkout below; you will only be charged after the session.' : 'Create or log in to add prepaid credit. Pay by minute stays available after your account is ready.') + '</div>');
+        (balance > 0 ? '<button type="button" class="ob-credit-btn secondary" style="width:100%;margin-top:6px" onclick="obBookLaterUseCredit()">Use prepaid balance</button>' : '<div id="ob-credit-bfl-empty-note" class="ob-credit-note" style="margin-top:6px">' + (signedIn ? 'Pay by minute is selected. Save your payment method now; the $5 authorization happens only when it is time to join.' : 'Create or log in to add prepaid credit. Pay by minute stays available after your account is ready.') + '</div>');
       setBookLaterPaymentMode(bookLaterPaymentMode());
       injectSessionPromo('book_later');
     }).catch(function(){
@@ -1375,7 +1355,7 @@
         '<div data-ob-credit-head style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:12px"><div data-ob-credit-title><h3 style="font-size:22px;margin:0 0 4px">Add prepaid credit</h3><p class="ob-credit-sub" style="margin:0">Credit has no expiration and is used automatically with this expert.</p></div><button class="ob-credit-btn secondary" data-ob-credit-close onclick="obCreditCloseModal()">Close</button></div>' +
         '<div id="ob-credit-modal-balance" class="ob-credit-note" style="margin-bottom:12px">Loading balance...</div>' +
         '<div id="ob-credit-modal-amounts"></div>' +
-        '<div id="ob-credit-session-pause-note" class="ob-credit-note" style="display:none;margin-bottom:12px">Billing is paused briefly while you add credit. The session stays open, and the pause is capped to protect both sides.</div>' +
+        '<div id="ob-credit-session-pause-note" class="ob-credit-note" style="display:none;margin-bottom:12px">Billing continues while the session is active. If prepaid credit runs out first, the session ends; any credit you add remains available for your next session.</div>' +
         '<div id="ob-credit-modal-summary" class="ob-credit-note" style="display:none;margin-bottom:12px"></div>' +
         '<div id="ob-credit-payment-element" style="display:none;border:1px solid rgba(36,24,19,.12);border-radius:14px;padding:12px;margin:12px 0;background:#fff"></div>' +
         '<div id="ob-credit-modal-error" style="display:none;color:#dc2626;font-size:13px;margin:8px 0"></div>' +
@@ -1500,7 +1480,6 @@
     setModalError('');
     var pauseNote = document.getElementById('ob-credit-session-pause-note');
     if(pauseNote) pauseNote.style.display = state.context === 'session' ? 'block' : 'none';
-    if(state.context === 'session') pauseBillingForTopup();
     resetCreditPaymentMount();
     var balanceEl = document.getElementById('ob-credit-modal-balance');
     var d = await loadClientCreditSummary();
@@ -1531,7 +1510,6 @@
       resetCreditPaymentMount();
       setBookLaterPaymentMode('minute');
     }
-    resumeBillingForTopup();
   };
 
   window.obCreditSelectAmount = function(amount){
@@ -8177,7 +8155,7 @@ if (!window.toast) {
           <div style="font-size:14px;font-weight:700;color:var(--brown);" id="bov-channel-name">Chat with Expert</div>
           <div style="font-size:12px;color:var(--gray-400);" id="bov-channel-detail">$3.50/min · first 3 minutes free</div>
         </div>
-        <button class="ob-booking-selected-close" onclick="closeBookingOverlay()" style="margin-left:auto;border:none;background:var(--cream);color:var(--gray-400);width:28px;height:28px;border-radius:50%;font-size:16px;cursor:pointer;line-height:1;">✕</button>
+        <button type="button" class="ob-booking-selected-close" aria-label="Close payment and session setup" onclick="closeBookingOverlay()" style="margin-left:auto;border:none;background:var(--cream);color:var(--gray-400);width:44px;height:44px;min-width:44px;min-height:44px;border-radius:50%;font-size:18px;cursor:pointer;line-height:1;touch-action:manipulation;">✕</button>
       </div>
 
       <div style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;">
@@ -8207,8 +8185,8 @@ if (!window.toast) {
         <!-- STEP 2: Payment -->
         <div id="bov-step2" style="display:none;padding:20px 24px 24px;">
           <h2 style="font-size:20px;font-family:var(--font-head);color:var(--brown);margin-bottom:6px;" id="bov-pay-title">Add payment method</h2>
-          <div id="bov-pay-explainer" style="background:rgba(122,140,110,.07);border:1px solid rgba(122,140,110,.2);border-radius:10px;padding:12px 14px;margin-bottom:18px;font-size:12px;color:var(--brown);line-height:1.6;">
-            🔐 Add a card or eligible wallet to start. You will only be charged after the session for the exact minutes you use.
+          <div id="bov-pay-explainer" role="note" aria-live="polite" style="background:rgba(122,140,110,.07);border:1px solid rgba(122,140,110,.2);border-radius:10px;padding:12px 14px;margin-bottom:18px;font-size:12px;color:var(--brown);line-height:1.6;">
+            <strong>Pay only for the time you use.</strong> A temporary $5 authorization may appear to confirm your payment method. Any unused amount is released after the session; your bank may show it as pending briefly.
           </div>
           <div id="bov-wallet-section" style="display:none;margin-bottom:16px;background:#fff;border:1.5px solid var(--gray-200);border-radius:12px;padding:12px;">
             <div style="font-size:12px;font-weight:800;color:var(--brown);margin-bottom:4px;">Express checkout</div>
@@ -8217,22 +8195,22 @@ if (!window.toast) {
             <div style="display:flex;align-items:center;gap:10px;margin-top:12px;color:var(--gray-400);font-size:11px;text-transform:uppercase;letter-spacing:.08em;"><span style="height:1px;background:var(--gray-200);flex:1;"></span>or use card<span style="height:1px;background:var(--gray-200);flex:1;"></span></div>
           </div>
           <!-- Stripe card element -->
-          <label style="font-size:12px;font-weight:600;color:#6b7280;margin-bottom:4px;display:block;">Credit or debit card</label>
+          <label id="bov-card-label" style="font-size:12px;font-weight:600;color:#6b7280;margin-bottom:4px;display:block;">Credit or debit card</label>
           <div id="bov-card-element" style="background:#fff;border:2px solid #d1d5db;border-radius:10px;padding:4px 12px;margin-bottom:16px;font-size:14px;min-height:56px;pointer-events:all;position:relative;z-index:10;cursor:text;"></div>
           <div id="bov-card-error" style="color:#dc2626;font-size:12px;margin-bottom:10px;min-height:16px;display:none;"></div>
-          <button class="btn btn-primary" style="width:100%;margin-top:16px;padding:14px;" id="bov-pay-btn" onclick="bovAuthorize()">Authorize & Start Session →</button>
-          <p style="font-size:11px;color:var(--gray-400);text-align:center;margin-top:8px;">🔒 256-bit SSL · Only charged for time used · Cancel any time</p>
+          <button class="btn btn-primary" style="width:100%;margin-top:16px;padding:14px;" id="bov-pay-btn" onclick="bovAuthorize()">Verify payment & Continue →</button>
+          <p style="font-size:11px;color:var(--gray-400);text-align:center;margin-top:8px;line-height:1.5;">Secure Stripe checkout · The $5 is a temporary authorization, not an extra session charge.</p>
 
         </div>
 
         <!-- STEP 3: Connecting -->
         <div id="bov-step3" style="display:none;padding:40px 24px;text-align:center;">
           <div style="font-size:64px;margin-bottom:16px;animation:spin 2s linear infinite;display:inline-block;" id="bov-connect-spinner">⟳</div>
-          <div style="font-size:20px;font-weight:700;font-family:var(--font-head);color:var(--brown);margin-bottom:8px;" id="bov-connect-title">Connecting you to Expert...</div>
+          <div tabindex="-1" style="font-size:20px;font-weight:700;font-family:var(--font-head);color:var(--brown);margin-bottom:8px;outline:none;" id="bov-connect-title">Connecting you to Expert...</div>
           <div style="font-size:13px;color:var(--gray-400);margin-bottom:28px;" id="bov-connect-sub">Setting up your session · usually takes under 5 seconds</div>
           <div style="display:flex;justify-content:center;gap:8px;" id="bov-connect-steps">
             <div style="padding:6px 14px;border-radius:100px;font-size:12px;font-weight:700;background:#dcfce7;color:#166534;">✓ Account ready</div>
-            <div style="padding:6px 14px;border-radius:100px;font-size:12px;font-weight:700;background:#dcfce7;color:#166534;" id="bov-step-pay-badge">✓ Payment authorized</div>
+            <div style="padding:6px 14px;border-radius:100px;font-size:12px;font-weight:700;background:#dcfce7;color:#166534;" id="bov-step-pay-badge">✓ $5 authorization approved</div>
             <div style="padding:6px 14px;border-radius:100px;font-size:12px;font-weight:700;background:var(--cream);color:var(--gray-400);" id="bov-step-conn-badge">● Connecting...</div>
           </div>
         </div>
@@ -8793,7 +8771,7 @@ if (!window.toast) {
                 </div>
                 <div class="ob-session-detail-row ob-session-detail-row-payment">
                   <span class="ob-session-detail-label" style="color:var(--gray-400);">Payment</span>
-                  <span class="ob-session-detail-value" style="font-weight:600;color:var(--brown);" id="presess-payment">Card authorized</span>
+                  <span class="ob-session-detail-value" style="font-weight:600;color:var(--brown);" id="presess-payment">$5 temporary authorization approved</span>
                 </div>
               </div>
 
@@ -9187,7 +9165,7 @@ if (!window.toast) {
         <div class="admin-content">
           <div class="admin-kpi-row">
             <div class="admin-kpi"><div class="admin-kpi-label">Total Experts</div><div class="admin-kpi-val" id="kpi-total-experts">0</div><div class="admin-kpi-change">↑ +234 this week</div></div>
-            <div class="admin-kpi"><div class="admin-kpi-label">Gross Revenue (MTD)</div><div class="admin-kpi-val" id="kpi-gross-revenue">$0</div><div class="admin-kpi-change">↑ +22% vs last month</div></div>
+            <div class="admin-kpi"><div class="admin-kpi-label">Gross Captured (MTD)</div><div class="admin-kpi-val" id="kpi-gross-revenue">$0</div><div class="admin-kpi-change">↑ +22% vs last month</div></div>
             <div class="admin-kpi"><div class="admin-kpi-label">Platform Revenue (MTD)</div><div class="admin-kpi-val" id="kpi-platform-revenue">$0</div><div class="admin-kpi-change">↑ Avg 12% fee applied</div></div>
             <div class="admin-kpi"><div class="admin-kpi-label">Active Sessions (Now)</div><div class="admin-kpi-val" id="kpi-active-sessions">0</div><div class="admin-kpi-change">● Live right now</div></div>
             <div class="admin-kpi"><div class="admin-kpi-label">Pending Payouts</div><div class="admin-kpi-val" id="kpi-pending-payouts">$0</div><div class="admin-kpi-change warning">8 awaiting approval</div></div>
@@ -9268,7 +9246,7 @@ if (!window.toast) {
       <div class="admin-tab-panel" id="admin-panel-revenue">
         <div class="admin-content">
           <div class="admin-kpi-row" style="grid-template-columns:repeat(4,1fr);">
-            <div class="admin-kpi"><div class="admin-kpi-label">Gross Revenue (YTD)</div><div class="admin-kpi-val">$28.4M</div><div class="admin-kpi-change">↑ 31% YoY</div></div>
+            <div class="admin-kpi"><div class="admin-kpi-label">Gross Captured (YTD)</div><div class="admin-kpi-val">$28.4M</div><div class="admin-kpi-change">↑ 31% YoY</div></div>
             <div class="admin-kpi"><div class="admin-kpi-label">Platform Fees (YTD)</div><div class="admin-kpi-val">$3.1M</div><div class="admin-kpi-change">↑ Avg 10.9% blended</div></div>
             <div class="admin-kpi"><div class="admin-kpi-label">Total Payouts (YTD)</div><div class="admin-kpi-val">$25.3M</div><div class="admin-kpi-change">↑ Paid to experts</div></div>
             <div class="admin-kpi"><div class="admin-kpi-label">Avg Revenue / Expert</div><div class="admin-kpi-val">$2,210</div><div class="admin-kpi-change">↑ MTD average</div></div>
@@ -9286,7 +9264,7 @@ if (!window.toast) {
           <div class="admin-card">
             <div class="admin-card-title">Top Earning Experts — This Month</div>
             <table class="experts-table">
-              <thead><tr><th>Rank</th><th>Expert</th><th>Category</th><th>Sessions</th><th>Gross Revenue</th><th>Platform Fee</th><th>Net Payout</th></tr></thead>
+              <thead><tr><th>Rank</th><th>Expert</th><th>Category</th><th>Sessions</th><th>Gross Captured</th><th>Platform Fee</th><th>Net Payout</th></tr></thead>
               <tbody>
                 <tr><td style="color:var(--gold);">#1</td><td><div class="expert-table-avatar" style="background:#C49A3C;">ML</div>Maya Levi</td><td>Coaching</td><td>134</td><td>$22,800</td><td style="color:var(--terra-light);">$1,140 (5%)</td><td style="color:rgba(34,197,94,.8);">$21,660</td></tr>
                 <tr><td style="color:rgba(246,241,233,.5);">#2</td><td><div class="expert-table-avatar" style="background:#5a3d2b;">TO</div>Tom O'Brien</td><td>Legal</td><td>89</td><td>$18,600</td><td style="color:var(--terra-light);">$1,488 (8%)</td><td style="color:rgba(34,197,94,.8);">$17,112</td></tr>
@@ -11419,7 +11397,7 @@ function openBookingOverlay(channelId) {
     if (mode === 'upfront' || fm === 0) {
       // Always go through payment step — session request only fires after Begin Session
       {
-        _bovGoStep(2); // show payment (card saved on Stripe, just needs auth)
+        _bovGoStep(2); // show payment; a saved method alone is not a session authorization
       // Mount Stripe card element when step 2 is shown
       setTimeout(function() {
         var BASE2 = 'https://victorious-wisdom-production-a6b0.up.railway.app';
@@ -11511,9 +11489,9 @@ function _bovGoStep(n) {
     var fm = freeMinutes[ch.id] || 0;
     var mode = sessionStartMode[ch.id] || 'upfront';
     if (mode === 'upfront' || fm === 0) {
-      if (title) title.textContent = 'Authorize payment';
-      if (expl) expl.innerHTML = '🔐 Add a card or eligible wallet to start. You will only be charged after the session for the exact minutes you use. Stop any time.';
-      if (payBtn) payBtn.textContent = 'Authorize & Start Session →';
+      if (title) title.textContent = 'Confirm payment method';
+      if (expl) expl.innerHTML = '<strong>Pay only for the time you use.</strong> A temporary $5 authorization may appear to confirm your payment method. Any unused amount is released after the session; your bank may show it as pending briefly.';
+      if (payBtn) payBtn.textContent = 'Verify payment & Continue →';
     }
   }
 }
@@ -11594,7 +11572,7 @@ async function bovAuthorize() {
 
   function showErr(msg) {
     if (errEl) { errEl.textContent = msg; errEl.style.display = 'block'; }
-    if (btn) { btn.disabled = false; btn.textContent = 'Authorize & Start Session →'; }
+    if (btn) { btn.disabled = false; btn.textContent = 'Verify payment & Continue →'; }
   }
 
   var t = sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || localStorage.getItem('ob_client_token') || '';
@@ -11649,8 +11627,8 @@ async function bovAuthorize() {
               ? window._obSaveDefaultPaymentMethod(result.setupIntent.payment_method, t, {expert_id:_payExpertId, stripe_mode:d.mode})
               : Promise.resolve();
             saveDefault.then(function(){
-              if (btn) { btn.textContent = 'Card authorized ✓'; }
-              // Show connecting state — mark payment as authorized for future sessions
+              if (btn) { btn.textContent = 'Payment method saved ✓'; }
+              // The final pay-per-minute controller below performs the real $5 authorization before continuing.
               localStorage.setItem('ob_hpm','1');
               _bovGoStep(3);
               var badge = document.getElementById('bov-step-pay-badge');
@@ -11697,7 +11675,7 @@ function _launchSession(isPaid) {
   if(el) {
     el.textContent = typeof window.obCreditPreSessionPaymentLabel === 'function'
       ? window.obCreditPreSessionPaymentLabel(fm)
-      : (isPaid ? (fm > 0 ? 'Card authorized · after intro' : 'Card authorized') : 'Card ready');
+      : (isPaid ? '$5 temporary authorization approved' : 'Payment method ready');
   }
   var freeRow = document.getElementById('presess-free-row');
   var freeNote = document.getElementById('presess-free-note');
@@ -15039,6 +15017,7 @@ async function savePaymentConfig() {
 	      case 'session_expired': {
 	        var _dSid = d.session?.id || d.sessionId;
 	        if(_dSid && _dSid !== window._pendingSid && _dSid !== window._obPendingSessId) break; // stale — ignore
+	        if(typeof window.obReleaseLocalSessionAuthorization==='function') window.obReleaseLocalSessionAuthorization();
 	        toast(d.type === 'session_expired' ? 'Session request expired — please start again' : 'Expert declined — try again', 'err');
 	        if(typeof closeBookingOverlay==='function') closeBookingOverlay();
 	        break; }
@@ -15046,6 +15025,7 @@ async function savePaymentConfig() {
         var _endedSid = d.session_id || d.sessionId || (d.session && d.session.id);
         var _activeEndedSid = window._obActiveSessId || window._sid || window._sessId || window._obPendingSessId || window._pendingSid || '';
         if(_activeEndedSid && (!_endedSid || _endedSid !== _activeEndedSid)) break;
+        if(typeof window.obReleaseLocalSessionAuthorization==='function') window.obReleaseLocalSessionAuthorization();
         window._sid=null; window._expertSessActive=false;
         window._obActiveSessId=null;window._obPendingSessId=null;window._pendingSid=null;window._obIncomingSessId=null;
         if(window.OB_RTC&&typeof window.OB_RTC.cleanup==='function')window.OB_RTC.cleanup();
@@ -16408,7 +16388,7 @@ async function savePaymentConfig() {
         const val=card.querySelector('.admin-kpi-val');
         if(!val||val.id) return; // skip if already updated by ID
         if(lbl.includes('total expert')){ val.textContent=(s.total_experts||0).toLocaleString(); }
-        if(lbl.includes('gross revenue')){ val.textContent=fmt$(s.total_revenue||0); }
+        if(lbl.includes('gross revenue') || lbl.includes('gross captured')){ val.textContent=fmt$(s.gross_captured_revenue != null ? s.gross_captured_revenue : s.total_revenue||0); }
         if(lbl.includes('platform revenue')){ val.textContent=fmt$(s.platform_fees||0); }
         if(lbl.includes('active session')){ val.textContent=(s.active_sessions||0).toLocaleString(); }
         if(lbl.includes('pending payout')){ val.textContent=fmt$(s.pending_payouts||0); }
@@ -16553,14 +16533,16 @@ async function savePaymentConfig() {
       let c=panel.querySelector('.admin-content'); if(!c){c=document.createElement('div');c.className='admin-content';panel.appendChild(c);}
       c.innerHTML=`
         <div class="admin-kpi-row">
-          <div class="admin-kpi"><div class="admin-kpi-label">Gross Revenue (30d)</div><div class="admin-kpi-val">${fmt$(s.gross)}</div></div>
+          <div class="admin-kpi"><div class="admin-kpi-label">Gross Captured (30d)</div><div class="admin-kpi-val">${fmt$(s.gross_captured != null ? s.gross_captured : s.gross)}</div></div>
+          <div class="admin-kpi"><div class="admin-kpi-label">Refunded</div><div class="admin-kpi-val">${fmt$(s.refunded)}</div></div>
+          <div class="admin-kpi"><div class="admin-kpi-label">Net Client Revenue</div><div class="admin-kpi-val">${fmt$(s.net_revenue != null ? s.net_revenue : ((s.gross||0) - (s.refunded||0)))}</div></div>
           <div class="admin-kpi"><div class="admin-kpi-label">Platform Fees</div><div class="admin-kpi-val">${fmt$(s.net)}</div></div>
           <div class="admin-kpi"><div class="admin-kpi-label">Paid to Experts</div><div class="admin-kpi-val">${fmt$(s.paid_out)}</div></div>
           <div class="admin-kpi"><div class="admin-kpi-label">Sessions</div><div class="admin-kpi-val">${s.sessions||0}</div></div>
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:20px;">
-          <div class="admin-card"><div class="admin-card-title">By Channel</div>${(d.by_channel||[]).map(ch=>`<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.06);"><span style="text-transform:capitalize;">${ch.channel}</span><span style="color:var(--terra);">${ch.sessions} · ${fmt$(ch.revenue)}</span></div>`).join('')}</div>
-          <div class="admin-card"><div class="admin-card-title">Top Experts</div>${(d.top_experts||[]).map(e=>`<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.06);"><span>${esc(e.name)}</span><span style="color:var(--sage);">${e.sessions} · ${fmt$(e.revenue)}</span></div>`).join('')}</div>
+          <div class="admin-card"><div class="admin-card-title">By Channel</div>${(d.by_channel||[]).map(ch=>`<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.06);"><span style="text-transform:capitalize;">${ch.channel}</span><span style="color:var(--terra);">${ch.sessions} · gross ${fmt$(ch.revenue)} · refunded ${fmt$(ch.refunded)} · net ${fmt$(ch.net_revenue != null ? ch.net_revenue : ch.revenue)}</span></div>`).join('')}</div>
+          <div class="admin-card"><div class="admin-card-title">Top Experts</div>${(d.top_experts||[]).map(e=>`<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.06);"><span>${esc(e.name)}</span><span style="color:var(--sage);">${e.sessions} · gross ${fmt$(e.revenue)} · refunded ${fmt$(e.refunded)} · net ${fmt$(e.net_revenue != null ? e.net_revenue : e.revenue)}</span></div>`).join('')}</div>
         </div>`;
     } catch(err){ console.warn('Admin revenue:',err.message); }
   }
@@ -19460,6 +19442,19 @@ setTimeout(function(){
 
 // --- Fix 2: Extend _refreshPublicPage to cover booking section ---
 (function(){
+  if(window.obSetPayPerMinuteDisclosure) return;
+  window.obSetPayPerMinuteDisclosure = function(element, expertName){
+    if(!element) return;
+    var strong = document.createElement('strong');
+    strong.textContent = 'Pay only for the time you use.';
+    element.replaceChildren(strong, document.createTextNode(
+      ' A temporary $5 authorization may appear to confirm your payment method' +
+      (expertName ? ' for your session with ' + String(expertName) : '') +
+      '. Any unused amount is released after the session; your bank may show it as pending briefly.'
+    ));
+  };
+})();
+(function(){
   var _origRPP = window._refreshPublicPage;
   window._refreshPublicPage = function(e) {
     // Run original first
@@ -19507,11 +19502,9 @@ setTimeout(function(){
     var bcn = document.getElementById('bov-channel-name');
     if(bcn && name) bcn.textContent = 'Chat with '+name;
 
-    // bov-pay-explainer: payment method guidance before authorization.
+    // bov-pay-explainer: payment method guidance before the real session authorization.
     var bpe = document.getElementById('bov-pay-explainer');
-    if(bpe && name) {
-      bpe.innerHTML = '\uD83D\uDD10 Add a card or eligible wallet to start your session with '+name+'. You will only be charged after the session for exact time used.';
-    }
+    if(bpe && name && typeof window.obSetPayPerMinuteDisclosure === 'function') window.obSetPayPerMinuteDisclosure(bpe, name);
 
     // .expert-footer-disclaimer and .expert-footer-copy
     document.querySelectorAll('.expert-footer-disclaimer').forEach(function(el){
@@ -21187,7 +21180,7 @@ body.expert-page #mob-cta-bar{display:none!important;}
     <div class="ob-wait-spinner"></div>
     <h3 id="ob-wait-title">Waiting for expert...</h3>
     <p id="ob-wait-sub">Your request has been sent</p>
-    <button class="ob-cancel-wait" onclick="obCancelWait()">Cancel</button>
+    <button class="ob-cancel-wait" onclick="obCancelPendingSession('client_cancelled')">Cancel</button>
   </div>
 </div>
 <div id="ob-expert-incoming">
@@ -21244,7 +21237,7 @@ body.expert-page #mob-cta-bar{display:none!important;}
     _statusPollTimer=setInterval(function(){
       // allow poll even when tab hidden (mobile)
       attempts++;
-      if(attempts>15){stopStatusPoll();obCancelWait();alert('Expert did not respond. Please try again.');return;}
+      if(attempts>15){stopStatusPoll();if(typeof window.obCancelPendingSession==='function')window.obCancelPendingSession('client_timeout');else obCancelWait();alert('Expert did not respond. Please try again.');return;}
       var t=tok();if(!t)return;
       fetch(BASE+'/api/sessions/'+sid,{headers:hdr()}).then(function(r){return r.json();}).then(function(d){
         var sess=d.session||d;
@@ -21282,6 +21275,7 @@ body.expert-page #mob-cta-bar{display:none!important;}
 	    if(d.type==='session_declined'||d.type==='session_expired'){
 	      var sid2=d.sessionId||(d.session&&d.session.id);
 	      if(sid2&&sid2===window._obPendingSessId){
+	        if(typeof window.obReleaseLocalSessionAuthorization==='function') window.obReleaseLocalSessionAuthorization();
 	        stopStatusPoll();
 	        var ov2=document.getElementById('ob-waiting-overlay');if(ov2)ov2.classList.remove('show');
 	        window._obPendingSessId=null;if(typeof toast==='function')toast(d.type==='session_expired'?'Session request expired — please start again':'Expert declined — try again','err');
@@ -21349,6 +21343,16 @@ body.expert-page #mob-cta-bar{display:none!important;}
     window._obActiveSessionCreditMode = creditMode;
     var sessionRequestPayload = {expert_id:expertId,channel:channel,message:'',credit_mode:creditMode,payment_mode:creditMode};
     if(creditMode !== 'prepaid'){
+      var sessionAuthorization = typeof window.obGetSessionAuthorizationForRequest === 'function'
+        ? window.obGetSessionAuthorizationForRequest(expertId, channel)
+        : null;
+      if(!sessionAuthorization){
+        obCancelWait();
+        alert('Please verify your payment method before requesting the session.');
+        return;
+      }
+      sessionRequestPayload.authorization_payment_intent_id = sessionAuthorization.authorization_payment_intent_id;
+      sessionRequestPayload.authorization_request_id = sessionAuthorization.authorization_request_id;
       var sessionPromoCode = typeof window.obCreditCurrentSessionPromoCode === 'function'
         ? window.obCreditCurrentSessionPromoCode()
         : (window._obSessionPromoCode || '');
@@ -21358,6 +21362,7 @@ body.expert-page #mob-cta-bar{display:none!important;}
     fetch(BASE+'/api/sessions/request',{method:'POST',headers:hdr(),body:JSON.stringify(sessionRequestPayload)})
       .then(function(r){return r.json().catch(function(){return {};}).then(function(d){d=d||{};d._httpOk=r.ok;d._httpStatus=r.status;return d;});}).then(function(d){
         if(!d._httpOk){
+          if(creditMode !== 'prepaid' && typeof window.obHandleSessionAuthorizationRequestFailure === 'function') window.obHandleSessionAuthorizationRequestFailure(d.code || '', d._httpStatus);
           var msg = d.error || 'Could not request session';
           if(d._httpStatus === 409 || /active|pending|already|existing/i.test(msg)){
             msg = 'You already have a session waiting or active with this expert. Cancel or finish it before starting another.';
@@ -21366,10 +21371,11 @@ body.expert-page #mob-cta-bar{display:none!important;}
           obCancelWait();alert(msg);return;
         }
         if(d.session){
+          if(creditMode !== 'prepaid' && typeof window.obMarkSessionAuthorizationBound === 'function') window.obMarkSessionAuthorizationBound(d.session.id);
           if(typeof window.obCreditRememberSessionMode === 'function') window.obCreditRememberSessionMode(d.session);
           _sessId=d.session.id;window._obPendingSessId=d.session.id;window._obPendingExpertName=expertName;
           window._obClientSessionSnapshot=Object.assign(window._obClientSessionSnapshot||{},d.session);
-          // Mark client as having payment method (session accepted = authorized for billing)
+          // A successful backend session request means the $5 authorization was verified and consumed once.
           try{localStorage.setItem('ob_hpm','1');}catch(e){}
           var ws=window._obWs||window._obClientWs;if(ws&&ws.readyState===1)sendWsAuth(ws);
           if(d.auto_accepted || d.session.status === 'active'){
@@ -21385,7 +21391,7 @@ body.expert-page #mob-cta-bar{display:none!important;}
           if(d.error && /promotion code/i.test(d.error) && typeof window.obCreditClearSessionPromo === 'function') window.obCreditClearSessionPromo();
           obCancelWait();alert(d.error||'Could not request session');
         }
-      }).catch(function(){obCancelWait();alert('Network error - please try again');});
+      }).catch(function(){if(creditMode !== 'prepaid' && typeof window.obHandleSessionAuthorizationRequestFailure === 'function') window.obHandleSessionAuthorizationRequestFailure('network_error',0);obCancelWait();alert('Network error - please try again');});
   };
   window.obCancelWait=function(){
     stopStatusPoll();var ov=document.getElementById('ob-waiting-overlay');if(ov)ov.classList.remove('show');window._obPendingSessId=null;
@@ -23645,7 +23651,7 @@ function loadClientCredit() {
       <div id="ob-credit-bfl-choice" class="ob-credit-card" style="margin:0 0 16px;"></div>
       <div id="bfl-card-section" style="margin-bottom:16px;">
         <label style="font-size:12px;font-weight:700;color:var(--brown);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:8px;">Payment method</label>
-        <div style="font-size:12px;color:var(--gray-400);margin-bottom:10px;">Use a supported wallet or save a card. You won't be charged until the session starts.</div>
+        <div style="font-size:12px;color:var(--gray-400);margin-bottom:10px;line-height:1.5;">Save a card or eligible wallet for this booking. Shortly before the live session, a temporary $5 authorization confirms the payment method. You only pay for time used.</div>
         <div id="bfl-wallet-section" style="display:none;margin-bottom:12px;background:#fff;border:1.5px solid var(--gray-200);border-radius:12px;padding:12px;">
           <div style="font-size:12px;font-weight:800;color:var(--brown);margin-bottom:4px;">Express checkout</div>
           <div style="font-size:11px;color:var(--gray-400);line-height:1.4;margin-bottom:10px;">Apple Pay or Google Pay appears here when it is available on this browser and device.</div>
@@ -25484,7 +25490,7 @@ window._handleRTCMessage=function(d){
     el=document.getElementById('presess-rate'); if(el) el.textContent = money(rate) + '/min';
     el=document.getElementById('presess-free'); if(el) el.textContent = obMinuteText(free,'free');
     el=document.getElementById('presess-free-mins'); if(el) el.textContent = obMinuteText(free);
-    el=document.getElementById('presess-payment'); if(el) el.textContent = free > 0 ? 'Card authorized · after intro' : 'Card authorized';
+    el=document.getElementById('presess-payment'); if(el) el.textContent = '$5 temporary authorization approved';
     el=document.getElementById('presess-free-row'); if(el) el.style.display = free > 0 ? 'grid' : 'none';
     el=document.getElementById('presess-free-note'); if(el) el.style.display = free > 0 ? 'block' : 'none';
     el=document.getElementById('bk-total'); if(el) el.textContent = money(rate) + '/min' + (free > 0 ? ' · ' + free + ' min free' : '');
@@ -25610,7 +25616,12 @@ window._handleRTCMessage=function(d){
     var sub=document.getElementById('live-sess-subtitle'); if(sub) sub.textContent = ch.charAt(0).toUpperCase() + ch.slice(1) + ' session with ' + (sess.client_name || 'Client');
     var rateEl=document.getElementById('live-sess-rate'); if(rateEl) rateEl.textContent = money(rate) + '/min';
     var fp=document.getElementById('live-free-period'); if(fp){ fp.style.display = free > 0 ? 'block' : 'none'; if(free > 0) fp.textContent = 'Free period: ' + free + ' min intro included'; }
-    var bill=document.getElementById('live-billing-status'); if(bill) bill.textContent = free > 0 ? 'Client is in free intro time' : (sess.payment_method ? 'Card on file - authorized' : 'Payment pending');
+    var bill=document.getElementById('live-billing-status');
+    if(bill) bill.textContent=typeof window.obSessionExpertBillingLabel==='function'
+      ? window.obSessionExpertBillingLabel(sess,free)
+      : (String(sess.credit_mode || sess.payment_mode || '').toLowerCase()==='prepaid'
+        ? (free > 0 ? 'Client is in free intro time · prepaid credit selected' : 'Prepaid credit selected')
+        : (free > 0 ? 'Client is in free intro time · $5 authorization approved' : (sess.payment_method ? '$5 authorization approved' : 'Payment pending')));
     var sec = Math.max(0, Math.floor(Date.now()/1000) - int(sess.started_at, Math.floor(Date.now()/1000)));
     var billed = billableMinutes(sec, free);
     if(free > 0 && billed <= 0){
@@ -25702,7 +25713,9 @@ window._handleRTCMessage=function(d){
       setAdminPanelContent('dashboard',
         '<div class="admin-kpi-row">' +
         '<div class="admin-kpi"><div class="admin-kpi-label">Total Experts</div><div class="admin-kpi-val">'+int(s.total_experts,0)+'</div></div>' +
-        '<div class="admin-kpi"><div class="admin-kpi-label">Gross Revenue</div><div class="admin-kpi-val">'+money(s.total_revenue||0)+'</div></div>' +
+        '<div class="admin-kpi"><div class="admin-kpi-label">Gross Captured</div><div class="admin-kpi-val">'+money(s.gross_captured_revenue != null ? s.gross_captured_revenue : s.total_revenue)+'</div></div>' +
+        '<div class="admin-kpi"><div class="admin-kpi-label">Refunded</div><div class="admin-kpi-val">'+money(s.refunded_revenue||0)+'</div></div>' +
+        '<div class="admin-kpi"><div class="admin-kpi-label">Net Client Revenue</div><div class="admin-kpi-val">'+money(s.net_revenue != null ? s.net_revenue : s.total_revenue)+'</div></div>' +
         '<div class="admin-kpi"><div class="admin-kpi-label">Platform Revenue</div><div class="admin-kpi-val">'+money(s.platform_fees||0)+'</div></div>' +
         '<div class="admin-kpi"><div class="admin-kpi-label">Active Sessions</div><div class="admin-kpi-val">'+int(s.active_sessions,0)+'</div></div>' +
         '</div>');
@@ -26547,7 +26560,7 @@ window._handleRTCMessage=function(d){
     setText('bk-total', label);
     setText('presess-free', obMinuteText(free,'free'));
     setText('presess-free-mins', obMinuteText(free));
-    setText('presess-payment', typeof window.obCreditPreSessionPaymentLabel === 'function' ? window.obCreditPreSessionPaymentLabel(free) : (free > 0 ? 'Card authorized · after intro' : 'Card authorized.'));
+    setText('presess-payment', typeof window.obCreditPreSessionPaymentLabel === 'function' ? window.obCreditPreSessionPaymentLabel(free) : '$5 temporary authorization approved');
     show('presess-free-row', free > 0);
     show('presess-free-note', free > 0);
     var row = document.getElementById('bk-free-row');
@@ -34080,19 +34093,22 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
       buttonId:'bov-wallet-button',
       errorId:'bov-card-error',
       token:function(){ return token(); },
-      onSuccess:function(pm){
+      onSuccess:async function(pm){
         window._bovPaymentMethodId = pm;
-        localStorage.setItem('ob_hpm','1');
         var btn = document.getElementById('bov-pay-btn');
-        if(btn) btn.textContent = 'Payment authorized ✓';
-        if(typeof window._bovGoStep === 'function') window._bovGoStep(3);
-        var badge = document.getElementById('bov-step-pay-badge');
-        var conn = document.getElementById('bov-step-conn-badge');
-        if(badge){ badge.style.background = '#dcfce7'; badge.style.color = '#166534'; }
-        setTimeout(function(){
-          if(conn){ conn.style.background = '#dcfce7'; conn.style.color = '#166534'; conn.textContent = '✓ Connected'; }
-          setTimeout(function(){ if(typeof window._launchSession === 'function') window._launchSession(true); }, 500);
-        }, 500);
+        var errEl = document.getElementById('bov-card-error');
+        if(btn){ btn.disabled = true; btn.textContent = 'Verifying payment...'; }
+        if(errEl) errEl.style.display = 'none';
+        try {
+          if(typeof window.obAuthorizeSessionHold !== 'function') throw new Error('Session authorization is not ready. Please refresh and try again.');
+          await window.obAuthorizeSessionHold({stripe:stripe,token:token(),expertId:currentExpertId(),channel:(window.selectedChannel && window.selectedChannel.id) || window._obPendingChannel || window.currentBookChannel || 'chat'});
+          localStorage.setItem('ob_hpm','1');
+          if(typeof window.obCompleteSessionAuthorizationUi === 'function') window.obCompleteSessionAuthorizationUi();
+        } catch(err) {
+          if(errEl){ errEl.textContent = (err && err.message) || 'We could not approve the temporary authorization. Try another card or wallet.'; errEl.style.display = 'block'; }
+          if(btn){ btn.disabled = false; btn.textContent = 'Verify payment & Continue \u2192'; }
+          toastLocal((err && err.message) || 'Authorization failed', 'err');
+        }
       }
     });
   };
@@ -45323,7 +45339,9 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
           card('Total experts', num(s.total_experts).toLocaleString(), 'Active now: ' + num(s.active_experts).toLocaleString()) +
           card('Client users', num(s.total_users).toLocaleString(), 'Registered client accounts') +
           card('Active sessions', num(s.active_sessions).toLocaleString(), 'Currently marked active') +
-          card('Gross revenue', money(s.total_revenue), 'Paid ended sessions') +
+          card('Gross captured', money(s.gross_captured_revenue != null ? s.gross_captured_revenue : s.total_revenue), 'Before client refunds') +
+          card('Refunded', money(s.refunded_revenue), 'Returned to clients') +
+          card('Net client revenue', money(s.net_revenue != null ? s.net_revenue : s.total_revenue), 'Gross captured minus refunds') +
           card('Platform fees', money(s.platform_fees), 'Ownlybiz plan/fee share') +
           card('Pending payouts', money(s.pending_payouts), 'Needs Stripe reconciliation') +
           card('Open tickets', num(s.open_tickets).toLocaleString(), 'Support queue') +
@@ -45348,18 +45366,20 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     try {
       var d = await api('/admin/revenue?period=30');
       var s = d.summary || {};
-      var byChannel = (d.by_channel || []).map(function(row){ return '<tr><td>' + esc(row.channel || '-') + '</td><td>' + num(row.sessions).toLocaleString() + '</td><td>' + money(row.revenue) + '</td></tr>'; });
-      var experts = (d.top_experts || []).map(function(row){ return '<tr><td>' + esc(row.name || '-') + '<br><small>' + esc(row.slug || '') + '</small></td><td>' + num(row.sessions).toLocaleString() + '</td><td>' + money(row.revenue) + '</td></tr>'; });
+      var byChannel = (d.by_channel || []).map(function(row){ return '<tr><td>' + esc(row.channel || '-') + '</td><td>' + num(row.sessions).toLocaleString() + '</td><td>' + money(row.revenue) + '</td><td>' + money(row.refunded) + '</td><td>' + money(row.net_revenue != null ? row.net_revenue : row.revenue) + '</td></tr>'; });
+      var experts = (d.top_experts || []).map(function(row){ return '<tr><td>' + esc(row.name || '-') + '<br><small>' + esc(row.slug || '') + '</small></td><td>' + num(row.sessions).toLocaleString() + '</td><td>' + money(row.revenue) + '</td><td>' + money(row.refunded) + '</td><td>' + money(row.net_revenue != null ? row.net_revenue : row.revenue) + '</td></tr>'; });
       setContent('revenue',
-        note('Live 30-day paid-session revenue. Platform fees are the Ownlybiz share; paid to experts is the expert share.') +
+        note('Live 30-day paid-session revenue. Gross captured is before refunds; net client revenue is after refunds. Platform fees and expert payouts are shown after their refund reversals.') +
         '<div class="ob-admin-live-grid">' +
-          card('Gross revenue', money(s.gross), '30 days') +
+          card('Gross captured', money(s.gross_captured != null ? s.gross_captured : s.gross), 'Before refunds') +
+          card('Refunded', money(s.refunded), 'Returned to clients') +
+          card('Net client revenue', money(s.net_revenue != null ? s.net_revenue : (num(s.gross) - num(s.refunded))), 'Gross minus refunds') +
           card('Platform fees', money(s.net), 'Ownlybiz share') +
           card('Paid to experts', money(s.paid_out), 'Expert share') +
           card('Sessions', num(s.sessions).toLocaleString(), 'Ended sessions') +
         '</div><div class="ob-admin-live-two">' +
-          '<div class="admin-card"><div class="admin-card-title">By channel</div>' + table(['Channel','Sessions','Revenue'], byChannel, 'No channel revenue returned.') + '</div>' +
-          '<div class="admin-card"><div class="admin-card-title">Top experts</div>' + table(['Expert','Sessions','Revenue'], experts, 'No expert revenue returned.') + '</div>' +
+          '<div class="admin-card"><div class="admin-card-title">By channel</div>' + table(['Channel','Sessions','Gross','Refunded','Net'], byChannel, 'No channel revenue returned.') + '</div>' +
+          '<div class="admin-card"><div class="admin-card-title">Top experts</div>' + table(['Expert','Sessions','Gross','Refunded','Net'], experts, 'No expert revenue returned.') + '</div>' +
         '</div>');
     } catch(err) { setContent('revenue', errorBox(err)); }
   }
@@ -46461,7 +46481,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     }
     var baseLabel = typeof window.obCreditPreSessionPaymentLabel === 'function'
       ? window.obCreditPreSessionPaymentLabel(free)
-      : (free > 0 ? 'Card authorized · after intro' : 'Card authorized');
+      : '$5 temporary authorization approved';
     if(free <= 0 && (alreadyUsed || configured > 0) && baseLabel.indexOf('from minute one') === -1) {
       baseLabel += ' · from minute one';
     }
@@ -60937,7 +60957,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     var connectTitle = document.getElementById('bov-connect-title');
     if(connectTitle) connectTitle.textContent = 'Connecting you to ' + name + '...';
     var payExplainer = document.getElementById('bov-pay-explainer');
-    if(payExplainer) payExplainer.textContent = 'Add a card or eligible wallet to start your session with ' + name + '. You will only be charged after the session for exact time used.';
+    if(payExplainer && typeof window.obSetPayPerMinuteDisclosure === 'function') window.obSetPayPerMinuteDisclosure(payExplainer, name);
     var receiptType = document.getElementById('receipt-session-type');
     if(receiptType) receiptType.textContent = label + ' with ' + name;
     var presessName = document.getElementById('presess-expert-name');
@@ -62519,6 +62539,1042 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
 
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',initialize,{once:true});
   else initialize();
+})();
+</script>
+
+<style id="ownlybiz-pay-per-minute-authorization-20260814-css">
+  #bov-pay-explainer strong{display:block;margin-bottom:3px;color:var(--brown)}
+  #bov-card-error[role="alert"]{line-height:1.5}
+  #ob-booking-session-authorization{
+    margin:0 0 18px;padding:14px 16px;border:1px solid rgba(122,140,110,.25);border-radius:12px;
+    background:rgba(122,140,110,.08);color:var(--brown);font-size:13px;line-height:1.55
+  }
+  #ob-booking-session-authorization strong{display:block;margin-bottom:4px}
+  #ob-booking-session-authorization .ob-booking-auth-copy{color:var(--gray-500)}
+  #ob-booking-session-authorization .ob-booking-auth-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+  #ob-booking-session-authorization .ob-booking-auth-actions .btn{flex:1 1 160px;min-height:44px}
+  #ob-booking-session-authorization .ob-booking-auth-error{display:none;margin-top:10px;color:#b91c1c;font-weight:700}
+  #ob-booking-session-authorization .ob-booking-auth-success{color:#166534;font-weight:800}
+  #ob-booking-auth-card-wrap{display:none;margin-top:12px;padding-top:12px;border-top:1px solid rgba(122,140,110,.2)}
+  #ob-booking-auth-card-element{min-height:48px;padding:4px 10px;border:1.5px solid var(--gray-200);border-radius:10px;background:#fff}
+  #screen-A5.ob-payment-failed .receipt-icon{background:rgba(239,68,68,.1);color:#b91c1c}
+  #screen-A5.ob-payment-failed .receipt-title{color:#b91c1c}
+  #screen-A5.ob-payment-partial .receipt-icon{background:rgba(245,158,11,.12);color:#b45309}
+  #screen-A5 .ob-receipt-payment-status-row span:last-child{font-weight:800}
+  #view-3 .ob-client-activity-row.ob-payment-failed-row{background:rgba(239,68,68,.035)}
+  #bov-connect-steps{flex-wrap:wrap}
+  #booking-join-overlay{overflow-y:auto;-webkit-overflow-scrolling:touch;align-items:flex-start!important}
+  #booking-join-overlay>div{max-height:calc(100dvh - 40px);overflow-y:auto;-webkit-overflow-scrolling:touch;margin:auto}
+  #ob-booking-session-authorization button:focus-visible,.ob-booking-selected-close:focus-visible{outline:3px solid rgba(196,98,45,.35);outline-offset:2px}
+  body.ob-public-site-dark #ob-booking-session-authorization{
+    background:rgba(255,255,255,.045);border-color:rgba(255,255,255,.14);color:var(--text-primary,#f6f1e9)
+  }
+  body.ob-public-site-dark #ob-booking-session-authorization .ob-booking-auth-copy{color:var(--text-muted,rgba(246,241,233,.65))}
+  @media(max-width:640px){
+    #ob-booking-session-authorization{padding:13px 14px}
+    #ob-booking-session-authorization .ob-booking-auth-actions{display:grid;grid-template-columns:1fr}
+    #bov-connect-steps{display:grid!important;grid-template-columns:1fr;justify-items:stretch}
+    #bov-connect-steps>div{text-align:center;white-space:normal}
+    #booking-join-overlay{padding:12px!important}
+    #booking-join-overlay>div{max-height:calc(100dvh - 24px);padding:22px!important}
+  }
+</style>
+<script id="ownlybiz-pay-per-minute-authorization-20260814-js">
+(function(){
+  'use strict';
+  if(window.__obPayPerMinuteAuthorization20260814) return;
+  window.__obPayPerMinuteAuthorization20260814 = true;
+
+  var BASE = (window.OWNLYBIZ_API_URL || window._OB_BACKEND || 'https://victorious-wisdom-production-a6b0.up.railway.app').replace(/\/+$/,'');
+  var DISCLOSURE_TITLE = 'Pay only for the time you use.';
+  var DISCLOSURE_BODY = 'A temporary $5 authorization may appear to confirm your payment method. Any unused amount is released after the session; your bank may show it as pending briefly.';
+  var state = {
+    phase:'idle', context:'', requestId:'', paymentIntentId:'', clientSecret:'', amount:5,
+    expertId:'', marketplaceExpertId:'', channel:'chat', bookingId:'', inFlight:null, abandoned:false, lastError:'',recoveryAction:'authorization',cancellationSessionId:''
+  };
+  window.obSessionAuthorizationState = state;
+
+  function authToken(explicit){
+    return explicit || sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || localStorage.getItem('ob_client_token') || '';
+  }
+  function currentExpertId(){
+    return (window._currentExpert && (window._currentExpert.user_id || window._currentExpert.id)) || window._currentExpertId || '';
+  }
+  function currentChannel(){
+    return ((window.selectedChannel && window.selectedChannel.id) || window._obPendingChannel || window.currentBookChannel || 'chat').toLowerCase();
+  }
+  function currentMarketplaceExpertId(){
+    if(typeof window.obMarketplaceSelectedId !== 'function') return '';
+    return String(window.obMarketplaceSelectedId() || '');
+  }
+  function uuid(){
+    if(window.crypto && typeof window.crypto.randomUUID === 'function') return window.crypto.randomUUID();
+    var bytes = new Uint8Array(16);
+    if(window.crypto && typeof window.crypto.getRandomValues === 'function') window.crypto.getRandomValues(bytes);
+    else for(var i=0;i<bytes.length;i++) bytes[i]=Math.floor(Math.random()*256);
+    bytes[6]=(bytes[6]&15)|64;
+    bytes[8]=(bytes[8]&63)|128;
+    var hex=Array.prototype.map.call(bytes,function(value){return value.toString(16).padStart(2,'0');}).join('');
+    return hex.slice(0,8)+'-'+hex.slice(8,12)+'-'+hex.slice(12,16)+'-'+hex.slice(16,20)+'-'+hex.slice(20);
+  }
+  function contextKey(opts){
+    return opts.bookingId
+      ? 'booking:' + opts.bookingId
+      : 'live:' + opts.expertId + ':' + (opts.marketplaceExpertId || 'owner') + ':' + opts.channel;
+  }
+  function paymentMode(){
+    var mode = typeof window.obCreditCurrentSessionRequestMode === 'function'
+      ? window.obCreditCurrentSessionRequestMode()
+      : (window._obSelectedPaymentMode || window._obActiveSessionCreditMode || 'minute');
+    return String(mode || '').toLowerCase() === 'prepaid' ? 'prepaid' : 'minute';
+  }
+  function expertBillingLabel(sess,free){
+    sess=sess||{};free=Math.max(0,Number(free||0));
+    var prepaid=String(sess.credit_mode||sess.payment_mode||'').toLowerCase()==='prepaid';
+    if(prepaid)return free>0?'Client is in free intro time · prepaid credit selected':'Prepaid credit selected';
+    if(free>0)return 'Client is in free intro time · $5 authorization approved';
+    var authorized=!!(sess.payment_authorization_id||sess.authorization_request_id||sess.stripe_pi_id||sess.authorization_payment_intent_id)
+      ||Number(sess.authorized_amount||sess.amount_authorized||0)>0
+      ||!!sess.payment_method;
+    return authorized?'$5 authorization approved':'Payment pending';
+  }
+  window.obSessionExpertBillingLabel=expertBillingLabel;
+  function isReadyFor(opts){
+    return state.phase === 'ready' && state.paymentIntentId && state.requestId && state.context === contextKey(opts);
+  }
+  function snapshot(){
+    return {
+      payment_intent_id:state.paymentIntentId,
+      authorization_payment_intent_id:state.paymentIntentId,
+      authorization_request_id:state.requestId,
+      marketplace_expert_id:state.marketplaceExpertId || null,
+      amount_authorized:state.amount,
+      status:state.phase
+    };
+  }
+  window.obGetSessionAuthorizationForRequest = function(expertId,channel){
+    var opts={
+      expertId:String(expertId||currentExpertId()),
+      marketplaceExpertId:currentMarketplaceExpertId(),
+      channel:String(channel||currentChannel()).toLowerCase(),
+      bookingId:''
+    };
+    if(!isReadyFor(opts)) return null;
+    state.phase='binding';
+    rememberState();
+    return snapshot();
+  };
+  window.obMarkSessionAuthorizationBound = function(sessionId){
+    if(state.phase==='binding'||state.phase==='ready'){
+      state.phase='bound';
+      state.recoveryAction='session';
+      state.cancellationSessionId=String(sessionId||'');
+      rememberState();
+    }
+  };
+  window.obHandleSessionAuthorizationRequestFailure = function(code,httpStatus){
+    code=String(code||'').toLowerCase();
+    var authorizationWasReleased=code.indexOf('session_authorization_')===0
+      ||code==='expert_busy'
+      ||code==='expert_request_pending'
+      ||code==='client_live_session_exists';
+    if(authorizationWasReleased||Number(httpStatus)===401||Number(httpStatus)===403){
+      if(state.paymentIntentId&&state.requestId) cancelAuthorization('session_request_rejected');
+      else resetState();
+      return;
+    }
+    if(state.paymentIntentId&&state.requestId){state.phase='ready';rememberState();}
+  };
+  function resetState(){
+    state.phase='idle'; state.context=''; state.requestId=''; state.paymentIntentId=''; state.clientSecret='';
+    state.amount=5; state.expertId=''; state.marketplaceExpertId=''; state.channel='chat'; state.bookingId=''; state.inFlight=null;
+    state.abandoned=false; state.lastError=''; state.recoveryAction='authorization'; state.cancellationSessionId='';
+    try{ sessionStorage.removeItem('ob_live_authorization'); }catch(e){}
+  }
+  window.obReleaseLocalSessionAuthorization = resetState;
+  function rememberState(){
+    try{
+      sessionStorage.setItem('ob_live_authorization', JSON.stringify({
+        context:state.context, requestId:state.requestId, paymentIntentId:state.paymentIntentId,
+        amount:state.amount, expertId:state.expertId, marketplaceExpertId:state.marketplaceExpertId,
+        channel:state.channel, bookingId:state.bookingId,
+        phase:state.phase, recoveryAction:state.recoveryAction, cancellationSessionId:state.cancellationSessionId, savedAt:Date.now()
+      }));
+    }catch(e){}
+  }
+  function restoreState(){
+    try{
+      var saved=JSON.parse(sessionStorage.getItem('ob_live_authorization')||'null');
+      if(!saved||!saved.savedAt||Date.now()-Number(saved.savedAt)>30*60*1000){
+        sessionStorage.removeItem('ob_live_authorization');
+        return;
+      }
+      state.context=String(saved.context||'');
+      state.requestId=String(saved.requestId||'');
+      state.paymentIntentId=String(saved.paymentIntentId||'');
+      state.amount=Number(saved.amount||5)||5;
+      state.expertId=String(saved.expertId||'');
+      state.marketplaceExpertId=String(saved.marketplaceExpertId||'');
+      state.channel=String(saved.channel||'chat');
+      state.bookingId=String(saved.bookingId||'');
+      state.recoveryAction=saved.recoveryAction==='session'?'session':'authorization';
+      state.cancellationSessionId=String(saved.cancellationSessionId||'');
+      if(state.paymentIntentId&&state.requestId&&String(saved.phase||'')==='bound'&&state.cancellationSessionId){
+        state.phase='bound';
+        state.lastError='';
+        state.recoveryAction='session';
+      }else if(state.paymentIntentId&&state.requestId&&String(saved.phase||'')==='binding'&&!state.cancellationSessionId){
+        // The deterministic authorization request id is also the session id. A reload
+        // before the request response is safe to retry; the backend returns the same
+        // pending/active session instead of consuming the hold twice.
+        state.phase='ready';
+        state.lastError='';
+        state.recoveryAction='authorization';
+      }else if(state.paymentIntentId&&state.requestId&&String(saved.phase||'')==='bound'&&state.bookingId){
+        // A confirmed scheduled-booking bind is already durable on the server. Do not
+        // let its local controller state block an unrelated immediate live session.
+        resetState();
+      }else if(state.paymentIntentId&&state.requestId){
+        state.phase='cancel_retry';
+        state.lastError='A previous temporary authorization still needs a release confirmation before you continue.';
+      }else if(String(saved.phase||'')==='retryable'&&state.requestId){
+        state.phase='retryable';
+        state.lastError='Your last payment confirmation was interrupted. Try again to continue safely.';
+      }else resetState();
+    }catch(e){resetState();}
+  }
+  function friendlyError(err){
+    var raw = String((err && err.message) || err || '').trim();
+    var code = String((err && (err.code || err.decline_code)) || '').toLowerCase();
+    var hay = (code + ' ' + raw).toLowerCase();
+    if(/declin|do_not_honor|insufficient|lost_card|stolen_card/.test(hay)) return 'This payment method could not approve the temporary $5 authorization. Try another card or wallet, or contact your bank.';
+    if(/authentication|3d secure|3ds/.test(hay)) return 'Please complete your bank\'s verification to approve the temporary $5 authorization.';
+    if(/network|fetch|offline|timed out|timeout/.test(hay)) return 'We could not reach the payment service. Check your connection and try again; a duplicate authorization will not be created.';
+    return raw || 'We could not approve the temporary $5 authorization. Try another card or wallet.';
+  }
+  async function responseJson(response){
+    return response.json().catch(function(){ return {}; });
+  }
+  function renderCancellationRecovery(){
+    var error=document.getElementById('bov-card-error');
+    if(!error||state.phase!=='cancel_retry') return;
+    error.replaceChildren(document.createTextNode(state.lastError||'We could not confirm the release yet.'));
+    var retry=document.createElement('button');
+    retry.type='button'; retry.id='ob-authorization-release-retry'; retry.className='btn btn-secondary';
+    retry.textContent='Retry release';
+    retry.style.cssText='display:block;width:100%;min-height:44px;margin-top:10px;';
+    retry.addEventListener('click',retryCancellationRecovery);
+    error.appendChild(retry); error.style.display='block'; error.setAttribute('role','alert');
+  }
+  function retryCancellationRecovery(){
+    if(state.recoveryAction==='session')return window.obCancelPendingSession('retry_session_cancellation');
+    return window.obRetrySessionAuthorizationCancellation();
+  }
+  async function cancelAuthorization(reason, options){
+    options = options || {};
+    if(!state.paymentIntentId || !state.requestId || state.phase === 'bound'){
+      if(state.phase !== 'bound') resetState();
+      return {confirmed:state.phase!=='bound',bound:state.phase==='bound'};
+    }
+    var payload = {payment_intent_id:state.paymentIntentId, authorization_request_id:state.requestId, reason:reason || 'client_abandoned'};
+    var headers = {'Content-Type':'application/json'};
+    var tok = authToken(options.token);
+    if(tok) headers.Authorization = 'Bearer ' + tok;
+    state.phase = 'cancelling';
+    rememberState();
+    try{
+      var response=await fetch(BASE + '/api/payments/authorize/cancel', {
+        method:'POST', headers:headers, body:JSON.stringify(payload), keepalive:!!options.keepalive
+      });
+      var data=await responseJson(response);
+      if(!response.ok) throw new Error(data.error||data.message||'Release confirmation was not received.');
+      resetState();
+      return {confirmed:true,data:data};
+    }catch(e){
+      state.phase='cancel_retry';
+      state.recoveryAction='authorization';
+      state.cancellationSessionId='';
+      state.lastError='We could not confirm the release yet. Your authorization details are kept so you can retry safely.';
+      rememberState();
+      if(!options.bestEffort) renderCancellationRecovery();
+      return {confirmed:false,error:e};
+    }
+  }
+  window.obCancelSessionAuthorization = cancelAuthorization;
+  window.obRetrySessionAuthorizationCancellation=async function(){
+    var button=document.getElementById('ob-authorization-release-retry');
+    if(button){button.disabled=true;button.textContent='Confirming release...';}
+    var result=await cancelAuthorization('retry_release_confirmation');
+    if(result&&result.confirmed){
+      syncPaymentCopy();
+      if(bookingIdFromUrl()) enhanceBookingJoinOverlay({focus:true,force:true});
+    }else renderCancellationRecovery();
+    return result;
+  };
+  var localCancelWait = window.obCancelWait;
+  window.obCancelPendingSession = async function(reason){
+    cancelPendingMainLaunch();
+    var sid=String(window._obPendingSessId || window._pendingSid || window._sessId || state.cancellationSessionId || '').trim();
+    if(typeof localCancelWait==='function') localCancelWait();
+    window._obPendingSessId=null;window._pendingSid=null;
+    if(!sid){
+      if(state.phase==='ready'||state.phase==='cancel_retry') await cancelAuthorization(reason||'client_cancelled');
+      else resetState();
+      return;
+    }
+    try{
+      var response=await fetch(BASE+'/api/sessions/'+encodeURIComponent(sid)+'/decline',{
+        method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+authToken()},body:'{}',keepalive:true
+      });
+      var data=await responseJson(response);
+      if(!response.ok) throw new Error(data.error||'Cancellation was not confirmed.');
+      window._sessId=null;
+      resetState();
+    }catch(e){
+      state.phase='cancel_retry';
+      state.recoveryAction='session';
+      state.cancellationSessionId=sid;
+      state.lastError='We could not confirm cancellation yet. Your payment authorization is preserved so you can retry safely.';
+      rememberState(); renderCancellationRecovery();
+    }
+  };
+
+  async function createOrConfirmAuthorization(options){
+    options = options || {};
+    var opts = {
+      expertId:String(options.expertId || currentExpertId()),
+      marketplaceExpertId:String(options.marketplaceExpertId || (!options.bookingId ? currentMarketplaceExpertId() : '')),
+      channel:String(options.channel || currentChannel()).toLowerCase(),
+      bookingId:String(options.bookingId || ''),
+      token:authToken(options.token),
+      stripe:options.stripe || null
+    };
+    if(!opts.token) throw new Error('Please sign in before confirming your payment method.');
+    if(!opts.expertId) throw new Error('The expert could not be identified. Please refresh and try again.');
+    if(!/^(chat|voice|video)$/.test(opts.channel)) opts.channel = 'chat';
+    var nextContext = contextKey(opts);
+    if(isReadyFor(opts)) return snapshot();
+    if(state.phase==='cancel_retry') throw new Error('Release the previous temporary authorization before starting another payment confirmation.');
+    if(state.phase === 'bound') throw new Error('A payment authorization is already linked to a pending or active session. Finish or cancel that session first.');
+    if(state.inFlight && state.context === nextContext) return state.inFlight;
+    if(state.paymentIntentId && state.context && state.context !== nextContext){
+      var released=await cancelAuthorization('replaced_before_session');
+      if(!released||!released.confirmed) throw new Error('Release the previous temporary authorization before continuing.');
+    }
+
+    state.context = nextContext;
+    state.expertId = opts.expertId;
+    state.marketplaceExpertId = opts.marketplaceExpertId;
+    state.channel = opts.channel;
+    state.bookingId = opts.bookingId;
+    state.requestId = state.requestId || uuid();
+    state.phase = 'creating';
+    state.lastError = '';
+    state.recoveryAction='authorization';state.cancellationSessionId='';
+
+    state.inFlight = (async function(){
+      var headers = {'Content-Type':'application/json','Authorization':'Bearer ' + opts.token};
+      var body = {expert_id:opts.expertId, channel:opts.channel, authorization_request_id:state.requestId};
+      if(opts.bookingId) body.booking_id = opts.bookingId;
+      else if(opts.marketplaceExpertId) body.marketplace_expert_id = opts.marketplaceExpertId;
+      var response;
+      try{
+        response = await fetch(BASE + '/api/payments/authorize', {method:'POST',headers:headers,body:JSON.stringify(body)});
+      }catch(networkError){
+        networkError._obNetwork = true;
+        throw networkError;
+      }
+      var data = await responseJson(response);
+      if(!response.ok) {
+        var apiError = new Error(data.error || data.message || 'Authorization was not approved.');
+        apiError.code = data.code || data.decline_code || '';
+        throw apiError;
+      }
+      state.paymentIntentId = data.payment_intent_id || data.authorization_payment_intent_id || '';
+      state.clientSecret = data.client_secret || '';
+      state.amount = Number(data.amount_authorized || (Number(data.amount_authorized_cents || 500) / 100)) || 5;
+      state.requestId = data.authorization_request_id || state.requestId;
+      var status = String(data.status || '').toLowerCase();
+      if(status !== 'requires_capture'){
+        var stripe = opts.stripe || (data.publishable_key && window.Stripe ? window.Stripe(data.publishable_key) : null);
+        if(!stripe || !state.clientSecret) throw new Error('Secure card confirmation is unavailable. Please refresh and try again.');
+        var result = await stripe.confirmCardPayment(state.clientSecret);
+        if(result && result.error) {
+          var stripeError = new Error(result.error.message || 'Authorization was not approved.');
+          stripeError.code = result.error.code || result.error.decline_code || '';
+          throw stripeError;
+        }
+        var intent = result && result.paymentIntent;
+        state.paymentIntentId = (intent && intent.id) || state.paymentIntentId;
+        status = String(intent && intent.status || '').toLowerCase();
+      }
+      if(status !== 'requires_capture') throw new Error('The temporary authorization was not completed. Please try another payment method.');
+      state.phase = 'ready';
+      rememberState();
+      if(state.abandoned){
+        await cancelAuthorization('closed_during_authorization');
+        throw new Error('The payment window was closed. Start again when you are ready.');
+      }
+      return snapshot();
+    })();
+
+    try{
+      return await state.inFlight;
+    }catch(err){
+      state.lastError = friendlyError(err);
+      state.inFlight = null;
+      if(err && err._obNetwork){
+        state.phase = 'retryable';
+        rememberState();
+      }else{
+        var failedIntent = state.paymentIntentId;
+        var failedRequest = state.requestId;
+        if(failedIntent && failedRequest){
+          state.phase = 'ready';
+          await cancelAuthorization('authorization_failed');
+        }else resetState();
+      }
+      var finalError=new Error(friendlyError(err));
+      finalError.code=err&&err.code||'';
+      throw finalError;
+    }finally{
+      state.inFlight = null;
+    }
+  }
+  window.obAuthorizeSessionHold = createOrConfirmAuthorization;
+
+  var savedPayment={loaded:false,loading:null,available:false,useSaved:false,expertId:'',mode:'',requestSeq:0};
+  function ensureSavedPaymentUi(){
+    var step=document.getElementById('bov-step2');
+    var label=document.getElementById('bov-card-label');
+    if(!step||!label) return null;
+    var panel=document.getElementById('ob-saved-payment-option');
+    if(!panel){
+      panel=document.createElement('div'); panel.id='ob-saved-payment-option'; panel.setAttribute('role','status');
+      panel.style.cssText='display:none;margin:0 0 16px;padding:12px 14px;border:1px solid rgba(122,140,110,.25);border-radius:10px;background:rgba(122,140,110,.08);font-size:12px;line-height:1.5;';
+      var copy=document.createElement('span'); copy.textContent='Your saved payment method is ready for this confirmation. ';
+      var change=document.createElement('button'); change.type='button'; change.id='ob-use-different-live-card';
+      change.textContent='Use a different card';
+      change.style.cssText='border:0;background:transparent;padding:6px 2px;min-height:44px;color:var(--terra);font:inherit;font-weight:800;text-decoration:underline;cursor:pointer;touch-action:manipulation;';
+      change.addEventListener('click',function(){setUseSavedPayment(false,true);});
+      panel.append(copy,change); step.insertBefore(panel,label);
+    }
+    return panel;
+  }
+  function setUseSavedPayment(useSaved,focusCard){
+    savedPayment.useSaved=!!useSaved&&savedPayment.available;
+    var panel=ensureSavedPaymentUi();
+    var label=document.getElementById('bov-card-label');
+    var card=document.getElementById('bov-card-element');
+    var wallet=document.getElementById('bov-wallet-section');
+    if(panel) panel.style.display=savedPayment.useSaved?'block':'none';
+    if(label) label.style.display=savedPayment.useSaved?'none':'block';
+    if(card) card.style.display=savedPayment.useSaved?'none':'block';
+    if(wallet&&savedPayment.useSaved) wallet.style.display='none';
+    var button=document.getElementById('bov-pay-btn');
+    if(button&&!button.disabled) button.textContent=savedPayment.useSaved?'Verify saved payment & Continue \u2192':'Verify payment & Continue \u2192';
+    if(focusCard&&!savedPayment.useSaved){
+      setTimeout(function(){
+        if(window._bovCardElement&&typeof window._bovCardElement.focus==='function') window._bovCardElement.focus();
+        else if(card) card.focus();
+      },40);
+    }
+  }
+  async function refreshSavedPaymentStatus(force,explicitExpertId){
+    var tok=authToken();
+    if(!tok) return false;
+    var expertId=String(explicitExpertId||currentExpertId()||'');
+    if(!expertId){savedPayment.available=false;savedPayment.useSaved=false;setUseSavedPayment(false);return false;}
+    if(savedPayment.expertId!==expertId){
+      savedPayment.loaded=false;savedPayment.loading=null;savedPayment.available=false;savedPayment.useSaved=false;savedPayment.mode='';savedPayment.expertId=expertId;
+    }
+    if(savedPayment.loading) return savedPayment.loading;
+    if(savedPayment.loaded&&!force) return savedPayment.available;
+    var requestSeq=++savedPayment.requestSeq;
+    savedPayment.loading=fetch(BASE+'/api/payments/methods/status'+(expertId?'?expert_id='+encodeURIComponent(expertId):''),{headers:{Authorization:'Bearer '+tok}})
+      .then(async function(response){
+        var data=await responseJson(response);
+        if(savedPayment.expertId!==expertId||savedPayment.requestSeq!==requestSeq)return false;
+        savedPayment.loaded=true;
+        savedPayment.mode=String(data.mode||'');
+        savedPayment.available=!!(response.ok&&data.has_saved_payment_method===true);
+        setUseSavedPayment(savedPayment.available);
+        return savedPayment.available;
+      }).catch(function(){if(savedPayment.expertId===expertId&&savedPayment.requestSeq===requestSeq){savedPayment.loaded=true;savedPayment.available=false;setUseSavedPayment(false);}return false;})
+      .finally(function(){if(savedPayment.requestSeq===requestSeq)savedPayment.loading=null;});
+    return savedPayment.loading;
+  }
+  window.obUseDifferentSessionCard=function(){setUseSavedPayment(false,true);};
+
+  function syncPaymentCopy(){
+    var title = document.getElementById('bov-pay-title');
+    var explainer = document.getElementById('bov-pay-explainer');
+    var button = document.getElementById('bov-pay-btn');
+    var error = document.getElementById('bov-card-error');
+    if(title) title.textContent = 'Confirm payment method';
+    if(explainer){
+      if(typeof window.obSetPayPerMinuteDisclosure==='function') window.obSetPayPerMinuteDisclosure(explainer,'');
+      else explainer.textContent=DISCLOSURE_TITLE+' '+DISCLOSURE_BODY;
+      explainer.setAttribute('role','note'); explainer.setAttribute('aria-live','polite');
+    }
+    if(button && !button.disabled) button.textContent = savedPayment.useSaved?'Verify saved payment & Continue \u2192':'Verify payment & Continue \u2192';
+    if(error) error.setAttribute('role','alert');
+    ensureSavedPaymentUi();
+    if(state.phase==='cancel_retry') renderCancellationRecovery();
+    else{
+      var recovery=document.getElementById('ob-authorization-release-retry');
+      if(recovery&&error){error.replaceChildren();error.style.display='none';}
+      refreshSavedPaymentStatus(false);
+    }
+  }
+  var mainLaunchTimers=[];
+  function cancelPendingMainLaunch(){
+    while(mainLaunchTimers.length) clearTimeout(mainLaunchTimers.pop());
+  }
+  window.obCancelPendingMainAuthorizationLaunch=cancelPendingMainLaunch;
+  function focusElement(element){
+    if(element&&typeof element.focus==='function') setTimeout(function(){try{element.focus({preventScroll:true});}catch(e){element.focus();}},0);
+  }
+  function completeMainAuthorizationUi(){
+    cancelPendingMainLaunch();
+    var button = document.getElementById('bov-pay-btn');
+    var badge = document.getElementById('bov-step-pay-badge');
+    var conn = document.getElementById('bov-step-conn-badge');
+    var title = document.getElementById('bov-connect-title');
+    var sub = document.getElementById('bov-connect-sub');
+    if(button){ button.disabled = true; button.textContent = '$5 authorization approved \u2713'; }
+    if(badge){ badge.textContent = '\u2713 $5 authorization approved'; badge.style.background='#dcfce7'; badge.style.color='#166534'; }
+    if(title) title.textContent = 'Payment method confirmed';
+    if(sub) sub.textContent = 'Only your actual session time will be charged.';
+    if(typeof window._bovGoStep === 'function') window._bovGoStep(3);
+    focusElement(title);
+    mainLaunchTimers.push(setTimeout(function(){
+      if(state.abandoned||state.phase!=='ready') return;
+      if(conn){ conn.style.background='#dcfce7'; conn.style.color='#166534'; conn.textContent='\u2713 Ready'; }
+      mainLaunchTimers.push(setTimeout(function(){
+        if(state.abandoned||state.phase!=='ready') return;
+        if(typeof window._launchSession === 'function') window._launchSession(true);
+        focusElement(document.getElementById('presess-begin-btn')||document.getElementById('presess-title'));
+      },450));
+    },350));
+  }
+  window.obCompleteSessionAuthorizationUi = completeMainAuthorizationUi;
+
+  var mainFlowPromise = null;
+  window.bovAuthorize = async function(){
+    if(mainFlowPromise) return mainFlowPromise;
+    state.abandoned=false;
+    var button = document.getElementById('bov-pay-btn');
+    var error = document.getElementById('bov-card-error');
+    syncPaymentCopy();
+    if(button){ button.disabled=true; button.textContent=savedPayment.useSaved?'Verifying saved payment...':'Saving payment method...'; }
+    if(error){ error.style.display='none'; error.textContent=''; }
+    mainFlowPromise = (async function(){
+      var tok = authToken();
+      var expertId = currentExpertId();
+      if(!tok) throw new Error('Please sign in before confirming your payment method.');
+      await refreshSavedPaymentStatus(false,expertId);
+      var configResponse = await fetch(BASE + '/api/payments/config' + (expertId ? '?expert_id=' + encodeURIComponent(expertId) : ''));
+      var config = await responseJson(configResponse);
+      if(!configResponse.ok || !config.publishable_key) throw new Error(config.error || 'Payment is temporarily unavailable. Please try again shortly.');
+      var stripe = window._bovStripe || (window.Stripe && window.Stripe(config.publishable_key));
+      var card = window._bovCardElement;
+      if(!stripe || (!savedPayment.useSaved&&!card)) throw new Error('The secure card form is still loading. Wait a moment and try again.');
+
+      if(!savedPayment.useSaved){
+        var setupResponse = await fetch(BASE + '/api/payments/methods/setup', {
+          method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer ' + tok},
+          body:JSON.stringify({expert_id:expertId})
+        });
+        var setup = await responseJson(setupResponse);
+        if(!setupResponse.ok || !setup.client_secret) throw new Error(setup.error || 'Could not securely save this payment method.');
+        var setupResult = await stripe.confirmCardSetup(setup.client_secret, {payment_method:{card:card}});
+        if(setupResult && setupResult.error){
+          var setupError = new Error(setupResult.error.message || 'Could not save this payment method.');
+          setupError.code = setupResult.error.code || '';
+          throw setupError;
+        }
+        var pm = setupResult && setupResult.setupIntent && setupResult.setupIntent.payment_method;
+        if(pm && typeof pm === 'object') pm = pm.id;
+        if(!pm) throw new Error('The payment method was not returned. Please try again.');
+        window._bovPaymentMethodId = pm;
+        if(typeof window._obSaveDefaultPaymentMethod !== 'function') throw new Error('Could not finish saving this payment method. Please refresh and try again.');
+        await window._obSaveDefaultPaymentMethod(pm, tok, {expert_id:expertId,stripe_mode:setup.mode});
+        savedPayment.loaded=true;savedPayment.available=true;savedPayment.useSaved=true;
+      }
+      if(button) button.textContent='Verifying payment...';
+      await createOrConfirmAuthorization({stripe:stripe,token:tok,expertId:expertId,channel:currentChannel()});
+      localStorage.setItem('ob_hpm','1');
+      completeMainAuthorizationUi();
+    })();
+    try{
+      return await mainFlowPromise;
+    }catch(err){
+      var message = friendlyError(err);
+      if(savedPayment.useSaved&&(/payment.method|client_payment_method_missing/i.test(String(err&&err.code||'')+' '+message))){
+        savedPayment.available=false; setUseSavedPayment(false,true);
+        message='That saved payment method is no longer available. Enter another card to continue.';
+      }
+      if(state.phase==='cancel_retry') renderCancellationRecovery();
+      else if(error){ error.textContent=message; error.style.display='block'; }
+      if(button){ button.disabled=false; button.textContent=savedPayment.useSaved?'Verify saved payment & Continue \u2192':'Verify payment & Continue \u2192'; }
+      if(typeof window._showToast === 'function') window._showToast(message,'red');
+      else if(typeof window.toast === 'function') window.toast(message,'err');
+    }finally{
+      mainFlowPromise = null;
+    }
+  };
+
+  var originalGoStep = window._bovGoStep;
+  if(typeof originalGoStep === 'function'){
+    window._bovGoStep = function(n){
+      var result = originalGoStep.apply(this,arguments);
+      if(Number(n) === 2) syncPaymentCopy();
+      return result;
+    };
+  }
+  var originalRefreshPage = window._refreshPublicPage;
+  if(typeof originalRefreshPage === 'function'){
+    window._refreshPublicPage = function(){
+      var result = originalRefreshPage.apply(this,arguments);
+      syncPaymentCopy();
+      return result;
+    };
+  }
+  var originalPaymentLabel = window.obCreditPreSessionPaymentLabel;
+  window.obCreditPreSessionPaymentLabel = function(freeMinutes){
+    var mode = paymentMode();
+    if(mode === 'prepaid' && typeof originalPaymentLabel === 'function') return originalPaymentLabel(freeMinutes);
+    var promo = window._obSessionPromoCode || '';
+    if(state.phase === 'ready' || state.phase === 'binding' || state.phase === 'bound') return '$5 temporary authorization approved' + (promo ? ' \u00b7 promo ' + promo : '');
+    return 'Payment authorization required';
+  };
+
+  var priorBegin = window._beginSession;
+  if(typeof priorBegin === 'function'){
+    window._beginSession = function(){
+      if(paymentMode() !== 'prepaid' && !isReadyFor({expertId:currentExpertId(),channel:currentChannel(),bookingId:''})){
+        window._userClickedBegin = false;
+        var message = 'Please approve the temporary $5 authorization before requesting the session.';
+        if(typeof window.toast === 'function') window.toast(message,'err');
+        else alert(message);
+        return;
+      }
+      return priorBegin.apply(this,arguments);
+    };
+  }
+
+  document.addEventListener('click',function(event){
+    var bookingOverlay=document.getElementById('booking-overlay');
+    var isBookingBackdrop=!!bookingOverlay && event.target===bookingOverlay;
+    var target = event.target && event.target.closest ? event.target.closest('button,a') : null;
+    if(!target&&!isBookingBackdrop) return;
+    var isBookingClose = !!target && !!target.closest('#booking-overlay') && target.classList.contains('ob-booking-selected-close');
+    var isPreSessionBack = !!target && !!target.closest('#screen-PRESESS') && /cancel|back to booking/i.test(target.textContent || '');
+    if(!isBookingBackdrop&&!isBookingClose&&!isPreSessionBack) return;
+    cancelPendingMainLaunch(); state.abandoned=true;
+    if(mainFlowPromise||state.phase === 'creating' || state.phase === 'retryable') state.abandoned=true;
+    else if(state.phase === 'ready'||state.phase==='cancel_retry') cancelAuthorization('client_abandoned');
+  },true);
+  document.addEventListener('keydown',function(event){
+    if(event.key!=='Escape') return;
+    var overlay=document.getElementById('booking-overlay');
+    if(!overlay||getComputedStyle(overlay).display==='none') return;
+    cancelPendingMainLaunch(); state.abandoned=true;
+    if(mainFlowPromise||state.phase==='creating'||state.phase==='retryable')state.abandoned=true;
+    else if(state.phase==='ready'||state.phase==='cancel_retry')cancelAuthorization('client_abandoned');
+    if(typeof window.closeBookingOverlay==='function')window.closeBookingOverlay();
+  },true);
+  window.addEventListener('pagehide',function(){
+    cancelPendingMainLaunch();
+    if(state.phase === 'ready'||state.phase==='cancel_retry') cancelAuthorization('page_closed_before_session',{keepalive:true,bestEffort:true});
+    else if(state.phase === 'creating') state.abandoned=true;
+  });
+
+  function paymentState(sess){
+    sess=sess||{};
+    var status=String(sess.payment_status || '').toLowerCase();
+    if(/partial|balance_due|outstanding/.test(status)) return 'partial';
+    if(/fail|declin|unpaid|requires_payment_method/.test(status)) return 'failed';
+    return '';
+  }
+  function attemptedAmount(sess){
+    sess=sess||{};
+    var kind=paymentState(sess);
+    var fields=kind==='partial'
+      ? ['billing_outstanding_amount','outstanding_amount','amount_due']
+      : ['billing_attempted_amount','attempted_amount','attempted_charge','charge_attempted','settlement_attempted_amount','billing_outstanding_amount','outstanding_amount','amount_due'];
+    for(var i=0;i<fields.length;i++){
+      var value=Number(sess[fields[i]]);
+      if(Number.isFinite(value) && value>0) return value;
+    }
+    var duration=Number(sess.duration_secs || sess.duration_seconds || sess.duration || 0);
+    var free=Number(sess.free_minutes || 0);
+    var rate=Number(sess.rate_per_min || 0);
+    return Math.round(Math.max(0,duration/60-free)*rate*100)/100;
+  }
+  function alreadyPaidAmount(sess){
+    sess=sess||{};
+    var fields=['billing_paid_amount','total_charged','charged','card_charged','authorization_captured_amount'];
+    for(var i=0;i<fields.length;i++){
+      var value=Number(sess[fields[i]]);
+      if(Number.isFinite(value) && value>0) return value;
+    }
+    return 0;
+  }
+  function ensureReceiptRow(id,label,value,color){
+    var total=document.getElementById('receipt-total');
+    var card=total && total.closest ? total.closest('.receipt-card') : null;
+    if(!card) return;
+    var row=document.getElementById(id);
+    if(!row){
+      row=document.createElement('div'); row.id=id; row.className='receipt-row ob-receipt-payment-status-row';
+      row.append(document.createElement('span'),document.createElement('span'));
+      var totalRow=total.closest('.receipt-row');
+      card.insertBefore(row,totalRow || null);
+    }
+    row.hidden=false;
+    row.style.setProperty('display','grid','important');
+    row.children[0].textContent=label; row.children[1].textContent=value; row.children[1].style.color=color||'';
+  }
+  function resetReceiptPaymentDecoration(screen){
+    if(!screen) return;
+    screen.classList.remove('ob-payment-failed','ob-payment-partial');
+    var title=screen.querySelector('.receipt-title');
+    var sub=screen.querySelector('.receipt-sub');
+    var icon=screen.querySelector('.receipt-icon');
+    var total=document.getElementById('receipt-total');
+    var totalRow=total&&total.closest?total.closest('.receipt-row'):null;
+    [[title,'Session Complete!'],[sub,'How was your experience?'],[icon,'\u2b50']].forEach(function(pair){
+      var element=pair[0];if(!element)return;
+      if(!element.dataset.obPaymentDefaultText)element.dataset.obPaymentDefaultText=element.textContent||pair[1];
+      element.textContent=element.dataset.obPaymentDefaultText;element.style.color='';
+    });
+    if(totalRow&&totalRow.children[0]){
+      var label=totalRow.children[0];
+      if(!label.dataset.obPaymentDefaultText)label.dataset.obPaymentDefaultText=label.textContent||'Total session cost';
+      label.textContent=label.dataset.obPaymentDefaultText;label.style.color='';
+    }
+    ['receipt-payment-status-row','receipt-amount-paid-row'].forEach(function(id){
+      var row=document.getElementById(id);if(!row)return;
+      row.hidden=true;row.style.setProperty('display','none','important');
+      Array.prototype.forEach.call(row.children,function(child){child.textContent='';child.style.color='';});
+    });
+  }
+  function decorateReceipt(sess){
+    var kind=paymentState(sess);
+    var screen=document.getElementById('screen-A5');
+    if(!screen) return;
+    resetState();
+    resetReceiptPaymentDecoration(screen);
+    screen.classList.toggle('ob-payment-failed',kind==='failed');
+    screen.classList.toggle('ob-payment-partial',kind==='partial');
+    if(!kind) return;
+    var title=screen.querySelector('.receipt-title');
+    var sub=screen.querySelector('.receipt-sub');
+    var icon=screen.querySelector('.receipt-icon');
+    var amount=attemptedAmount(sess);
+    var total=document.getElementById('receipt-total');
+    var totalRow=total && total.closest('.receipt-row');
+    if(title) title.textContent=kind==='partial'?'Session ended - balance due':'Session ended - payment failed';
+    if(sub) sub.textContent=kind==='partial'?'Part of the session payment is still outstanding.':'Your card was not charged. Update your payment method before another paid session.';
+    if(icon) icon.textContent=kind==='partial'?'!':'\u00d7';
+    if(totalRow && totalRow.children[0]) totalRow.children[0].textContent=kind==='partial'?'Outstanding balance':'Amount due';
+    if(total) total.textContent=amount>0?'$'+amount.toFixed(2):'Not available';
+    ensureReceiptRow('receipt-payment-status-row','Payment status',kind==='partial'?'Partially paid':'Payment failed - card not charged',kind==='partial'?'#b45309':'#b91c1c');
+    var paid=alreadyPaidAmount(sess);
+    if(kind==='partial'&&paid>0)ensureReceiptRow('receipt-amount-paid-row','Already paid','$'+paid.toFixed(2),'#166534');
+  }
+  var priorReceipt = window.obCreditEnhanceReceipt;
+  if(typeof priorReceipt === 'function'){
+    window.obCreditEnhanceReceipt=function(sess){
+      var result=priorReceipt.apply(this,arguments);
+      decorateReceipt(sess||{});
+      return result;
+    };
+  }
+
+  var priorRenderClientActivity=window.obRenderClientActivity;
+  if(typeof priorRenderClientActivity==='function'){
+    window.obRenderClientActivity=function(clientId,sessions){
+      var result=priorRenderClientActivity.apply(this,arguments);
+      (sessions||[]).forEach(function(sess){
+        var kind=paymentState(sess); if(!kind) return;
+        var row=document.querySelector('[data-ob-session-row="1"][data-session-id="'+String(sess.id||'').replace(/["\\]/g,'')+'"]');
+        if(!row) return;
+        row.classList.add('ob-payment-failed-row');
+        var cells=row.children;
+        var due=attemptedAmount(sess);
+        var paid=alreadyPaidAmount(sess);
+        if(cells[3]) cells[3].textContent=kind==='partial'
+          ? ((paid>0?'$'+paid.toFixed(2)+' paid · ':'')+(due>0?'$'+due.toFixed(2)+' due':'No balance due'))
+          : (due>0?'$'+due.toFixed(2)+' due':'Not paid');
+        var pill=cells[4] && cells[4].querySelector('span');
+        if(pill){ pill.textContent=kind==='partial'?'Balance due':'Payment failed'; pill.style.background=kind==='partial'?'rgba(245,158,11,.12)':'rgba(239,68,68,.1)'; pill.style.color=kind==='partial'?'#b45309':'#b91c1c'; }
+      });
+      return result;
+    };
+  }
+  var priorExpertEnded=window.obApplyAuthoritativeExpertEnded;
+  if(typeof priorExpertEnded==='function'){
+    window.obApplyAuthoritativeExpertEnded=function(payload,reason){
+      var result=priorExpertEnded.apply(this,arguments);
+      var sess=payload && payload.session ? Object.assign({},payload.session,payload) : (payload||{});
+      var kind=paymentState(sess);
+      if(kind){
+        setTimeout(function(){
+          var banner=document.getElementById('ob-client-ended-session-banner');
+          if(banner){
+            banner.textContent=kind==='partial'?'Session ended. Part of the client payment remains outstanding.':'Session ended. The client payment failed, so no payout was completed.';
+            banner.style.borderColor=kind==='partial'?'rgba(245,158,11,.35)':'rgba(239,68,68,.35)';
+            banner.style.background=kind==='partial'?'rgba(245,158,11,.1)':'rgba(239,68,68,.08)';
+            banner.style.color=kind==='partial'?'#b45309':'#b91c1c';
+          }
+          var status=document.getElementById('live-client-status');
+          if(status){ status.textContent=kind==='partial'?'Balance due':'Payment failed'; status.style.color=kind==='partial'?'#b45309':'#b91c1c'; }
+        },750);
+      }
+      return result;
+    };
+  }
+
+  var bookingController={id:'',data:null,view:null,loading:null,error:'',card:null,stripe:null,cardComplete:false,busy:false,refreshTimer:null,loginTimer:null};
+  function bookingIdFromUrl(){ return new URLSearchParams(window.location.search).get('booking') || ''; }
+  function bookingIsMinute(data){
+    var booking=data&&data.booking||{};
+    var mode=String(booking.credit_mode||booking.payment_mode||'minute').toLowerCase();
+    var type=String(booking.type||booking.booking_type||'permin').toLowerCase();
+    return mode!=='prepaid'&&type!=='fixed'&&type!=='package';
+  }
+  function secondsToMs(value){
+    var number=Number(value||0);if(!Number.isFinite(number)||number<=0)return null;
+    return number<100000000000?number*1000:number;
+  }
+  function bookingAuthorizationView(data,now){
+    data=data||{};var booking=data.booking||{};now=Number(now||Date.now());
+    var required=typeof data.authorization_required==='boolean'?data.authorization_required:(typeof booking.authorization_required==='boolean'?booking.authorization_required:bookingIsMinute(data));
+    var available=typeof data.authorization_available==='boolean'?data.authorization_available:(typeof booking.authorization_available==='boolean'?booking.authorization_available:false);
+    var availableAt=secondsToMs(data.authorization_available_at!=null?data.authorization_available_at:booking.authorization_available_at);
+    var expiresAt=secondsToMs(data.authorization_expires_at!=null?data.authorization_expires_at:(data.expires_at!=null?data.expires_at:(booking.authorization_expires_at!=null?booking.authorization_expires_at:booking.expires_at)));
+    var authStatus=String(data.authorization_status||booking.authorization_status||booking.session_authorization_status||'').toLowerCase();
+    var ready=data.authorization_ready===true||booking.authorization_ready===true||/^(ready|authorized|bound|requires_capture)$/.test(authStatus);
+    var expired=!!(ready&&expiresAt&&expiresAt<=now);
+    if(expired)ready=false;
+    return {required:!!required,available:!!available,availableAt:availableAt,expiresAt:expiresAt,ready:!!ready,expired:expired,now:now};
+  }
+  async function loadBookingAuthorizationData(force){
+    var bookingId=bookingIdFromUrl();var tok=authToken();
+    if(!bookingId||!tok)return null;
+    if(bookingController.loading)return bookingController.loading;
+    if(bookingController.data&&!force)return bookingController.data;
+    bookingController.id=bookingId;
+    bookingController.loading=fetch(BASE+'/api/bookings/'+encodeURIComponent(bookingId)+'/join',{headers:{Authorization:'Bearer '+tok}})
+      .then(async function(response){
+        var data=await responseJson(response);
+        if(!response.ok){var error=new Error(data.error||'Could not refresh this booking.');error.code=data.code||'';throw error;}
+        bookingController.data=data;bookingController.view=bookingAuthorizationView(data,Date.now());bookingController.error='';
+        return data;
+      }).catch(function(error){
+        bookingController.error='We could not refresh payment readiness. Check your connection and try again.';
+        return null;
+      }).finally(function(){bookingController.loading=null;});
+    return bookingController.loading;
+  }
+  function clearBookingRefresh(){
+    if(bookingController.refreshTimer){clearTimeout(bookingController.refreshTimer);bookingController.refreshTimer=null;}
+  }
+  function scheduleBookingRefresh(view){
+    clearBookingRefresh();
+    if(!document.getElementById('booking-join-overlay')||!authToken())return;
+    if(view&&view.available&&!view.ready)return;
+    var delay=15000;
+    if(view&&view.availableAt&&!view.available)delay=Math.max(1000,Math.min(15000,view.availableAt-Date.now()+150));
+    if(view&&view.ready&&view.expiresAt)delay=Math.max(1000,Math.min(15000,view.expiresAt-Date.now()+150));
+    bookingController.refreshTimer=setTimeout(function(){enhanceBookingJoinOverlay({force:true});},delay);
+  }
+  function bookingCard(panel){
+    var card=document.getElementById('ob-booking-session-authorization');
+    if(!card){
+      card=document.createElement('section');card.id='ob-booking-session-authorization';
+      card.setAttribute('aria-live','polite');card.setAttribute('aria-labelledby','ob-booking-auth-heading');
+      panel.insertBefore(card,panel.lastElementChild||null);
+    }
+    return card;
+  }
+  function bookingHeading(card,text,success){
+    var heading=document.createElement(success?'div':'strong');heading.id='ob-booking-auth-heading';heading.tabIndex=-1;
+    if(success)heading.className='ob-booking-auth-success';heading.textContent=text;card.appendChild(heading);return heading;
+  }
+  function bookingCopy(card,text){var copy=document.createElement('div');copy.className='ob-booking-auth-copy';copy.textContent=text;card.appendChild(copy);return copy;}
+  function bookingButton(id,text,kind,handler){
+    var button=document.createElement('button');button.type='button';button.id=id;button.className='btn '+(kind||'btn-secondary');button.textContent=text;button.addEventListener('click',handler);return button;
+  }
+  function bookingActions(card){var actions=document.createElement('div');actions.className='ob-booking-auth-actions';card.appendChild(actions);return actions;}
+  function renderBookingLogin(card){
+    bookingHeading(card,'Sign in to confirm payment');
+    bookingCopy(card,'This booking link can be opened on another device. Sign in with the account used for the booking, then you can confirm payment here.');
+    var actions=bookingActions(card);actions.appendChild(bookingButton('ob-booking-auth-signin','Sign in to continue','btn-primary',window.obOpenScheduledBookingSignIn));
+  }
+  function renderBookingUnavailable(card,view){
+    var future=view&&view.availableAt&&view.availableAt>Date.now();
+    bookingHeading(card,future?'Payment confirmation opens closer to your session':'Payment confirmation is not available yet');
+    var copy=future
+      ? 'You can confirm payment from '+new Date(view.availableAt).toLocaleString()+'. This page will update automatically.'
+      : 'There is nothing to do right now. This page will refresh payment readiness automatically.';
+    bookingCopy(card,copy);
+    var actions=bookingActions(card);actions.appendChild(bookingButton('ob-booking-auth-refresh','Refresh readiness','btn-secondary',function(){enhanceBookingJoinOverlay({force:true,focus:true});}));
+  }
+  function renderBookingAuthorization(card,view){
+    bookingHeading(card,'Confirm your payment method before the live session');
+    bookingCopy(card,(view&&view.expired?'The previous temporary authorization expired. Confirm again to get ready. ':'')+'A temporary $5 authorization may appear. You will only be charged for the time you use, and any unused amount is released after the session; your bank may show it as pending briefly.');
+    var actions=bookingActions(card);
+    actions.appendChild(bookingButton('ob-booking-auth-submit','Confirm payment & get ready','btn-primary',function(){authorizeScheduledBooking(false);}));
+    var change=bookingButton('ob-booking-auth-change','Use a different card','btn-secondary',window.obShowScheduledBookingCard);
+    change.style.display=bookingController.error?'inline-flex':'none';actions.appendChild(change);
+    var wrap=document.createElement('div');wrap.id='ob-booking-auth-card-wrap';
+    var element=document.createElement('div');element.id='ob-booking-auth-card-element';wrap.appendChild(element);
+    var cardActions=document.createElement('div');cardActions.className='ob-booking-auth-actions';
+    cardActions.appendChild(bookingButton('ob-booking-auth-save','Save card & confirm payment','btn-primary',function(){authorizeScheduledBooking(true);}));
+    wrap.appendChild(cardActions);card.appendChild(wrap);
+    var error=document.createElement('div');error.className='ob-booking-auth-error';error.setAttribute('role','alert');error.textContent=bookingController.error||'';
+    if(bookingController.error)error.style.display='block';card.appendChild(error);
+  }
+  function renderBookingCard(data,options){
+    options=options||{};var overlay=document.getElementById('booking-join-overlay');if(!overlay)return;
+    var panel=overlay.firstElementChild;if(!panel)return;var card=bookingCard(panel);
+    if(bookingController.card){
+      try{if(typeof bookingController.card.unmount==='function')bookingController.card.unmount();}catch(e){}
+      try{if(typeof bookingController.card.destroy==='function')bookingController.card.destroy();}catch(e2){}
+      bookingController.card=null;bookingController.cardComplete=false;
+    }
+    card.replaceChildren();
+    var heading;
+    if(!authToken())renderBookingLogin(card);
+    else if(!data){
+      bookingHeading(card,'Checking payment readiness');bookingCopy(card,bookingController.error||'This page will update as soon as payment confirmation is available.');
+      bookingActions(card).appendChild(bookingButton('ob-booking-auth-refresh','Try again','btn-secondary',function(){enhanceBookingJoinOverlay({force:true,focus:true});}));
+    }else if(!bookingIsMinute(data)||bookingController.view&&bookingController.view.required===false){
+      bookingHeading(card,'Payment is already covered',true);bookingCopy(card,'This booking uses prepaid credit, so no card authorization is needed for this session.');
+    }else if(state.phase==='cancel_retry'){
+      bookingHeading(card,'Finish releasing the previous authorization');bookingCopy(card,state.lastError||'Release the previous temporary authorization before confirming another one.');
+      bookingActions(card).appendChild(bookingButton('ob-booking-auth-release-retry','Retry release','btn-secondary',retryCancellationRecovery));
+    }else if(bookingController.view&&bookingController.view.ready){
+      bookingHeading(card,'\u2713 $5 temporary authorization approved',true);bookingCopy(card,'You will only be charged for the session time you use. The expert can now start the session.');
+    }else if(!bookingController.view||!bookingController.view.available)renderBookingUnavailable(card,bookingController.view);
+    else renderBookingAuthorization(card,bookingController.view);
+    heading=document.getElementById('ob-booking-auth-heading');if(options.focus)focusElement(heading);
+  }
+  async function mountBookingReplacementCard(){
+    var data=bookingController.data||{};var booking=data.booking||{};var wrap=document.getElementById('ob-booking-auth-card-wrap');
+    if(wrap)wrap.style.display='block';if(bookingController.card){if(typeof bookingController.card.focus==='function')bookingController.card.focus();return;}
+    var expertId=booking.expert_id||(data.expert&&(data.expert.user_id||data.expert.id))||currentExpertId();
+    var response=await fetch(BASE+'/api/payments/config?expert_id='+encodeURIComponent(expertId));var config=await responseJson(response);
+    if(!response.ok||!config.publishable_key)throw new Error(config.error||'Payment form is unavailable.');
+    bookingController.stripe=window.Stripe(config.publishable_key);var elements=bookingController.stripe.elements();
+    bookingController.card=elements.create('card',{hidePostalCode:true,style:{base:{fontSize:'16px',color:'#3b1f0e','::placeholder':{color:'#9ca3af'}}}});
+    bookingController.card.mount('#ob-booking-auth-card-element');bookingController.card.on('change',function(event){
+      bookingController.cardComplete=!!event.complete;var error=document.querySelector('.ob-booking-auth-error');
+      if(error&&event.error){error.textContent=event.error.message;error.style.display='block';}
+    });
+    if(typeof bookingController.card.focus==='function')bookingController.card.focus();
+  }
+  async function saveBookingReplacementCard(expertId){
+    if(!bookingController.card||!bookingController.cardComplete)throw new Error('Enter your complete card details first.');
+    var response=await fetch(BASE+'/api/payments/methods/setup',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+authToken()},body:JSON.stringify({expert_id:expertId})});
+    var setup=await responseJson(response);if(!response.ok||!setup.client_secret)throw new Error(setup.error||'Could not save this card.');
+    var result=await bookingController.stripe.confirmCardSetup(setup.client_secret,{payment_method:{card:bookingController.card}});
+    if(result.error)throw new Error(result.error.message||'Could not save this card.');var pm=result.setupIntent&&result.setupIntent.payment_method;
+    if(pm&&typeof pm==='object')pm=pm.id;if(!pm||typeof window._obSaveDefaultPaymentMethod!=='function')throw new Error('Could not finish saving this card.');
+    await window._obSaveDefaultPaymentMethod(pm,authToken(),{expert_id:expertId,stripe_mode:setup.mode});
+  }
+  function bookingWindowError(error){
+    if(error&&error.code==='booking_authorization_not_open')return 'Payment confirmation is not open yet. This page will update when it is time.';
+    if(error&&error.code==='booking_authorization_window_closed')return 'The payment confirmation window has closed. Contact the expert if you still need this session.';
+    return friendlyError(error);
+  }
+  async function authorizeScheduledBooking(useReplacement){
+    if(bookingController.busy)return;var data=await loadBookingAuthorizationData(true);if(!data||!bookingIsMinute(data))return;
+    var view=bookingController.view;if(!view||!view.available){renderBookingCard(data,{focus:true});return;}
+    var booking=data.booking||{};var expertId=booking.expert_id||(data.expert&&(data.expert.user_id||data.expert.id))||currentExpertId();
+    var channel=String(booking.channel||'chat').toLowerCase();var button=document.getElementById(useReplacement?'ob-booking-auth-save':'ob-booking-auth-submit');
+    var error=document.querySelector('.ob-booking-auth-error');bookingController.busy=true;bookingController.error='';
+    if(button){button.disabled=true;button.textContent=useReplacement?'Saving card...':'Confirming payment...';}if(error){error.style.display='none';error.textContent='';}
+    try{
+      if(useReplacement)await saveBookingReplacementCard(expertId);
+      var auth=await createOrConfirmAuthorization({expertId:expertId,channel:channel,bookingId:bookingController.id,token:authToken(),stripe:bookingController.stripe});
+      var bindResponse=await fetch(BASE+'/api/bookings/'+encodeURIComponent(bookingController.id)+'/authorize',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+authToken()},body:JSON.stringify({authorization_payment_intent_id:auth.authorization_payment_intent_id,authorization_request_id:auth.authorization_request_id})});
+      var bound=await responseJson(bindResponse);if(!bindResponse.ok){var bindError=new Error(bound.error||'Could not link the authorization to this booking.');bindError.code=bound.code||'';throw bindError;}
+      resetState();bookingController.error='';await loadBookingAuthorizationData(true);renderBookingCard(bookingController.data,{focus:true});scheduleBookingRefresh(bookingController.view);
+    }catch(errorValue){
+      if(state.phase==='ready'&&state.paymentIntentId&&state.requestId){
+        var cancellation=await cancelAuthorization('booking_binding_failed');
+        if(!cancellation||!cancellation.confirmed){bookingController.error=state.lastError;renderBookingCard(data,{focus:true});return;}
+      }
+      bookingController.error=bookingWindowError(errorValue);if(error){error.textContent=bookingController.error;error.style.display='block';}
+      var change=document.getElementById('ob-booking-auth-change');if(change)change.style.display='inline-flex';
+      if(button){button.disabled=false;button.textContent=useReplacement?'Save card & confirm payment':'Try payment confirmation again';}
+    }finally{bookingController.busy=false;}
+  }
+  window.obAuthorizeScheduledBooking=function(){return authorizeScheduledBooking(false);};
+  window.obAuthorizeScheduledBookingWithCard=function(){return authorizeScheduledBooking(true);};
+  window.obShowScheduledBookingCard=async function(){
+    try{await mountBookingReplacementCard();var save=document.getElementById('ob-booking-auth-save');if(save)save.style.display='inline-flex';}
+    catch(error){var target=document.querySelector('.ob-booking-auth-error');if(target){target.textContent=friendlyError(error);target.style.display='block';}}
+  };
+  window.obOpenScheduledBookingSignIn=function(){
+    if(typeof window.showClientLoginModal==='function')window.showClientLoginModal();
+    else{var modal=document.getElementById('client-login-modal');if(modal)modal.style.display='flex';}
+    setTimeout(function(){var email=document.getElementById('clm-login-email');if(email)email.focus();},50);
+    if(!bookingController.loginTimer)bookingController.loginTimer=setInterval(function(){
+      if(authToken()){clearInterval(bookingController.loginTimer);bookingController.loginTimer=null;enhanceBookingJoinOverlay({force:true,focus:true});}
+    },1000);
+  };
+  async function enhanceBookingJoinOverlay(options){
+    options=options||{};var overlay=document.getElementById('booking-join-overlay');if(!overlay||!bookingIdFromUrl())return;
+    if(!authToken()){renderBookingCard(null,options);return;}
+    var data=await loadBookingAuthorizationData(options.force!==false);renderBookingCard(data,options);scheduleBookingRefresh(bookingController.view);
+  }
+  if(bookingIdFromUrl()){
+    var bookingEnhanceTimer=null;function scheduleBookingEnhance(){clearTimeout(bookingEnhanceTimer);bookingEnhanceTimer=setTimeout(function(){enhanceBookingJoinOverlay({force:true});},40);}
+    if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',scheduleBookingEnhance,{once:true});else scheduleBookingEnhance();
+    if(window.MutationObserver)new MutationObserver(function(mutations){
+      for(var i=0;i<mutations.length;i++)for(var j=0;j<mutations[i].addedNodes.length;j++){
+        var node=mutations[i].addedNodes[j];if(node&&node.nodeType===1&&(node.id==='booking-join-overlay'||(node.querySelector&&node.querySelector('#booking-join-overlay')))){scheduleBookingEnhance();return;}
+      }
+    }).observe(document.body,{childList:true,subtree:true});
+  }
+
+  window.startBookingSession=function(bookingId){
+    var tok=authToken();if(!bookingId||!tok){if(typeof window.toast==='function')window.toast('Not logged in','err');return;}
+    var button=window.event&&window.event.target&&window.event.target.closest?window.event.target.closest('button'):null;
+    if(button){button.disabled=true;button.textContent='Starting...';}
+    fetch(BASE+'/api/bookings/'+encodeURIComponent(bookingId)+'/start',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+tok}})
+      .then(async function(response){var data=await responseJson(response);if(!response.ok){var err=new Error(data.error||'Failed to start booking');err.code=data.code||'';throw err;}return data;})
+      .then(function(data){
+        if(!data.session)throw new Error(data.error||'No session returned');
+        window._sid=data.session.id;window._obActiveSessId=data.session.id;
+        window._obPendingChannel=String(data.session.channel||'chat').toLowerCase();window.currentBookChannel=window._obPendingChannel;
+        if(typeof window.toast==='function')window.toast('Session started','ok');
+        if(typeof window.openExpertLivePanel==='function')window.openExpertLivePanel(data.session.id);
+        if(typeof window.loadExpertBookings==='function')window.loadExpertBookings();
+      }).catch(function(err){
+        var message=err.code==='session_authorization_required'?'Waiting for the client to approve the temporary $5 authorization. Ask them to open their booking join link.':(err.message||'Failed to start booking');
+        if(typeof window.toast==='function')window.toast(message,'err');else alert(message);
+        if(button){button.disabled=false;button.textContent='\u25b6 Start Session';}
+      });
+  };
+
+  restoreState();
+  if(window.__OB_TEST_HOOKS__){
+    window.obPayPerMinuteAuthorizationTestHooks={
+      uuid:uuid,bookingAuthorizationView:bookingAuthorizationView,paymentState:paymentState,
+      resetReceiptPaymentDecoration:resetReceiptPaymentDecoration,completeMainAuthorizationUi:completeMainAuthorizationUi,
+      cancelPendingMainLaunch:cancelPendingMainLaunch,state:state,renderBookingCard:renderBookingCard,
+      bookingController:bookingController,expertBillingLabel:expertBillingLabel,restoreState:restoreState,
+      savedPayment:savedPayment,refreshSavedPaymentStatus:refreshSavedPaymentStatus
+    };
+  }
+  syncPaymentCopy();
 })();
 </script>
 	</html>

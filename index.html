@@ -5975,7 +5975,7 @@ if (!window.toast) {
               <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;">
                 <button id="rtc-mute-btn" onclick="if(window.OB_RTC)window.OB_RTC.toggleMute();" style="padding:12px 24px;border-radius:12px;border:1.5px solid var(--gray-200);background:var(--white);font-size:14px;font-weight:600;cursor:pointer;color:var(--brown);min-width:100px;">Mute</button>
                 <button id="rtc-cam-btn" onclick="if(window.OB_RTC)window.OB_RTC.toggleCamera();" style="padding:12px 24px;border-radius:12px;border:1.5px solid var(--gray-200);background:var(--white);font-size:14px;font-weight:600;cursor:pointer;color:var(--brown);min-width:100px;display:none;">Camera Off</button>
-                <button onclick="expertEndSession();if(window.OB_RTC)window.OB_RTC.end();" style="padding:12px 24px;border-radius:12px;background:rgba(239,68,68,.12);border:1.5px solid rgba(239,68,68,.3);color:#dc2626;font-size:14px;font-weight:700;cursor:pointer;min-width:100px;">End Call</button>
+                <button onclick="expertEndSession()" style="padding:12px 24px;border-radius:12px;background:rgba(239,68,68,.12);border:1.5px solid rgba(239,68,68,.3);color:#dc2626;font-size:14px;font-weight:700;cursor:pointer;min-width:100px;">End Call</button>
               </div>
             </div>
           </div>
@@ -12488,20 +12488,6 @@ window._obResetExpertLiveSessionUI = function(channel){
   }
 };
 
-function expertEndSession() {
-  if(window.OB_RTC&&window.OB_RTC.isActive())window.OB_RTC.end();
-  if(typeof window._obResetExpertLiveSessionUI === 'function') window._obResetExpertLiveSessionUI('chat');
-  if(_expertSessInterval) { clearInterval(_expertSessInterval); _expertSessInterval = null; }
-  _expertSessSeconds = 0;
-  var earn = document.getElementById('expert-session-earnings');
-  var net = document.getElementById('expert-net-earnings');
-  var timer = document.getElementById('expert-sess-timer');
-  if(earn) earn.textContent = '$0.00';
-  if(net) net.textContent = '$0.00';
-  if(timer) timer.textContent = '0:00';
-  dbNav(document.querySelector('.db-nav-item[onclick*="sessions"]'), 'sessions');
-}
-
 function startExpertSessionTimer(startedAt) {
   if(_expertSessInterval) clearInterval(_expertSessInterval);
   // Start from elapsed seconds if session already running (catch-up)
@@ -16359,20 +16345,6 @@ async function savePaymentConfig() {
   window.declineSessionRequest=async function(){
     if(READY&&window._pendingSid){ try{ await api('POST',`/sessions/${window._pendingSid}/decline`,{}); }catch{} window._pendingSid=null; }
     _origDecline?.();
-  };
-
-  const _origEndSession=window.expertEndSession;
-  window.expertEndSession=async function(){
-    if(READY&&window._sid){
-      try {
-        const d=await api('POST',`/sessions/${window._sid}/end`,{});
-        toast(`Session ended · You earned ${fmt$(d.expert_earned||0)} 💰`);
-        set('expert-session-earnings',fmt$(d.expert_earned||0));
-        window._sid=null;
-        setTimeout(loadExpertDashboard,1000);
-      } catch(err){ console.warn('End session:',err); }
-    }
-    _origEndSession?.();
   };
 
   /* ── Submit review ────────────────────────────────── */
@@ -21968,28 +21940,6 @@ window.obClientSessionRate = obClientSessionRate;
       if(_ws&&_ws.readyState===1){try{_ws.send(JSON.stringify({type:'message',session_id:_sessId,content:content}));_wsSent=true;}catch(e){}}
       if(!_wsSent){fetch(BASE+'/api/sessions/'+_sessId+'/message',{method:'POST',headers:hdr(),body:JSON.stringify({content:content})}).catch(function(){});}
     };
-    window.expertEndSession=function(){
-      var sid=_sessId||window._sid||window._obActiveSessId;
-      if(!sid){console.warn('[expertEndSession] no active session id');return;}
-      var t=hdr();
-      fetch(BASE+'/api/sessions/'+sid+'/end',{method:'POST',headers:t})
-        .then(function(r){return r.json();})
-        .then(function(d){
-          console.log('[expertEndSession] ended:',JSON.stringify(d).substring(0,100));
-          if(_expertSessionPoller){clearInterval(_expertSessionPoller);_expertSessionPoller=null;}
-          _sessId=null; window._sid=null; window._obActiveSessId=null; window._expertSessActive=false;
-          if(window._expertTimerInterval){clearInterval(window._expertTimerInterval);window._expertTimerInterval=null;}
-          if(window._expertSessInterval){clearInterval(window._expertSessInterval);window._expertSessInterval=null;}
-          var earned=typeof fmt$==='function'?fmt$(d.expert_earned||0):'$'+(d.expert_earned||0).toFixed(2);
-          if(typeof toast==='function') toast('Session ended · Earned: '+earned);
-          var earnEl=document.getElementById('expert-session-earnings');
-          if(earnEl) earnEl.textContent=earned;
-          var sessNav=document.querySelector('.db-nav-item[onclick*="sessions"]');
-          if(sessNav&&typeof dbNav==='function') dbNav(sessNav,'sessions');
-          setTimeout(function(){if(typeof loadExpertDashboard==='function')loadExpertDashboard();},500);
-        })
-        .catch(function(e){console.error('[expertEndSession] error',e);});
-    };
     // Start polling session status — fallback for when WS session_ended doesn't arrive
     startExpertSessionPoller(sid);
   }
@@ -23307,6 +23257,46 @@ function switchClientTab(tab) {
   if (tab === 'credit') loadClientCredit();
 }
 
+function clientBookingLifecycleView(booking) {
+  booking = booking || {};
+  var bookingStatus = String(booking.status || '').toLowerCase();
+  var sessionStatus = String(booking.session_status || '').toLowerCase();
+  if (sessionStatus === 'canceled') sessionStatus = 'cancelled';
+  var sessionId = String(booking.session_id || '').trim();
+  var sessionStarted = booking.session_started_at !== null && booking.session_started_at !== undefined && booking.session_started_at !== '';
+  if (sessionStatus === 'active') {
+    if (!sessionId) return { label: 'Session starting', color: '#3b82f6', joinable: true };
+    return { label: sessionStarted ? 'In session' : 'Ready to join', color: '#3b82f6', joinable: true };
+  }
+  if (sessionStatus === 'settling') return { label: 'Finalizing', color: '#f59e0b', joinable: false };
+  if (sessionStatus === 'ended') return { label: 'Completed', color: '#22c55e', joinable: false };
+  if (sessionStatus === 'cancelled') return { label: 'Cancelled', color: '#9ca3af', joinable: false };
+  if (sessionStatus === 'failed') return { label: 'Failed', color: '#ef4444', joinable: false };
+  if (bookingStatus === 'started') return { label: 'Ready to join', color: '#3b82f6', joinable: true };
+  if (bookingStatus === 'confirmed') return { label: 'Confirmed', color: '#22c55e', joinable: true };
+  if (bookingStatus === 'pending') return { label: 'Pending', color: '#f59e0b', joinable: false };
+  if (bookingStatus === 'declined') return { label: 'Declined', color: '#ef4444', joinable: false };
+  if (bookingStatus === 'cancelled' || bookingStatus === 'canceled') return { label: 'Cancelled', color: '#9ca3af', joinable: false };
+  if (bookingStatus === 'failed') return { label: 'Failed', color: '#ef4444', joinable: false };
+  return { label: bookingStatus || 'Unavailable', color: '#9ca3af', joinable: false };
+}
+
+function clientBookingJoinUrl(booking) {
+  booking = booking || {};
+  var origin = String(location.origin || '').replace(/\/$/, '');
+  var bookingId = encodeURIComponent(String(booking.id || ''));
+  var expertSlug = String(booking.expert_slug || '').trim();
+  var hostname = String(location.hostname || '').toLowerCase();
+  var platformHost = !hostname || hostname === 'ownlybiz.com' || hostname === 'www.ownlybiz.com' || hostname === 'localhost' || hostname === '127.0.0.1' || hostname.indexOf('vercel.app') >= 0;
+  var isExpertHost = typeof window._obIsPublicExpertHost === 'function' ? window._obIsPublicExpertHost() : !platformHost;
+  var path = isExpertHost || !expertSlug ? '/' : '/' + encodeURIComponent(expertSlug);
+  return origin + path + '?booking=' + bookingId;
+}
+
+if (window.__OB_TEST_HOOKS__) {
+  window.obClientBookingTestHooks = { lifecycle: clientBookingLifecycleView, joinUrl: clientBookingJoinUrl };
+}
+
 function loadClientBookings() {
   var tok = getClientToken();
   var context=captureClientUi('client-bookings');
@@ -23322,19 +23312,17 @@ function loadClientBookings() {
         list.innerHTML = '<div style="text-align:center;padding:40px 20px;"><div style="font-size:40px;margin-bottom:8px;">📋</div><div style="font-size:15px;font-weight:600;color:var(--brown);">No bookings yet</div><div style="font-size:13px;color:var(--gray-400);margin-top:4px;">Book a session and it will appear here.</div></div>';
         return;
       }
-      var statusColors = { pending: '#f59e0b', confirmed: '#22c55e', declined: '#ef4444', cancelled: '#9ca3af', started: '#3b82f6' };
-      var statusLabels = { pending: 'Pending', confirmed: 'Confirmed', declined: 'Declined', cancelled: 'Cancelled', started: 'Completed' };
       list.innerHTML = bookings.map(function(b) {
         var dd = new Date(b.scheduled_date + 'T12:00:00');
         var dateStr = dd.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
         var hh = parseInt(b.scheduled_time.split(':')[0]), mm = b.scheduled_time.split(':')[1];
         var ap = hh >= 12 ? 'PM' : 'AM', h12 = hh > 12 ? hh - 12 : (hh === 0 ? 12 : hh);
-        var color = statusColors[b.status] || '#9ca3af';
-        var label = statusLabels[b.status] || b.status;
+        var lifecycle = clientBookingLifecycleView(b);
+        var color = lifecycle.color;
+        var label = lifecycle.label;
         var joinBtn = '';
-        if (b.status === 'confirmed' || b.status === 'started') {
-          var slug = b.expert_slug || '';
-          joinBtn = '<a href="' + window.location.origin + '?booking=' + b.id + '" style="display:inline-block;margin-top:8px;font-size:12px;font-weight:600;color:var(--terra);text-decoration:none;">Join Session \u2192</a>';
+        if (lifecycle.joinable && b.id) {
+          joinBtn = '<a href="' + clientBookingJoinUrl(b) + '" style="display:inline-block;margin-top:8px;font-size:12px;font-weight:600;color:var(--terra);text-decoration:none;">Join Session \u2192</a>';
         }
         return '<div style="background:var(--white);border:1px solid var(--gray-200);border-radius:14px;padding:16px;margin-bottom:10px;">' +
           '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">' +
@@ -63883,7 +63871,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     };
   }
 
-  var bookingController={id:'',context:null,data:null,view:null,loading:null,error:'',card:null,cardMountPromise:null,stripe:null,cardComplete:false,busy:false,refreshTimer:null,loadSeq:0,actionSeq:0};
+  var bookingController={id:'',context:null,data:null,lifecycle:null,view:null,loading:null,error:'',card:null,cardMountPromise:null,stripe:null,cardComplete:false,busy:false,refreshTimer:null,loadSeq:0,actionSeq:0};
   function bookingIdFromUrl(){ return new URLSearchParams(window.location.search).get('booking') || ''; }
   function bookingOperationContext(bookingId,token){
     token=String(token||authToken()||'');
@@ -63921,7 +63909,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
       try{if(typeof bookingController.card.unmount==='function')bookingController.card.unmount();}catch(e2){}
       try{if(typeof bookingController.card.destroy==='function')bookingController.card.destroy();}catch(e3){}
     }
-    bookingController.id='';bookingController.data=null;bookingController.view=null;bookingController.loading=null;bookingController.error='';
+    bookingController.id='';bookingController.data=null;bookingController.lifecycle=null;bookingController.view=null;bookingController.loading=null;bookingController.error='';
     bookingController.card=null;bookingController.cardMountPromise=null;bookingController.stripe=null;bookingController.cardComplete=false;bookingController.busy=false;
     bookingController.context=null;
     if(options.removeUi){var ui=document.getElementById('ob-booking-session-authorization');if(ui)ui.remove();}
@@ -63935,6 +63923,34 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
   function secondsToMs(value){
     var number=Number(value||0);if(!Number.isFinite(number)||number<=0)return null;
     return number<100000000000?number*1000:number;
+  }
+  function bookingLifecycleState(data){
+    data=data||{};var booking=data.booking||{};var session=data.session||{};
+    var status=String(data.status||booking.status||'').toLowerCase();
+    var sessionStatus=String(session.status||data.session_status||'').toLowerCase();
+    if(status==='canceled')status='cancelled';if(sessionStatus==='canceled')sessionStatus='cancelled';
+    if(sessionStatus==='settling')return {kind:'settling',status:'settling'};
+    if(sessionStatus==='ended')return {kind:'terminal',status:'ended'};
+    if(sessionStatus==='cancelled')return {kind:'terminal',status:'cancelled'};
+    if(sessionStatus==='failed')return {kind:'terminal',status:'failed'};
+    if(status==='active'){
+      return session&&session.id
+        ? {kind:'active',status:'active',session:session}
+        : {kind:'starting',status:'active'};
+    }
+    if(status==='settling')return {kind:'settling',status:'settling'};
+    if(status==='ended')return {kind:'terminal',status:'ended'};
+    if(status==='cancelled')return {kind:'terminal',status:'cancelled'};
+    if(status==='failed')return {kind:'terminal',status:'failed'};
+    if(status==='declined')return {kind:'terminal',status:'declined'};
+    if(status==='pending')return {kind:'pending',status:'pending'};
+    if(status==='started'){
+      return sessionStatus==='active'&&session.id
+        ? {kind:'active',status:'active',session:session}
+        : {kind:'starting',status:'started'};
+    }
+    if(status==='waiting'||status==='confirmed')return {kind:'waiting',status:status};
+    return {kind:'unknown',status:status};
   }
   function bookingAuthorizationView(data,now){
     data=data||{};var booking=data.booking||{};now=Number(now||Date.now());
@@ -63961,7 +63977,8 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
         var data=await responseJson(response);
         if(!bookingControllerOwns(context)||bookingController.loadSeq!==loadSeq)return null;
         if(!response.ok){var error=new Error(data.error||'Could not refresh this booking.');error.code=data.code||'';throw error;}
-        bookingController.data=data;bookingController.view=bookingAuthorizationView(data,Date.now());bookingController.error='';
+        bookingController.data=data;bookingController.lifecycle=bookingLifecycleState(data);
+        bookingController.view=bookingController.lifecycle.kind==='waiting'?bookingAuthorizationView(data,Date.now()):null;bookingController.error='';
         return data;
       }).catch(function(error){
         if(!bookingControllerOwns(context)||bookingController.loadSeq!==loadSeq)return null;
@@ -64031,6 +64048,52 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     wrap.appendChild(cardActions);card.appendChild(wrap);
     var error=document.createElement('div');error.className='ob-booking-auth-error';error.setAttribute('role','alert');error.textContent=bookingController.error||'';
     if(bookingController.error)error.style.display='block';card.appendChild(error);
+  }
+  function renderBookingLifecycleCard(lifecycle,options){
+    options=options||{};var overlay=document.getElementById('booking-join-overlay');if(!overlay)return;
+    var panel=overlay.firstElementChild;if(!panel)return;var card=bookingCard(panel);
+    if(bookingController.card){
+      try{if(typeof bookingController.card.clear==='function')bookingController.card.clear();}catch(e){}
+      try{if(typeof bookingController.card.unmount==='function')bookingController.card.unmount();}catch(e2){}
+      try{if(typeof bookingController.card.destroy==='function')bookingController.card.destroy();}catch(e3){}
+      bookingController.card=null;bookingController.cardComplete=false;
+    }
+    card.replaceChildren();var headingText='Booking status unavailable';var copy='Refresh this page to check the latest booking status.';var refresh=false;
+    if(lifecycle.kind==='settling'){
+      headingText='Finalizing your session';copy='The session has ended and the final payment details are being confirmed. This page will update automatically.';refresh=true;
+    }else if(lifecycle.kind==='starting'){
+      headingText='Your session is starting';copy='The expert has started the booking. We are reconnecting you to the live session now.';refresh=true;
+    }else if(lifecycle.kind==='pending'){
+      headingText='Awaiting expert confirmation';copy='Your booking request is still pending. This page will update after the expert responds.';refresh=true;
+    }else if(lifecycle.status==='ended'){
+      headingText='Session completed';copy='This scheduled session has ended. You can review it from My Bookings.';
+    }else if(lifecycle.status==='cancelled'){
+      headingText='Booking cancelled';copy='This booking was cancelled and cannot be joined.';
+    }else if(lifecycle.status==='failed'){
+      headingText='Session could not be completed';copy='This session is no longer active. Check My Bookings for the latest details.';
+    }else if(lifecycle.status==='declined'){
+      headingText='Booking declined';copy='The expert was unable to accept this booking.';
+    }
+    var heading=bookingHeading(card,headingText,lifecycle.status==='ended');bookingCopy(card,copy);
+    if(refresh){
+      bookingActions(card).appendChild(bookingButton('ob-booking-lifecycle-refresh','Refresh status','btn-secondary',function(){enhanceBookingJoinOverlay({force:true,focus:true});}));
+      scheduleBookingRefresh(null);
+    }else clearBookingRefresh();
+    if(options.focus)focusElement(heading);
+  }
+  function applyBookingLifecycle(data,options){
+    if(!data)return false;var lifecycle=bookingController.lifecycle||bookingLifecycleState(data);bookingController.lifecycle=lifecycle;
+    if(lifecycle.kind==='waiting')return false;
+    if(lifecycle.kind==='active'&&lifecycle.session&&lifecycle.session.id&&typeof window.joinActiveBookingSession==='function'){
+      var context=bookingController.context;if(!bookingControllerOwns(context))return true;
+      var booking=data.booking||{};var expert=data.expert||{};
+      var sessionId=String(lifecycle.session.id);var expertId=String(booking.expert_id||expert.user_id||expert.id||'');
+      var channel=String(lifecycle.session.channel||booking.channel||'chat').toLowerCase();
+      clearBookingRefresh();clearBookingControllerState({removeUi:true});
+      window.joinActiveBookingSession(sessionId,expertId,channel);
+      return true;
+    }
+    renderBookingLifecycleCard(lifecycle,options);return true;
   }
   function renderBookingCard(data,options){
     options=options||{};var overlay=document.getElementById('booking-join-overlay');if(!overlay)return;
@@ -64119,6 +64182,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     if(bookingController.busy&&bookingControllerOwns(context))return;
     var data=await loadBookingAuthorizationData(true,context);
     if(!bookingControllerOwns(context)||!data||bookingController.busy)return;
+    if(applyBookingLifecycle(data,{focus:true}))return;
     var view=bookingController.view;
     if(!bookingIsMinute(data)||view&&(view.ready||view.required===false)){renderBookingCard(data,{focus:true});scheduleBookingRefresh(view);return;}
     if(!view||!view.available){renderBookingCard(data,{focus:true});return;}
@@ -64166,6 +64230,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     if(!authToken()){renderBookingCard(null,options);return;}
     var context=bookingOperationContext();var data=await loadBookingAuthorizationData(options.force!==false,context);
     if(!bookingControllerOwns(context))return;
+    if(applyBookingLifecycle(data,options))return;
     renderBookingCard(data,options);scheduleBookingRefresh(bookingController.view);
   }
   if(bookingIdFromUrl()){
@@ -64208,6 +64273,74 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
         if(button){button.disabled=false;button.textContent='\u25b6 Start Session';}
       });
   };
+
+  var expertEndController={nextRequestId:0,current:null};
+  function activeExpertSessionIdForEnd(){
+    return String(window._obActiveSessId||window._sid||window._sessId||'');
+  }
+  function setExpertEndControlsBusy(busy){
+    document.querySelectorAll('[onclick*="expertEndSession"]').forEach(function(button){
+      if(busy){
+        if(!button.dataset.obEndLabel)button.dataset.obEndLabel=button.textContent;
+        button.disabled=true;button.textContent='Ending...';
+      }else{
+        button.disabled=false;
+        if(button.dataset.obEndLabel){button.textContent=button.dataset.obEndLabel;delete button.dataset.obEndLabel;}
+      }
+    });
+  }
+  function expertEndControllerOwns(request){
+    return expertEndController.current===request;
+  }
+  function expertEndResponseOwns(request){
+    return expertEndControllerOwns(request)&&clientContext.isCurrent(request.context)&&activeExpertSessionIdForEnd()===request.sessionId;
+  }
+  function applySuccessfulExpertEnd(data,sessionId){
+    data=data||{};var session=Object.assign({},data,data.session||{});delete session.session;
+    if(!session.id)session.id=sessionId;
+    if(typeof window.obApplyAuthoritativeExpertEnded==='function'){
+      window.obApplyAuthoritativeExpertEnded({type:'session_ended',session_id:sessionId,session:session},'expert');
+      return;
+    }
+    if(window.OB_RTC&&window.OB_RTC.isActive&&window.OB_RTC.isActive()){
+      try{if(typeof window.OB_RTC.cleanup==='function')window.OB_RTC.cleanup();else if(typeof window.OB_RTC.end==='function')window.OB_RTC.end();}catch(e){}
+    }
+    window._sessId=null;window._sid=null;window._obActiveSessId=null;window._expertSessActive=false;
+    if(window._expertTimerInterval){clearInterval(window._expertTimerInterval);window._expertTimerInterval=null;}
+    if(window._expertSessInterval){clearInterval(window._expertSessInterval);window._expertSessInterval=null;}
+  }
+  function requestExpertSessionEnd(){
+    var sessionId=activeExpertSessionIdForEnd();
+    if(!sessionId){if(typeof window.toast==='function')window.toast('Could not find the active session. Refresh and try again.','err');return Promise.resolve(false);}
+    if(expertEndController.current&&expertEndController.current.sessionId===sessionId&&clientContext.isCurrent(expertEndController.current.context))return expertEndController.current.promise;
+    var context=clientContext.capture('expert-session-end',{sessionId:sessionId});
+    if(!context.token||['expert','admin','support'].indexOf(context.role)<0){if(typeof window.toast==='function')window.toast('Please sign in to end this session.','err');return Promise.resolve(false);}
+    var request={id:++expertEndController.nextRequestId,sessionId:sessionId,context:context,promise:null};
+    expertEndController.current=request;setExpertEndControlsBusy(true);
+    request.promise=(async function(){
+      try{
+        var response=await fetch(BASE+'/api/sessions/'+encodeURIComponent(sessionId)+'/end',{
+          method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+context.token},body:'{}',signal:context.signal
+        });
+        var data=await responseJson(response);
+        if(!expertEndResponseOwns(request))return false;
+        if(!response.ok){var error=new Error(data.error||'Could not end this session.');error.code=data.code||'';throw error;}
+        applySuccessfulExpertEnd(data,sessionId);return true;
+      }catch(errorValue){
+        if(!expertEndResponseOwns(request))return false;
+        var message=errorValue&&errorValue.message?errorValue.message:'Could not end this session. Please try again.';
+        if(typeof window.toast==='function')window.toast(message,'err');else console.error('[expertEndSession]',message);
+        return false;
+      }finally{
+        if(expertEndControllerOwns(request)){
+          expertEndController.current=null;
+          setExpertEndControlsBusy(false);
+        }
+      }
+    })();
+    return request.promise;
+  }
+  window.expertEndSession=requestExpertSessionEnd;
 
   function isClientIdentity(context){
     if(!context)return false;
@@ -64263,10 +64396,12 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
       clearClientSessionTransport:clearClientSessionTransport,clearClientRtcMediaAndTimers:clearClientRtcMediaAndTimers,clearClientSessionDom:clearClientSessionDom,
       sessionAuthorizationRequestIsCurrent:sessionAuthorizationRequestIsCurrent,
       bookingOperationContext:bookingOperationContext,bookingContextIsCurrent:bookingContextIsCurrent,
+      bookingLifecycleState:bookingLifecycleState,applyBookingLifecycle:applyBookingLifecycle,
       detachServerBoundBookingAuthorization:detachServerBoundBookingAuthorization,
       clearBookingControllerState:clearBookingControllerState,loadBookingAuthorizationData:loadBookingAuthorizationData,
       mountBookingReplacementCard:mountBookingReplacementCard,
-      authorizeScheduledBooking:authorizeScheduledBooking,enhanceBookingJoinOverlay:enhanceBookingJoinOverlay
+      authorizeScheduledBooking:authorizeScheduledBooking,enhanceBookingJoinOverlay:enhanceBookingJoinOverlay,
+      endExpertSession:requestExpertSessionEnd
     };
   }
   syncPaymentCopy();

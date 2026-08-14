@@ -38,6 +38,11 @@ const bflOwnerStart = html.indexOf('function bflCurrentExpertId(){');
 const bflOwnerEnd = html.indexOf('\n\nfunction mountBflCardElement()', bflOwnerStart);
 assert(bflOwnerStart >= 0 && bflOwnerEnd > bflOwnerStart, 'book-later immutable target owner is installed');
 const bflOwnerSource = html.slice(bflOwnerStart, bflOwnerEnd);
+const clientBookingHelpersStart = html.indexOf('function clientBookingLifecycleView(booking)');
+const clientBookingHelpersEnd = html.indexOf('\nfunction loadClientBookings()', clientBookingHelpersStart);
+assert(clientBookingHelpersStart >= 0 && clientBookingHelpersEnd > clientBookingHelpersStart,
+  'client booking lifecycle and route helpers are installed');
+const clientBookingHelpersSource = html.slice(clientBookingHelpersStart, clientBookingHelpersEnd);
 
 assert.match(html, /A temporary \$5 authorization may appear to confirm your payment method/,
   'immediate payment page discloses the temporary authorization');
@@ -164,6 +169,20 @@ assert.doesNotMatch(html, /syncClientSessionFromBackend|_origOpenClientChatCriti
   'superseded client-chat synchronization wrappers are deleted');
 assert.equal((controllerSource.match(/\/api\/bookings\/'\+encodeURIComponent\(context\.bookingId\)\+'\/join'/g) || []).length, 1,
   'one scheduled-booking controller owns authenticated join readiness');
+assert.match(controllerSource, /function bookingLifecycleState\(data\)/,
+  'one scheduled-booking lifecycle classifier owns active, settling, waiting, and terminal states');
+assert.match(controllerSource, /lifecycle\.kind==='active'[\s\S]*window\.joinActiveBookingSession\(/,
+  'an authoritative active join response resumes the scheduled live session without waiting for WebSocket delivery');
+assert.match(controllerSource, /if\(applyBookingLifecycle\(data,\{focus:true\}\)\)return;/,
+  'a fresh non-waiting booking lifecycle cannot fall through into payment authorization');
+assert.match(controllerSource, /if\(!response\.ok\)[\s\S]*Could not end this session/,
+  'expert End treats non-2xx responses as failures before applying terminal UI state');
+assert.equal((html.match(/window\.expertEndSession\s*=/g) || []).length, 1,
+  'one expert End request owner remains');
+assert.equal((html.match(/function expertEndSession\s*\(/g) || []).length, 0,
+  'the superseded local-only expert End implementation is deleted');
+assert.doesNotMatch(html, /_origEndSession|expertEndSession\(\);if\(window\.OB_RTC\)/,
+  'expert End has no wrapper or pre-success RTC teardown path');
 assert.match(html, /obInstallAuthProfileUpdate\(\{email:email\},data,attempt\)/,
   'email-change credential refreshes are routed through the central identity owner');
 assert.doesNotMatch(html, /function (?:updateStoredUserEmail|syncStoredUserEmail)\(email, data\)\{[\s\S]{0,800}store\.setItem\('ob_t', data\.token\)/,
@@ -425,6 +444,18 @@ async function changeAuth(harness, nextToken) {
   await settleAsync();
 }
 
+function attachPersistentExpertEndButton(harness, label = 'End Session') {
+  const button = new FakeElement('button');
+  button.textContent = label;
+  button.setAttribute('onclick', 'expertEndSession()');
+  harness.body.appendChild(button);
+  const priorQuerySelectorAll = harness.document.querySelectorAll.bind(harness.document);
+  harness.document.querySelectorAll = (selector) => (
+    selector === '[onclick*="expertEndSession"]' ? [button] : priorQuerySelectorAll(selector)
+  );
+  return button;
+}
+
 // Executable XSS regression: an expert name remains a text node, never markup.
 const disclosureAssignment = html.match(/window\.obSetPayPerMinuteDisclosure = function\(element, expertName\)\{[\s\S]*?\n  \};/);
 assert(disclosureAssignment, 'safe disclosure renderer is defined');
@@ -448,6 +479,7 @@ const clientBToken = authTokenFor('client-b');
 const clientBRotatedToken = authTokenFor('client-b', { nonce: 'rotated' });
 const clientBKey = `principal:${JSON.stringify(['client-b', 'client', ''])}`;
 const expertToken = `e30.${Buffer.from(JSON.stringify({ id: 'expert-a', role: 'expert' })).toString('base64url')}.signature`;
+const expertBToken = `e30.${Buffer.from(JSON.stringify({ id: 'expert-b', role: 'expert' })).toString('base64url')}.signature`;
 const adminToken = `e30.${Buffer.from(JSON.stringify({ id: 'admin-a', role: 'admin' })).toString('base64url')}.signature`;
 const supportToken = `e30.${Buffer.from(JSON.stringify({ id: 'support-a', role: 'support' })).toString('base64url')}.signature`;
 
@@ -1744,14 +1776,132 @@ assert.equal(lateSessionErrors, 0, 'late client-A API/network errors cannot clea
 assert.equal(liveRaceHarness.sandbox.obClientSessionRequestContinuationAllowed('prepaid', '', clientBToken), true,
   'prepaid remains available to the current authenticated client');
 
+// My Bookings derives its label and link from the authoritative linked session,
+// never from the legacy booking.status === "started" shortcut.
+const clientBookingSandbox = {
+  __OB_TEST_HOOKS__: true,
+  window: {},
+  location: { origin: 'https://ownlybiz.example', hostname: 'ownlybiz.example' },
+  encodeURIComponent,
+};
+clientBookingSandbox.window = clientBookingSandbox;
+vm.createContext(clientBookingSandbox);
+new vm.Script(clientBookingHelpersSource, { filename: 'client-booking-lifecycle.js' }).runInContext(clientBookingSandbox);
+const clientBookingHooks = clientBookingSandbox.obClientBookingTestHooks;
+assert.equal(clientBookingHooks.lifecycle({ status: 'started', session_id: 'session-ready', session_status: 'active', session_started_at: null }).label, 'Ready to join',
+  'an active scheduled session that is waiting for the client is ready to join');
+assert.equal(clientBookingHooks.lifecycle({ status: 'started', session_id: 'session-live', session_status: 'active', session_started_at: 1_786_729_600 }).label, 'In session',
+  'an active scheduled session with billing started is shown in session');
+assert.equal(clientBookingHooks.lifecycle({ status: 'started', session_status: 'active', session_started_at: null }).label, 'Session starting',
+  'an active status without a linked session id is not presented as fully ready');
+assert.equal(clientBookingHooks.lifecycle({ status: 'started', session_status: 'settling' }).label, 'Finalizing',
+  'a settling scheduled session is never shown as completed early');
+assert.equal(clientBookingHooks.lifecycle({ status: 'started', session_status: 'ended' }).label, 'Completed',
+  'only an ended linked session is completed');
+assert.equal(clientBookingHooks.lifecycle({ status: 'started', session_status: 'cancelled' }).label, 'Cancelled',
+  'a cancelled linked session remains cancelled');
+assert.equal(clientBookingHooks.lifecycle({ status: 'started', session_status: 'failed' }).label, 'Failed',
+  'a failed linked session remains failed');
+assert.notEqual(clientBookingHooks.lifecycle({ status: 'started' }).label, 'Completed',
+  'legacy started without linked-session truth can never become Completed');
+
+clientBookingSandbox._obIsPublicExpertHost = () => false;
+assert.equal(
+  clientBookingHooks.joinUrl({ id: 'booking 1', expert_slug: 'luna-psychic' }),
+  'https://ownlybiz.example/luna-psychic?booking=booking%201',
+  'platform and Vercel booking links retain the expert slug route',
+);
+clientBookingSandbox._obIsPublicExpertHost = () => true;
+assert.equal(
+  clientBookingHooks.joinUrl({ id: 'booking 1', expert_slug: 'luna-psychic' }),
+  'https://ownlybiz.example/?booking=booking%201',
+  'expert subdomains and custom domains keep the booking link at their root',
+);
+delete clientBookingSandbox._obIsPublicExpertHost;
+clientBookingSandbox.location.origin = 'https://ownlybiz-git-staging.example.vercel.app';
+clientBookingSandbox.location.hostname = 'ownlybiz-git-staging.example.vercel.app';
+assert.equal(
+  clientBookingHooks.joinUrl({ id: 'booking-vercel', expert_slug: 'luna-psychic' }),
+  'https://ownlybiz-git-staging.example.vercel.app/luna-psychic?booking=booking-vercel',
+  'Vercel staging hosts retain the expert slug even before the expert-host resolver initializes',
+);
+clientBookingSandbox.location.origin = 'https://lunapsychics.example';
+clientBookingSandbox.location.hostname = 'lunapsychics.example';
+assert.equal(
+  clientBookingHooks.joinUrl({ id: 'booking-custom', expert_slug: 'luna-psychic' }),
+  'https://lunapsychics.example/?booking=booking-custom',
+  'custom domains stay at the root even before the expert-host resolver initializes',
+);
+
 const scheduledData = (owner, ready = true) => ({
   owner,
+  status: 'waiting',
   authorization_required: true,
   authorization_ready: ready,
   authorization_available: true,
   authorization_expires_at: Math.floor((Date.now() + 5 * 60_000) / 1000),
   booking: { id: 'booking-account-isolation', expert_id: 'expert-scheduled', channel: 'chat', payment_mode: 'minute', booking_type: 'permin' },
 });
+
+// Reloading after the one-shot booking_session_started event uses the authenticated
+// join response as the source of truth and enters the already-active session.
+const activeBookingHarness = createHarness({
+  search: '?booking=booking-active-reload',
+  session: { ob_t: clientAToken },
+  fetchImpl: (url) => {
+    if (String(url).includes('/api/bookings/booking-active-reload/join')) {
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({
+          status: 'active',
+          booking: { id: 'booking-active-reload', expert_id: 'expert-active', channel: 'video', status: 'started' },
+          session: { id: 'scheduled-session-active', status: 'active', started_at: null, channel: 'video' },
+        }),
+      });
+    }
+    return Promise.resolve({ ok: false, json: async () => ({ error: 'unexpected request' }) });
+  },
+});
+const activeBookingOverlay = new FakeElement('div'); activeBookingOverlay.id = 'booking-join-overlay';
+const activeBookingPanel = new FakeElement('div'); activeBookingPanel.appendChild(new FakeElement('div')); activeBookingOverlay.appendChild(activeBookingPanel); activeBookingHarness.body.appendChild(activeBookingOverlay);
+const activeBookingJoins = [];
+activeBookingHarness.sandbox.joinActiveBookingSession = (...args) => activeBookingJoins.push(args);
+await activeBookingHarness.sandbox.obPayPerMinuteAuthorizationTestHooks.enhanceBookingJoinOverlay({ force: true });
+assert.deepEqual(activeBookingJoins, [['scheduled-session-active', 'expert-active', 'video']],
+  'an active join response recovers a missed WebSocket event and enters the exact linked session');
+assert.equal(activeBookingHarness.document.getElementById('ob-booking-auth-heading'), null,
+  'an active session never renders stale payment-readiness UI');
+
+async function assertScheduledLifecycleHeading(status, expectedHeading, sessionStatus = status) {
+  const bookingId = `booking-${status}`;
+  const harness = createHarness({
+    search: `?booking=${bookingId}`,
+    session: { ob_t: clientAToken },
+    fetchImpl: (url) => {
+      if (String(url).includes(`/api/bookings/${bookingId}/join`)) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            status,
+            booking: { id: bookingId, expert_id: 'expert-scheduled', channel: 'chat', status: status === 'ended' ? 'started' : status },
+            session: { id: `session-${status}`, status: sessionStatus },
+          }),
+        });
+      }
+      return Promise.resolve({ ok: false, json: async () => ({ error: 'unexpected request' }) });
+    },
+  });
+  const overlay = new FakeElement('div'); overlay.id = 'booking-join-overlay';
+  const panel = new FakeElement('div'); panel.appendChild(new FakeElement('div')); overlay.appendChild(panel); harness.body.appendChild(overlay);
+  await harness.sandbox.obPayPerMinuteAuthorizationTestHooks.enhanceBookingJoinOverlay({ force: true });
+  assert.equal(harness.document.getElementById('ob-booking-auth-heading').textContent, expectedHeading);
+  assert.equal(harness.document.getElementById('ob-booking-auth-submit'), null,
+    `${status} lifecycle truth cannot render a payment action`);
+}
+await assertScheduledLifecycleHeading('settling', 'Finalizing your session');
+await assertScheduledLifecycleHeading('ended', 'Session completed');
+await assertScheduledLifecycleHeading('cancelled', 'Booking cancelled');
+await assertScheduledLifecycleHeading('failed', 'Session could not be completed');
 
 // A late scheduled-join response cannot repopulate B's controller, and logout/login re-renders the correct card.
 let resolveScheduledAJoin;
@@ -1775,6 +1925,8 @@ const scheduledJoinHarness = createHarness({
 const scheduledJoinOverlay = new FakeElement('div'); scheduledJoinOverlay.id = 'booking-join-overlay';
 const scheduledJoinPanel = new FakeElement('div'); scheduledJoinPanel.appendChild(new FakeElement('div')); scheduledJoinOverlay.appendChild(scheduledJoinPanel); scheduledJoinHarness.body.appendChild(scheduledJoinOverlay);
 const scheduledJoinHooks = scheduledJoinHarness.sandbox.obPayPerMinuteAuthorizationTestHooks;
+let staleScheduledActiveJoins = 0;
+scheduledJoinHarness.sandbox.joinActiveBookingSession = () => { staleScheduledActiveJoins += 1; };
 const lateScheduledAJoin = scheduledJoinHooks.enhanceBookingJoinOverlay({ force: true });
 assert(resolveScheduledAJoin, 'client A scheduled readiness request is in flight');
 let scheduledCardClears = 0;
@@ -1798,17 +1950,196 @@ assert.equal(scheduledJoinHooks.bookingController.data.owner, 'client-b', 'clien
 assert.equal(scheduledJoinHarness.document.getElementById('ob-booking-auth-heading').textContent, '✓ $5 temporary authorization approved',
   'signup/login immediately re-renders client B scheduled payment readiness');
 
-resolveScheduledAJoin({ ok: true, json: async () => scheduledData('client-a', false) });
+resolveScheduledAJoin({
+  ok: true,
+  json: async () => ({
+    owner: 'client-a',
+    status: 'active',
+    booking: { id: 'booking-account-isolation', expert_id: 'expert-a', channel: 'chat', status: 'started' },
+    session: { id: 'client-a-active-session', status: 'active' },
+  }),
+});
 await lateScheduledAJoin;
 assert.equal(scheduledJoinHooks.bookingController.context.accountKey, clientBKey, 'late client-A join response cannot reclaim the scheduled controller');
 assert.equal(scheduledJoinHooks.bookingController.data.owner, 'client-b', 'late client-A join data cannot replace client B data');
 assert.equal(scheduledJoinHarness.document.getElementById('ob-booking-auth-heading').textContent, '✓ $5 temporary authorization approved',
   'late client-A join response cannot replace client B scheduled UI');
+assert.equal(staleScheduledActiveJoins, 0,
+  'a late active-session response for client A cannot route client B into A\'s session');
 const scheduledJoinAuth = scheduledJoinRequests.filter((request) => request.url.includes('/join')).map((request) => request.authorization);
 assert.deepEqual(scheduledJoinAuth, [`Bearer ${clientAToken}`, `Bearer ${clientBToken}`],
   'scheduled booking readiness is fetched once with each account\'s captured credential');
 assert(scheduledJoinRequests.filter((request) => request.url.includes('/join')).every((request) => request.cache === 'no-store'),
   'scheduled booking readiness bypasses HTTP cache for both accounts');
+
+// Expert End owns the server response before it mutates the live panel. A backend
+// failure leaves the active session intact; only a successful authoritative response
+// is allowed to apply terminal state.
+const failedExpertEndToasts = [];
+let failedExpertEndApplied = 0;
+const failedExpertEndHarness = createHarness({
+  session: { ob_t: expertToken },
+  fetchImpl: (url) => {
+    if (String(url).includes('/api/sessions/expert-session-failure/end')) {
+      return Promise.resolve({ ok: false, status: 500, json: async () => ({ error: 'Authoritative session billing inputs are incomplete.' }) });
+    }
+    return Promise.resolve({ ok: false, status: 404, json: async () => ({ error: 'unexpected request' }) });
+  },
+});
+const failedExpertEndButton = attachPersistentExpertEndButton(failedExpertEndHarness, '\u2715 End Session');
+failedExpertEndHarness.sandbox._sessId = 'expert-session-failure';
+failedExpertEndHarness.sandbox._sid = 'expert-session-failure';
+failedExpertEndHarness.sandbox._obActiveSessId = 'expert-session-failure';
+failedExpertEndHarness.sandbox.toast = (message, kind) => failedExpertEndToasts.push({ message, kind });
+failedExpertEndHarness.sandbox.obApplyAuthoritativeExpertEnded = () => { failedExpertEndApplied += 1; };
+assert.equal(await failedExpertEndHarness.sandbox.obPayPerMinuteAuthorizationTestHooks.endExpertSession(), false,
+  'a non-2xx expert End response reports failure');
+assert.equal(failedExpertEndApplied, 0, 'a failed expert End never applies terminal UI state');
+assert.equal(failedExpertEndHarness.sandbox._obActiveSessId, 'expert-session-failure',
+  'a failed expert End retains the active session owner');
+assert.equal(failedExpertEndHarness.sandbox._sid, 'expert-session-failure',
+  'a failed expert End retains the expert session id');
+assert.equal(failedExpertEndToasts.at(-1)?.kind, 'err', 'a failed expert End surfaces a visible error');
+assert.equal(failedExpertEndButton.disabled, false, 'a failed expert End re-enables its persistent control');
+assert.equal(failedExpertEndButton.textContent, '\u2715 End Session', 'a failed expert End restores its persistent control label');
+assert.equal(failedExpertEndButton.dataset.obEndLabel, undefined, 'a failed expert End releases its control ownership marker');
+
+const successfulExpertEndPayloads = [];
+const successfulExpertEndRequests = [];
+const successfulExpertEndHarness = createHarness({
+  session: { ob_t: expertToken },
+  fetchImpl: (url, init = {}) => {
+    const requestUrl = String(url);
+    const sessionId = requestUrl.includes('/expert-session-success-next/end')
+      ? 'expert-session-success-next'
+      : 'expert-session-success';
+    assert(requestUrl.includes(`/api/sessions/${sessionId}/end`));
+    assert.equal(init.headers.Authorization, `Bearer ${expertToken}`, 'expert End uses its captured account credential');
+    successfulExpertEndRequests.push(sessionId);
+    return Promise.resolve({
+      ok: true,
+      status: 200,
+      json: async () => ({ expert_earned: sessionId.endsWith('-next') ? 3.25 : 2.5, session: { id: sessionId, status: 'ended' } }),
+    });
+  },
+});
+const successfulExpertEndButton = attachPersistentExpertEndButton(successfulExpertEndHarness);
+successfulExpertEndHarness.sandbox._sessId = 'expert-session-success';
+successfulExpertEndHarness.sandbox._sid = 'expert-session-success';
+successfulExpertEndHarness.sandbox._obActiveSessId = 'expert-session-success';
+successfulExpertEndHarness.sandbox.obApplyAuthoritativeExpertEnded = (payload) => {
+  successfulExpertEndPayloads.push(payload);
+  successfulExpertEndHarness.sandbox._sessId = null;
+  successfulExpertEndHarness.sandbox._sid = null;
+  successfulExpertEndHarness.sandbox._obActiveSessId = null;
+};
+assert.equal(await successfulExpertEndHarness.sandbox.obPayPerMinuteAuthorizationTestHooks.endExpertSession(), true,
+  'a successful expert End applies authoritative terminal state');
+assert.equal(successfulExpertEndPayloads[0].session.id, 'expert-session-success');
+assert.equal(successfulExpertEndPayloads[0].session.expert_earned, 2.5, 'top-level settlement totals reach the terminal UI owner');
+assert.equal(successfulExpertEndHarness.sandbox._obActiveSessId, null, 'success clears the active live-session UI owner');
+assert.equal(successfulExpertEndButton.disabled, false, 'success re-enables the persistent End control after terminal state clears the active session id');
+assert.equal(successfulExpertEndButton.textContent, 'End Session', 'success restores the persistent End control label');
+assert.equal(successfulExpertEndButton.dataset.obEndLabel, undefined, 'success releases its control ownership marker');
+
+successfulExpertEndHarness.sandbox._sessId = 'expert-session-success-next';
+successfulExpertEndHarness.sandbox._sid = 'expert-session-success-next';
+successfulExpertEndHarness.sandbox._obActiveSessId = 'expert-session-success-next';
+assert.equal(await successfulExpertEndHarness.sandbox.obPayPerMinuteAuthorizationTestHooks.endExpertSession(), true,
+  'the next expert session can be ended without reloading the persistent dashboard');
+assert.deepEqual(successfulExpertEndRequests, ['expert-session-success', 'expert-session-success-next'],
+  'each session receives its own authoritative End request');
+assert.equal(successfulExpertEndPayloads[1].session.id, 'expert-session-success-next');
+assert.equal(successfulExpertEndButton.disabled, false, 'the next session also releases the persistent End control');
+assert.equal(successfulExpertEndButton.textContent, 'End Session', 'the next session restores the original persistent control label');
+
+let resolveStaleExpertEnd;
+let staleExpertEndApplied = 0;
+const staleExpertEndHarness = createHarness({
+  session: { ob_t: expertToken },
+  fetchImpl: (url, init = {}) => {
+    if (String(url).includes('/api/sessions/expert-a-session/end')) {
+      assert.equal(init.headers.Authorization, `Bearer ${expertToken}`);
+      return new Promise((resolve) => { resolveStaleExpertEnd = resolve; });
+    }
+    return Promise.resolve({ ok: false, status: 404, json: async () => ({ error: 'unexpected request' }) });
+  },
+});
+const staleExpertEndButton = attachPersistentExpertEndButton(staleExpertEndHarness);
+staleExpertEndHarness.sandbox._sessId = 'expert-a-session';
+staleExpertEndHarness.sandbox._sid = 'expert-a-session';
+staleExpertEndHarness.sandbox._obActiveSessId = 'expert-a-session';
+staleExpertEndHarness.sandbox.obApplyAuthoritativeExpertEnded = () => { staleExpertEndApplied += 1; };
+const staleExpertEnd = staleExpertEndHarness.sandbox.obPayPerMinuteAuthorizationTestHooks.endExpertSession();
+assert(resolveStaleExpertEnd, 'expert A End request is pending before the account changes');
+await changeAuth(staleExpertEndHarness, expertBToken);
+staleExpertEndHarness.sandbox._sessId = 'expert-b-session';
+staleExpertEndHarness.sandbox._sid = 'expert-b-session';
+staleExpertEndHarness.sandbox._obActiveSessId = 'expert-b-session';
+resolveStaleExpertEnd({
+  ok: true,
+  status: 200,
+  json: async () => ({ session: { id: 'expert-a-session', status: 'ended', expert_earned: 1 } }),
+});
+assert.equal(await staleExpertEnd, false, 'a late expert-A success is discarded after expert B becomes current');
+assert.equal(staleExpertEndApplied, 0, 'a late expert-A success cannot clear expert B live-session UI');
+assert.equal(staleExpertEndHarness.sandbox._obActiveSessId, 'expert-b-session',
+  'expert B keeps its active session after the stale expert-A response');
+assert.equal(staleExpertEndButton.disabled, false,
+  'a stale expert-A request releases its controls when no newer End request owns them');
+assert.equal(staleExpertEndButton.textContent, 'End Session',
+  'a stale expert-A request restores the persistent control for expert B');
+
+let resolveOverlappedExpertAEnd;
+let resolveOverlappedExpertBEnd;
+const overlappedExpertEndHarness = createHarness({
+  session: { ob_t: expertToken },
+  fetchImpl: (url) => {
+    if (String(url).includes('/api/sessions/expert-a-overlap/end')) {
+      return new Promise((resolve) => { resolveOverlappedExpertAEnd = resolve; });
+    }
+    if (String(url).includes('/api/sessions/expert-b-overlap/end')) {
+      return new Promise((resolve) => { resolveOverlappedExpertBEnd = resolve; });
+    }
+    return Promise.resolve({ ok: false, status: 404, json: async () => ({ error: 'unexpected request' }) });
+  },
+});
+const overlappedExpertEndButton = attachPersistentExpertEndButton(overlappedExpertEndHarness);
+overlappedExpertEndHarness.sandbox._sessId = 'expert-a-overlap';
+overlappedExpertEndHarness.sandbox._sid = 'expert-a-overlap';
+overlappedExpertEndHarness.sandbox._obActiveSessId = 'expert-a-overlap';
+overlappedExpertEndHarness.sandbox.obApplyAuthoritativeExpertEnded = (payload) => {
+  if (payload.session_id !== 'expert-b-overlap') return;
+  overlappedExpertEndHarness.sandbox._sessId = null;
+  overlappedExpertEndHarness.sandbox._sid = null;
+  overlappedExpertEndHarness.sandbox._obActiveSessId = null;
+};
+const overlappedExpertAEnd = overlappedExpertEndHarness.sandbox.obPayPerMinuteAuthorizationTestHooks.endExpertSession();
+assert(resolveOverlappedExpertAEnd, 'expert A overlapping End request is pending');
+await changeAuth(overlappedExpertEndHarness, expertBToken);
+overlappedExpertEndHarness.sandbox._sessId = 'expert-b-overlap';
+overlappedExpertEndHarness.sandbox._sid = 'expert-b-overlap';
+overlappedExpertEndHarness.sandbox._obActiveSessId = 'expert-b-overlap';
+const overlappedExpertBEnd = overlappedExpertEndHarness.sandbox.obPayPerMinuteAuthorizationTestHooks.endExpertSession();
+assert(resolveOverlappedExpertBEnd, 'expert B owns a newer End request before expert A resolves');
+resolveOverlappedExpertAEnd({
+  ok: true,
+  status: 200,
+  json: async () => ({ session: { id: 'expert-a-overlap', status: 'ended' } }),
+});
+assert.equal(await overlappedExpertAEnd, false, 'the overlapped expert-A response remains stale');
+assert.equal(overlappedExpertEndButton.disabled, true,
+  'a stale request cannot re-enable controls owned by the newer expert-B request');
+assert.equal(overlappedExpertEndButton.textContent, 'Ending...',
+  'the newer expert-B request keeps its visible busy state');
+resolveOverlappedExpertBEnd({
+  ok: true,
+  status: 200,
+  json: async () => ({ session: { id: 'expert-b-overlap', status: 'ended' } }),
+});
+assert.equal(await overlappedExpertBEnd, true, 'the newer expert-B End request completes normally');
+assert.equal(overlappedExpertEndButton.disabled, false, 'the newer request releases its own controls');
+assert.equal(overlappedExpertEndButton.textContent, 'End Session', 'the newer request restores the original control label');
 
 // Changing accounts while A's scheduled authorization bind is pending cannot mutate B after the bind resolves.
 let resolveScheduledBind;
@@ -1863,6 +2194,7 @@ let resolveRotatedScheduledBind;
 const rotatedScheduledRequests = [];
 const rotatedScheduledData = {
   owner: 'client-a',
+  status: 'waiting',
   authorization_required: true,
   authorization_ready: false,
   authorization_available: true,
@@ -1958,6 +2290,7 @@ let duplicateCardCreates = 0;
 let duplicateCardMounts = 0;
 let duplicateCardChanges = 0;
 const duplicateMountData = {
+  status: 'waiting',
   authorization_required: true,
   authorization_ready: false,
   authorization_available: true,
@@ -2032,6 +2365,7 @@ async function assertAuthoritativeScheduledStateSkipsHold({ bookingId, data, exp
 await assertAuthoritativeScheduledStateSkipsHold({
   bookingId: 'booking-already-ready',
   data: {
+    status: 'waiting',
     authorization_required: true,
     authorization_ready: true,
     authorization_available: true,
@@ -2045,6 +2379,7 @@ await assertAuthoritativeScheduledStateSkipsHold({
 await assertAuthoritativeScheduledStateSkipsHold({
   bookingId: 'booking-authorization-not-required',
   data: {
+    status: 'waiting',
     authorization_required: false,
     authorization_ready: false,
     authorization_available: true,
@@ -2069,6 +2404,8 @@ assert.match(
   /window\.startBookingSession=function\(bookingId\)\{[\s\S]*?clientContext\.capture\('expert-booking-start',[\s\S]*?actionSeq===expertBookingStartSeq&&clientContext\.isCurrent\(context\)[\s\S]*?if\(!data\|\|!owns\(\)\)return;/,
   'expert booking start ignores late success and error continuations after identity or booking target changes',
 );
+assert.equal((html.match(/window\.expertEndSession\s*=/g) || []).length, 1,
+  'one centralized expert End controller owns every persistent End control');
 
 let scriptCount = 0;
 for (const match of html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi)) {

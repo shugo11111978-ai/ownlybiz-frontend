@@ -10,6 +10,13 @@ const authContextStart = html.indexOf('window.obAuthPrincipalFingerprint =');
 const authContextEnd = html.indexOf('window.obPublicLoaderCanFetchProfile =', authContextStart);
 assert(authContextStart >= 0 && authContextEnd > authContextStart, 'central client identity context is installed');
 const authContextSource = html.slice(authContextStart, authContextEnd);
+const clientAuthUiStart = html.indexOf('var _clientUser = null;');
+const clientAuthUiEnd = html.indexOf('\nfunction toggleClientMenu()', clientAuthUiStart);
+assert(clientAuthUiStart >= 0 && clientAuthUiEnd > clientAuthUiStart, 'client profile identity owner is installed');
+const clientAuthUiSource = html.slice(clientAuthUiStart, clientAuthUiEnd);
+const stagePolishMatch = html.match(/<script id="ownlybiz-v3-stage-polish-20260505">([\s\S]*?)<\/script>/);
+assert(stagePolishMatch, 'public-site visual polish routine is installed');
+const stagePolishSource = stagePolishMatch[1];
 const rtcModuleStart = html.indexOf('window.OB_RTC = (function(){');
 const rtcModuleEnd = html.indexOf('\n\nwindow._handleRTCMessage=', rtcModuleStart);
 assert(rtcModuleStart >= 0 && rtcModuleEnd > rtcModuleStart, 'WebRTC module is installed');
@@ -261,6 +268,8 @@ class FakeStyle {
 
 class FakeText {
   constructor(text) { this.nodeType = 3; this.textContent = String(text); this.parentNode = null; }
+  get nodeValue() { return this.textContent; }
+  set nodeValue(value) { this.textContent = String(value ?? ''); }
 }
 
 class FakeElement {
@@ -289,6 +298,7 @@ class FakeElement {
   get className() { return this.attributes.class || ''; }
   set textContent(value) { this._text = String(value ?? ''); this.children = []; }
   get textContent() { return this.children.length ? this.children.map((child) => child.textContent).join('') : this._text; }
+  get childNodes() { return this.children; }
   appendChild(child) { child.parentNode = this; this.children.push(child); return child; }
   append(...children) { children.forEach((child) => this.appendChild(typeof child === 'string' ? new FakeText(child) : child)); }
   replaceChildren(...children) { this.children.forEach((child) => { child.parentNode = null; }); this.children = []; this._text = ''; this.append(...children); }
@@ -1030,6 +1040,82 @@ const detachedRelease = identityRequests.find((request) => request.url.includes(
 assert.equal(detachedRelease?.authorization, `Bearer ${clientAToken}`, 'client A hold release never uses client B credentials');
 const detachedSessionEnd = identityRequests.find((request) => request.url.includes('/api/sessions/session-client-a/end'));
 assert.equal(detachedSessionEnd?.authorization, `Bearer ${clientAToken}`, 'client A active session is ended with A credentials before client B is installed');
+
+// The public visual-polish pass must preserve composite client identity controls.
+// Reproduce the real A -> logout -> B lifecycle with the actual profile renderer,
+// polish routine, and payment owner sharing one central client context.
+const navIdentityRequests = [];
+const navIdentityUsers = {
+  [`Bearer ${clientAToken}`]: { id: 'client-a', role: 'client', name: 'Book for Later', email: 'alice@example.test' },
+  [`Bearer ${clientBToken}`]: { id: 'client-b', role: 'client', name: 'Bianca Fresh', email: 'bianca@example.test' },
+};
+const navIdentityHarness = createHarness({
+  session: { ob_t: clientAToken, ob_u: JSON.stringify(navIdentityUsers[`Bearer ${clientAToken}`]) },
+  fetchImpl: async (url, init = {}) => {
+    const request = { url: String(url), authorization: init.headers?.Authorization || '' };
+    navIdentityRequests.push(request);
+    if (request.url.includes('/api/auth/me')) return { ok: true, status: 200, json: async () => ({ user: navIdentityUsers[request.authorization] }) };
+    if (request.url.includes('/api/payments/methods/status')) {
+      return { ok: true, status: 200, json: async () => ({ has_saved_payment_method: request.authorization === `Bearer ${clientAToken}`, mode: 'test' }) };
+    }
+    return { ok: true, status: 200, json: async () => ({}) };
+  },
+});
+navIdentityHarness.sandbox._currentExpertId = 'expert-nav-isolation';
+new vm.Script(clientAuthUiSource, { filename: 'client-profile-identity-ui.js' }).runInContext(navIdentityHarness.sandbox);
+
+const navView = new FakeElement('section'); navView.id = 'view-4';
+const navLogin = new FakeElement('button'); navLogin.id = 'client-nav-login-btn';
+const navUser = new FakeElement('div'); navUser.id = 'client-nav-user';
+const navAvatar = new FakeElement('button'); navAvatar.id = 'client-nav-avatar';
+const navInitial = new FakeElement('div'); navInitial.id = 'client-nav-initial'; navInitial.textContent = '?';
+const navName = new FakeElement('span'); navName.id = 'client-nav-name';
+const navChevron = new FakeElement('svg');
+const navMenuHandler = () => 'menu'; navAvatar.addEventListener('click', navMenuHandler);
+navAvatar.append(new FakeText('\n  '), navInitial, new FakeText('\n  '), navName, new FakeText('\n  '), navChevron, new FakeText('\n'));
+navUser.appendChild(navAvatar); navView.append(navLogin, navUser);
+const navEmail = new FakeElement('div'); navEmail.id = 'client-account-email'; navView.appendChild(navEmail);
+const polishedAction = new FakeElement('button'); polishedAction.className = 'btn';
+const polishedActionIcon = new FakeElement('svg');
+const polishedActionHandler = () => 'action'; polishedAction.addEventListener('click', polishedActionHandler);
+polishedAction.append(polishedActionIcon, new FakeText(' ✨ Start now'));
+navView.appendChild(polishedAction); navIdentityHarness.body.appendChild(navView);
+navIdentityHarness.document.querySelectorAll = (selector) => String(selector).includes('#view-4 button') ? [navAvatar, polishedAction] : [];
+
+navIdentityHarness.sandbox.checkClientAuth();
+await settleAsync();
+assert.equal(navName.textContent, 'Book for Later', 'client A profile initially renders a booking-copy name collision in the structured nav component');
+assert.equal(navInitial.textContent, 'B', 'client A initial initially renders');
+await navIdentityHarness.sandbox.obPayPerMinuteAuthorizationTestHooks.refreshSavedPaymentStatus(true, 'expert-nav-isolation');
+assert.equal(navIdentityHarness.sandbox.obPayPerMinuteAuthorizationTestHooks.savedPayment.available, true, 'client A begins with its own saved payment method');
+
+new vm.Script(stagePolishSource, { filename: 'public-stage-polish.js' }).runInContext(navIdentityHarness.sandbox);
+assert.equal(navIdentityHarness.document.getElementById('client-nav-name'), navName, 'visual polish preserves the client name node');
+assert.equal(navIdentityHarness.document.getElementById('client-nav-initial'), navInitial, 'visual polish preserves the client initial node');
+assert.equal(navAvatar.listeners.click, navMenuHandler, 'visual polish preserves the composite avatar event handler');
+assert.equal(polishedAction.children.includes(polishedActionIcon), true, 'visual polish preserves legitimate composite button icons');
+assert.equal(polishedAction.textContent.includes('✨'), false, 'visual polish still removes decorative emoji from eligible text nodes');
+assert.equal(polishedAction.listeners.click, polishedActionHandler, 'visual polish preserves legitimate button behavior');
+
+navIdentityHarness.sandbox.clientLogout();
+await settleAsync();
+assert.equal(navName.textContent, 'Account', 'logout neutralizes client A name without replacing the nav component');
+assert.equal(navInitial.textContent, '?', 'logout neutralizes client A initial');
+assert.equal(navEmail.textContent, '', 'logout removes client A email');
+await changeAuth(navIdentityHarness, clientBToken);
+await settleAsync(32);
+assert.equal(navIdentityHarness.document.getElementById('client-nav-name'), navName, 'client B still owns the original structured name node');
+assert.equal(navIdentityHarness.document.getElementById('client-nav-initial'), navInitial, 'client B still owns the original structured initial node');
+assert.equal(navName.textContent, 'Bianca Fresh', 'client B name replaces client A');
+assert.equal(navInitial.textContent, 'B', 'client B initial replaces client A');
+assert.equal(navEmail.textContent, 'bianca@example.test', 'client B email comes from the current exact-credential profile response');
+assert.equal(navAvatar.textContent.includes('Book for Later'), false, 'client A booking-copy name collision is absent after client B signs in');
+const navIdentityHooks = navIdentityHarness.sandbox.obPayPerMinuteAuthorizationTestHooks;
+assert.equal(navIdentityHooks.savedPayment.accountKey, clientBKey, 'fresh payment ownership remains scoped to client B');
+assert.equal(navIdentityHooks.savedPayment.available, false, 'client B does not inherit client A saved card');
+assert.equal(navIdentityHooks.savedPayment.useSaved, false, 'client B remains on the fresh payment-method flow');
+const navBReadiness = navIdentityRequests.find((request) => request.url.includes('/api/payments/methods/status') && request.authorization === `Bearer ${clientBToken}`);
+assert(navBReadiness, 'client B payment readiness is fetched with client B authentication');
 
 // The single cross-tab storage reconciler treats the central context as authority and clears stale profile data atomically.
 const crossTabHarness = createHarness({ session: { ob_t: clientAToken, ob_u: JSON.stringify({ id: 'client-a', role: 'client', email: 'a@example.test' }) } });

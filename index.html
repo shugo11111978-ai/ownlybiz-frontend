@@ -30561,18 +30561,18 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
 	      if(customHost && firstPath && value === firstPath) return '';
 	      return value;
 	    }
-	    var expert = window._currentExpert || {};
-	    if(trusted(expert.slug)) return trusted(expert.slug);
-	    if(trusted(window._currentExpertSlug)) return trusted(window._currentExpertSlug);
-	    if(trusted(window._browseExpert)) return trusted(window._browseExpert);
 	    var q = new URLSearchParams(location.search || '').get('expert');
 	    if(q) return String(q);
 	    var sub = host.match(/^([^.]+)\.ownlybiz\.com$/);
 	    if(sub && sub[1] !== 'www') return sub[1];
+	    if(trusted(window._browseExpert)) return trusted(window._browseExpert);
+	    if(trusted(window._currentExpertSlug)) return trusted(window._currentExpertSlug);
     if(platformHost()){
       var first = String(location.pathname || '').replace(/^\/+|\/+$/g, '').split('/').filter(Boolean)[0] || '';
       if(first && !reserved[first]) return first;
     }
+	    var expert = window._currentExpert || {};
+	    if(trusted(expert.slug)) return trusted(expert.slug);
     return '';
   }
   function lookupSlug(){
@@ -30584,45 +30584,67 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
       .then(function(d){ return d && d.slug ? String(d.slug) : ''; })
       .catch(function(){ return ''; });
   }
-  function publicStatusAllows(slug){
+  var refreshInFlight = {};
+  var consentBySlug = {};
+  function applyConsentDecision(decision){
+    if(decision === 'disabled'){
+      closeAndHide();
+      return true;
+    }
+    allowConsent();
+    return false;
+  }
+  function rememberConsentDecision(slug, decision, ttl){
+    consentBySlug[slug] = {decision:decision, expiresAt:Date.now() + ttl};
+    return applyConsentDecision(decision);
+  }
+  function refreshExpertConsentForSlug(slug){
+    slug = String(slug || '').trim().toLowerCase();
     if(!slug) return Promise.resolve(false);
-    return fetch(API + '/api/experts/public-status/' + encodeURIComponent(slug), {cache:'no-store'})
-      .then(function(r){ return r.json().catch(function(){ return {}; }).then(function(d){ return {ok:r.ok, data:d}; }); })
-      .then(function(result){ return !!(result.ok && (!result.data || result.data.public_available !== false)); })
-      .catch(function(){ return false; });
+    var current = window._currentExpert || {};
+    var currentSlug = String(current.slug || '').trim().toLowerCase();
+    if(currentSlug === slug && current.privacy_cookie_banner_enabled !== undefined){
+      return Promise.resolve(rememberConsentDecision(slug, disabled(current.privacy_cookie_banner_enabled) ? 'disabled' : 'enabled', 60*1000));
+    }
+    var cached = consentBySlug[slug];
+    if(cached && Date.now() < cached.expiresAt) return Promise.resolve(applyConsentDecision(cached.decision));
+    if(refreshInFlight[slug]) return refreshInFlight[slug];
+    if(typeof window.obPublicLoaderStatus !== 'function') return Promise.resolve(false);
+    refreshInFlight[slug] = window.obPublicLoaderStatus(slug).then(function(status){
+      if(status && status.public_available === false){
+        rememberConsentDecision(slug, 'unavailable', 30*1000);
+        return null;
+      }
+      return fetch(API + '/api/experts/' + encodeURIComponent(slug) + '?_=' + Date.now(), {cache:'no-store'});
+    })
+      .then(function(r){
+        if(!r) return null;
+        return r.json();
+      })
+      .then(function(d){
+        if(!d) return false;
+        var expert = d && (d.expert || d) || {};
+        var decision = disabled(expert.privacy_cookie_banner_enabled) ? 'disabled' : 'enabled';
+        consentBySlug[slug] = {decision:decision, expiresAt:Date.now() + 60*1000};
+        if(String(slugFromLocation() || '').trim().toLowerCase() !== slug) return false;
+        if(expert && expert.slug) {
+          window._currentExpert = Object.assign(window._currentExpert || {}, expert);
+          window._currentExpertSlug = expert.slug;
+        }
+        return applyConsentDecision(decision);
+      })
+      .catch(function(){
+        rememberConsentDecision(slug, 'unavailable', 5*1000);
+        return false;
+      })
+      .finally(function(){ delete refreshInFlight[slug]; });
+    return refreshInFlight[slug];
   }
   function refreshExpertConsentFlag(){
     if(!expertContext()) return Promise.resolve(false);
-    var current = window._currentExpert || {};
-    if(disabled(current.privacy_cookie_banner_enabled)){
-      closeAndHide();
-      return Promise.resolve(true);
-    }
-    return lookupSlug().then(function(slug){
-      if(!slug) return false;
-      return publicStatusAllows(slug).then(function(allowed){
-        if(!allowed) return null;
-        return fetch(API + '/api/experts/' + encodeURIComponent(slug) + '?_=' + Date.now(), {cache:'no-store'});
-      })
-        .then(function(r){
-          if(!r) return null;
-          return r.json();
-        })
-        .then(function(d){
-          if(!d) return false;
-          var expert = d && (d.expert || d) || {};
-          if(expert && expert.slug) {
-            window._currentExpert = Object.assign(window._currentExpert || {}, expert);
-            window._currentExpertSlug = expert.slug;
-          }
-          if(disabled(expert.privacy_cookie_banner_enabled)){
-            closeAndHide();
-            return true;
-          }
-          allowConsent();
-          return false;
-        }).catch(function(){ return false; });
-    });
+    var slug = slugFromLocation();
+    if(slug) return refreshExpertConsentForSlug(slug);
+    return lookupSlug().then(refreshExpertConsentForSlug);
   }
   var previousOpen = window.obOpenConsentManager;
   if(typeof previousOpen === 'function'){
@@ -30633,16 +30655,30 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
       });
     };
   }
-  var observer = new MutationObserver(function(){
-    if(!expertContext()) return;
+  var consentObserver = null;
+  var discoveryObserver = null;
+  function observeConsentClass(el){
+    if(!el || consentObserver) return;
+    consentObserver = new MutationObserver(function(){
+      if(expertContext() && el.classList.contains('active')) refreshExpertConsentFlag();
+    });
+    consentObserver.observe(el, {attributes:true, attributeFilter:['class']});
+  }
+  function discoverConsentNode(){
     var el = document.getElementById('privacy-consent');
-    if(el && el.classList.contains('active')) refreshExpertConsentFlag();
-  });
+    if(!el) return false;
+    if(discoveryObserver){ discoveryObserver.disconnect(); discoveryObserver = null; }
+    observeConsentClass(el);
+    if(el.classList.contains('active')) refreshExpertConsentFlag();
+    return true;
+  }
   function boot(){
     refreshExpertConsentFlag();
-    var target = document.getElementById('privacy-consent') || document.body || document.documentElement;
-    if(target) observer.observe(target, {attributes:true, childList:true, subtree:true, attributeFilter:['class']});
-    [600, 1600, 3500].forEach(function(ms){ setTimeout(refreshExpertConsentFlag, ms); });
+    if(discoverConsentNode()) return;
+    var target = document.body || document.documentElement;
+    if(!target || discoveryObserver) return;
+    discoveryObserver = new MutationObserver(discoverConsentNode);
+    discoveryObserver.observe(target, {childList:true, subtree:true});
   }
   if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 })();

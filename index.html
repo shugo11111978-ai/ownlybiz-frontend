@@ -9087,7 +9087,7 @@ if (!window.toast) {
 
                 <div class="waveform" id="waveform-b3"></div>
                 <div class="voice-timer" id="voice-timer-B">0:00</div>
-                <div class="voice-cost" id="b3-voice-cost"></div>
+                <div class="voice-cost" id="ob-client-voice-live-cost" data-ob-client-live-cost="voice">$0.00</div>
                 <div style="display:flex;gap:8px;margin:0 16px 12px;">
                   <button onclick="window.clientEndSession&&window.clientEndSession()" style="flex:1;padding:8px 10px;border-radius:10px;border:1px solid rgba(239,68,68,.4);background:rgba(239,68,68,.15);color:#fca5a5;font-size:12px;font-weight:600;cursor:pointer;">✕ End Session</button>
                 </div>
@@ -9204,6 +9204,7 @@ if (!window.toast) {
               <div class="video-timer-bar">
                 <div class="video-live-badge">● LIVE</div>
                 <div style="font-size:12px;color:rgba(255,255,255,.8);font-weight:700;" id="video-timer-display">0:00</div>
+                <div style="font-size:11px;color:rgba(255,255,255,.76);font-weight:800;" id="ob-client-video-live-cost" data-ob-client-live-cost="video">$0.00</div>
                 <div style="font-size:11px;color:rgba(255,255,255,.6);" id="vid-rate-display">$5.00/min</div>
               </div>
 
@@ -12182,7 +12183,7 @@ function loadDomainSettings() {
 var currentFlow='A';
 var currentScreen='A1';
 var freeTimerInterval=null,paidTimerInterval=null,voiceTimerB=null,videoTimer=null;
-var freeSeconds=180,paidSeconds=0,voiceBSeconds=0,videoSeconds=0,paidCost=0,videoCost=0;
+var freeSeconds=180,paidSeconds=0,voiceBSeconds=0,videoSeconds=0,paidCost=0;
 
 function phoneGo(screenId){
   document.querySelectorAll('.phone-screen').forEach(s=>s.classList.remove('active'));
@@ -12250,15 +12251,12 @@ function startVoiceTimerB(){
 
 function startVideoTimer(){
   clearInterval(videoTimer);
-  videoSeconds=0;videoCost=0;
+  videoSeconds=0;
   videoTimer=setInterval(()=>{
     videoSeconds++;
     var m=Math.floor(videoSeconds/60),s=videoSeconds%60;
     var el=document.getElementById('video-timer-display');
     if(el) el.textContent=m+':'+(s<10?'0':'')+s;
-    if(videoSeconds%60===0) videoCost+=6.00;
-    var vc=document.getElementById('video-cost');
-    if(vc) vc.textContent='$'+videoCost.toFixed(2);
   },1000);
 }
 
@@ -23720,6 +23718,7 @@ function loadClientCredit() {
    ══════════════════════════════════════════════ */
 window.OB_RTC = (function(){
   var pc=null, localStream=null, sid=null, ch=null, _role=null, _muted=false, _camOff=false;
+  var _scheduledPreflight={stream:null,sessionId:'',channel:'',role:''};
   var _lifecycleEpoch=0;
   var _pendingOffer=null, _pendingIce=[], _pendingAnswer=null;
   var _lastOfferSdp=null, _lastAnswerSdp=null, _lastLocalOfferSdp=null, _remoteAnswerSet=false, _answerApplying=false, _offerApplying=false, _offerRetryTimer=null;
@@ -23731,16 +23730,78 @@ window.OB_RTC = (function(){
   var DEFAULT_ICE={iceServers:[{urls:'stun:stun.l.google.com:19302'},{urls:'stun:stun1.l.google.com:19302'}],iceCandidatePoolSize:10,bundlePolicy:'max-bundle',rtcpMuxPolicy:'require'};
   var ICE=DEFAULT_ICE;
   function _apiBase(){return window.OWNLYBIZ_API_URL||window._OB_BACKEND||'https://victorious-wisdom-production-a6b0.up.railway.app';}
-  function _authToken(){return window.OB_CLIENT_CONTEXT?window.OB_CLIENT_CONTEXT.token():(sessionStorage.getItem('ob_t')||localStorage.getItem('ob_t')||localStorage.getItem('ob_client_token')||sessionStorage.getItem('ob_client_token')||sessionStorage.getItem('ob_token')||localStorage.getItem('ob_token')||'');}
+  function _authToken(){
+    var miniSuite=window.location&&/^\/mini-suite(?:\/|$)/.test(String(window.location.pathname||''))?sessionStorage.getItem('ob_mini_suite_token'):'';
+    var central=window.OB_CLIENT_CONTEXT&&window.OB_CLIENT_CONTEXT.token?window.OB_CLIENT_CONTEXT.token():'';
+    return miniSuite||central||sessionStorage.getItem('ob_t')||localStorage.getItem('ob_t')||sessionStorage.getItem('ob_mini_suite_token')||localStorage.getItem('ob_client_token')||sessionStorage.getItem('ob_client_token')||sessionStorage.getItem('ob_token')||localStorage.getItem('ob_token')||'';
+  }
   function _stopMediaStream(stream){
     if(!stream||typeof stream.getTracks!=='function')return;
-    stream.getTracks().forEach(function(track){try{track.stop();}catch(e){}});
+    stream.getTracks().forEach(function(track){
+      try{if(track&&track.readyState!=='ended'&&typeof track.stop==='function')track.stop();}catch(e){}
+    });
+  }
+  function _streamReadyForChannel(stream,channel){
+    if(!stream||!stream.getAudioTracks)return false;
+    var audio=stream.getAudioTracks().some(function(track){return track&&track.readyState!=='ended';});
+    if(!audio)return false;
+    return channel!=='video'||!!stream.getVideoTracks&&stream.getVideoTracks().some(function(track){return track&&track.readyState!=='ended';});
+  }
+  function _clearScheduledPreflightGlobals(stream){
+    if(window._obClientMediaReadyStream===stream){window._obClientMediaReadyStream=null;window._obClientMediaReadyChannel='';}
+    if(window._obRtcPrewarmedStream===stream)window._obRtcPrewarmedStream=null;
+  }
+  function _releaseScheduledPreflight(stop){
+    var stream=_scheduledPreflight.stream;
+    _scheduledPreflight={stream:null,sessionId:'',channel:'',role:''};
+    if(stream)_clearScheduledPreflightGlobals(stream);
+    if(stop)_stopMediaStream(stream);
+    return stream;
+  }
+  function setScheduledPreflightStream(stream,sessionId,channel,role){
+    sessionId=String(sessionId||'');channel=String(channel||'').toLowerCase();role=String(role||'client').toLowerCase();
+    if(!sessionId||(channel!=='voice'&&channel!=='video')||!_streamReadyForChannel(stream,channel))return false;
+    if(_scheduledPreflight.stream&&_scheduledPreflight.stream!==stream)_releaseScheduledPreflight(true);
+    _scheduledPreflight={stream:stream,sessionId:sessionId,channel:channel,role:role};
+    return true;
+  }
+  function settleScheduledPreflight(sessionId,transferred){
+    if(!_scheduledPreflight.stream)return false;
+    sessionId=String(sessionId||'');
+    if(sessionId&&_scheduledPreflight.sessionId!==sessionId)return false;
+    _releaseScheduledPreflight(!transferred);
+    return true;
+  }
+  function _takeScheduledPreflightStream(role,channel,sessionId){
+    role=String(role||'client').toLowerCase();channel=String(channel||'').toLowerCase();sessionId=String(sessionId||'');
+    if(_scheduledPreflight.stream){
+      var exact=_scheduledPreflight.role===role&&_scheduledPreflight.channel===channel&&_scheduledPreflight.sessionId===sessionId;
+      if(exact&&_streamReadyForChannel(_scheduledPreflight.stream,channel))return _releaseScheduledPreflight(false);
+      _releaseScheduledPreflight(true);
+    }
+    if(role!=='client'||String(window._obClientMediaReadyChannel||'')!==channel)return null;
+    var stream=window._obClientMediaReadyStream;
+    if(!_streamReadyForChannel(stream,channel))return null;
+    _clearScheduledPreflightGlobals(stream);
+    return stream;
+  }
+  function _rtcRoleUsesCentralIdentity(role,identity){
+    if(!identity)return false;
+    var identityRole=String(identity.role||'').toLowerCase();
+    if(role==='client')return !identityRole||identityRole==='client';
+    if(role==='expert'||role==='admin'||role==='support')return identityRole==='expert'||identityRole==='admin'||identityRole==='support';
+    return false;
+  }
+  function _captureRtcIdentity(role,scope,extras){
+    if(!window.OB_CLIENT_CONTEXT)return null;
+    var identity=window.OB_CLIENT_CONTEXT.capture(scope,extras||{});
+    return _rtcRoleUsesCentralIdentity(role,identity)?identity:null;
   }
   function _startContextCurrent(context){
     if(!context||context.epoch!==_lifecycleEpoch||_role!==context.role||sid!==context.sid||ch!==context.channel)return false;
-    return context.role!=='client'||!!(window.OB_CLIENT_CONTEXT&&window.OB_CLIENT_CONTEXT.isCurrent(context.clientIdentity));
+    return !context.authIdentity||!!(window.OB_CLIENT_CONTEXT&&window.OB_CLIENT_CONTEXT.isCurrent(context.authIdentity));
   }
-  function _captureRtcContext(){return{epoch:_lifecycleEpoch,role:_role,clientIdentity:_role==='client'&&window.OB_CLIENT_CONTEXT?window.OB_CLIENT_CONTEXT.capture('rtc-signal'):null,sid:sid,channel:ch};}
+  function _captureRtcContext(){return{epoch:_lifecycleEpoch,role:_role,authIdentity:_captureRtcIdentity(_role,'rtc-signal'),sid:sid,channel:ch};}
   function _rtcAsyncContextCurrent(context,ownedPc){return _startContextCurrent(context)&&pc===ownedPc;}
   function resetClientContext(){
     if(_role==='expert'||_role==='admin'||_role==='support')return false;
@@ -23754,6 +23815,34 @@ window.OB_RTC = (function(){
       _rtcWs=null;
     }
     cleanup();
+    settleScheduledPreflight('',false);
+    var clientPrewarm=window._obClientMediaReadyStream;
+    if(clientPrewarm){_clearScheduledPreflightGlobals(clientPrewarm);_stopMediaStream(clientPrewarm);}
+    else window._obClientMediaReadyChannel='';
+    return true;
+  }
+  function resetExpertContext(){
+    var activeRole=String(_role||'').toLowerCase();
+    if(activeRole&&activeRole!=='expert'&&activeRole!=='admin'&&activeRole!=='support')return false;
+    _lifecycleEpoch+=1;
+    _rtcWsCallbacks=[];
+    if(_rtcWs&&(activeRole==='expert'||activeRole==='admin'||activeRole==='support'||_rtcWs===window._expertWs)){
+      var expertRtcWs=_rtcWs;
+      try{expertRtcWs.onopen=null;expertRtcWs.onmessage=null;expertRtcWs.onerror=null;expertRtcWs.onclose=null;}catch(e){}
+      try{if(expertRtcWs.readyState<=1&&typeof expertRtcWs.close==='function')expertRtcWs.close();}catch(e2){}
+      if(window._expertWs===expertRtcWs)window._expertWs=null;
+      if(window._obWs===expertRtcWs)window._obWs=null;
+      if(window._obClientWs===expertRtcWs)window._obClientWs=null;
+      _rtcWs=null;
+    }
+    if(activeRole)cleanup();
+    if(_scheduledPreflight.stream&&(_scheduledPreflight.role==='expert'||_scheduledPreflight.role==='admin'||_scheduledPreflight.role==='support'))_releaseScheduledPreflight(true);
+    var expertPrewarm=window._obExpertMediaReadyStream;
+    if(expertPrewarm){
+      window._obExpertMediaReadyStream=null;
+      if(window._obRtcPrewarmedStream===expertPrewarm)window._obRtcPrewarmedStream=null;
+      _stopMediaStream(expertPrewarm);
+    }
     return true;
   }
   function refreshClientCredential(nextToken){
@@ -24435,7 +24524,7 @@ window.OB_RTC = (function(){
 		      }
 		    }
 	    sid=sessionId; ch=channel; _role=role; _muted=false; _camOff=false;
-	    var startContext={epoch:++_lifecycleEpoch,role:role,clientIdentity:role==='client'&&window.OB_CLIENT_CONTEXT?window.OB_CLIENT_CONTEXT.capture('rtc-start',{sid:sessionId,channel:channel}):null,sid:sessionId,channel:channel};
+	    var startContext={epoch:++_lifecycleEpoch,role:role,authIdentity:_captureRtcIdentity(role,'rtc-start',{sid:sessionId,channel:channel}),sid:sessionId,channel:channel};
 	    window._obRtcStartedAt=Date.now();
 	    window._obRtcLastSid=sessionId;
 	    window._obRtcLastChannel=channel;
@@ -24456,7 +24545,9 @@ window.OB_RTC = (function(){
       _dbg('Requesting mic/camera...');
       await _loadRtcConfig();
       if(!_startContextCurrent(startContext))return false;
-      acquiredStream=await navigator.mediaDevices.getUserMedia(_mediaConstraints(channel));
+      acquiredStream=_takeScheduledPreflightStream(role,channel,sessionId);
+      if(!acquiredStream)acquiredStream=await navigator.mediaDevices.getUserMedia(_mediaConstraints(channel));
+      else _dbg('Using scheduled media preflight stream');
       if(!_startContextCurrent(startContext)){_stopMediaStream(acquiredStream);return false;}
       localStream=acquiredStream;
       _dbg('Media granted: '+localStream.getTracks().map(function(t){return t.kind;}).join(', '));
@@ -24658,10 +24749,12 @@ window.OB_RTC = (function(){
 	    cleanup();
 	  }
   function cleanup(){
+    var cleanupRole=_role;
     _clearConnectionTimers();
     _stopQualityMonitor();
     if(pc){try{pc.close();}catch(e){}pc=null;}
-    if(localStream){localStream.getTracks().forEach(function(t){t.stop();});localStream=null;}
+    if(localStream){_stopMediaStream(localStream);localStream=null;}
+    if(!_scheduledPreflight.stream||_scheduledPreflight.role===cleanupRole)settleScheduledPreflight(sid,false);
 	    _pendingOffer=null;_pendingIce=[];_pendingAnswer=null;
     _lastOfferSdp=null;_lastAnswerSdp=null;_lastLocalOfferSdp=null;_remoteAnswerSet=false;_answerApplying=false;_offerApplying=false;
     _localIce=[];_peerReady=false;_remoteMediaSeen=false;_remoteMediaKinds={audio:false,video:false};
@@ -24669,7 +24762,7 @@ window.OB_RTC = (function(){
     ['rtc-remote-audio','rtc-remote-video','expert-rtc-remote-video','rtc-local-video','expert-rtc-local-video'].forEach(function(id){
       var media=document.getElementById(id);
       if(!media) return;
-      try{if(media.srcObject&&media.srcObject.getTracks)media.srcObject.getTracks().forEach(function(t){try{t.stop();}catch(e){}});}catch(e){}
+      try{if(media.srcObject)_stopMediaStream(media.srcObject);}catch(e){}
       try{media.pause&&media.pause();}catch(e){}
       try{media.srcObject=null;}catch(e){}
       try{media.removeAttribute&&media.removeAttribute('src');}catch(e){}
@@ -24681,7 +24774,7 @@ window.OB_RTC = (function(){
 	    sid=null;ch=null;_role=null;_muted=false;_camOff=false;_connectedOnce=false;_endingForIssue=false;_iceRestartAttempted=false;_lastIceRestartAt=0;
   }
 
-  var rtcApi={start:start,handleOffer:handleOffer,handleAnswer:handleAnswer,handleIce:handleIce,handleReady:handleReady,toggleMute:toggleMute,toggleCamera:toggleCamera,end:end,cleanup:cleanup,resetClientContext:resetClientContext,refreshClientCredential:refreshClientCredential,isActive:function(){return pc!==null;},getChannel:function(){return ch;},getSid:function(){return sid;},getRole:function(){return _role;},getMediaHealth:_getMediaHealth,getQuality:function(){return{level:_qualityLevel,profile:_qualityProfile,weak_samples:_qualityWeakSamples,good_samples:_qualityGoodSamples};}};
+  var rtcApi={start:start,handleOffer:handleOffer,handleAnswer:handleAnswer,handleIce:handleIce,handleReady:handleReady,toggleMute:toggleMute,toggleCamera:toggleCamera,end:end,cleanup:cleanup,resetClientContext:resetClientContext,resetExpertContext:resetExpertContext,refreshClientCredential:refreshClientCredential,setScheduledPreflightStream:setScheduledPreflightStream,settleScheduledPreflight:settleScheduledPreflight,isActive:function(){return pc!==null;},getChannel:function(){return ch;},getSid:function(){return sid;},getRole:function(){return _role;},getMediaHealth:_getMediaHealth,getQuality:function(){return{level:_qualityLevel,profile:_qualityProfile,weak_samples:_qualityWeakSamples,good_samples:_qualityGoodSamples};}};
   if(window.__OB_TEST_HOOKS__){rtcApi.testStartQualityMonitor=_startQualityMonitor;rtcApi.testStopQualityMonitor=_stopQualityMonitor;}
   return rtcApi;
 })();
@@ -25914,7 +26007,8 @@ window._handleRTCMessage=function(d){
     var cost = billed * rate;
     ['paid-timer','voice-timer-B','video-timer-display','video-timer-a4','video-timer-a3'].forEach(function(id){ setText(id, fmtTime(elapsed)); });
     setText('paid-cost-val', money(cost));
-    setText('video-cost', money(cost));
+    if(ch === 'voice') setText('ob-client-voice-live-cost', money(cost));
+    if(ch === 'video') setText('ob-client-video-live-cost', money(cost));
     var rateLabel = free > 0 ? ('Free intro · ' + money(rate) + '/min after') : ('Billing · ' + money(rate) + '/min');
     setText('a4-session-rate', rateLabel);
   }
@@ -26523,6 +26617,7 @@ window._handleRTCMessage=function(d){
   }
   function wireWs(ws, roleName){
     if(!ws) return ws;
+    if(ws._obMiniSuiteSignalOwner) return ws;
     if(ws._obStagingV2Wired){
       if(roleName === 'expert') ws._obStagingV2Role = 'expert';
       else if(!ws._obStagingV2Role) ws._obStagingV2Role = roleName;
@@ -26610,6 +26705,59 @@ window._handleRTCMessage=function(d){
       }
     });
   }
+  function settleClientScheduledPreflight(sessionId,transferred){
+    var rtc=window.OB_RTC;
+    return !!(rtc&&typeof rtc.settleScheduledPreflight==='function'&&rtc.settleScheduledPreflight(sessionId,transferred));
+  }
+  var clientRtcMediaStart={key:'',promise:null,generation:0};
+  function clientRtcMediaOwnerCurrent(owner){
+    return !owner||!!(window.OB_CLIENT_CONTEXT&&window.OB_CLIENT_CONTEXT.isCurrent(owner));
+  }
+  function invalidateClientRtcMediaStarts(){
+    clientRtcMediaStart.generation+=1;clientRtcMediaStart.key='';clientRtcMediaStart.promise=null;
+  }
+  function clearClientRtcMediaStart(promise,generation){
+    if(clientRtcMediaStart.promise!==promise||clientRtcMediaStart.generation!==generation)return;
+    clientRtcMediaStart.key='';clientRtcMediaStart.promise=null;
+  }
+  function startClientRtcMedia(sessionId,channel){
+    sessionId=String(sessionId||'');channel=String(channel||'').toLowerCase();
+    var owner=window.OB_CLIENT_CONTEXT?window.OB_CLIENT_CONTEXT.capture('client-rtc-media-start',{sid:sessionId,channel:channel}):null;
+    if(!clientRtcMediaOwnerCurrent(owner))return Promise.resolve(false);
+    var generation=clientRtcMediaStart.generation;
+    var startKey=String(owner&&owner.identityGeneration||'')+':'+sessionId+':'+channel;
+    if(clientRtcMediaStart.promise){
+      if(clientRtcMediaStart.key===startKey)return clientRtcMediaStart.promise;
+      return clientRtcMediaStart.promise.then(function(){
+        return clientRtcMediaOwnerCurrent(owner)&&clientRtcMediaStart.generation===generation?startClientRtcMedia(sessionId,channel):false;
+      });
+    }
+    var rtc=window.OB_RTC;
+    if(!rtc||typeof rtc.start!=='function'){settleClientScheduledPreflight(sessionId,false);return Promise.resolve(false);}
+    var active=!!(rtc.isActive&&rtc.isActive());
+    if(active){
+      var sameSession=(!rtc.getSid||rtc.getSid()===sessionId)&&(!rtc.getChannel||rtc.getChannel()===channel);
+      if(sameSession){settleClientScheduledPreflight(sessionId,false);return Promise.resolve(true);}
+      if(typeof rtc.cleanup==='function')rtc.cleanup();else if(typeof rtc.end==='function')rtc.end();
+    }
+    var startResult;
+    try{startResult=rtc.start(sessionId,channel,'client');}
+    catch(errorValue){startResult=Promise.reject(errorValue);}
+    var ownedPromise=Promise.resolve(startResult).then(function(started){
+        if(!clientRtcMediaOwnerCurrent(owner)||clientRtcMediaStart.generation!==generation)return false;
+        var transferred=started!==false;
+        settleClientScheduledPreflight(sessionId,transferred);
+        return transferred;
+      }).catch(function(errorValue){
+        if(clientRtcMediaOwnerCurrent(owner)&&clientRtcMediaStart.generation===generation)settleClientScheduledPreflight(sessionId,false);
+        console.error('[RTC] Client media start failed:',errorValue);
+        return false;
+      });
+    clientRtcMediaStart.key=startKey;clientRtcMediaStart.promise=ownedPromise;
+    ownedPromise.then(function(){clearClientRtcMediaStart(ownedPromise,generation);},function(){clearClientRtcMediaStart(ownedPromise,generation);});
+    return ownedPromise;
+  }
+  if(window.OB_CLIENT_CONTEXT)window.OB_CLIENT_CONTEXT.register('client-rtc-media-start',{teardown:invalidateClientRtcMediaStarts});
   function applyClientSessionUi(sess){
     if(!sess) return;
     var sessId = sess.id || sess.session_id || sess.sessionId || '';
@@ -26645,20 +26793,10 @@ window._handleRTCMessage=function(d){
     if(typeof switchView === 'function') switchView(5);
     if(ch === 'voice') {
       if(typeof phoneGo === 'function') phoneGo('B3');
-      ensureClientWsJoined(sess.id, function(){
-        if(window.OB_RTC){
-          if(window.OB_RTC.isActive && window.OB_RTC.isActive() && ((window.OB_RTC.getSid && window.OB_RTC.getSid() !== sess.id) || (window.OB_RTC.getChannel && window.OB_RTC.getChannel() !== ch))){ if(typeof window.OB_RTC.cleanup === 'function') window.OB_RTC.cleanup(); else if(typeof window.OB_RTC.end === 'function') window.OB_RTC.end(); }
-          if(!window.OB_RTC.isActive || !window.OB_RTC.isActive()) window.OB_RTC.start(sess.id, ch, 'client');
-        }
-      });
+      ensureClientWsJoined(sess.id, function(){startClientRtcMedia(sess.id,ch);});
     } else if(ch === 'video') {
       if(typeof phoneGo === 'function') phoneGo('VID');
-      ensureClientWsJoined(sess.id, function(){
-        if(window.OB_RTC){
-          if(window.OB_RTC.isActive && window.OB_RTC.isActive() && ((window.OB_RTC.getSid && window.OB_RTC.getSid() !== sess.id) || (window.OB_RTC.getChannel && window.OB_RTC.getChannel() !== ch))){ if(typeof window.OB_RTC.cleanup === 'function') window.OB_RTC.cleanup(); else if(typeof window.OB_RTC.end === 'function') window.OB_RTC.end(); }
-          if(!window.OB_RTC.isActive || !window.OB_RTC.isActive()) window.OB_RTC.start(sess.id, ch, 'client');
-        }
-      });
+      ensureClientWsJoined(sess.id, function(){startClientRtcMedia(sess.id,ch);});
     } else {
       if(window.OB_RTC && window.OB_RTC.isActive && window.OB_RTC.isActive()){ if(typeof window.OB_RTC.cleanup === 'function') window.OB_RTC.cleanup(); else if(typeof window.OB_RTC.end === 'function') window.OB_RTC.end(); }
       if(typeof phoneGo === 'function') phoneGo('A4');
@@ -33497,29 +33635,87 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
     if(oldAdjustFreeMin) return oldAdjustFreeMin.apply(this, arguments);
   };
 
+  function stopOwnedPrewarmStream(stream){
+    if(!stream || typeof stream.getTracks !== 'function') return;
+    stream.getTracks().forEach(function(track){
+      try { if(track && track.readyState !== 'ended' && typeof track.stop === 'function') track.stop(); } catch(e) {}
+    });
+  }
+  function captureMediaPrewarmOwner(role, extras){
+    if(!window.OB_CLIENT_CONTEXT || typeof window.OB_CLIENT_CONTEXT.capture !== 'function') return null;
+    return window.OB_CLIENT_CONTEXT.capture(role + '-media-prewarm', extras || {});
+  }
+  function mediaPrewarmOwnerCurrent(owner, role){
+    if(!owner) return true;
+    if(!window.OB_CLIENT_CONTEXT || !window.OB_CLIENT_CONTEXT.isCurrent(owner)) return false;
+    var ownerRole = String(owner.role || '').toLowerCase();
+    if(role === 'client') return !ownerRole || ownerRole === 'client';
+    return ownerRole === 'expert' || ownerRole === 'admin' || ownerRole === 'support';
+  }
+  function clearRoleMediaPrewarm(role, expectedStream){
+    role = role === 'expert' ? 'expert' : 'client';
+    var globalKey = role === 'expert' ? '_obExpertMediaReadyStream' : '_obClientMediaReadyStream';
+    var globalStream = window[globalKey];
+    var clearedBySfu = false;
+    try {
+      if(window.ExpertSfuClient && typeof window.ExpertSfuClient.clearPrewarmedStream === 'function') {
+        clearedBySfu = !!window.ExpertSfuClient.clearPrewarmedStream(role, expectedStream);
+      }
+    } catch(e) {}
+    if(globalStream && (!expectedStream || globalStream === expectedStream)) {
+      window[globalKey] = null;
+      if(window._obRtcPrewarmedStream === globalStream) window._obRtcPrewarmedStream = null;
+      stopOwnedPrewarmStream(globalStream);
+      if(role === 'client') window._obClientMediaReadyChannel = '';
+      return true;
+    }
+    if(role === 'client' && !window._obClientMediaReadyStream) window._obClientMediaReadyChannel = '';
+    return clearedBySfu;
+  }
+  function resetExpertMediaPrewarmUi(){
+    var status = document.getElementById('ob-expert-media-ready-status');
+    var card = document.getElementById('ob-expert-media-ready-card');
+    var button = card && card.querySelector('button');
+    if(status){ status.textContent = 'Enable camera and microphone before a session starts.'; status.style.color = ''; status.style.fontWeight = ''; }
+    if(button){ button.disabled = false; button.textContent = 'Enable mic and cam'; button.style.opacity = '1'; }
+  }
+  window.obClearRoleMediaPrewarm = clearRoleMediaPrewarm;
+
   window.obEnableExpertMedia = async function(){
     var card = document.getElementById('ob-expert-media-ready-card');
     var status = document.getElementById('ob-expert-media-ready-status');
     var btn = card && card.querySelector('button');
+    var owner = captureMediaPrewarmOwner('expert', {channel:'video'});
+    if(!mediaPrewarmOwnerCurrent(owner, 'expert')){
+      if(status) status.textContent = 'Sign in again before enabling camera and microphone.';
+      return false;
+    }
     if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
       if(status) status.textContent = 'Media permissions are not available in this browser.';
-      return;
+      return false;
     }
     try {
       if(btn) { btn.disabled = true; btn.textContent = 'Checking...'; }
       var stream = await navigator.mediaDevices.getUserMedia({audio:true, video:true});
+      if(!mediaPrewarmOwnerCurrent(owner, 'expert')) { stopOwnedPrewarmStream(stream); return false; }
+      clearRoleMediaPrewarm('expert');
       window._obExpertMediaReadyStream = stream;
       window._obRtcPrewarmedStream = stream;
+      var registered = true;
       try {
         if(window.ExpertSfuClient && typeof window.ExpertSfuClient.setPrewarmedStream === 'function') {
-          window.ExpertSfuClient.setPrewarmedStream('expert', stream, 'video');
+          registered = window.ExpertSfuClient.setPrewarmedStream('expert', stream, 'video', owner) !== false;
         }
-      } catch(e) {}
+      } catch(e) { registered = false; }
+      if(!registered || !mediaPrewarmOwnerCurrent(owner, 'expert')) { clearRoleMediaPrewarm('expert', stream); return false; }
       if(status) { status.textContent = 'Camera and microphone enabled'; status.style.color = 'var(--sage)'; status.style.fontWeight = '800'; }
       if(btn) { btn.textContent = 'Enabled'; btn.style.opacity = '.75'; }
+      return true;
     } catch(e) {
+      if(!mediaPrewarmOwnerCurrent(owner, 'expert')) return false;
       if(status) { status.textContent = 'Permission was not enabled. You can still grant access when the call starts.'; status.style.color = '#b45309'; status.style.fontWeight = '700'; }
       if(btn) { btn.disabled = false; btn.textContent = 'Enable mic and cam'; btn.style.opacity = '1'; }
+      return false;
     }
   };
 
@@ -33540,20 +33736,30 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
     var card = document.getElementById(cardId);
     var status = document.getElementById(cardId + '-status');
     var channel = (card && card.getAttribute('data-ob-media-channel')) || mediaChannel();
+    var owner = captureMediaPrewarmOwner('client', {channel:channel || 'video', cardId:String(cardId || '')});
+    if(!mediaPrewarmOwnerCurrent(owner, 'client')){
+      if(status) status.textContent = 'Sign in again before enabling media.';
+      return false;
+    }
     if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
       if(status) status.textContent = 'Media permissions are not available in this browser.';
-      return;
+      return false;
     }
     try {
       var constraints = channel === 'voice' ? {audio:true, video:false} : {audio:true, video:true};
       var stream = await navigator.mediaDevices.getUserMedia(constraints);
+      if(!mediaPrewarmOwnerCurrent(owner, 'client')) { stopOwnedPrewarmStream(stream); return false; }
+      clearRoleMediaPrewarm('client');
       window._obClientMediaReadyStream = stream;
+      window._obClientMediaReadyChannel = channel || 'video';
       window._obRtcPrewarmedStream = stream;
+      var registered = true;
       try {
         if(window.ExpertSfuClient && typeof window.ExpertSfuClient.setPrewarmedStream === 'function') {
-          window.ExpertSfuClient.setPrewarmedStream('client', stream, channel || 'video');
+          registered = window.ExpertSfuClient.setPrewarmedStream('client', stream, channel || 'video', owner) !== false;
         }
-      } catch(e) {}
+      } catch(e) { registered = false; }
+      if(!registered || !mediaPrewarmOwnerCurrent(owner, 'client')) { clearRoleMediaPrewarm('client', stream); return false; }
       if(status) {
         status.textContent = channel === 'voice'
           ? 'Microphone ready. You will connect when the expert accepts.'
@@ -33563,10 +33769,24 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
       }
       var btn = card && card.querySelector('button');
       if(btn) { btn.textContent = 'Enabled'; btn.disabled = true; btn.style.opacity = '.75'; }
+      return true;
     } catch(e) {
+      if(!mediaPrewarmOwnerCurrent(owner, 'client')) return false;
       if(status) { status.textContent = 'Permission was not enabled. You can still join and grant access when the session starts.'; status.style.color = '#b45309'; }
+      return false;
     }
   };
+  if(window.OB_CLIENT_CONTEXT) window.OB_CLIENT_CONTEXT.register('media-prewarm', {
+    teardown:function(previous){
+      var role = String(previous && previous.role || '').toLowerCase();
+      if(role === 'client') clearRoleMediaPrewarm('client');
+      else if(role === 'expert' || role === 'admin' || role === 'support') {
+        try { if(window.OB_RTC && typeof window.OB_RTC.resetExpertContext === 'function') window.OB_RTC.resetExpertContext(); } catch(e) {}
+        clearRoleMediaPrewarm('expert');
+        resetExpertMediaPrewarmUi();
+      }
+    }
+  });
   function renderPresessionMedia(){
     var ch = mediaChannel();
     var begin = document.getElementById('presess-begin-btn');
@@ -33592,21 +33812,6 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
       return ret;
     };
   }
-  function renderBookingOverlayMedia(){
-    var ov = document.getElementById('booking-join-overlay');
-    if(!ov || ov.querySelector('#ob-client-media-ready-booking')) return;
-    var typeText = ov.textContent || '';
-    var channelMatch = typeText.match(/Type\s*(Chat|Voice|Video)/i);
-    var ch = channelMatch ? channelMatch[1].toLowerCase() : '';
-    if(ch !== 'voice' && ch !== 'video') return;
-    var box = ov.querySelector('div[style*="max-width"]');
-    if(!box) return;
-    var liveBtn = Array.from(ov.querySelectorAll('button')).find(function(b){ return /Join Session/i.test(b.textContent || ''); });
-    if(liveBtn) liveBtn.insertAdjacentHTML('beforebegin', readinessHtml('ob-client-media-ready-booking', ch));
-    else box.insertAdjacentHTML('beforeend', readinessHtml('ob-client-media-ready-booking', ch));
-  }
-  new MutationObserver(renderBookingOverlayMedia).observe(document.documentElement, {childList:true, subtree:true});
-
   function handleBillingReturnNotice(){
     if(window._obBillingReturnHandled) return;
     var q;
@@ -33692,7 +33897,6 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
 	      }
 	    }
 	    renderPresessionMedia();
-    renderBookingOverlayMedia();
     guardIncompleteDashboardRoute();
   }
   document.addEventListener('DOMContentLoaded', boot);
@@ -61983,7 +62187,10 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     });
   };
 
-  var miniSuiteState = {token:'', tab:'live', data:null, sessions:[], bookings:[], clients:[], openSession:null, messages:[], ws:null, poll:null};
+  var miniSuiteState = {
+    token:'',tab:'live',data:null,sessions:[],bookings:[],clients:[],openSession:null,messages:[],ws:null,wsAuthenticated:false,wsWaiters:[],poll:null,
+    mediaSessionId:'',mediaChannel:'',mediaStarting:false,rtcHomeParent:null,rtcHomeNext:null,rtcHomeMargin:''
+  };
   function isMiniSuiteRoute(){
     return /^\/mini-suite(\/|$)/.test(window.location.pathname || '');
   }
@@ -62076,7 +62283,56 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
         (status === 'confirmed' ? '<button class="ob-mini-suite-btn primary" onclick="obMiniSuiteBookingStart(&quot;' + attr(booking.id) + '&quot;)">Start session</button><button class="ob-mini-suite-btn warn" onclick="obMiniSuiteBookingStatus(&quot;' + attr(booking.id) + '&quot;,&quot;cancelled&quot;)">Cancel</button>' : '') +
       '</div></article>';
   }
+  function miniRtcSurface(){return document.getElementById('expert-rtc-area');}
+  function rememberMiniRtcHome(surface){
+    if(!surface||miniSuiteState.rtcHomeParent)return;
+    var parent=surface.parentNode;
+    if(!parent||parent.id==='ob-mini-expert-rtc-mount')return;
+    miniSuiteState.rtcHomeParent=parent;miniSuiteState.rtcHomeNext=surface.nextSibling||null;miniSuiteState.rtcHomeMargin=surface.style.margin||'';
+  }
+  function restoreMiniRtcSurface(hide){
+    var surface=miniRtcSurface();var home=miniSuiteState.rtcHomeParent;
+    if(!surface||!home)return false;
+    var next=miniSuiteState.rtcHomeNext;
+    if(next&&next.parentNode===home)home.insertBefore(surface,next);else home.appendChild(surface);
+    surface.style.margin=miniSuiteState.rtcHomeMargin;
+    if(hide)surface.style.display='none';
+    return true;
+  }
+  function configureMiniRtcSurface(channel){
+    var surface=miniRtcSurface();if(!surface)return null;
+    var label=document.getElementById('expert-rtc-channel');if(label)label.textContent=channel==='video'?'Video call':'Voice call';
+    var videoBox=document.getElementById('expert-rtc-video-box');if(videoBox)videoBox.style.display=channel==='video'?'block':'none';
+    var voiceViz=document.getElementById('expert-rtc-voice-viz');if(voiceViz)voiceViz.style.display=channel==='voice'?'block':'none';
+    var cameraButton=document.getElementById('rtc-cam-btn');if(cameraButton)cameraButton.style.display=channel==='video'?'inline-flex':'none';
+    return surface;
+  }
+  function mountMiniRtcSurface(channel){
+    var mount=document.getElementById('ob-mini-expert-rtc-mount');var surface=miniRtcSurface();
+    if(!mount||!surface)return false;
+    rememberMiniRtcHome(surface);configureMiniRtcSurface(channel);mount.appendChild(surface);
+    surface.style.margin='4px 0 10px';
+    surface.style.display=miniSuiteState.mediaSessionId?'block':'none';
+    return true;
+  }
+  function releaseMiniRtcSurface(stopMedia){
+    var sessionId=miniSuiteState.mediaSessionId;
+    if(stopMedia&&sessionId&&window.OB_RTC&&typeof window.OB_RTC.cleanup==='function'){
+      var rtcSid=typeof window.OB_RTC.getSid==='function'?String(window.OB_RTC.getSid()||''):'';
+      var rtcRole=typeof window.OB_RTC.getRole==='function'?String(window.OB_RTC.getRole()||''):'';
+      if((!rtcSid||rtcSid===sessionId)&&(!rtcRole||rtcRole==='expert'))window.OB_RTC.cleanup();
+    }
+    if(sessionId&&String(window._obActiveSessId||'')===sessionId)window._obActiveSessId=null;
+    if(sessionId&&String(window._sid||'')===sessionId)window._sid=null;
+    miniSuiteState.mediaSessionId='';miniSuiteState.mediaChannel='';miniSuiteState.mediaStarting=false;
+    restoreMiniRtcSurface(true);
+  }
+  function miniSuiteSessionIsTerminal(session){
+    var status=String(session&&session.status||'').toLowerCase();
+    return ['ended','cancelled','canceled','declined','failed','expired'].indexOf(status)>=0;
+  }
   function renderMiniSuite(){
+    restoreMiniRtcSurface(false);
     var tab = miniSuiteState.tab || 'live';
     var content = '';
     if(tab === 'live') {
@@ -62084,7 +62340,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
         var sess = miniSuiteState.openSession;
         var ch = String(sess.channel || 'chat').toLowerCase();
         content = '<div class="ob-mini-suite-card"><div class="ob-mini-suite-meta"><span class="ob-mini-suite-pill">' + esc(sess.status || 'active') + '</span><span>' + esc(ch) + '</span><span>' + esc(sess.client_name || 'Client') + '</span></div><h3>' + esc(sess.client_name || 'Client session') + '</h3>' +
-          '<div id="expert-rtc-area" style="display:none;margin:4px 0 10px;"><div style="background:#111;border-radius:8px;padding:14px;color:white;text-align:center;"><div id="expert-rtc-channel" style="font-weight:950;margin-bottom:8px;">' + esc(ch === 'video' ? 'Video call' : 'Voice call') + '</div><div id="rtc-status" style="font-size:12px;opacity:.72;">Ready</div><div id="expert-rtc-video-box" style="display:none;position:relative;aspect-ratio:16/9;background:#000;border-radius:8px;overflow:hidden;margin-top:10px;"><video id="expert-rtc-remote-video" autoplay playsinline style="width:100%;height:100%;object-fit:cover;"></video><video id="expert-rtc-local-video" autoplay playsinline muted style="position:absolute;right:10px;bottom:10px;width:120px;height:90px;border:2px solid white;border-radius:8px;object-fit:cover;"></video></div></div></div>' +
+          '<div id="ob-mini-expert-rtc-mount" style="margin:4px 0 10px;"></div>' +
           (ch === 'voice' || ch === 'video' ? '<div class="ob-mini-suite-actions"><button class="ob-mini-suite-btn primary" onclick="obMiniSuiteStartMedia()">Start ' + esc(ch) + '</button></div>' : '') +
           '<div id="ob-mini-session-messages" style="min-height:220px;max-height:360px;overflow:auto;border:1px solid rgba(36,24,19,.1);border-radius:8px;padding:12px;background:#fffaf4;display:grid;gap:8px;">' + ((miniSuiteState.messages || []).length ? miniSuiteState.messages.map(function(msg){ var mine = String(msg.sender_id || '') === String(sess.expert_id || ''); return '<div style="display:flex;justify-content:' + (mine ? 'flex-end' : 'flex-start') + '"><div style="max-width:78%;border-radius:8px;padding:9px 11px;background:' + (mine ? '#2d5016' : '#fff') + ';color:' + (mine ? '#fff' : '#241813') + ';border:1px solid rgba(36,24,19,.08);font-size:13px;line-height:1.4;">' + esc(msg.content || '') + '</div></div>'; }).join('') : '<div class="ob-mini-suite-empty">No messages yet.</div>') + '</div>' +
           '<div class="ob-mini-suite-actions"><input id="ob-mini-session-input" class="ob-mini-suite-input" style="flex:1;min-width:180px" placeholder="Message the client" onkeydown="if(event.key===&quot;Enter&quot;)obMiniSuiteSendMessage()"><button class="ob-mini-suite-btn primary" onclick="obMiniSuiteSendMessage()">Send</button><button class="ob-mini-suite-btn warn" onclick="obMiniSuiteSessionAction(&quot;' + attr(sess.id) + '&quot;,&quot;end&quot;)">End</button></div></div>';
@@ -62110,6 +62366,10 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
       '</div></div>';
     }
     miniSuiteShell(content);
+    if(tab==='live'&&miniSuiteState.openSession){
+      var openChannel=String(miniSuiteState.openSession.channel||'chat').toLowerCase();
+      if(openChannel==='voice'||openChannel==='video')mountMiniRtcSurface(openChannel);
+    }
   }
   function loadMiniSuite(tab){
     if(tab) miniSuiteState.tab = tab;
@@ -62129,7 +62389,11 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
       miniSuiteState.clients = results[3] && results[3].clients || [];
       if(miniSuiteState.openSession) {
         var openId = miniSuiteState.openSession.id;
-        miniSuiteState.openSession = (miniSuiteState.sessions || []).filter(function(session){ return session.id === openId; })[0] || miniSuiteState.openSession;
+        var refreshedOpen=(miniSuiteState.sessions||[]).filter(function(session){return String(session.id)===String(openId);})[0];
+        if(refreshedOpen&&miniSuiteSessionIsTerminal(refreshedOpen)){
+          if(String(openId)===miniSuiteState.mediaSessionId)releaseMiniRtcSurface(true);
+          miniSuiteState.openSession=null;miniSuiteState.messages=[];
+        }else if(refreshedOpen)miniSuiteState.openSession=refreshedOpen;
       }
       renderMiniSuite();
       connectMiniSuiteSocket();
@@ -62139,12 +62403,33 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
       return null;
     });
   }
+  function miniSuiteSocketReady(ws){return !!ws&&ws===miniSuiteState.ws&&ws.readyState===1&&miniSuiteState.wsAuthenticated;}
+  function resolveMiniSuiteSocketWaiters(ws){
+    if(!miniSuiteSocketReady(ws))return;
+    var waiters=miniSuiteState.wsWaiters.splice(0,miniSuiteState.wsWaiters.length);
+    waiters.forEach(function(waiter){clearTimeout(waiter.timer);waiter.resolve(ws);});
+  }
+  function waitForMiniSuiteMediaSocket(){
+    var ws=connectMiniSuiteSocket();
+    if(miniSuiteSocketReady(ws))return Promise.resolve(ws);
+    if(!ws)return Promise.reject(new Error('Mini suite signaling is unavailable. Refresh this page and try again.'));
+    return new Promise(function(resolve,reject){
+      var waiter={resolve:resolve,reject:reject,timer:null};
+      waiter.timer=setTimeout(function(){
+        var index=miniSuiteState.wsWaiters.indexOf(waiter);if(index>=0)miniSuiteState.wsWaiters.splice(index,1);
+        reject(new Error('Media signaling did not connect. Check your connection and try again.'));
+      },10000);
+      miniSuiteState.wsWaiters.push(waiter);
+    });
+  }
   function connectMiniSuiteSocket(){
-    if(miniSuiteState.ws || !miniSuiteToken()) return;
+    if(miniSuiteState.ws || !miniSuiteToken()) return miniSuiteState.ws;
     try {
       var wsUrl = API_ROOT.replace(/\/api$/,'').replace(/^http/i,'ws') + '/ws';
       var ws = new WebSocket(wsUrl);
+      ws._obMiniSuiteSignalOwner = true;
       miniSuiteState.ws = ws;
+      miniSuiteState.wsAuthenticated = false;
       ws.onopen = function(){
         ws.send(JSON.stringify({type:'auth', token:miniSuiteToken()}));
         setTimeout(miniSuiteJoinOpenSession, 150);
@@ -62152,8 +62437,23 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
       ws.onmessage = function(event){
         var data = {};
         try { data = JSON.parse(event.data || '{}'); } catch(e) {}
-        if(data.type === 'authed' || data.type === 'authenticated') miniSuiteJoinOpenSession();
+        if(data.type && data.type.indexOf('rtc_') === 0){
+          if(ws!==miniSuiteState.ws||!miniSuiteState.wsAuthenticated)return;
+          if(typeof window._handleRTCMessage==='function')window._handleRTCMessage(data);
+          return;
+        }
+        if(data.type === 'authed' || data.type === 'authenticated'){
+          if(ws!==miniSuiteState.ws)return;
+          miniSuiteState.wsAuthenticated=true;window._expertWs=ws;
+          resolveMiniSuiteSocketWaiters(ws);miniSuiteJoinOpenSession();
+        }
         if(['session_request','session_expired','session_declined','session_ended','booking_update','booking_session_started'].indexOf(data.type) >= 0) {
+          var eventSessionId=String(data.session_id||data.sessionId||data.session&&data.session.id||'');
+          if(eventSessionId&&miniSuiteState.openSession&&eventSessionId===String(miniSuiteState.openSession.id||'')&&
+            ['session_expired','session_declined','session_ended'].indexOf(data.type)>=0){
+            if(eventSessionId===miniSuiteState.mediaSessionId)releaseMiniRtcSurface(true);
+            miniSuiteState.openSession=null;miniSuiteState.messages=[];
+          }
           loadMiniSuite();
         }
         if(data.type === 'message' && miniSuiteState.openSession && (data.session_id || data.sessionId) === miniSuiteState.openSession.id) {
@@ -62165,8 +62465,12 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
           renderMiniSuite();
         }
       };
-      ws.onclose = function(){ miniSuiteState.ws = null; setTimeout(connectMiniSuiteSocket, 3000); };
-    } catch(e) {}
+      ws.onclose = function(){
+        if(window._expertWs===ws)window._expertWs=null;
+        if(miniSuiteState.ws===ws){miniSuiteState.ws=null;miniSuiteState.wsAuthenticated=false;setTimeout(connectMiniSuiteSocket,3000);}
+      };
+      return ws;
+    } catch(e) {return null;}
   }
   function miniSuiteJoinOpenSession(){
     var sess = miniSuiteState.openSession || {};
@@ -62178,16 +62482,23 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
       return false;
     }
   }
-  window.obMiniSuiteSetTab = function(tab){ loadMiniSuite(tab); };
+  window.obMiniSuiteSetTab = function(tab){
+    if(miniSuiteState.mediaSessionId&&tab!=='live'){
+      notify('End the live media session before leaving this tab.','err');
+      return Promise.resolve(false);
+    }
+    return loadMiniSuite(tab);
+  };
   window.obMiniSuiteSessionAction = function(id, action){
-    miniApi('/sessions/' + encodeURIComponent(id) + '/' + encodeURIComponent(action), {method:'POST'}).then(function(data){
+    return miniApi('/sessions/' + encodeURIComponent(id) + '/' + encodeURIComponent(action), {method:'POST'}).then(function(data){
       if(action === 'accept' && data && data.session) {
         miniSuiteState.openSession = data.session;
         miniSuiteState.messages = [];
         return window.obMiniSuiteOpenSession(data.session.id || id);
       }
+      if(String(id)===miniSuiteState.mediaSessionId)releaseMiniRtcSurface(true);
       miniSuiteState.openSession = null;
-      loadMiniSuite();
+      return loadMiniSuite();
     }).catch(function(err){ notify(err.message || 'Session action failed.', 'err'); });
   };
   window.obMiniSuiteBookingStatus = function(id, status){
@@ -62200,7 +62511,12 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     }).catch(function(err){ notify(err.message || 'Booking start failed.', 'err'); });
   };
   window.obMiniSuiteOpenSession = function(id){
-    miniApi('/sessions/' + encodeURIComponent(id)).then(function(data){
+    id=String(id||'');
+    if(miniSuiteState.mediaSessionId&&miniSuiteState.mediaSessionId!==id){
+      notify('End the current media session before opening another session.','err');
+      return Promise.resolve(false);
+    }
+    return miniApi('/sessions/' + encodeURIComponent(id)).then(function(data){
       miniSuiteState.tab = 'live';
       miniSuiteState.openSession = data.session || data || {};
       miniSuiteState.messages = data.messages || [];
@@ -62230,27 +62546,36 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
   };
   window.obMiniSuiteStartMedia = function(){
     var sess = miniSuiteState.openSession || {};
-    if(!sess.id) return;
+    if(!sess.id) return Promise.resolve(false);
     var ch = String(sess.channel || 'chat').toLowerCase();
-    if(ch !== 'voice' && ch !== 'video') return;
-    connectMiniSuiteSocket();
-    setTimeout(function(){
-      try {
-        if(miniSuiteState.ws && miniSuiteState.ws.readyState === 1) {
-          miniSuiteJoinOpenSession();
-          window._expertWs = miniSuiteState.ws;
-        }
-        window._obActiveSessId = sess.id;
-        window._sid = sess.id;
-        var area = document.getElementById('expert-rtc-area');
-        if(area) area.style.display = 'block';
-        var videoBox = document.getElementById('expert-rtc-video-box');
-        if(videoBox) videoBox.style.display = ch === 'video' ? 'block' : 'none';
-        if(window.OB_RTC && typeof window.OB_RTC.start === 'function') window.OB_RTC.start(sess.id, ch, 'expert');
-      } catch(e) {
-        notify('Media could not start.', 'err');
-      }
-    }, 400);
+    if(ch !== 'voice' && ch !== 'video') return Promise.resolve(false);
+    if(miniSuiteState.mediaSessionId===String(sess.id)&&!miniSuiteState.mediaStarting)return Promise.resolve(true);
+    if(miniSuiteState.mediaSessionId&&miniSuiteState.mediaSessionId!==String(sess.id)){
+      notify('End the current media session before starting another one.','err');
+      return Promise.resolve(false);
+    }
+    if(miniSuiteState.mediaStarting)return Promise.resolve(false);
+    if(!window.OB_RTC||typeof window.OB_RTC.start!=='function'){
+      notify('Media is not available in this browser.','err');
+      return Promise.resolve(false);
+    }
+    miniSuiteState.mediaSessionId=String(sess.id);miniSuiteState.mediaChannel=ch;miniSuiteState.mediaStarting=true;
+    if(!mountMiniRtcSurface(ch)){
+      releaseMiniRtcSurface(false);notify('Media controls could not be opened. Refresh this page and try again.','err');
+      return Promise.resolve(false);
+    }
+    return waitForMiniSuiteMediaSocket().then(function(ws){
+      if(miniSuiteState.mediaSessionId!==String(sess.id)||!miniSuiteState.openSession||String(miniSuiteState.openSession.id)!==String(sess.id))return false;
+      window._expertWs=ws;miniSuiteJoinOpenSession();
+      window._obActiveSessId=sess.id;window._sid=sess.id;
+      return window.OB_RTC.start(sess.id,ch,'expert');
+    }).then(function(started){
+      miniSuiteState.mediaStarting=false;
+      if(started===false){releaseMiniRtcSurface(true);notify('Media permission was not enabled. Try again when your devices are ready.','err');return false;}
+      return true;
+    }).catch(function(){
+      releaseMiniRtcSurface(true);notify('Media could not start.','err');return false;
+    });
   };
   window.obMiniSuiteSaveProfile = function(){
     var status = document.getElementById('ob-mini-profile-status');
@@ -62866,6 +63191,10 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
   #ob-booking-session-authorization .ob-booking-auth-actions .btn{flex:1 1 160px;min-height:44px}
   #ob-booking-session-authorization .ob-booking-auth-error{display:none;margin-top:10px;color:#b91c1c;font-weight:700}
   #ob-booking-session-authorization .ob-booking-auth-success{color:#166534;font-weight:800}
+  #ob-booking-media-preflight{margin-top:14px;padding-top:14px;border-top:1px solid rgba(122,140,110,.2)}
+  #ob-booking-media-heading{display:block;margin-bottom:4px}
+  #ob-booking-media-status{color:var(--gray-500)}
+  #ob-booking-media-status[role="alert"]{color:#b91c1c;font-weight:700}
   #ob-booking-auth-card-wrap{display:none;margin-top:12px;padding-top:12px;border-top:1px solid rgba(122,140,110,.2)}
   #ob-booking-auth-card-element{min-height:48px;padding:4px 10px;border:1.5px solid var(--gray-200);border-radius:10px;background:#fff}
   #screen-A5.ob-payment-failed .receipt-icon{background:rgba(239,68,68,.1);color:#b91c1c}
@@ -63402,7 +63731,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
       'a3-session-title':'Expert · Session','a4-session-title':'Expert · Session','a4-session-rate':'Session not active',
       'a4-voice-status':'Voice session','b3-voice-status':'Voice session','b3-rtc-status':'Not connected','vid-nametag':'Expert','vid-rate-display':'—',
       'free-timer':'0:00','paid-timer':'0:00','voice-timer-a3':'0:00','voice-timer-a4':'0:00','voice-timer-B':'0:00','video-timer-a3':'0:00','video-timer-a4':'0:00','video-timer-display':'0:00',
-      'paid-cost-val':'$0.00','video-cost':'$0.00','a4-voice-cost':'$0.00','a4-video-cost':'$0.00','b3-voice-cost':'',
+      'paid-cost-val':'$0.00','ob-client-voice-live-cost':'$0.00','ob-client-video-live-cost':'$0.00','a4-voice-cost':'$0.00','a4-video-cost':'$0.00',
       'receipt-session-type':'—','receipt-duration':'—','receipt-rate':'—','receipt-total':'—'
     };
     Object.keys(neutralText).forEach(function(id){var element=document.getElementById(id);if(element)element.textContent=neutralText[id];});
@@ -63907,7 +64236,11 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     };
   }
 
-  var bookingController={id:'',context:null,data:null,lifecycle:null,view:null,loading:null,error:'',card:null,cardMountPromise:null,stripe:null,cardComplete:false,busy:false,refreshTimer:null,loadSeq:0,actionSeq:0};
+  var bookingController={
+    id:'',context:null,data:null,lifecycle:null,view:null,loading:null,error:'',card:null,cardMountPromise:null,
+    stripe:null,cardComplete:false,busy:false,refreshTimer:null,loadSeq:0,actionSeq:0,
+    media:{bookingId:'',channel:'',stream:null,phase:'idle',error:'',promise:null,requestSeq:0,pendingJoin:null}
+  };
   function bookingIdFromUrl(){ return new URLSearchParams(window.location.search).get('booking') || ''; }
   function bookingOperationContext(bookingId,token){
     token=String(token||authToken()||'');
@@ -63935,6 +64268,18 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     resetState();
     return true;
   }
+  function stopScheduledBookingMediaStream(stream){
+    if(!stream)return;
+    try{if(stream.getTracks)stream.getTracks().forEach(function(track){try{track.stop();}catch(e){}});}catch(e2){}
+    if(window._obClientMediaReadyStream===stream){window._obClientMediaReadyStream=null;window._obClientMediaReadyChannel='';}
+    if(window._obRtcPrewarmedStream===stream)window._obRtcPrewarmedStream=null;
+  }
+  function resetScheduledBookingMedia(options){
+    options=options||{};var media=bookingController.media;if(!media)return;
+    media.requestSeq+=1;
+    if(media.stream&&!options.keepStream)stopScheduledBookingMediaStream(media.stream);
+    media.bookingId='';media.channel='';media.stream=null;media.phase='idle';media.error='';media.promise=null;media.pendingJoin=null;
+  }
   function clearBookingControllerState(options){
     options=options||{};
     if(!bookingController||typeof bookingController!=='object')return;
@@ -63945,6 +64290,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
       try{if(typeof bookingController.card.unmount==='function')bookingController.card.unmount();}catch(e2){}
       try{if(typeof bookingController.card.destroy==='function')bookingController.card.destroy();}catch(e3){}
     }
+    resetScheduledBookingMedia({keepStream:!!options.keepMediaStream});
     bookingController.id='';bookingController.data=null;bookingController.lifecycle=null;bookingController.view=null;bookingController.loading=null;bookingController.error='';
     bookingController.card=null;bookingController.cardMountPromise=null;bookingController.stripe=null;bookingController.cardComplete=false;bookingController.busy=false;
     bookingController.context=null;
@@ -64056,6 +64402,134 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     var button=document.createElement('button');button.type='button';button.id=id;button.className='btn '+(kind||'btn-secondary');button.textContent=text;button.addEventListener('click',handler);return button;
   }
   function bookingActions(card){var actions=document.createElement('div');actions.className='ob-booking-auth-actions';card.appendChild(actions);return actions;}
+  function bookingMediaChannel(data){
+    data=data||{};var booking=data.booking||{};var session=data.session||{};
+    var sessionChannel=String(session.channel||'').toLowerCase();
+    if(sessionChannel==='voice'||sessionChannel==='video')return sessionChannel;
+    var bookingChannel=String(booking.channel||'').toLowerCase();
+    return bookingChannel==='voice'||bookingChannel==='video'?bookingChannel:'';
+  }
+  function bookingMediaBookingId(data){
+    var booking=data&&data.booking||{};
+    return String(booking.id||(bookingController.context&&bookingController.context.bookingId)||'');
+  }
+  function scheduledBookingMediaStreamReady(stream,channel){
+    if(!stream||!stream.getAudioTracks)return false;
+    var audio=stream.getAudioTracks().some(function(track){return track&&track.readyState!=='ended';});
+    if(!audio)return false;
+    if(channel!=='video')return true;
+    return !!stream.getVideoTracks&&stream.getVideoTracks().some(function(track){return track&&track.readyState!=='ended';});
+  }
+  function syncScheduledBookingMedia(data){
+    var media=bookingController.media;var bookingId=bookingMediaBookingId(data);var channel=bookingMediaChannel(data);
+    if(!bookingId||!channel){
+      if(media.bookingId||media.channel||media.stream)resetScheduledBookingMedia();
+      return null;
+    }
+    if(media.bookingId!==bookingId||media.channel!==channel){
+      resetScheduledBookingMedia();media.bookingId=bookingId;media.channel=channel;
+    }else if(media.stream&&!scheduledBookingMediaStreamReady(media.stream,channel)){
+      stopScheduledBookingMediaStream(media.stream);media.stream=null;media.phase='idle';media.error='';
+    }
+    return media;
+  }
+  function mediaReadyForBooking(data){
+    var media=bookingController.media;var bookingId=bookingMediaBookingId(data);var channel=bookingMediaChannel(data);
+    return !!channel&&media.bookingId===bookingId&&media.channel===channel&&scheduledBookingMediaStreamReady(media.stream,channel);
+  }
+  function scheduledBookingMediaLabel(channel,kind){
+    if(kind==='heading')return channel==='video'?'Camera and microphone check':'Microphone check';
+    if(kind==='button')return channel==='video'?'Enable camera and microphone':'Enable microphone';
+    return channel==='video'?'Camera and microphone':'Microphone';
+  }
+  function renderBookingMediaPreflight(card,data,options){
+    options=options||{};var media=syncScheduledBookingMedia(data);if(!media)return null;
+    var prior=document.getElementById('ob-booking-media-preflight');if(prior)prior.remove();
+    var wrap=document.createElement('div');wrap.id='ob-booking-media-preflight';
+    var heading=document.createElement('strong');heading.id='ob-booking-media-heading';heading.textContent=scheduledBookingMediaLabel(media.channel,'heading');wrap.appendChild(heading);
+    var status=document.createElement('div');status.id='ob-booking-media-status';
+    if(media.phase==='requesting')status.textContent='Waiting for browser permission...';
+    else if(media.error){status.textContent=media.error;status.setAttribute('role','alert');}
+    else if(mediaReadyForBooking(data))status.textContent=options.active
+      ? scheduledBookingMediaLabel(media.channel)+' ready. Joining your session...'
+      : scheduledBookingMediaLabel(media.channel)+' ready. This session will open automatically when the expert starts it.';
+    else status.textContent=media.channel==='video'
+      ? 'Enable your camera and microphone now. Your session will not open until both are ready.'
+      : 'Enable your microphone now. Your session will not open until it is ready.';
+    wrap.appendChild(status);
+    if(!mediaReadyForBooking(data)){
+      var actions=document.createElement('div');actions.className='ob-booking-auth-actions';
+      var button=bookingButton('ob-booking-media-enable',scheduledBookingMediaLabel(media.channel,'button'),'btn-primary',enableScheduledBookingMedia);
+      if(media.phase==='requesting'){button.disabled=true;button.textContent='Waiting for permission...';}
+      actions.appendChild(button);wrap.appendChild(actions);
+    }
+    card.appendChild(wrap);return wrap;
+  }
+  function renderActiveBookingMediaGate(data,options){
+    options=options||{};var overlay=document.getElementById('booking-join-overlay');if(!overlay)return;
+    var panel=overlay.firstElementChild;if(!panel)return;var card=bookingCard(panel);card.replaceChildren();
+    var channel=bookingMediaChannel(data);var heading=bookingHeading(card,'Your '+channel+' session is ready');
+    bookingCopy(card,'Allow the required device access to enter the exact scheduled session. Billing begins only after the live session connects.');
+    renderBookingMediaPreflight(card,data,{active:true});scheduleBookingRefresh(null);
+    if(options.focus)focusElement(heading);
+  }
+  function refreshScheduledBookingMediaUi(){
+    var data=bookingController.data;if(!data)return;
+    var lifecycle=bookingController.lifecycle||bookingLifecycleState(data);
+    if(lifecycle.kind==='active'){renderActiveBookingMediaGate(data);return;}
+    var current=document.getElementById('ob-booking-media-preflight');var card=current&&current.parentNode;
+    if(card){current.remove();renderBookingMediaPreflight(card,data);}
+  }
+  function completeScheduledBookingJoin(){
+    var media=bookingController.media;var pending=media&&media.pendingJoin;var data=bookingController.data;
+    if(!pending||!bookingControllerOwns(pending.context)||!mediaReadyForBooking(data))return false;
+    if(media.bookingId!==pending.bookingId||media.channel!==pending.channel)return false;
+    var sessionId=pending.sessionId;var expertId=pending.expertId;var channel=pending.channel;
+    var rtc=window.OB_RTC;
+    if(!rtc||typeof rtc.setScheduledPreflightStream!=='function'||!rtc.setScheduledPreflightStream(media.stream,sessionId,channel,'client')){
+      media.phase='error';media.error='Media could not be handed to this session. Check your devices and try again.';
+      refreshScheduledBookingMediaUi();return false;
+    }
+    clearBookingRefresh();clearBookingControllerState({removeUi:true,keepMediaStream:true});
+    window.joinActiveBookingSession(sessionId,expertId,channel);
+    return true;
+  }
+  async function enableScheduledBookingMedia(){
+    var context=bookingController.context;var data=bookingController.data;var media=syncScheduledBookingMedia(data);
+    if(!media||!bookingControllerOwns(context))return false;
+    if(mediaReadyForBooking(data))return completeScheduledBookingJoin()||true;
+    if(media.promise)return media.promise;
+    if(!navigator.mediaDevices||typeof navigator.mediaDevices.getUserMedia!=='function'){
+      media.phase='error';media.error='Media permissions are not available in this browser. Open this link in a browser with device access.';
+      refreshScheduledBookingMediaUi();return false;
+    }
+    var bookingId=media.bookingId;var channel=media.channel;var requestSeq=++media.requestSeq;media.phase='requesting';media.error='';refreshScheduledBookingMediaUi();
+    var request=(async function(){
+      await Promise.resolve();
+      var stream=null;
+      try{
+        var constraints=channel==='video'?{audio:true,video:true}:{audio:true,video:false};
+        stream=await navigator.mediaDevices.getUserMedia(constraints);
+        if(!bookingControllerOwns(context)||media.requestSeq!==requestSeq||media.bookingId!==bookingId||media.channel!==channel){stopScheduledBookingMediaStream(stream);return false;}
+        if(!scheduledBookingMediaStreamReady(stream,channel)){
+          stopScheduledBookingMediaStream(stream);stream=null;
+          throw new Error(channel==='video'?'Camera and microphone access is required to join this video session.':'Microphone access is required to join this voice session.');
+        }
+        media.stream=stream;media.phase='ready';media.error='';
+        window._obClientMediaReadyStream=stream;window._obClientMediaReadyChannel=channel;window._obRtcPrewarmedStream=stream;
+        try{if(window.ExpertSfuClient&&typeof window.ExpertSfuClient.setPrewarmedStream==='function')window.ExpertSfuClient.setPrewarmedStream('client',stream,channel);}catch(e){}
+        if((bookingController.lifecycle||bookingLifecycleState(data)).kind==='active')return completeScheduledBookingJoin();
+        refreshScheduledBookingMediaUi();return true;
+      }catch(errorValue){
+        if(!bookingControllerOwns(context)||media.requestSeq!==requestSeq)return false;
+        media.phase='error';media.error=errorValue&&errorValue.message?errorValue.message:(channel==='video'
+          ? 'Camera and microphone permission was not enabled. Allow both devices, then try again.'
+          : 'Microphone permission was not enabled. Allow it, then try again.');
+        refreshScheduledBookingMediaUi();return false;
+      }finally{if(media.requestSeq===requestSeq&&media.promise===request)media.promise=null;}
+    })();
+    media.promise=request;return request;
+  }
   function renderBookingLogin(card){
     bookingHeading(card,'Sign in to confirm payment');
     bookingCopy(card,'This booking link can be opened on another device. Sign in with the account used for the booking, then you can confirm payment here.');
@@ -64124,11 +64598,19 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
       var context=bookingController.context;if(!bookingControllerOwns(context))return true;
       var booking=data.booking||{};var expert=data.expert||{};
       var sessionId=String(lifecycle.session.id);var expertId=String(booking.expert_id||expert.user_id||expert.id||'');
-      var channel=String(lifecycle.session.channel||booking.channel||'chat').toLowerCase();
+      var channel=bookingMediaChannel(data)||String(lifecycle.session.channel||booking.channel||'chat').toLowerCase();
+      if(channel==='voice'||channel==='video'){
+        var media=syncScheduledBookingMedia(data);
+        media.pendingJoin={context:context,bookingId:media.bookingId,sessionId:sessionId,expertId:expertId,channel:channel};
+        clearBookingRefresh();
+        if(mediaReadyForBooking(data)){completeScheduledBookingJoin();return true;}
+        renderActiveBookingMediaGate(data,options);return true;
+      }
       clearBookingRefresh();clearBookingControllerState({removeUi:true});
       window.joinActiveBookingSession(sessionId,expertId,channel);
       return true;
     }
+    if(lifecycle.kind!=='starting')resetScheduledBookingMedia();
     renderBookingLifecycleCard(lifecycle,options);return true;
   }
   function renderBookingCard(data,options){
@@ -64154,6 +64636,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
       bookingHeading(card,'\u2713 $5 temporary authorization approved',true);bookingCopy(card,'You will only be charged for the session time you use. The expert can now start the session.');
     }else if(!bookingController.view||!bookingController.view.available)renderBookingUnavailable(card,bookingController.view);
     else renderBookingAuthorization(card,bookingController.view);
+    if(authToken()&&data&&bookingMediaChannel(data))renderBookingMediaPreflight(card,data);
     heading=document.getElementById('ob-booking-auth-heading');if(options.focus)focusElement(heading);
   }
   async function mountBookingReplacementCard(){

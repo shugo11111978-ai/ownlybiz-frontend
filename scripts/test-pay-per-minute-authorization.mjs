@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 
 const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+const sfuClientSource = readFileSync(new URL('../assets/sfu-client.js', import.meta.url), 'utf8');
 const controllerMatch = html.match(/<script id="ownlybiz-pay-per-minute-authorization-20260814-js">([\s\S]*?)<\/script>/);
 assert(controllerMatch, 'pay-per-minute authorization controller is installed');
 const controllerSource = controllerMatch[1];
@@ -21,6 +22,27 @@ const rtcModuleStart = html.indexOf('window.OB_RTC = (function(){');
 const rtcModuleEnd = html.indexOf('\n\nwindow._handleRTCMessage=', rtcModuleStart);
 assert(rtcModuleStart >= 0 && rtcModuleEnd > rtcModuleStart, 'WebRTC module is installed');
 const rtcModuleSource = html.slice(rtcModuleStart, rtcModuleEnd);
+const genericWireWsStart = html.indexOf('function wireWs(ws, roleName){');
+const genericWireWsEnd = html.indexOf('\n  window._obRouteWsMessage = routeWsMessage;', genericWireWsStart);
+assert(genericWireWsStart >= 0 && genericWireWsEnd > genericWireWsStart, 'generic WebSocket wiring owner is installed');
+const genericWireWsSource = html.slice(genericWireWsStart, genericWireWsEnd);
+const clientRtcStartOwnerStart = html.indexOf('function settleClientScheduledPreflight(sessionId,transferred){');
+const clientRtcStartOwnerEnd = html.indexOf('\n  function applyClientSessionUi(sess){', clientRtcStartOwnerStart);
+assert(clientRtcStartOwnerStart >= 0 && clientRtcStartOwnerEnd > clientRtcStartOwnerStart,
+  'client RTC media-start owner is installed');
+const clientRtcStartOwnerSource = html.slice(clientRtcStartOwnerStart, clientRtcStartOwnerEnd);
+const mediaPrewarmOwnerStart = html.indexOf('function stopOwnedPrewarmStream(stream){');
+const mediaPrewarmOwnerEnd = html.indexOf('\n  function renderPresessionMedia(){', mediaPrewarmOwnerStart);
+assert(mediaPrewarmOwnerStart >= 0 && mediaPrewarmOwnerEnd > mediaPrewarmOwnerStart,
+  'role-scoped media prewarm owner is installed');
+const mediaPrewarmOwnerSource = html.slice(mediaPrewarmOwnerStart, mediaPrewarmOwnerEnd);
+const marketplaceMatch = html.match(/<script id="ob-marketplace-mode-20260618">([\s\S]*?)<\/script>/);
+assert(marketplaceMatch, 'marketplace and mini-suite owner is installed');
+const marketplaceSource = marketplaceMatch[1];
+const miniSuiteRuntimeStart = marketplaceSource.indexOf('var miniSuiteState =');
+const miniSuiteRuntimeEnd = marketplaceSource.indexOf('\n  window.obMiniSuiteSaveProfile', miniSuiteRuntimeStart);
+assert(miniSuiteRuntimeStart >= 0 && miniSuiteRuntimeEnd > miniSuiteRuntimeStart, 'mini-suite runtime owner is present');
+const miniSuiteRuntimeSource = marketplaceSource.slice(miniSuiteRuntimeStart, miniSuiteRuntimeEnd);
 const walletMarker = html.indexOf('if(window._obClientWalletGoogleApprovalInstalled) return;');
 const walletModuleStart = html.lastIndexOf('(function(){', walletMarker);
 const walletCoreEnd = html.indexOf('\n  function completeClientProviderAuth', walletMarker);
@@ -142,6 +164,14 @@ assert.match(controllerSource, /session_authorization_required'\?'Waiting for th
   'expert start explains the client authorization gate');
 assert.match(controllerSource, /Sign in to confirm payment/,
   'cross-device booking link renders a sign-in state');
+assert.doesNotMatch(html, /function renderBookingOverlayMedia\(/,
+  'scheduled media readiness has no DOM-text inference or competing MutationObserver owner');
+assert.match(controllerSource, /function bookingMediaChannel\(data\)/,
+  'the scheduled-booking controller derives Voice or Video from authoritative booking data');
+assert.match(controllerSource, /function enableScheduledBookingMedia\(\)/,
+  'one scheduled-booking media owner acquires devices before entering an active media session');
+assert.match(controllerSource, /mediaReadyForBooking\(data\)[\s\S]*completeScheduledBookingJoin/,
+  'an active scheduled media session cannot auto-join until its owned preflight is ready');
 assert.match(controllerSource, /Use a different card/,
   'saved-card flow offers a different-card fallback');
 assert.match(controllerSource, /\/api\/payments\/methods\/status/,
@@ -211,10 +241,62 @@ assert.match(controllerSource, /rtc\.resetClientContext\(\)/,
   'client auth teardown delegates pending RTC startup and local media cleanup to one RTC owner');
 assert.match(controllerSource, /'_clientTimerInterval','_obClientElapsedInterval','_bookingPollTimer'/,
   'client auth teardown stops elapsed and scheduled-session timers');
-assert.match(rtcModuleSource, /clientIdentity:role==='client'.*OB_CLIENT_CONTEXT\.capture\('rtc-start'/,
-  'RTC startup captures the central client identity that requested media');
+assert.match(rtcModuleSource, /authIdentity:_captureRtcIdentity\(role,'rtc-start'/,
+  'peer RTC startup captures the matching central client or expert identity that requested media');
 assert.match(rtcModuleSource, /acquiredStream=await navigator\.mediaDevices\.getUserMedia[\s\S]*_stopMediaStream\(acquiredStream\);return false/,
   'a media stream arriving after RTC invalidation is immediately stopped');
+assert.match(rtcModuleSource, /_takeScheduledPreflightStream\(role,channel,sessionId\)[\s\S]*if\(!acquiredStream\)acquiredStream=await navigator\.mediaDevices\.getUserMedia/,
+  'peer RTC consumes the exact scheduled preflight stream before requesting devices again');
+assert.match(controllerSource, /rtc\.setScheduledPreflightStream\(media\.stream,sessionId,channel,'client'\)/,
+  'scheduled Voice/Video hands the exact stream and session identity to the authoritative RTC owner');
+assert.match(rtcModuleSource, /setScheduledPreflightStream:setScheduledPreflightStream,settleScheduledPreflight:settleScheduledPreflight/,
+  'the RTC owner exposes explicit scheduled-stream transfer and settlement operations');
+assert.match(rtcModuleSource, /var clientPrewarm=window\._obClientMediaReadyStream;[\s\S]*_stopMediaStream\(clientPrewarm\)/,
+  'peer-only identity teardown also stops an unscheduled client prewarm');
+assert.match(clientRtcStartOwnerSource, /if\(clientRtcMediaStart\.key===startKey\)return clientRtcMediaStart\.promise/,
+  'repeated polling shares one in-flight RTC start for the exact client session and channel');
+assert.match(clientRtcStartOwnerSource, /OB_CLIENT_CONTEXT\.register\('client-rtc-media-start',\{teardown:invalidateClientRtcMediaStarts\}\)/,
+  'client identity teardown invalidates pending and queued RTC media starts');
+assert.match(sfuClientSource, /captureSfuIdentity\(L,"sfu-rtc-start",C,E\)/,
+  'the installed SFU start captures its matching client or expert identity before asynchronous configuration or preparation');
+assert.match(sfuClientSource, /captureSfuIdentity\(u,"sfu-rtc-prepare",_,o\)/,
+  'the installed SFU pre-join preparation captures its matching client or expert identity before asynchronous configuration');
+assert.match(sfuClientSource, /let ownedSession=null;try\{/,
+  'the installed SFU start captures one local session owner before asynchronous startup');
+assert.match(sfuClientSource, /adoptLocalStream\(g\)[\s\S]*source:"prewarmed"/,
+  'the real installed SFU session owns a consumed prewarm before preparation can fail');
+assert.match(sfuClientSource, /getUserMedia\(xe\(this\.channel\)\)[\s\S]*adoptLocalStream\(E\)/,
+  'the real installed SFU session owns a prompted stream at the permission continuation boundary');
+assert.match(sfuClientSource, /catch\(E\)\{try\{await y\}catch\{\}throw E\}/,
+  'a preparation failure settles exact media ownership before SFU fallback or privacy cleanup');
+assert.match(sfuClientSource, /releaseLocalStreamForFallback[\s\S]*setScheduledPreflightStream\(Fe,C,E,L\)/,
+  'only a current owned SFU session explicitly transfers a reusable stream into peer fallback');
+assert.match(sfuClientSource, /je=mediaStartCurrent\(G\),st=!i\|\|i===ownedSession[\s\S]*!je\|\|!st\?!1:/,
+  'an identity-invalidated or superseded SFU start cannot close the current session or enter peer fallback');
+assert.match(sfuClientSource, /resetClientContext:resetClientContext[\s\S]*getRole\(\)\{return i\?i\.role/,
+  'the installed SFU owner exposes client-only reset and its real active role');
+assert.match(sfuClientSource, /resetExpertContext:resetExpertContext/,
+  'the installed SFU owner exposes a nondeliberate expert identity reset');
+assert.match(sfuClientSource, /clearPrewarmedStream:clearPrewarmedRole/,
+  'the installed SFU owner exposes role-scoped prewarm cleanup');
+assert.doesNotMatch(sfuClientSource, /_obRtcPrewarmedStream&&g\.push\(window\._obRtcPrewarmedStream\)/,
+  'the installed SFU consumer never treats the untyped shared prewarm reference as cross-role media');
+assert.match(mediaPrewarmOwnerSource, /captureMediaPrewarmOwner\('client'/,
+  'pre-session client device permission is bound to its authenticated identity before awaiting media');
+assert.match(mediaPrewarmOwnerSource, /OB_CLIENT_CONTEXT\.register\('media-prewarm'/,
+  'client and expert prewarm streams have a central identity teardown owner');
+assert.match(mediaPrewarmOwnerSource, /OB_RTC\.resetExpertContext\(\)/,
+  'expert, admin, and support identity teardown reaches the active expert RTC owner');
+assert.match(rtcModuleSource, /sessionStorage\.getItem\('ob_mini_suite_token'\)/,
+  'peer RTC can authenticate a dedicated fallback socket with the mini-suite credential');
+assert.match(miniSuiteRuntimeSource, /waitForMiniSuiteMediaSocket\(\)[\s\S]*window\.OB_RTC\.start\(sess\.id,ch,'expert'\)/,
+  'mini-suite media waits for its authenticated suite socket before starting RTC');
+assert.match(miniSuiteRuntimeSource, /miniSuiteState\.wsAuthenticated=true;window\._expertWs=ws/,
+  'an authenticated initial or reconnected mini-suite socket becomes the expert signaling owner');
+assert.match(miniSuiteRuntimeSource, /data\.type && data\.type\.indexOf\('rtc_'\) === 0[\s\S]*window\._handleRTCMessage\(data\);[\s\S]*return;/,
+  'the mini-suite socket directly owns incoming RTC signaling');
+assert.match(html, /if\(ws\._obMiniSuiteSignalOwner\) return ws;/,
+  'the generic socket router cannot compete with the mini-suite RTC message owner');
 
 const liveRequestHandlerStart = html.indexOf("fetch(BASE+'/api/sessions/request'");
 const liveRequestHandlerEnd = html.indexOf('window.obCancelWait=function()', liveRequestHandlerStart);
@@ -268,6 +350,22 @@ assert.doesNotMatch(html, /payExplainer\.innerHTML\s*=|bpe\.innerHTML\s*=/,
   'expert names are not interpolated into disclosure HTML');
 assert.match(html, /obSetPayPerMinuteDisclosure\(payExplainer, name\)/,
   'marketplace expert disclosure uses the safe text renderer');
+
+assert.equal((html.match(/id="ob-client-voice-live-cost"/g) || []).length, 1,
+  'Voice owns one live-cost output');
+assert.equal((html.match(/id="ob-client-video-live-cost"/g) || []).length, 1,
+  'Video owns one live-cost output');
+assert.doesNotMatch(html, /id="b3-voice-cost"|getElementById\('video-cost'\)|setText\('video-cost'/,
+  'superseded blank and ghost media-cost selectors are deleted');
+for (const rtcId of [
+  'expert-rtc-area', 'expert-rtc-channel', 'rtc-status', 'expert-rtc-video-box',
+  'expert-rtc-remote-video', 'expert-rtc-local-video',
+]) {
+  assert.equal((html.match(new RegExp(`id="${rtcId}"`, 'g')) || []).length, 1,
+    `${rtcId} has one canonical DOM owner`);
+}
+assert.equal((html.match(/id="ob-mini-expert-rtc-mount"/g) || []).length, 1,
+  'the mini suite mounts the canonical expert RTC surface instead of cloning its IDs');
 
 class FakeClassList {
   constructor() { this.values = new Set(); }
@@ -482,6 +580,123 @@ const expertToken = `e30.${Buffer.from(JSON.stringify({ id: 'expert-a', role: 'e
 const expertBToken = `e30.${Buffer.from(JSON.stringify({ id: 'expert-b', role: 'expert' })).toString('base64url')}.signature`;
 const adminToken = `e30.${Buffer.from(JSON.stringify({ id: 'admin-a', role: 'admin' })).toString('base64url')}.signature`;
 const supportToken = `e30.${Buffer.from(JSON.stringify({ id: 'support-a', role: 'support' })).toString('base64url')}.signature`;
+const miniSuiteTokenValue = 'mini-suite-session-token';
+
+// Starting media while the suite socket is CONNECTING waits for its authenticated
+// socket. Reconnect publishes the replacement socket before future RTC signaling.
+const miniSocketHarness = createHarness({ session: { ob_mini_suite_token: miniSuiteTokenValue } });
+const miniSocketInstances = [];
+class MiniSuiteSocket {
+  constructor(url) { this.url = url; this.readyState = 0; this.sent = []; miniSocketInstances.push(this); }
+  send(payload) { this.sent.push(JSON.parse(payload)); }
+  open() { this.readyState = 1; if (this.onopen) this.onopen(); }
+  receive(payload) { if (this.onmessage) this.onmessage({ data: JSON.stringify(payload) }); }
+  close() { this.readyState = 3; if (this.onclose) this.onclose(); }
+}
+miniSocketHarness.sandbox.WebSocket = MiniSuiteSocket;
+miniSocketHarness.sandbox.API_ROOT = 'https://staging.example/api';
+miniSocketHarness.sandbox.esc = (value) => String(value ?? '');
+miniSocketHarness.sandbox.attr = (value) => String(value ?? '');
+miniSocketHarness.sandbox.money = (value) => `$${Number(value || 0).toFixed(2)}`;
+const miniNotifications = [];
+miniSocketHarness.sandbox.notify = (...args) => miniNotifications.push(args);
+const miniIncomingRtc = [];
+miniSocketHarness.sandbox._handleRTCMessage = (message) => miniIncomingRtc.push(message);
+const miniRtcStarts = [];
+miniSocketHarness.sandbox.OB_RTC = {
+  start(sessionId, channel, role) {
+    miniRtcStarts.push({ sessionId, channel, role, socket: miniSocketHarness.sandbox._expertWs });
+    return Promise.resolve(true);
+  },
+  cleanup() {}, getSid: () => 'mini-voice-session', getRole: () => 'expert',
+};
+const miniArea = new FakeElement('div'); miniArea.id = 'expert-rtc-area'; miniArea.style.display = 'none';
+for (const id of ['expert-rtc-channel', 'expert-rtc-video-box', 'expert-rtc-voice-viz', 'rtc-cam-btn']) {
+  const element = new FakeElement(id === 'rtc-cam-btn' ? 'button' : 'div'); element.id = id; miniArea.appendChild(element);
+}
+const miniMount = new FakeElement('div'); miniMount.id = 'ob-mini-expert-rtc-mount';
+miniSocketHarness.body.append(miniArea, miniMount);
+vm.runInContext(miniSuiteRuntimeSource, miniSocketHarness.sandbox, { filename: 'mini-suite-media-runtime.js' });
+vm.runInContext(genericWireWsSource, miniSocketHarness.sandbox, { filename: 'generic-websocket-wiring.js' });
+miniSocketHarness.sandbox.miniSuiteState.openSession = { id: 'mini-voice-session', channel: 'voice', status: 'active' };
+const delayedMiniStart = miniSocketHarness.sandbox.obMiniSuiteStartMedia();
+assert.equal(miniSocketInstances.length, 1, 'mini media creates its suite socket while disconnected');
+assert.equal(miniSocketInstances[0].readyState, 0, 'the initial suite socket is still CONNECTING');
+const initialMiniMessageOwner = miniSocketInstances[0].onmessage;
+miniSocketHarness.sandbox.wireWs(miniSocketInstances[0], 'expert');
+assert.equal(miniSocketInstances[0].onmessage, initialMiniMessageOwner,
+  'generic WebSocket reinstall leaves the initial mini-suite message owner untouched');
+assert.equal(miniRtcStarts.length, 0, 'RTC cannot start before the suite socket opens and authenticates');
+miniSocketInstances[0].open();
+assert.equal(miniSocketInstances[0].sent[0].type, 'auth', 'suite socket authenticates before it is published to RTC');
+assert.equal(miniSocketInstances[0].sent[0].token, miniSuiteTokenValue, 'suite socket uses the mini credential');
+assert.equal(miniRtcStarts.length, 0, 'an open but unacknowledged suite socket still cannot start RTC');
+miniSocketInstances[0].receive({ type: 'rtc_offer', session_id: 'untrusted-before-auth', sdp: 'ignored' });
+assert.deepEqual(miniIncomingRtc, [], 'the suite socket rejects RTC signaling before authentication');
+miniSocketInstances[0].receive({ type: 'authenticated' });
+await settleAsync();
+const initialRtcOffer = { type: 'rtc_offer', session_id: 'mini-voice-session', sdp: 'initial-offer' };
+miniSocketInstances[0].receive(initialRtcOffer);
+assert.equal(miniIncomingRtc.length, 1, 'authenticated initial suite socket routes one RTC message exactly once');
+assert.equal(JSON.stringify(miniIncomingRtc[0]), JSON.stringify(initialRtcOffer));
+assert.equal(await delayedMiniStart, true, 'media starts after suite authentication succeeds');
+assert.deepEqual(miniRtcStarts[0], {
+  sessionId: 'mini-voice-session', channel: 'voice', role: 'expert', socket: miniSocketInstances[0],
+}, 'peer/SFU RTC receives the exact authenticated mini-suite socket');
+miniSocketInstances[0].close();
+assert.equal(miniSocketHarness.sandbox._expertWs, null, 'a closed suite socket cannot remain the signaling owner');
+miniSocketHarness.runTimers();
+assert.equal(miniSocketInstances.length, 2, 'mini-suite signaling reconnects after the owned socket closes');
+const reconnectedMiniMessageOwner = miniSocketInstances[1].onmessage;
+miniSocketHarness.sandbox.wireWs(miniSocketInstances[1], 'expert');
+assert.equal(miniSocketInstances[1].onmessage, reconnectedMiniMessageOwner,
+  'generic WebSocket reinstall leaves the reconnected mini-suite message owner untouched');
+miniSocketInstances[1].open();
+assert.equal(miniSocketInstances[1].sent[0].token, miniSuiteTokenValue, 'reconnected suite socket authenticates with the same mini credential');
+miniSocketInstances[1].receive({ type: 'authed' });
+await settleAsync();
+const reconnectedRtcIce = { type: 'rtc_ice', session_id: 'mini-voice-session', candidate: { candidate: 'reconnected-ice' } };
+miniSocketInstances[1].receive(reconnectedRtcIce);
+assert.equal(miniIncomingRtc.length, 2, 'authenticated reconnect routes the next RTC message exactly once through the new owner');
+assert.equal(JSON.stringify(miniIncomingRtc[1]), JSON.stringify(reconnectedRtcIce));
+assert.equal(miniSocketHarness.sandbox._expertWs, miniSocketInstances[1], 'authenticated reconnect replaces the closed RTC signaling socket');
+assert.equal(miniRtcStarts.length, 1, 'socket reconnect does not duplicate media startup');
+assert.deepEqual(miniNotifications, [], 'healthy delayed-open and reconnect paths show no media error');
+
+// If peer RTC must create a dedicated fallback socket during a reconnect gap,
+// its own auth owner uses the mini-suite token rather than an unrelated account.
+const miniPeerHarness = createHarness({ session: { ob_t: clientAToken, ob_mini_suite_token: miniSuiteTokenValue } });
+miniPeerHarness.sandbox.location.pathname = '/mini-suite/expert/mini-a';
+miniPeerHarness.sandbox.OWNLY_CONFIG = { rtc: {} };
+const miniPeerTrack = { kind: 'audio', readyState: 'live', enabled: true, stop() { this.readyState = 'ended'; } };
+miniPeerHarness.sandbox.navigator = { mediaDevices: { getUserMedia: async () => ({
+  getTracks: () => [miniPeerTrack], getAudioTracks: () => [miniPeerTrack], getVideoTracks: () => [],
+}) } };
+miniPeerHarness.sandbox.RTCPeerConnection = class {
+  constructor() { this.connectionState = 'new'; this.iceConnectionState = 'new'; this.signalingState = 'stable'; this.remoteDescription = null; }
+  addTrack() {}
+  close() { this.connectionState = 'closed'; }
+  async createOffer() { return { type: 'offer', sdp: 'mini-peer-offer' }; }
+  async createAnswer() { return { type: 'answer', sdp: 'mini-peer-answer' }; }
+  async setLocalDescription(description) { this.localDescription = description; this.signalingState = description.type === 'offer' ? 'have-local-offer' : 'stable'; }
+  async setRemoteDescription(description) { this.remoteDescription = description; }
+  async addIceCandidate() {}
+};
+const miniPeerSockets = [];
+class MiniPeerSocket {
+  constructor(url) { this.url = url; this.readyState = 0; this.sent = []; miniPeerSockets.push(this); }
+  send(payload) { this.sent.push(JSON.parse(payload)); }
+  open() { this.readyState = 1; if (this.onopen) this.onopen(); }
+}
+miniPeerHarness.sandbox.WebSocket = MiniPeerSocket;
+new vm.Script(rtcModuleSource, { filename: 'mini-suite-peer-fallback.js' }).runInContext(miniPeerHarness.sandbox);
+assert.equal(await miniPeerHarness.sandbox.OB_RTC.start('mini-peer-session', 'voice', 'expert'), true,
+  'mini-suite peer fallback can initialize while its dedicated signaling socket connects');
+assert.equal(miniPeerSockets.length, 1, 'peer fallback creates one dedicated signaling socket');
+miniPeerSockets[0].open();
+assert.deepEqual(miniPeerSockets[0].sent[0], { type: 'auth', token: miniSuiteTokenValue },
+  'dedicated peer fallback authenticates with the mini-suite credential');
+miniPeerHarness.sandbox.OB_RTC.cleanup();
 
 // Every login/signup entry point shares one monotonic attempt owner. A faster later
 // response wins even when it came from a different surface, and logout invalidates all.
@@ -1549,6 +1764,1246 @@ assert(lateClientTracks.every((track) => track.stopped === 1), 'late client A au
 assert.equal(lateClientPeerConnections, 0, 'late client A media never creates a peer connection in client B state');
 assert.equal(lateMediaHarness.sandbox.OB_RTC.isActive(), false, 'late client A RTC cannot become active after client B signs in');
 
+// Peer fallback consumes the same Voice/Video stream granted by the scheduled
+// preflight. It cannot prompt for devices a second time or leak the first stream.
+async function assertPeerScheduledPreflightHandoff(channel) {
+  const harness = createHarness({ session: { ob_t: clientAToken } });
+  harness.sandbox.OWNLY_CONFIG = { rtc: {} };
+  let getUserMediaCalls = 0;
+  harness.sandbox.navigator = { mediaDevices: { getUserMedia: async () => { getUserMediaCalls += 1; throw new Error('unexpected second media request'); } } };
+  harness.sandbox.RTCPeerConnection = class {
+    constructor() { this.connectionState = 'new'; this.iceConnectionState = 'new'; this.signalingState = 'stable'; this.remoteDescription = null; }
+    addTrack() {}
+    close() { this.connectionState = 'closed'; }
+    async createOffer() { return { type: 'offer', sdp: `offer-${channel}` }; }
+    async createAnswer() { return { type: 'answer', sdp: `answer-${channel}` }; }
+    async setLocalDescription(description) { this.localDescription = description; this.signalingState = description.type === 'offer' ? 'have-local-offer' : 'stable'; }
+    async setRemoteDescription(description) { this.remoteDescription = description; }
+    async addIceCandidate() {}
+  };
+  const stopped = [];
+  const audioTrack = { kind: 'audio', readyState: 'live', enabled: true, stop() { this.readyState = 'ended'; stopped.push('audio'); } };
+  const videoTrack = { kind: 'video', readyState: 'live', enabled: true, stop() { this.readyState = 'ended'; stopped.push('video'); } };
+  const tracks = channel === 'video' ? [audioTrack, videoTrack] : [audioTrack];
+  const stream = {
+    getTracks: () => tracks,
+    getAudioTracks: () => [audioTrack],
+    getVideoTracks: () => channel === 'video' ? [videoTrack] : [],
+  };
+  harness.sandbox._obClientMediaReadyStream = stream;
+  harness.sandbox._obClientMediaReadyChannel = channel;
+  harness.sandbox._obRtcPrewarmedStream = stream;
+  harness.sandbox._obClientWs = { readyState: 1, send() {}, close() {} };
+  new vm.Script(rtcModuleSource, { filename: `ownlybiz-rtc-scheduled-${channel}.js` }).runInContext(harness.sandbox);
+  assert.equal(harness.sandbox.OB_RTC.setScheduledPreflightStream(stream, `scheduled-${channel}`, channel, 'client'), true,
+    `${channel} preflight registers with the exact RTC session owner`);
+  assert.equal(await harness.sandbox.OB_RTC.start(`scheduled-${channel}`, channel, 'client'), true,
+    `${channel} peer fallback starts with its scheduled preflight stream`);
+  assert.equal(getUserMediaCalls, 0, `${channel} peer fallback does not request devices twice`);
+  assert.equal(harness.sandbox._obClientMediaReadyStream, null, `${channel} transfers preflight stream ownership into RTC`);
+  assert.equal(harness.sandbox._obRtcPrewarmedStream, null, `${channel} clears the transferred global prewarm reference`);
+  assert.deepEqual(stopped, [], `${channel} stream remains live during RTC startup`);
+  harness.sandbox.OB_RTC.cleanup();
+  assert.deepEqual(stopped, channel === 'video' ? ['audio', 'video'] : ['audio'], `${channel} RTC cleanup stops the transferred stream exactly once`);
+  harness.sandbox.OB_RTC.cleanup();
+  assert.deepEqual(stopped, channel === 'video' ? ['audio', 'video'] : ['audio'], `${channel} repeated cleanup cannot stop transferred tracks twice`);
+}
+await assertPeerScheduledPreflightHandoff('voice');
+await assertPeerScheduledPreflightHandoff('video');
+
+// Execute the installed SFU patch with a deliberately slow preparation. A poll
+// refresh starts the same client media again before preparation fails. The client
+// owner must share one start while base RTC retains the exact fallback stream.
+async function assertDuplicateStartDuringSfuFailureUsesScheduledHandoff(channel) {
+  const sfuConfig = {
+    rtc: { one_to_one: { sfu_enabled: true, mode: 'sfu', sfu_url: 'https://media.example', fallback_enabled: true } },
+  };
+  const harness = createHarness({
+    session: { ob_t: clientAToken },
+    fetchImpl: async (url) => {
+      assert(String(url).endsWith('/api/config'), `${channel} SFU patch only reads media configuration`);
+      return { ok: true, json: async () => sfuConfig };
+    },
+  });
+  harness.sandbox.OWNLY_CONFIG = { rtc: {} };
+  harness.sandbox.performance = { now: () => 100 };
+  harness.sandbox.TextEncoder = TextEncoder;
+  harness.sandbox.TextDecoder = TextDecoder;
+  let mediaRequests = 0;
+  const audioTrack = {
+    id: `sfu-fallback-${channel}-audio`, kind: 'audio', readyState: 'live', enabled: true, stopCalls: 0,
+    stop() { this.stopCalls += 1; this.readyState = 'ended'; },
+  };
+  const videoTrack = {
+    id: `sfu-fallback-${channel}-video`, kind: 'video', readyState: 'live', enabled: true, stopCalls: 0,
+    stop() { this.stopCalls += 1; this.readyState = 'ended'; },
+  };
+  const tracks = channel === 'video' ? [audioTrack, videoTrack] : [audioTrack];
+  const stream = {
+    getTracks: () => tracks,
+    getAudioTracks: () => [audioTrack],
+    getVideoTracks: () => channel === 'video' ? [videoTrack] : [],
+  };
+  harness.sandbox.navigator = {
+    userAgent: 'Mozilla/5.0 Chrome/140.0.0.0',
+    mediaDevices: { getUserMedia: async () => { mediaRequests += 1; return stream; } },
+  };
+  const addedStreams = [];
+  harness.sandbox.RTCPeerConnection = class {
+    constructor() { this.connectionState = 'new'; this.iceConnectionState = 'new'; this.signalingState = 'stable'; this.remoteDescription = null; }
+    addTrack(track, ownedStream) { addedStreams.push({ track, stream: ownedStream }); }
+    close() { this.connectionState = 'closed'; }
+    async createOffer() { return { type: 'offer', sdp: `sfu-fallback-offer-${channel}` }; }
+    async createAnswer() { return { type: 'answer', sdp: `sfu-fallback-answer-${channel}` }; }
+    async setLocalDescription(description) { this.localDescription = description; this.signalingState = description.type === 'offer' ? 'have-local-offer' : 'stable'; }
+    async setRemoteDescription(description) { this.remoteDescription = description; }
+    async addIceCandidate() {}
+  };
+  const sfuSockets = [];
+  class DelayedSfuPrepareSocket {
+    constructor(url) {
+      this.url = String(url); this.readyState = 0;
+      assert(this.url.endsWith('/sfu'), `${channel} delayed failure targets the SFU preparation socket`);
+      sfuSockets.push(this);
+    }
+    send() {}
+    fail() { if (this.onerror) this.onerror(new Error('forced delayed SFU preparation failure')); }
+    close() { this.readyState = 3; if (this.onclose) this.onclose(); }
+  }
+  DelayedSfuPrepareSocket.OPEN = 1;
+  DelayedSfuPrepareSocket.CONNECTING = 0;
+  DelayedSfuPrepareSocket.CLOSED = 3;
+  harness.sandbox.WebSocket = DelayedSfuPrepareSocket;
+  harness.sandbox._obClientWs = { readyState: 1, send() {}, close() {} };
+
+  const scheduledStream = await harness.sandbox.navigator.mediaDevices.getUserMedia(
+    channel === 'video' ? { audio: true, video: true } : { audio: true, video: false },
+  );
+  new vm.Script(rtcModuleSource, { filename: `ownlybiz-rtc-sfu-fallback-${channel}.js` }).runInContext(harness.sandbox);
+  const sessionId = `scheduled-sfu-fallback-${channel}`;
+  assert.equal(harness.sandbox.OB_RTC.setScheduledPreflightStream(scheduledStream, sessionId, channel, 'client'), true);
+  new vm.Script(sfuClientSource, { filename: `assets/sfu-client-${channel}.js` }).runInContext(harness.sandbox);
+  assert.equal(harness.sandbox.OB_RTC.__obSfuPatched, true, `${channel} regression executes the installed SFU patch`);
+  assert.equal(harness.sandbox.ExpertSfuClient.setPrewarmedStream('client', scheduledStream, channel), true);
+  harness.sandbox._obRtcPrewarmedStream = scheduledStream;
+  new vm.Script(clientRtcStartOwnerSource, { filename: `client-rtc-start-owner-${channel}.js` }).runInContext(harness.sandbox);
+  const installedRtcStart = harness.sandbox.OB_RTC.start;
+  let underlyingRtcStarts = 0;
+  harness.sandbox.OB_RTC.start = function(...args) {
+    underlyingRtcStarts += 1;
+    return installedRtcStart.apply(this, args);
+  };
+
+  const firstClientStart = harness.sandbox.startClientRtcMedia(sessionId, channel);
+  await settleAsync();
+  assert.equal(sfuSockets.length, 1, `${channel} first start remains pending in SFU preparation`);
+  assert.equal(harness.sandbox._obClientMediaReadyStream, null, `${channel} SFU attempt consumes its public prewarm reference`);
+  const duplicateClientStart = harness.sandbox.startClientRtcMedia(sessionId, channel);
+  assert.equal(duplicateClientStart, firstClientStart, `${channel} duplicate poll receives the exact in-flight start promise`);
+  assert.equal(underlyingRtcStarts, 1, `${channel} duplicate poll cannot start a second RTC transport`);
+  assert.equal(mediaRequests, 1, `${channel} duplicate poll cannot request device permission again`);
+  assert(tracks.every((track) => track.stopCalls === 0 && track.readyState === 'live'),
+    `${channel} duplicate poll keeps every preflight track live during slow SFU preparation`);
+
+  sfuSockets[0].fail();
+  assert.equal(await firstClientStart, true, `${channel} delayed SFU preparation failure reaches peer fallback`);
+  assert.equal(await duplicateClientStart, true, `${channel} duplicate poll shares the successful peer fallback result`);
+  assert.equal(sfuSockets.length, 1, `${channel} has one failed SFU preparation attempt`);
+  assert.equal(mediaRequests, 1, `${channel} has one total device permission request including preflight`);
+  assert.equal(addedStreams.length, tracks.length, `${channel} peer fallback installs every required preflight track`);
+  assert(addedStreams.every((entry) => entry.stream === scheduledStream),
+    `${channel} peer fallback reuses the exact scheduled stream consumed by the SFU attempt`);
+  assert(tracks.every((track) => track.stopCalls === 0 && track.readyState === 'live'),
+    `${channel} has no stopped or orphaned track while peer fallback is active`);
+  harness.sandbox.OB_RTC.cleanup();
+  assert(tracks.every((track) => track.stopCalls === 1 && track.readyState === 'ended'),
+    `${channel} final RTC cleanup stops every transferred track exactly once`);
+  harness.sandbox.OB_RTC.cleanup();
+  assert(tracks.every((track) => track.stopCalls === 1), `${channel} repeated fallback cleanup is idempotent`);
+}
+await assertDuplicateStartDuringSfuFailureUsesScheduledHandoff('voice');
+await assertDuplicateStartDuringSfuFailureUsesScheduledHandoff('video');
+
+// Identity teardown reaches the installed SFU transport owner, not only the
+// inherited peer object. No deliberate End signal is emitted during privacy
+// teardown, and the same local tracks cannot be stopped twice.
+async function assertInstalledSfuActiveIdentityTeardown(channel) {
+  const sfuConfig = {
+    rtc: { one_to_one: { sfu_enabled: true, mode: 'sfu', sfu_url: 'https://media.example', fallback_enabled: true } },
+  };
+  const harness = createHarness({
+    session: { ob_t: clientAToken },
+    fetchImpl: async () => ({ ok: true, json: async () => sfuConfig }),
+  });
+  harness.sandbox.OWNLY_CONFIG = { rtc: {} };
+  harness.sandbox.performance = { now: () => 200 };
+  harness.sandbox.TextEncoder = TextEncoder;
+  harness.sandbox.TextDecoder = TextDecoder;
+  let mediaRequests = 0;
+  const audioTrack = {
+    id: `sfu-reset-${channel}-audio`, kind: 'audio', readyState: 'live', enabled: true, stopCalls: 0,
+    stop() { this.stopCalls += 1; this.readyState = 'ended'; },
+  };
+  const videoTrack = {
+    id: `sfu-reset-${channel}-video`, kind: 'video', readyState: 'live', enabled: true, stopCalls: 0,
+    stop() { this.stopCalls += 1; this.readyState = 'ended'; },
+  };
+  const tracks = channel === 'video' ? [audioTrack, videoTrack] : [audioTrack];
+  const stream = {
+    getTracks: () => tracks,
+    getAudioTracks: () => [audioTrack],
+    getVideoTracks: () => channel === 'video' ? [videoTrack] : [],
+  };
+  harness.sandbox.navigator = {
+    userAgent: 'Mozilla/5.0 Chrome/140.0.0.0',
+    mediaDevices: { getUserMedia: async () => { mediaRequests += 1; return stream; } },
+  };
+  let peerStarts = 0;
+  harness.sandbox.RTCPeerConnection = class { constructor() { peerStarts += 1; } };
+  const sfuSockets = [];
+  class PendingActiveSfuSocket {
+    constructor(url) { this.url = String(url); this.readyState = 0; this.sent = []; sfuSockets.push(this); }
+    send(payload) { this.sent.push(JSON.parse(payload)); }
+    close() {
+      this.readyState = 3;
+      if (this.onerror) this.onerror(new Error('identity teardown closed pending SFU signal'));
+      if (this.onclose) this.onclose();
+    }
+  }
+  PendingActiveSfuSocket.OPEN = 1;
+  PendingActiveSfuSocket.CONNECTING = 0;
+  PendingActiveSfuSocket.CLOSED = 3;
+  harness.sandbox.WebSocket = PendingActiveSfuSocket;
+  const sharedSignals = [];
+  harness.sandbox._obClientWs = { readyState: 1, send(payload) { sharedSignals.push(JSON.parse(payload)); }, close() {} };
+
+  const scheduledStream = await harness.sandbox.navigator.mediaDevices.getUserMedia(
+    channel === 'video' ? { audio: true, video: true } : { audio: true, video: false },
+  );
+  new vm.Script(rtcModuleSource, { filename: `rtc-installed-sfu-reset-${channel}.js` }).runInContext(harness.sandbox);
+  const sessionId = `installed-sfu-reset-${channel}`;
+  assert.equal(harness.sandbox.OB_RTC.setScheduledPreflightStream(scheduledStream, sessionId, channel, 'client'), true);
+  new vm.Script(sfuClientSource, { filename: `installed-sfu-reset-${channel}.js` }).runInContext(harness.sandbox);
+  harness.sandbox.ExpertSfuClient.setPrewarmedStream('client', scheduledStream, channel);
+  harness.sandbox._obRtcPrewarmedStream = scheduledStream;
+  new vm.Script(clientRtcStartOwnerSource, { filename: `client-start-reset-${channel}.js` }).runInContext(harness.sandbox);
+
+  const pendingStart = harness.sandbox.startClientRtcMedia(sessionId, channel);
+  await settleAsync();
+  assert.equal(harness.sandbox.OB_RTC.testAdoptOneToOneLocalStream(scheduledStream), true,
+    `${channel} installed SFU session owns the exact local stream before identity teardown`);
+  assert.equal(harness.sandbox.OB_RTC.getRole(), 'client', `${channel} installed SFU wrapper reports its real client owner`);
+  assert.equal(harness.sandbox.OB_RTC.isActive(), true, `${channel} installed SFU session is active before teardown`);
+
+  await changeAuth(harness, null);
+  assert.equal(await pendingStart, false, `${channel} invalidated SFU start cannot fall through to peer RTC`);
+  assert.equal(harness.sandbox.OB_RTC.isActive(), false, `${channel} SFU transport is inactive after logout`);
+  assert.equal(peerStarts, 0, `${channel} logout cannot start stale peer fallback`);
+  assert.equal(mediaRequests, 1, `${channel} logout cannot prompt for devices after preflight`);
+  assert(tracks.every((track) => track.stopCalls === 1 && track.readyState === 'ended'),
+    `${channel} logout stops each SFU-owned local track exactly once`);
+  assert.equal(sharedSignals.some((message) => message.type === 'rtc_end'), false,
+    `${channel} privacy teardown never emits a deliberate rtc_end signal`);
+}
+await assertInstalledSfuActiveIdentityTeardown('voice');
+await assertInstalledSfuActiveIdentityTeardown('video');
+
+// A logout/account switch while SFU configuration is still pending invalidates
+// both the current start and a different-session continuation queued behind it.
+async function assertInstalledSfuPendingIdentityInvalidation() {
+  let resolveConfig;
+  const configResponse = new Promise((resolve) => { resolveConfig = resolve; });
+  const harness = createHarness({
+    session: { ob_t: clientAToken },
+    fetchImpl: () => configResponse,
+  });
+  harness.sandbox.OWNLY_CONFIG = { rtc: {} };
+  harness.sandbox.performance = { now: () => 300 };
+  harness.sandbox.TextEncoder = TextEncoder;
+  harness.sandbox.TextDecoder = TextDecoder;
+  const track = {
+    id: 'sfu-config-pending-audio', kind: 'audio', readyState: 'live', enabled: true, stopCalls: 0,
+    stop() { this.stopCalls += 1; this.readyState = 'ended'; },
+  };
+  const stream = { getTracks: () => [track], getAudioTracks: () => [track], getVideoTracks: () => [] };
+  let mediaRequests = 0;
+  harness.sandbox.navigator = {
+    userAgent: 'Mozilla/5.0 Chrome/140.0.0.0',
+    mediaDevices: { getUserMedia: async () => { mediaRequests += 1; return stream; } },
+  };
+  let socketsCreated = 0;
+  class ForbiddenStaleSfuSocket { constructor() { socketsCreated += 1; } }
+  ForbiddenStaleSfuSocket.OPEN = 1;
+  harness.sandbox.WebSocket = ForbiddenStaleSfuSocket;
+  harness.sandbox.RTCPeerConnection = class { constructor() { throw new Error('stale peer fallback must not start'); } };
+  const sharedSignals = [];
+  harness.sandbox._obClientWs = { readyState: 1, send(payload) { sharedSignals.push(JSON.parse(payload)); }, close() {} };
+
+  const scheduledStream = await harness.sandbox.navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+  new vm.Script(rtcModuleSource, { filename: 'rtc-installed-sfu-config-pending.js' }).runInContext(harness.sandbox);
+  assert.equal(harness.sandbox.OB_RTC.setScheduledPreflightStream(scheduledStream, 'pending-config-a', 'voice', 'client'), true);
+  new vm.Script(sfuClientSource, { filename: 'installed-sfu-config-pending.js' }).runInContext(harness.sandbox);
+  harness.sandbox.ExpertSfuClient.setPrewarmedStream('client', scheduledStream, 'voice');
+  harness.sandbox._obRtcPrewarmedStream = scheduledStream;
+  new vm.Script(clientRtcStartOwnerSource, { filename: 'client-start-config-pending.js' }).runInContext(harness.sandbox);
+  const installedStart = harness.sandbox.OB_RTC.start;
+  let underlyingStarts = 0;
+  harness.sandbox.OB_RTC.start = function(...args) { underlyingStarts += 1; return installedStart.apply(this, args); };
+
+  const pendingStart = harness.sandbox.startClientRtcMedia('pending-config-a', 'voice');
+  const queuedStart = harness.sandbox.startClientRtcMedia('queued-session-a', 'video');
+  assert.equal(underlyingStarts, 1, 'a different-session continuation queues behind the pending SFU start');
+  await changeAuth(harness, null);
+  await changeAuth(harness, clientBToken);
+  resolveConfig({
+    ok: true,
+    json: async () => ({ rtc: { one_to_one: { sfu_enabled: true, sfu_url: 'https://media.example', fallback_enabled: true } } }),
+  });
+  assert.equal(await pendingStart, false, 'client A config-pending SFU start is invalidated after account change');
+  assert.equal(await queuedStart, false, 'client A queued session cannot start under client B');
+  assert.equal(underlyingStarts, 1, 'identity teardown prevents every stale queued underlying RTC start');
+  assert.equal(socketsCreated, 0, 'identity-invalidated config continuation cannot create an SFU socket');
+  assert.equal(mediaRequests, 1, 'identity-invalidated config continuation cannot request media again');
+  assert.equal(track.stopCalls, 1, 'identity teardown stops the unclaimed scheduled track exactly once');
+  assert.equal(harness.sandbox.OB_RTC.isActive(), false, 'no SFU or peer transport remains after pending invalidation');
+  assert.equal(sharedSignals.some((message) => message.type === 'rtc_end'), false,
+    'pending identity teardown never emits rtc_end');
+}
+await assertInstalledSfuPendingIdentityInvalidation();
+
+// A superseded SFU start owns only the session it created. Its eventual success
+// or failure cannot close a live replacement session created by the next account.
+async function assertStaleInstalledSfuCompletionPreservesReplacement(channel, staleOutcome) {
+  const testName = `${channel}-${staleOutcome}`;
+  const sfuConfig = {
+    rtc: { one_to_one: { sfu_enabled: true, mode: 'sfu', sfu_url: 'https://media.example', fallback_enabled: true } },
+  };
+  const harness = createHarness({
+    session: { ob_t: clientAToken },
+    fetchImpl: async (url) => {
+      assert(String(url).endsWith('/api/config'), `${testName} only reads installed SFU configuration`);
+      return { ok: true, json: async () => sfuConfig };
+    },
+  });
+  harness.sandbox.OWNLY_CONFIG = { rtc: {} };
+  harness.sandbox.performance = { now: () => 400 };
+  harness.sandbox.TextEncoder = TextEncoder;
+  harness.sandbox.TextDecoder = TextDecoder;
+
+  function trackedStream(owner) {
+    const audioTrack = {
+      id: `${testName}-${owner}-audio`, kind: 'audio', readyState: 'live', enabled: true, stopCalls: 0,
+      stop() { this.stopCalls += 1; this.readyState = 'ended'; },
+    };
+    const videoTrack = {
+      id: `${testName}-${owner}-video`, kind: 'video', readyState: 'live', enabled: true, stopCalls: 0,
+      stop() { this.stopCalls += 1; this.readyState = 'ended'; },
+    };
+    const tracks = channel === 'video' ? [audioTrack, videoTrack] : [audioTrack];
+    return {
+      tracks,
+      stream: {
+        getTracks: () => tracks,
+        getAudioTracks: () => [audioTrack],
+        getVideoTracks: () => channel === 'video' ? [videoTrack] : [],
+      },
+    };
+  }
+
+  const clientA = trackedStream('client-a');
+  const clientB = trackedStream('client-b');
+  const preflightStreams = [clientA.stream, clientB.stream];
+  let mediaRequests = 0;
+  harness.sandbox.navigator = {
+    userAgent: 'Mozilla/5.0 Chrome/140.0.0.0',
+    mediaDevices: {
+      getUserMedia: async () => {
+        const stream = preflightStreams[mediaRequests];
+        mediaRequests += 1;
+        assert(stream, `${testName} cannot request media outside the two owned preflights`);
+        return stream;
+      },
+    },
+  };
+  let sfuSockets = 0;
+  class ForbiddenSfuSocket { constructor() { sfuSockets += 1; } }
+  ForbiddenSfuSocket.OPEN = 1;
+  harness.sandbox.WebSocket = ForbiddenSfuSocket;
+  let peerStarts = 0;
+  harness.sandbox.RTCPeerConnection = class { constructor() { peerStarts += 1; } };
+  const sharedSignals = [];
+  harness.sandbox._obClientWs = {
+    readyState: 1,
+    send(payload) { sharedSignals.push(JSON.parse(payload)); },
+    close() {},
+  };
+
+  new vm.Script(rtcModuleSource, { filename: `rtc-owned-sfu-${testName}.js` }).runInContext(harness.sandbox);
+  new vm.Script(sfuClientSource, { filename: `installed-owned-sfu-${testName}.js` }).runInContext(harness.sandbox);
+  new vm.Script(clientRtcStartOwnerSource, { filename: `client-owned-sfu-${testName}.js` }).runInContext(harness.sandbox);
+  const deferredStarts = [];
+  harness.sandbox.__OB_TEST_SFU_START_CALL__ = (session, requestedChannel) => {
+    let resolve;
+    let reject;
+    const promise = new Promise((resolvePromise, rejectPromise) => {
+      resolve = resolvePromise;
+      reject = rejectPromise;
+    });
+    deferredStarts.push({ session, channel: requestedChannel, promise, resolve, reject });
+    return promise;
+  };
+
+  async function beginOwnedStart(sessionId, ownedStream) {
+    const preflight = await harness.sandbox.navigator.mediaDevices.getUserMedia(
+      channel === 'video' ? { audio: true, video: true } : { audio: true, video: false },
+    );
+    assert.equal(preflight, ownedStream, `${testName} receives the expected account-owned preflight stream`);
+    assert.equal(harness.sandbox.OB_RTC.setScheduledPreflightStream(preflight, sessionId, channel, 'client'), true);
+    assert.equal(harness.sandbox.ExpertSfuClient.setPrewarmedStream('client', preflight, channel), true);
+    harness.sandbox._obRtcPrewarmedStream = preflight;
+    return { start: harness.sandbox.startClientRtcMedia(sessionId, channel) };
+  }
+
+  const clientASessionId = `owned-sfu-a-${testName}`;
+  const { start: clientAStart } = await beginOwnedStart(clientASessionId, clientA.stream);
+  await settleAsync();
+  assert.equal(deferredStarts.length, 1, `${testName} leaves client A's real installed SFU session pending`);
+  assert.equal(deferredStarts[0].session.roomId, clientASessionId, `${testName} pending start is owned by client A's session`);
+  assert.equal(harness.sandbox.OB_RTC.testAdoptOneToOneLocalStream(clientA.stream), true);
+  assert.equal(harness.sandbox.OB_RTC.isActive(), true, `${testName} client A SFU session is active while startup is pending`);
+
+  await changeAuth(harness, null);
+  assert(clientA.tracks.every((track) => track.stopCalls === 1 && track.readyState === 'ended'),
+    `${testName} client A teardown stops its tracks exactly once`);
+  await changeAuth(harness, clientBToken);
+
+  const clientBSessionId = `owned-sfu-b-${testName}`;
+  const { start: clientBStart } = await beginOwnedStart(clientBSessionId, clientB.stream);
+  await settleAsync();
+  assert.equal(deferredStarts.length, 2, `${testName} starts one replacement SFU session for client B`);
+  assert.equal(deferredStarts[1].session.roomId, clientBSessionId, `${testName} replacement session is owned by client B`);
+  assert.equal(harness.sandbox.OB_RTC.testAdoptOneToOneLocalStream(clientB.stream), true);
+  assert.equal(harness.sandbox.OB_RTC.getSid(), clientBSessionId, `${testName} client B owns the active SFU session`);
+  assert(clientB.tracks.every((track) => track.stopCalls === 0 && track.readyState === 'live'),
+    `${testName} client B tracks are live before client A settles`);
+
+  if (staleOutcome === 'failure') deferredStarts[0].reject(new Error('stale client A start failed'));
+  else deferredStarts[0].resolve({ joined: true });
+  assert.equal(await clientAStart, false, `${testName} stale client A completion is rejected by its identity owner`);
+  assert.equal(harness.sandbox.OB_RTC.isActive(), true, `${testName} stale client A completion cannot deactivate client B`);
+  assert.equal(harness.sandbox.OB_RTC.getSid(), clientBSessionId, `${testName} stale client A completion cannot replace client B`);
+  assert(clientB.tracks.every((track) => track.stopCalls === 0 && track.readyState === 'live'),
+    `${testName} stale client A completion cannot stop client B tracks`);
+  assert.equal(peerStarts, 0, `${testName} stale client A completion cannot start peer fallback`);
+  assert.equal(sfuSockets, 0, `${testName} controlled installed starts do not open an unrelated signal socket`);
+
+  await changeAuth(harness, null);
+  assert.equal(harness.sandbox.OB_RTC.isActive(), false, `${testName} final client B reset closes the replacement SFU session`);
+  assert(clientB.tracks.every((track) => track.stopCalls === 1 && track.readyState === 'ended'),
+    `${testName} final client B reset stops every replacement track exactly once`);
+  deferredStarts[1].resolve({ joined: true });
+  assert.equal(await clientBStart, false, `${testName} client B's pending completion stays invalid after final reset`);
+  assert(clientB.tracks.every((track) => track.stopCalls === 1),
+    `${testName} late client B completion cannot stop its tracks twice`);
+  assert.equal(mediaRequests, 2, `${testName} performs exactly one preflight per authenticated account`);
+  assert.equal(sharedSignals.some((message) => message.type === 'rtc_end'), false,
+    `${testName} identity resets never emit a deliberate rtc_end signal`);
+}
+for (const channel of ['voice', 'video']) {
+  await assertStaleInstalledSfuCompletionPreservesReplacement(channel, 'failure');
+  await assertStaleInstalledSfuCompletionPreservesReplacement(channel, 'success');
+}
+
+function trackedPrewarmStream(label, channel = 'video') {
+  const audioTrack = {
+    id: `${label}-audio`, kind: 'audio', readyState: 'live', enabled: true, stopCalls: 0,
+    stop() { this.stopCalls += 1; this.readyState = 'ended'; },
+  };
+  const videoTrack = {
+    id: `${label}-video`, kind: 'video', readyState: 'live', enabled: true, stopCalls: 0,
+    stop() { this.stopCalls += 1; this.readyState = 'ended'; },
+  };
+  const tracks = channel === 'video' ? [audioTrack, videoTrack] : [audioTrack];
+  return {
+    tracks,
+    stream: {
+      getTracks: () => tracks,
+      getAudioTracks: () => [audioTrack],
+      getVideoTracks: () => channel === 'video' ? [videoTrack] : [],
+    },
+  };
+}
+
+function attachClientPrewarmCard(harness, id, channel) {
+  const card = new FakeElement('div');
+  card.id = id;
+  card.setAttribute('data-ob-media-channel', channel);
+  const status = new FakeElement('div');
+  status.id = `${id}-status`;
+  const button = new FakeElement('button');
+  button.textContent = 'Enable before session';
+  card.appendChild(status);
+  card.appendChild(button);
+  harness.body.appendChild(card);
+  return { card, status, button };
+}
+
+function attachExpertPrewarmCard(harness) {
+  const card = new FakeElement('div');
+  card.id = 'ob-expert-media-ready-card';
+  const status = new FakeElement('div');
+  status.id = 'ob-expert-media-ready-status';
+  const button = new FakeElement('button');
+  button.textContent = 'Enable mic and cam';
+  card.appendChild(status);
+  card.appendChild(button);
+  harness.body.appendChild(card);
+  return { card, status, button };
+}
+
+function installRolePrewarmOwner(harness, getUserMedia) {
+  harness.sandbox.OWNLY_CONFIG = { rtc: {} };
+  harness.sandbox.performance = { now: () => 500 };
+  harness.sandbox.TextEncoder = TextEncoder;
+  harness.sandbox.TextDecoder = TextDecoder;
+  harness.sandbox.navigator = {
+    userAgent: 'Mozilla/5.0 Chrome/140.0.0.0',
+    mediaDevices: { getUserMedia },
+  };
+  if(!harness.sandbox.WebSocket){
+    class UnusedPrewarmSocket {}
+    UnusedPrewarmSocket.OPEN = 1;
+    harness.sandbox.WebSocket = UnusedPrewarmSocket;
+  }
+  new vm.Script(rtcModuleSource, { filename: 'rtc-role-prewarm-owner.js' }).runInContext(harness.sandbox);
+  new vm.Script(sfuClientSource, { filename: 'installed-sfu-role-prewarm-owner.js' }).runInContext(harness.sandbox);
+  new vm.Script(mediaPrewarmOwnerSource, { filename: 'role-prewarm-owner.js' }).runInContext(harness.sandbox);
+}
+
+// A client stream enabled before any scheduled-session owner exists is still
+// account-owned. Logout clears the installed SFU registry and exact globals,
+// while a separate expert prewarm remains live and registered.
+async function assertInstalledClientPrewarmLogoutIsolation(channel) {
+  const testName = `client-prewarm-logout-${channel}`;
+  const clientA = trackedPrewarmStream(`${testName}-a`, channel);
+  const clientB = trackedPrewarmStream(`${testName}-b`, channel);
+  const expert = trackedPrewarmStream(`${testName}-expert`, 'video');
+  const mediaQueue = [clientA.stream, clientB.stream];
+  let mediaRequests = 0;
+  const harness = createHarness({ session: { ob_t: clientAToken } });
+  attachClientPrewarmCard(harness, testName, channel);
+  installRolePrewarmOwner(harness, async () => {
+    const stream = mediaQueue[mediaRequests];
+    mediaRequests += 1;
+    assert(stream, `${testName} cannot request an unowned third stream`);
+    return stream;
+  });
+  assert.equal(harness.sandbox.ExpertSfuClient.setPrewarmedStream('expert', expert.stream, 'video'), true);
+
+  assert.equal(await harness.sandbox.obEnableClientMedia(testName), true,
+    `${testName} client A enables its pre-session device stream`);
+  assert.equal(harness.sandbox._obClientMediaReadyStream, clientA.stream, `${testName} publishes client A's exact stream`);
+  assert.equal(harness.sandbox._obClientMediaReadyChannel, channel, `${testName} publishes the exact channel`);
+  assert.equal(harness.sandbox._obRtcPrewarmedStream, clientA.stream, `${testName} publishes the shared reference to client A only`);
+
+  await changeAuth(harness, null);
+  assert(clientA.tracks.every((track) => track.stopCalls === 1 && track.readyState === 'ended'),
+    `${testName} logout stops each client A prewarm track exactly once`);
+  assert.equal(harness.sandbox._obClientMediaReadyStream, null, `${testName} logout clears the client prewarm global`);
+  assert.equal(harness.sandbox._obClientMediaReadyChannel, '', `${testName} logout clears the client channel global`);
+  assert.equal(harness.sandbox._obRtcPrewarmedStream, null, `${testName} logout clears the exact shared client reference`);
+  assert.equal(harness.sandbox.ExpertSfuClient.clearPrewarmedStream('client', clientA.stream), false,
+    `${testName} client A's SFU registry entry cannot be reused after logout`);
+  assert.equal(harness.sandbox._obExpertMediaReadyStream, expert.stream,
+    `${testName} client logout does not clear the expert prewarm global`);
+  assert(expert.tracks.every((track) => track.stopCalls === 0 && track.readyState === 'live'),
+    `${testName} client logout leaves expert tracks live`);
+
+  await changeAuth(harness, clientBToken);
+  assert.equal(await harness.sandbox.obEnableClientMedia(testName), true,
+    `${testName} client B obtains a new pre-session stream`);
+  assert.equal(harness.sandbox._obClientMediaReadyStream, clientB.stream,
+    `${testName} client B owns its exact replacement stream`);
+  assert(clientB.tracks.every((track) => track.stopCalls === 0 && track.readyState === 'live'),
+    `${testName} client B replacement tracks remain live`);
+  assert.equal(mediaRequests, 2, `${testName} makes one device request per account`);
+
+  await changeAuth(harness, null);
+  assert(clientB.tracks.every((track) => track.stopCalls === 1 && track.readyState === 'ended'),
+    `${testName} client B logout stops its own tracks exactly once`);
+  assert.equal(harness.sandbox.ExpertSfuClient.clearPrewarmedStream('client', clientB.stream), false,
+    `${testName} client B registry entry is gone after its logout`);
+  assert.equal(harness.sandbox._obExpertMediaReadyStream, expert.stream,
+    `${testName} repeated client teardown still preserves expert prewarm`);
+  assert.equal(harness.sandbox.ExpertSfuClient.clearPrewarmedStream('expert', expert.stream), true,
+    `${testName} preserved expert registry remains independently owned`);
+  assert(expert.tracks.every((track) => track.stopCalls === 1 && track.readyState === 'ended'),
+    `${testName} explicit expert cleanup stops its tracks exactly once`);
+}
+await assertInstalledClientPrewarmLogoutIsolation('voice');
+await assertInstalledClientPrewarmLogoutIsolation('video');
+
+// If client A changes identity while the browser permission prompt is open,
+// the late result is stopped without touching client B's newer prewarm.
+async function assertPendingClientPrewarmCannotPublishIntoReplacement(channel) {
+  const testName = `client-prewarm-pending-${channel}`;
+  const clientA = trackedPrewarmStream(`${testName}-a`, channel);
+  const clientB = trackedPrewarmStream(`${testName}-b`, channel);
+  const expert = trackedPrewarmStream(`${testName}-expert`, 'video');
+  let resolveClientA;
+  const pendingClientA = new Promise((resolve) => { resolveClientA = resolve; });
+  let mediaRequests = 0;
+  const harness = createHarness({ session: { ob_t: clientAToken } });
+  attachClientPrewarmCard(harness, testName, channel);
+  installRolePrewarmOwner(harness, () => {
+    mediaRequests += 1;
+    return mediaRequests === 1 ? pendingClientA : Promise.resolve(clientB.stream);
+  });
+  assert.equal(harness.sandbox.ExpertSfuClient.setPrewarmedStream('expert', expert.stream, 'video'), true);
+
+  const staleClientAEnable = harness.sandbox.obEnableClientMedia(testName);
+  await settleAsync();
+  assert.equal(mediaRequests, 1, `${testName} client A permission remains pending`);
+  await changeAuth(harness, null);
+  await changeAuth(harness, clientBToken);
+  assert.equal(await harness.sandbox.obEnableClientMedia(testName), true,
+    `${testName} client B can enable a replacement while client A remains pending`);
+  assert.equal(harness.sandbox._obClientMediaReadyStream, clientB.stream,
+    `${testName} client B publishes its own exact stream`);
+
+  resolveClientA(clientA.stream);
+  assert.equal(await staleClientAEnable, false, `${testName} client A's late permission continuation is invalidated`);
+  assert(clientA.tracks.every((track) => track.stopCalls === 1 && track.readyState === 'ended'),
+    `${testName} late client A tracks are stopped exactly once`);
+  assert(clientB.tracks.every((track) => track.stopCalls === 0 && track.readyState === 'live'),
+    `${testName} client A's late continuation cannot stop client B tracks`);
+  assert.equal(harness.sandbox._obClientMediaReadyStream, clientB.stream,
+    `${testName} client A's late continuation cannot replace client B's global`);
+  assert.equal(harness.sandbox._obRtcPrewarmedStream, clientB.stream,
+    `${testName} client A's late continuation cannot replace the shared reference`);
+  assert.equal(harness.sandbox.ExpertSfuClient.clearPrewarmedStream('client', clientA.stream), false,
+    `${testName} client A's late stream never enters the SFU registry`);
+  assert.equal(harness.sandbox._obExpertMediaReadyStream, expert.stream,
+    `${testName} client identity changes do not alter expert prewarm`);
+  assert.equal(mediaRequests, 2, `${testName} performs exactly one permission request per client`);
+
+  await changeAuth(harness, null);
+  assert(clientB.tracks.every((track) => track.stopCalls === 1 && track.readyState === 'ended'),
+    `${testName} final client B logout stops its tracks exactly once`);
+  assert.equal(harness.sandbox.ExpertSfuClient.clearPrewarmedStream('client', clientB.stream), false,
+    `${testName} final client B logout clears its SFU registry entry`);
+  assert.equal(harness.sandbox.ExpertSfuClient.clearPrewarmedStream('expert', expert.stream), true,
+    `${testName} expert prewarm remains independently registered through client switches`);
+}
+await assertPendingClientPrewarmCannotPublishIntoReplacement('voice');
+await assertPendingClientPrewarmCannotPublishIntoReplacement('video');
+
+// The same central identity lifecycle applies to the expert dashboard prewarm.
+// It clears an already-owned stream and rejects a post-logout permission result.
+async function assertExpertPrewarmIdentityOwnership() {
+  const existing = trackedPrewarmStream('expert-prewarm-existing', 'video');
+  let existingRequests = 0;
+  const existingHarness = createHarness({ session: { ob_t: expertToken } });
+  const existingControls = attachExpertPrewarmCard(existingHarness);
+  installRolePrewarmOwner(existingHarness, async () => { existingRequests += 1; return existing.stream; });
+  assert.equal(await existingHarness.sandbox.obEnableExpertMedia(), true, 'expert can enable an owned dashboard prewarm');
+  await changeAuth(existingHarness, null);
+  assert(existing.tracks.every((track) => track.stopCalls === 1 && track.readyState === 'ended'),
+    'expert logout stops each existing dashboard prewarm track exactly once');
+  assert.equal(existingHarness.sandbox._obExpertMediaReadyStream, null, 'expert logout clears the expert prewarm global');
+  assert.equal(existingHarness.sandbox._obRtcPrewarmedStream, null, 'expert logout clears the exact shared expert reference');
+  assert.equal(existingHarness.sandbox.ExpertSfuClient.clearPrewarmedStream('expert', existing.stream), false,
+    'expert logout removes the installed SFU registry entry');
+  assert.equal(existingControls.button.disabled, false, 'expert logout releases the media-enable control for the next identity');
+  assert.equal(existingRequests, 1, 'existing expert prewarm requests devices once');
+
+  const expertA = trackedPrewarmStream('expert-prewarm-pending-a', 'video');
+  const expertB = trackedPrewarmStream('expert-prewarm-pending-b', 'video');
+  let resolveExpertA;
+  const pendingExpertA = new Promise((resolve) => { resolveExpertA = resolve; });
+  let pendingRequests = 0;
+  const pendingHarness = createHarness({ session: { ob_t: expertToken } });
+  const pendingControls = attachExpertPrewarmCard(pendingHarness);
+  installRolePrewarmOwner(pendingHarness, () => {
+    pendingRequests += 1;
+    return pendingRequests === 1 ? pendingExpertA : Promise.resolve(expertB.stream);
+  });
+  const staleExpertAEnable = pendingHarness.sandbox.obEnableExpertMedia();
+  await settleAsync();
+  await changeAuth(pendingHarness, expertBToken);
+  assert.equal(pendingControls.button.disabled, false, 'expert A teardown releases the pending permission control');
+  assert.equal(await pendingHarness.sandbox.obEnableExpertMedia(), true,
+    'expert B can enable its own stream while expert A permission remains pending');
+  resolveExpertA(expertA.stream);
+  assert.equal(await staleExpertAEnable, false, 'expert A late permission result is invalid after account change');
+  assert(expertA.tracks.every((track) => track.stopCalls === 1 && track.readyState === 'ended'),
+    'expert A late tracks are stopped exactly once');
+  assert(expertB.tracks.every((track) => track.stopCalls === 0 && track.readyState === 'live'),
+    'expert A late result cannot stop expert B tracks');
+  assert.equal(pendingHarness.sandbox._obExpertMediaReadyStream, expertB.stream,
+    'expert A late result cannot replace expert B prewarm');
+  await changeAuth(pendingHarness, null);
+  assert(expertB.tracks.every((track) => track.stopCalls === 1 && track.readyState === 'ended'),
+    'expert B logout stops its prewarm exactly once');
+  assert.equal(pendingRequests, 2, 'pending expert ownership makes one device request per identity');
+}
+await assertExpertPrewarmIdentityOwnership();
+
+function installControlledExpertSfuHarness(harness, getUserMedia) {
+  let socketsCreated = 0;
+  class ControlledExpertSfuSocket { constructor() { socketsCreated += 1; } }
+  ControlledExpertSfuSocket.OPEN = 1;
+  harness.sandbox.WebSocket = ControlledExpertSfuSocket;
+  let peerStarts = 0;
+  harness.sandbox.RTCPeerConnection = class { constructor() { peerStarts += 1; } };
+  installRolePrewarmOwner(harness, getUserMedia);
+  const deferredStarts = [];
+  harness.sandbox.__OB_TEST_SFU_START_CALL__ = (session, channel) => {
+    let resolve;
+    let reject;
+    const promise = new Promise((resolvePromise, rejectPromise) => {
+      resolve = resolvePromise;
+      reject = rejectPromise;
+    });
+    deferredStarts.push({ session, channel, promise, resolve, reject });
+    return promise;
+  };
+  return {
+    deferredStarts,
+    socketsCreated: () => socketsCreated,
+    peerStarts: () => peerStarts,
+  };
+}
+
+function setExpertSfuPrewarm(harness, ownedStream, channel) {
+  assert.equal(harness.sandbox.ExpertSfuClient.setPrewarmedStream('expert', ownedStream, channel), true);
+  harness.sandbox._obRtcPrewarmedStream = ownedStream;
+}
+
+// Active installed SFU media belongs to the authenticated expert. Logout closes
+// it without a deliberate End signal and without touching a client-owned prewarm.
+async function assertInstalledSfuActiveExpertIdentityTeardown(channel) {
+  const testName = `active-expert-reset-${channel}`;
+  const sfuConfig = {
+    rtc: { one_to_one: { sfu_enabled: true, mode: 'sfu', sfu_url: 'https://media.example', fallback_enabled: true } },
+  };
+  const expert = trackedPrewarmStream(`${testName}-expert`, channel);
+  const client = trackedPrewarmStream(`${testName}-client`, channel);
+  let mediaRequests = 0;
+  const sharedSignals = [];
+  const harness = createHarness({
+    session: { ob_t: expertToken },
+    fetchImpl: async () => ({ ok: true, json: async () => sfuConfig }),
+  });
+  harness.sandbox._expertWs = { readyState: 1, send(payload) { sharedSignals.push(JSON.parse(payload)); }, close() {} };
+  const control = installControlledExpertSfuHarness(harness, async () => { mediaRequests += 1; return expert.stream; });
+  setExpertSfuPrewarm(harness, expert.stream, channel);
+
+  const sessionId = `active-expert-session-${channel}`;
+  const pendingStart = harness.sandbox.OB_RTC.start(sessionId, channel, 'expert');
+  await settleAsync();
+  assert.equal(control.deferredStarts.length, 1, `${testName} creates one real installed SFU session`);
+  assert.equal(harness.sandbox.OB_RTC.testAdoptOneToOneLocalStream(expert.stream), true,
+    `${testName} installed expert SFU owns its exact local stream`);
+  assert.equal(harness.sandbox.OB_RTC.isActive(), true, `${testName} expert SFU is active before logout`);
+  assert.equal(harness.sandbox.OB_RTC.getRole(), 'expert', `${testName} active role is expert`);
+
+  assert.equal(harness.sandbox.ExpertSfuClient.setPrewarmedStream('client', client.stream, channel), true);
+  harness.sandbox._obRtcPrewarmedStream = client.stream;
+  await changeAuth(harness, null);
+  assert.equal(harness.sandbox.OB_RTC.isActive(), false, `${testName} logout closes active expert SFU`);
+  assert(expert.tracks.every((track) => track.stopCalls === 1 && track.readyState === 'ended'),
+    `${testName} logout stops every expert SFU track exactly once`);
+  assert.equal(harness.sandbox._obExpertMediaReadyStream, null, `${testName} logout clears expert prewarm globals`);
+  assert.equal(harness.sandbox._obClientMediaReadyStream, client.stream,
+    `${testName} expert logout preserves client-owned prewarm globals`);
+  assert.equal(harness.sandbox._obRtcPrewarmedStream, client.stream,
+    `${testName} expert logout preserves the exact shared client reference`);
+  assert(client.tracks.every((track) => track.stopCalls === 0 && track.readyState === 'live'),
+    `${testName} expert logout leaves client tracks live`);
+
+  control.deferredStarts[0].resolve({ joined: true });
+  assert.equal(await pendingStart, false, `${testName} logged-out expert start cannot complete`);
+  assert.equal(control.socketsCreated(), 0, `${testName} controlled expert start opens no stale SFU socket`);
+  assert.equal(control.peerStarts(), 0, `${testName} expert logout cannot enter peer fallback`);
+  assert.equal(mediaRequests, 0, `${testName} expert logout cannot request media beyond its prewarm`);
+  assert.equal(sharedSignals.some((message) => message.type === 'rtc_end'), false,
+    `${testName} privacy teardown emits no deliberate rtc_end`);
+  assert.equal(harness.sandbox.ExpertSfuClient.clearPrewarmedStream('client', client.stream), true,
+    `${testName} preserved client registry remains independently owned`);
+  assert(client.tracks.every((track) => track.stopCalls === 1), `${testName} explicit client cleanup stops its tracks once`);
+}
+await assertInstalledSfuActiveExpertIdentityTeardown('voice');
+await assertInstalledSfuActiveExpertIdentityTeardown('video');
+
+// Expert A can be invalidated while SFU config is pending. Only expert B may
+// create a session after config resolves; A cannot open signaling, prompt media,
+// or fall through to peer RTC.
+async function assertInstalledSfuConfigPendingExpertReplacement(channel) {
+  const testName = `config-pending-expert-${channel}`;
+  let resolveConfig;
+  const configResponse = new Promise((resolve) => { resolveConfig = resolve; });
+  const expertA = trackedPrewarmStream(`${testName}-a`, channel);
+  const expertB = trackedPrewarmStream(`${testName}-b`, channel);
+  let mediaRequests = 0;
+  const sharedSignals = [];
+  const harness = createHarness({ session: { ob_t: expertToken }, fetchImpl: () => configResponse });
+  harness.sandbox._expertWs = { readyState: 1, send(payload) { sharedSignals.push(JSON.parse(payload)); }, close() {} };
+  const control = installControlledExpertSfuHarness(harness, async () => { mediaRequests += 1; return expertB.stream; });
+  setExpertSfuPrewarm(harness, expertA.stream, channel);
+
+  const expertAStart = harness.sandbox.OB_RTC.start(`config-expert-a-${channel}`, channel, 'expert');
+  await settleAsync();
+  assert.equal(control.deferredStarts.length, 0, `${testName} expert A remains before session construction`);
+  await changeAuth(harness, null);
+  assert(expertA.tracks.every((track) => track.stopCalls === 1 && track.readyState === 'ended'),
+    `${testName} config-pending expert A prewarm stops exactly once`);
+  await changeAuth(harness, expertBToken);
+  setExpertSfuPrewarm(harness, expertB.stream, channel);
+  const expertBStart = harness.sandbox.OB_RTC.start(`config-expert-b-${channel}`, channel, 'expert');
+
+  resolveConfig({
+    ok: true,
+    json: async () => ({ rtc: { one_to_one: { sfu_enabled: true, mode: 'sfu', sfu_url: 'https://media.example', fallback_enabled: true } } }),
+  });
+  await settleAsync();
+  assert.equal(await expertAStart, false, `${testName} expert A config continuation is identity-invalidated`);
+  assert.equal(control.deferredStarts.length, 1, `${testName} only expert B constructs an installed SFU session`);
+  assert.equal(control.deferredStarts[0].session.roomId, `config-expert-b-${channel}`,
+    `${testName} constructed SFU session belongs to expert B`);
+  assert.equal(harness.sandbox.OB_RTC.testAdoptOneToOneLocalStream(expertB.stream), true);
+  assert.equal(harness.sandbox.OB_RTC.getSid(), `config-expert-b-${channel}`,
+    `${testName} expert B owns the active replacement`);
+  assert(expertB.tracks.every((track) => track.stopCalls === 0 && track.readyState === 'live'),
+    `${testName} expert B tracks remain live`);
+  assert.equal(control.socketsCreated(), 0, `${testName} expert A opens no stale SFU socket`);
+  assert.equal(control.peerStarts(), 0, `${testName} expert A opens no peer fallback`);
+  assert.equal(mediaRequests, 0, `${testName} expert A cannot prompt for stale media`);
+
+  control.deferredStarts[0].resolve({ joined: true });
+  assert.equal(await expertBStart, true, `${testName} expert B may finish its current start`);
+  await changeAuth(harness, null);
+  assert(expertB.tracks.every((track) => track.stopCalls === 1 && track.readyState === 'ended'),
+    `${testName} final expert B logout stops its tracks exactly once`);
+  assert.equal(sharedSignals.some((message) => message.type === 'rtc_end'), false,
+    `${testName} config-pending identity teardown emits no rtc_end`);
+}
+await assertInstalledSfuConfigPendingExpertReplacement('voice');
+await assertInstalledSfuConfigPendingExpertReplacement('video');
+
+// Pre-join preparation is account-owned too. If expert A logs out while the
+// SFU configuration is pending, that continuation cannot construct a prepared
+// signaling session or leave A's prewarm available to the next account.
+async function assertInstalledSfuPrepareConfigInvalidation(channel) {
+  const testName = `prepare-config-pending-expert-${channel}`;
+  let resolveConfig;
+  const configResponse = new Promise((resolve) => { resolveConfig = resolve; });
+  const expertA = trackedPrewarmStream(`${testName}-a`, channel);
+  let mediaRequests = 0;
+  const sharedSignals = [];
+  const harness = createHarness({ session: { ob_t: expertToken }, fetchImpl: () => configResponse });
+  harness.sandbox._expertWs = { readyState: 1, send(payload) { sharedSignals.push(JSON.parse(payload)); }, close() {} };
+  const control = installControlledExpertSfuHarness(harness, async () => {
+    mediaRequests += 1;
+    return expertA.stream;
+  });
+  setExpertSfuPrewarm(harness, expertA.stream, channel);
+
+  const pendingPrepare = harness.sandbox.ExpertSfuClient.prepareCall(
+    `prepare-expert-a-${channel}`,
+    channel,
+    'expert',
+  );
+  await settleAsync();
+  assert.equal(control.socketsCreated(), 0, `${testName} waits for configuration before constructing signaling`);
+  await changeAuth(harness, null);
+  assert(expertA.tracks.every((track) => track.stopCalls === 1 && track.readyState === 'ended'),
+    `${testName} logout stops the prepared account's prewarm exactly once`);
+
+  resolveConfig({
+    ok: true,
+    json: async () => ({ rtc: { one_to_one: { sfu_enabled: true, mode: 'sfu', sfu_url: 'https://media.example', fallback_enabled: true } } }),
+  });
+  assert.equal(await pendingPrepare, false, `${testName} stale preparation resolves as invalid`);
+  assert.equal(control.socketsCreated(), 0, `${testName} stale preparation cannot create an SFU signaling socket`);
+  assert.equal(control.peerStarts(), 0, `${testName} stale preparation cannot create peer RTC`);
+  assert.equal(mediaRequests, 0, `${testName} preparation never prompts for account media`);
+  assert.equal(harness.sandbox._obExpertMediaReadyStream, null,
+    `${testName} stale preparation cannot republish the old expert prewarm`);
+  assert.equal(harness.sandbox.ExpertSfuClient.clearPrewarmedStream('expert', expertA.stream), false,
+    `${testName} stale preparation leaves no reusable expert registry entry`);
+  assert.equal(sharedSignals.some((message) => message.type === 'rtc_end'), false,
+    `${testName} preparation privacy teardown emits no deliberate rtc_end`);
+}
+await assertInstalledSfuPrepareConfigInvalidation('voice');
+await assertInstalledSfuPrepareConfigInvalidation('video');
+
+// A prepared session has the same identity and exact-owner rules as an active
+// call. A late completion from expert A cannot delete or close expert B's
+// replacement, even when the account switch reuses the same session key.
+async function assertStaleInstalledSfuExpertPreparationPreservesReplacement(channel, staleOutcome) {
+  const testName = `prepare-pending-expert-${channel}-${staleOutcome}`;
+  const sfuConfig = {
+    rtc: { one_to_one: { sfu_enabled: true, mode: 'sfu', sfu_url: 'https://media.example', fallback_enabled: true } },
+  };
+  const expertA = trackedPrewarmStream(`${testName}-a`, channel);
+  const expertB = trackedPrewarmStream(`${testName}-b`, channel);
+  let mediaRequests = 0;
+  const sharedSignals = [];
+  const harness = createHarness({
+    session: { ob_t: expertToken },
+    fetchImpl: async () => ({ ok: true, json: async () => sfuConfig }),
+  });
+  harness.sandbox._expertWs = { readyState: 1, send(payload) { sharedSignals.push(JSON.parse(payload)); }, close() {} };
+  const control = installControlledExpertSfuHarness(harness, async () => {
+    mediaRequests += 1;
+    return expertB.stream;
+  });
+  const deferredPrepares = [];
+  harness.sandbox.__OB_TEST_SFU_PREPARE_CALL__ = (session, requestedChannel) => {
+    let resolve;
+    let reject;
+    const promise = new Promise((resolvePromise, rejectPromise) => {
+      resolve = resolvePromise;
+      reject = rejectPromise;
+    });
+    deferredPrepares.push({ session, channel: requestedChannel, promise, resolve, reject });
+    return promise;
+  };
+  const sessionId = `shared-prepare-expert-${channel}`;
+  setExpertSfuPrewarm(harness, expertA.stream, channel);
+
+  const expertAPrepare = harness.sandbox.ExpertSfuClient.prepareCall(sessionId, channel, 'expert');
+  await settleAsync();
+  assert.equal(deferredPrepares.length, 1, `${testName} expert A owns one real prepared SFU session`);
+  const expertASession = deferredPrepares[0].session;
+  assert.equal(expertASession.closed, false, `${testName} expert A prepared owner starts open`);
+
+  await changeAuth(harness, null);
+  assert.equal(expertASession.closed, true, `${testName} expert A identity reset closes its prepared session`);
+  assert(expertA.tracks.every((track) => track.stopCalls === 1 && track.readyState === 'ended'),
+    `${testName} expert A identity reset stops its prewarm exactly once`);
+  await changeAuth(harness, expertBToken);
+  setExpertSfuPrewarm(harness, expertB.stream, channel);
+
+  const expertBPrepare = harness.sandbox.ExpertSfuClient.prepareCall(sessionId, channel, 'expert');
+  await settleAsync();
+  assert.equal(deferredPrepares.length, 2, `${testName} expert B creates one replacement prepared session`);
+  const expertBSession = deferredPrepares[1].session;
+  assert.notEqual(expertBSession, expertASession, `${testName} replacement uses a distinct account-owned session`);
+  assert.equal(expertBSession.closed, false, `${testName} expert B replacement is live before A settles`);
+
+  if(staleOutcome === 'failure') deferredPrepares[0].reject(new Error('stale expert A prepare failure'));
+  else deferredPrepares[0].resolve({ prepared: true });
+  assert.equal(await expertAPrepare, false, `${testName} stale expert A preparation is invalid`);
+  assert.equal(expertBSession.closed, false, `${testName} stale expert A cannot close expert B's prepared owner`);
+  assert(expertB.tracks.every((track) => track.stopCalls === 0 && track.readyState === 'live'),
+    `${testName} stale expert A cannot stop expert B tracks`);
+  assert.equal(harness.sandbox._obExpertMediaReadyStream, expertB.stream,
+    `${testName} stale expert A cannot clear expert B's prewarm`);
+
+  deferredPrepares[1].resolve({ prepared: true });
+  assert.equal(await expertBPrepare, true, `${testName} expert B preparation may complete under its current identity`);
+  assert.equal(expertBSession.closed, false, `${testName} completed expert B preparation remains reusable`);
+  assert.equal(control.socketsCreated(), 0, `${testName} controlled preparations open no unrelated signaling socket`);
+  assert.equal(control.peerStarts(), 0, `${testName} preparation ownership never enters peer fallback`);
+  assert.equal(mediaRequests, 0, `${testName} preparation ownership never prompts for media`);
+
+  await changeAuth(harness, null);
+  assert.equal(expertBSession.closed, true, `${testName} final expert B reset closes its prepared session`);
+  assert(expertB.tracks.every((track) => track.stopCalls === 1 && track.readyState === 'ended'),
+    `${testName} final expert B reset stops its prewarm exactly once`);
+  assert.equal(harness.sandbox.ExpertSfuClient.clearPrewarmedStream('expert', expertB.stream), false,
+    `${testName} final reset leaves no reusable expert B registry entry`);
+  assert.equal(sharedSignals.some((message) => message.type === 'rtc_end'), false,
+    `${testName} prepared-session privacy resets emit no deliberate rtc_end`);
+}
+for (const channel of ['voice', 'video']) {
+  await assertStaleInstalledSfuExpertPreparationPreservesReplacement(channel, 'failure');
+  await assertStaleInstalledSfuExpertPreparationPreservesReplacement(channel, 'success');
+}
+
+// A stale expert startCall completion owns only expert A's closed session. A
+// rejection or resolution after expert B becomes live cannot mutate B or fall back.
+async function assertStaleInstalledSfuExpertCompletionPreservesReplacement(channel, staleOutcome) {
+  const testName = `start-pending-expert-${channel}-${staleOutcome}`;
+  const sfuConfig = {
+    rtc: { one_to_one: { sfu_enabled: true, mode: 'sfu', sfu_url: 'https://media.example', fallback_enabled: true } },
+  };
+  const expertA = trackedPrewarmStream(`${testName}-a`, channel);
+  const expertB = trackedPrewarmStream(`${testName}-b`, channel);
+  let mediaRequests = 0;
+  const sharedSignals = [];
+  const harness = createHarness({
+    session: { ob_t: expertToken },
+    fetchImpl: async () => ({ ok: true, json: async () => sfuConfig }),
+  });
+  harness.sandbox._expertWs = { readyState: 1, send(payload) { sharedSignals.push(JSON.parse(payload)); }, close() {} };
+  const control = installControlledExpertSfuHarness(harness, async () => { mediaRequests += 1; return expertB.stream; });
+  setExpertSfuPrewarm(harness, expertA.stream, channel);
+
+  const expertAStart = harness.sandbox.OB_RTC.start(`start-expert-a-${testName}`, channel, 'expert');
+  await settleAsync();
+  assert.equal(control.deferredStarts.length, 1, `${testName} expert A startCall is pending`);
+  assert.equal(harness.sandbox.OB_RTC.testAdoptOneToOneLocalStream(expertA.stream), true);
+  await changeAuth(harness, null);
+  assert(expertA.tracks.every((track) => track.stopCalls === 1 && track.readyState === 'ended'),
+    `${testName} expert A reset stops its tracks exactly once`);
+  await changeAuth(harness, expertBToken);
+  setExpertSfuPrewarm(harness, expertB.stream, channel);
+
+  const expertBStart = harness.sandbox.OB_RTC.start(`start-expert-b-${testName}`, channel, 'expert');
+  await settleAsync();
+  assert.equal(control.deferredStarts.length, 2, `${testName} expert B creates one replacement startCall`);
+  assert.equal(harness.sandbox.OB_RTC.testAdoptOneToOneLocalStream(expertB.stream), true);
+  assert.equal(harness.sandbox.OB_RTC.getSid(), `start-expert-b-${testName}`,
+    `${testName} expert B owns the replacement session`);
+
+  if(staleOutcome === 'failure') control.deferredStarts[0].reject(new Error('stale expert A SFU failure'));
+  else control.deferredStarts[0].resolve({ joined: true });
+  assert.equal(await expertAStart, false, `${testName} stale expert A completion is invalid`);
+  assert.equal(harness.sandbox.OB_RTC.isActive(), true, `${testName} expert B remains active after stale A`);
+  assert.equal(harness.sandbox.OB_RTC.getSid(), `start-expert-b-${testName}`,
+    `${testName} stale expert A cannot replace expert B`);
+  assert(expertB.tracks.every((track) => track.stopCalls === 0 && track.readyState === 'live'),
+    `${testName} stale expert A cannot stop expert B tracks`);
+  assert.equal(control.socketsCreated(), 0, `${testName} stale expert A opens no SFU socket`);
+  assert.equal(control.peerStarts(), 0, `${testName} stale expert A cannot enter peer fallback`);
+  assert.equal(mediaRequests, 0, `${testName} stale expert A cannot request new media`);
+
+  await changeAuth(harness, null);
+  assert(expertB.tracks.every((track) => track.stopCalls === 1 && track.readyState === 'ended'),
+    `${testName} final expert B reset stops its tracks exactly once`);
+  control.deferredStarts[1].resolve({ joined: true });
+  assert.equal(await expertBStart, false, `${testName} expert B late completion stays invalid after final logout`);
+  assert(expertB.tracks.every((track) => track.stopCalls === 1),
+    `${testName} expert B tracks cannot stop twice`);
+  assert.equal(sharedSignals.some((message) => message.type === 'rtc_end'), false,
+    `${testName} expert privacy resets emit no rtc_end`);
+}
+for (const channel of ['voice', 'video']) {
+  await assertStaleInstalledSfuExpertCompletionPreservesReplacement(channel, 'failure');
+  await assertStaleInstalledSfuExpertCompletionPreservesReplacement(channel, 'success');
+}
+
+function installRealPendingSfuHarness(harness, getUserMedia) {
+  const sockets = [];
+  let peerStarts = 0;
+  class PendingSfuSocket {
+    static OPEN = 1;
+    static CLOSED = 3;
+    constructor(url) {
+      this.url = url;
+      this.readyState = 0;
+      this.sent = [];
+      this.closeCalls = 0;
+      sockets.push(this);
+      Promise.resolve().then(() => {
+        if(this.readyState !== 0) return;
+        this.readyState = PendingSfuSocket.OPEN;
+        if(this.onopen) this.onopen();
+      });
+    }
+    send(payload) {
+      const message = JSON.parse(payload);
+      this.sent.push(message);
+      if(message.action === 'auth') Promise.resolve().then(() => this.respond(message));
+    }
+    respond(request, extra = {}) {
+      if(this.onmessage) this.onmessage({ data: JSON.stringify({ id: request.id, ok: true, ...extra }) });
+    }
+    close() {
+      this.closeCalls += 1;
+      this.readyState = PendingSfuSocket.CLOSED;
+    }
+  }
+  harness.sandbox.WebSocket = PendingSfuSocket;
+  harness.sandbox.RTCPeerConnection = class { constructor() { peerStarts += 1; } };
+  installRolePrewarmOwner(harness, getUserMedia);
+  return {
+    sockets,
+    peerStarts: () => peerStarts,
+    actions: () => sockets.flatMap((socket) => socket.sent.map((message) => message.action).filter(Boolean)),
+    joinRequest: (socket) => socket.sent.find((message) => message.action === 'join'),
+  };
+}
+
+function setRoleSfuPrewarm(harness, role, ownedStream, channel) {
+  assert.equal(harness.sandbox.ExpertSfuClient.setPrewarmedStream(role, ownedStream, channel), true);
+  harness.sandbox._obRtcPrewarmedStream = ownedStream;
+}
+
+function attachRtcLocalVideo(harness, role) {
+  const video = new FakeElement('video');
+  video.id = role === 'expert' ? 'expert-rtc-local-video' : 'rtc-local-video';
+  harness.body.appendChild(video);
+  return video;
+}
+
+function realSfuRoleFixture(role) {
+  return role === 'expert'
+    ? { tokenA: expertToken, tokenB: expertBToken, socketKey: '_expertWs' }
+    : { tokenA: clientAToken, tokenB: clientBToken, socketKey: '_obClientWs' };
+}
+
+function staleJoinResponse() {
+  return {
+    producers: [],
+    participants: [],
+    participant: { id: 'stale-participant' },
+    room: { id: 'stale-room' },
+    routerRtpCapabilities: { codecs: [], headerExtensions: [] },
+  };
+}
+
+// This runs the actual bundled tr.startCall path: no startCall hook and no
+// testAdopt helper. The consumed prewarm is owned before join/prepare settles,
+// so account teardown stops it and a stale socket response cannot affect B.
+async function assertRealSfuConsumedPrewarmIdentityHandoff(role, channel) {
+  const testName = `real-sfu-prewarm-${role}-${channel}`;
+  const fixture = realSfuRoleFixture(role);
+  const expertA = trackedPrewarmStream(`${testName}-a`, channel);
+  const expertB = trackedPrewarmStream(`${testName}-b`, channel);
+  let mediaRequests = 0;
+  const sharedSignals = [];
+  const harness = createHarness({
+    session: { ob_t: fixture.tokenA },
+    fetchImpl: async () => ({
+      ok: true,
+      json: async () => ({ rtc: { one_to_one: { sfu_enabled: true, mode: 'sfu', sfu_url: 'https://media.example', fallback_enabled: true } } }),
+    }),
+  });
+  const localVideo = attachRtcLocalVideo(harness, role);
+  const control = installRealPendingSfuHarness(harness, async () => {
+    mediaRequests += 1;
+    throw new Error(`${testName} must consume its owned prewarm`);
+  });
+  harness.sandbox[fixture.socketKey] = {
+    readyState: 1,
+    send(payload) { sharedSignals.push(JSON.parse(payload)); },
+    close() {},
+  };
+  const sessionId = `real-sfu-shared-${role}-${channel}`;
+  setRoleSfuPrewarm(harness, role, expertA.stream, channel);
+
+  const startA = harness.sandbox.OB_RTC.start(sessionId, channel, role);
+  await settleAsync(32);
+  assert.equal(control.sockets.length, 1, `${testName} expert A opens one real SFU signaling socket`);
+  assert(control.joinRequest(control.sockets[0]), `${testName} expert A is pending in real SFU join preparation`);
+  assert(expertA.tracks.every((track) => track.stopCalls === 0 && track.readyState === 'live'),
+    `${testName} expert A prewarm stays live while its exact session owns it`);
+  assert.equal(harness.sandbox[role === 'expert' ? '_obExpertMediaReadyStream' : '_obClientMediaReadyStream'], null,
+    `${testName} consumed prewarm no longer has a global fallback owner`);
+  assert.equal(harness.sandbox._obRtcPrewarmedStream, null,
+    `${testName} consumed prewarm clears the untyped shared reference`);
+
+  await changeAuth(harness, fixture.tokenB);
+  assert(expertA.tracks.every((track) => track.stopCalls === 1 && track.readyState === 'ended'),
+    `${testName} identity change stops every expert A track exactly once`);
+  assert.equal(control.sockets[0].closeCalls, 1, `${testName} identity change closes expert A signaling once`);
+  setRoleSfuPrewarm(harness, role, expertB.stream, channel);
+  const startB = harness.sandbox.OB_RTC.start(sessionId, channel, role);
+  await settleAsync(32);
+  assert.equal(await startA, false, `${testName} expert A real start resolves invalid after teardown`);
+  assert.equal(control.sockets.length, 2, `${testName} expert B opens one replacement real SFU socket`);
+  assert(control.joinRequest(control.sockets[1]), `${testName} expert B remains pending in its own real join`);
+  assert.equal(harness.sandbox.OB_RTC.getSid(), sessionId, `${testName} expert B owns the replacement session`);
+
+  control.sockets[0].respond(control.joinRequest(control.sockets[0]), staleJoinResponse());
+  await settleAsync();
+  assert.equal(harness.sandbox.OB_RTC.isActive(), true, `${testName} stale expert A socket success cannot close expert B`);
+  assert(expertB.tracks.every((track) => track.stopCalls === 0 && track.readyState === 'live'),
+    `${testName} stale expert A socket success cannot stop expert B tracks`);
+  assert.equal(localVideo.srcObject ?? null, null, `${testName} no closed or pending session attaches local media`);
+  assert.equal(control.actions().some((action) => action === 'createTransport' || action === 'produce'), false,
+    `${testName} no stale session creates a transport or produces media`);
+  assert.equal(control.peerStarts(), 0, `${testName} identity teardown cannot enter peer fallback`);
+  assert.equal(mediaRequests, 0, `${testName} real prewarm handoff performs no second permission request`);
+
+  await changeAuth(harness, null);
+  assert.equal(await startB, false, `${testName} expert B pending start also resolves invalid after final logout`);
+  assert(expertB.tracks.every((track) => track.stopCalls === 1 && track.readyState === 'ended'),
+    `${testName} final reset stops every expert B track exactly once through its real session owner`);
+  assert.equal(control.sockets[1].closeCalls, 1, `${testName} final reset closes expert B signaling once`);
+  assert.equal(sharedSignals.some((message) => message.type === 'rtc_end'), false,
+    `${testName} privacy teardown emits no deliberate rtc_end`);
+}
+
+// The no-prewarm branch also runs real tr.startCall. If permission resolves
+// after A was closed, adoption stops that late stream; it cannot attach,
+// produce, fall back, or mutate B's already-owned replacement stream.
+async function assertRealSfuPendingPermissionIdentityHandoff(role, channel) {
+  const testName = `real-sfu-permission-${role}-${channel}`;
+  const fixture = realSfuRoleFixture(role);
+  const expertA = trackedPrewarmStream(`${testName}-a`, channel);
+  const expertB = trackedPrewarmStream(`${testName}-b`, channel);
+  let resolveExpertA;
+  const pendingExpertA = new Promise((resolve) => { resolveExpertA = resolve; });
+  let mediaRequests = 0;
+  const sharedSignals = [];
+  const harness = createHarness({
+    session: { ob_t: fixture.tokenA },
+    fetchImpl: async () => ({
+      ok: true,
+      json: async () => ({ rtc: { one_to_one: { sfu_enabled: true, mode: 'sfu', sfu_url: 'https://media.example', fallback_enabled: true } } }),
+    }),
+  });
+  const localVideo = attachRtcLocalVideo(harness, role);
+  const control = installRealPendingSfuHarness(harness, () => {
+    mediaRequests += 1;
+    return mediaRequests === 1 ? pendingExpertA : Promise.resolve(expertB.stream);
+  });
+  harness.sandbox[fixture.socketKey] = {
+    readyState: 1,
+    send(payload) { sharedSignals.push(JSON.parse(payload)); },
+    close() {},
+  };
+  const sessionId = `real-sfu-permission-shared-${role}-${channel}`;
+
+  const startA = harness.sandbox.OB_RTC.start(sessionId, channel, role);
+  await settleAsync(32);
+  assert.equal(mediaRequests, 1, `${testName} expert A has exactly one pending permission request`);
+  assert.equal(control.sockets.length, 1, `${testName} expert A opens one real SFU socket while permission is pending`);
+  assert(control.joinRequest(control.sockets[0]), `${testName} expert A real preparation is pending`);
+
+  await changeAuth(harness, fixture.tokenB);
+  const startB = harness.sandbox.OB_RTC.start(sessionId, channel, role);
+  await settleAsync(32);
+  assert.equal(mediaRequests, 2, `${testName} expert B obtains only its own replacement stream`);
+  assert.equal(control.sockets.length, 2, `${testName} expert B opens one replacement SFU socket`);
+  assert(expertB.tracks.every((track) => track.stopCalls === 0 && track.readyState === 'live'),
+    `${testName} expert B replacement stream is live under its exact pending session`);
+
+  resolveExpertA(expertA.stream);
+  assert.equal(await startA, false, `${testName} late expert A permission continuation is invalid`);
+  control.sockets[0].respond(control.joinRequest(control.sockets[0]), staleJoinResponse());
+  await settleAsync();
+  assert(expertA.tracks.every((track) => track.stopCalls === 1 && track.readyState === 'ended'),
+    `${testName} late expert A permission tracks stop exactly once`);
+  assert.equal(harness.sandbox.OB_RTC.isActive(), true, `${testName} expert B survives expert A's late resolve and stale socket response`);
+  assert(expertB.tracks.every((track) => track.stopCalls === 0 && track.readyState === 'live'),
+    `${testName} expert A's late continuation cannot stop expert B tracks`);
+  assert.equal(localVideo.srcObject ?? null, null, `${testName} late permission cannot attach on a closed session`);
+  assert.equal(control.actions().some((action) => action === 'createTransport' || action === 'produce'), false,
+    `${testName} late permission cannot create a transport or produce media`);
+  assert.equal(control.peerStarts(), 0, `${testName} invalid expert A cannot enter peer fallback`);
+
+  await changeAuth(harness, null);
+  assert.equal(await startB, false, `${testName} final expert B pending start resolves invalid`);
+  assert(expertB.tracks.every((track) => track.stopCalls === 1 && track.readyState === 'ended'),
+    `${testName} expert B's real session owner stops its tracks exactly once`);
+  assert.equal(control.sockets[1].closeCalls, 1, `${testName} final reset closes expert B signaling once`);
+  assert.equal(sharedSignals.some((message) => message.type === 'rtc_end'), false,
+    `${testName} permission privacy teardown emits no deliberate rtc_end`);
+}
+
+for (const role of ['client', 'expert']) {
+  for (const channel of ['voice', 'video']) {
+    await assertRealSfuConsumedPrewarmIdentityHandoff(role, channel);
+    await assertRealSfuPendingPermissionIdentityHandoff(role, channel);
+  }
+}
+
 // Signaling that arrives before A starts media is discarded on logout and cannot be consumed by B.
 const prestartHarness = createHarness({ session: { ob_t: clientAToken } });
 prestartHarness.sandbox.OWNLY_CONFIG = { rtc: {} };
@@ -1582,7 +3037,7 @@ assert.equal(prestartIceCandidates.some((candidate) => candidate.candidate === '
   'client B never applies client A buffered ICE');
 prestartHarness.sandbox.OB_RTC.cleanup();
 
-// Expert RTC intentionally ignores the client-token privacy epoch and completes normally.
+// Peer-only expert startup is also identity-owned and cannot finish after logout.
 let resolveExpertMedia;
 let expertPeerConnections = 0;
 const expertMediaHarness = createHarness({ session: { ob_t: expertToken } });
@@ -1598,16 +3053,16 @@ expertMediaHarness.sandbox.RTCPeerConnection = class {
 };
 expertMediaHarness.sandbox._expertWs = { readyState: 1, send() {} };
 new vm.Script(rtcModuleSource, { filename: 'ownlybiz-rtc-expert-module.js' }).runInContext(expertMediaHarness.sandbox);
+new vm.Script(mediaPrewarmOwnerSource, { filename: 'expert-peer-identity-owner.js' }).runInContext(expertMediaHarness.sandbox);
 const expertMediaStart = expertMediaHarness.sandbox.OB_RTC.start('session-expert-voice', 'voice', 'expert');
 for (let turn = 0; turn < 10 && !resolveExpertMedia; turn += 1) await Promise.resolve();
 assert(resolveExpertMedia, 'expert getUserMedia is pending before the payment auth reset');
 await changeAuth(expertMediaHarness, null);
 resolveExpertMedia({ getTracks: () => [pendingExpertTrack], getAudioTracks: () => [pendingExpertTrack], getVideoTracks: () => [] });
-assert.equal(await expertMediaStart, true, 'expert RTC startup is preserved across client-payment auth reset logic');
-assert.equal(expertPeerConnections, 1, 'expert RTC still installs its peer connection');
-assert.equal(pendingExpertTrack.stopped, 0, 'expert microphone remains live');
-assert.equal(expertMediaHarness.sandbox.OB_RTC.getRole(), 'expert', 'expert RTC ownership remains explicit');
-expertMediaHarness.sandbox.OB_RTC.cleanup();
+assert.equal(await expertMediaStart, false, 'expert RTC startup is invalid after expert logout');
+assert.equal(expertPeerConnections, 0, 'logged-out expert RTC cannot install a peer connection');
+assert.equal(pendingExpertTrack.stopped, 1, 'late expert microphone is stopped exactly once');
+assert.equal(expertMediaHarness.sandbox.OB_RTC.getRole(), null, 'expert identity reset clears peer RTC ownership');
 
 // A delayed A offer continuation cannot answer through B's replacement peer connection.
 let resolveClientARemoteDescription;
@@ -1844,33 +3299,78 @@ const scheduledData = (owner, ready = true) => ({
 });
 
 // Reloading after the one-shot booking_session_started event uses the authenticated
-// join response as the source of truth and enters the already-active session.
-const activeBookingHarness = createHarness({
-  search: '?booking=booking-active-reload',
-  session: { ob_t: clientAToken },
-  fetchImpl: (url) => {
-    if (String(url).includes('/api/bookings/booking-active-reload/join')) {
-      return Promise.resolve({
-        ok: true,
-        json: async () => ({
-          status: 'active',
-          booking: { id: 'booking-active-reload', expert_id: 'expert-active', channel: 'video', status: 'started' },
-          session: { id: 'scheduled-session-active', status: 'active', started_at: null, channel: 'video' },
-        }),
-      });
-    }
-    return Promise.resolve({ ok: false, json: async () => ({ error: 'unexpected request' }) });
-  },
-});
-const activeBookingOverlay = new FakeElement('div'); activeBookingOverlay.id = 'booking-join-overlay';
-const activeBookingPanel = new FakeElement('div'); activeBookingPanel.appendChild(new FakeElement('div')); activeBookingOverlay.appendChild(activeBookingPanel); activeBookingHarness.body.appendChild(activeBookingOverlay);
-const activeBookingJoins = [];
-activeBookingHarness.sandbox.joinActiveBookingSession = (...args) => activeBookingJoins.push(args);
-await activeBookingHarness.sandbox.obPayPerMinuteAuthorizationTestHooks.enhanceBookingJoinOverlay({ force: true });
-assert.deepEqual(activeBookingJoins, [['scheduled-session-active', 'expert-active', 'video']],
-  'an active join response recovers a missed WebSocket event and enters the exact linked session');
-assert.equal(activeBookingHarness.document.getElementById('ob-booking-auth-heading'), null,
-  'an active session never renders stale payment-readiness UI');
+// join response as the source of truth, but Voice and Video cannot enter until the
+// exact scheduled media preflight succeeds. The granted stream is then prewarmed
+// for the same role/channel and the exact linked session resumes automatically.
+async function assertScheduledMediaPreflight(channel) {
+  const bookingId = `booking-active-${channel}`;
+  const sessionId = `scheduled-session-${channel}`;
+  const harness = createHarness({
+    search: `?booking=${bookingId}`,
+    session: { ob_t: clientAToken },
+    fetchImpl: (url) => {
+      if (String(url).includes(`/api/bookings/${bookingId}/join`)) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            status: 'active',
+            booking: { id: bookingId, expert_id: 'expert-active', channel, status: 'started' },
+            session: { id: sessionId, status: 'active', started_at: null, channel },
+          }),
+        });
+      }
+      return Promise.resolve({ ok: false, json: async () => ({ error: 'unexpected request' }) });
+    },
+  });
+  const overlay = new FakeElement('div'); overlay.id = 'booking-join-overlay';
+  const panel = new FakeElement('div'); panel.appendChild(new FakeElement('div')); overlay.appendChild(panel); harness.body.appendChild(overlay);
+  const constraintsSeen = [];
+  const stoppedTracks = [];
+  const audioTrack = { kind: 'audio', readyState: 'live', enabled: true, stop() { stoppedTracks.push('audio'); } };
+  const videoTrack = { kind: 'video', readyState: 'live', enabled: true, stop() { stoppedTracks.push('video'); } };
+  const tracks = channel === 'video' ? [audioTrack, videoTrack] : [audioTrack];
+  const stream = {
+    getTracks: () => tracks,
+    getAudioTracks: () => [audioTrack],
+    getVideoTracks: () => channel === 'video' ? [videoTrack] : [],
+  };
+  harness.sandbox.navigator = { mediaDevices: { getUserMedia: async (constraints) => { constraintsSeen.push(constraints); return stream; } } };
+  const prewarmed = [];
+  harness.sandbox.ExpertSfuClient = { setPrewarmedStream: (...args) => prewarmed.push(args) };
+  const rtcHandoffs = [];
+  harness.sandbox.OB_RTC = {
+    setScheduledPreflightStream(...args) { rtcHandoffs.push(args); return true; },
+  };
+  const joins = [];
+  harness.sandbox.joinActiveBookingSession = (...args) => joins.push(args);
+  const hooks = harness.sandbox.obPayPerMinuteAuthorizationTestHooks;
+
+  await hooks.enhanceBookingJoinOverlay({ force: true });
+  assert.deepEqual(joins, [], `${channel} does not auto-join before device preflight`);
+  assert.equal(harness.document.getElementById('ob-booking-auth-heading').textContent,
+    `Your ${channel} session is ready`, `${channel} active recovery renders the owned preflight gate`);
+  const button = harness.document.getElementById('ob-booking-media-enable');
+  assert(button, `${channel} preflight exposes one explicit device action`);
+  await button.click();
+  await settleAsync();
+
+  assert.equal(JSON.stringify(constraintsSeen), JSON.stringify([
+    channel === 'video' ? { audio: true, video: true } : { audio: true, video: false },
+  ]), `${channel} requests only its required devices once`);
+  assert.equal(prewarmed.length, 1, `${channel} grants one prewarmed stream`);
+  assert.deepEqual(prewarmed[0].slice(0, 1), ['client']);
+  assert.equal(prewarmed[0][1], stream);
+  assert.equal(prewarmed[0][2], channel);
+  assert.deepEqual(rtcHandoffs, [[stream, sessionId, channel, 'client']],
+    `${channel} transfers the granted stream to the exact RTC session before joining`);
+  assert.deepEqual(joins, [[sessionId, 'expert-active', channel]],
+    `${channel} enters the exact linked session after successful preflight`);
+  assert.deepEqual(stoppedTracks, [], `${channel} keeps the prewarmed stream alive for RTC handoff`);
+  assert.equal(harness.document.getElementById('ob-booking-auth-heading'), null,
+    `${channel} removes the scheduled overlay UI only after the gate succeeds`);
+}
+await assertScheduledMediaPreflight('voice');
+await assertScheduledMediaPreflight('video');
 
 async function assertScheduledLifecycleHeading(status, expectedHeading, sessionStatus = status) {
   const bookingId = `booking-${status}`;

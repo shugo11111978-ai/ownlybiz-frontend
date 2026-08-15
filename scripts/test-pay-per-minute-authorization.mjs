@@ -464,7 +464,7 @@ function storage(initial = {}) {
   };
 }
 
-function createHarness({ search = '', session = {}, fetchImpl } = {}) {
+function createHarness({ search = '', session = {}, fetchImpl, beforeControllerSources = [] } = {}) {
   const body = new FakeElement('body');
   const documentElement = new FakeElement('html');
   documentElement.appendChild(body);
@@ -513,6 +513,9 @@ function createHarness({ search = '', session = {}, fetchImpl } = {}) {
   sandbox.obResolveAuthToken = () => sandbox.sessionStorage.getItem('ob_t') || sandbox.localStorage.getItem('ob_t') || sandbox.localStorage.getItem('ob_client_token') || '';
   vm.createContext(sandbox);
   new vm.Script(authContextSource, { filename: 'client-identity-context.js' }).runInContext(sandbox);
+  beforeControllerSources.forEach((source, index) => {
+    new vm.Script(source, { filename: `before-payment-controller-${index}.js` }).runInContext(sandbox);
+  });
   new vm.Script(controllerSource, { filename: 'pay-per-minute-controller.js' }).runInContext(sandbox);
   return {
     sandbox,
@@ -3371,6 +3374,323 @@ async function assertScheduledMediaPreflight(channel) {
 }
 await assertScheduledMediaPreflight('voice');
 await assertScheduledMediaPreflight('video');
+
+// A scheduled media grant belongs to the stable client + booking + channel,
+// not to a transient controller snapshot or same-principal JWT. Force reloads
+// and credential rotation must preserve the exact live stream; true teardown
+// must clear its SFU owner and stop every track exactly once.
+async function assertScheduledMediaSurvivesOwnedRefresh(channel) {
+  const bookingId = `booking-owned-refresh-${channel}`;
+  const stoppedTracks = [];
+  const audioTrack = {
+    kind: 'audio', readyState: 'live',
+    stop() { if(this.readyState !== 'ended') { this.readyState = 'ended'; stoppedTracks.push('audio'); } },
+  };
+  const videoTrack = {
+    kind: 'video', readyState: 'live',
+    stop() { if(this.readyState !== 'ended') { this.readyState = 'ended'; stoppedTracks.push('video'); } },
+  };
+  const tracks = channel === 'video' ? [audioTrack, videoTrack] : [audioTrack];
+  const stream = {
+    getTracks: () => tracks,
+    getAudioTracks: () => [audioTrack],
+    getVideoTracks: () => channel === 'video' ? [videoTrack] : [],
+  };
+  const requests = [];
+  let authorizationReady = false;
+  const harness = createHarness({
+    search: `?booking=${bookingId}`,
+    session: { ob_t: clientAToken },
+    fetchImpl: (url, init = {}) => {
+      requests.push({ url: String(url), authorization: init.headers?.Authorization || '' });
+      if(String(url).includes(`/api/bookings/${bookingId}/join`)) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            status: 'waiting', authorization_required: true, authorization_ready: authorizationReady, authorization_available: true,
+            authorization_expires_at: Math.floor((Date.now() + 5 * 60_000) / 1000),
+            booking: { id: bookingId, expert_id: 'expert-owned-refresh', channel, status: 'confirmed', payment_mode: 'minute' },
+          }),
+        });
+      }
+      if(String(url).includes('/api/payments/methods/status')) {
+        return Promise.resolve({ ok: true, json: async () => ({ has_saved_payment_method: true, mode: 'test' }) });
+      }
+      if(String(url).endsWith('/api/payments/authorize')) {
+        return Promise.resolve({ ok: true, json: async () => ({
+          payment_intent_id: `pi-owned-refresh-${channel}`,
+          authorization_request_id: `request-owned-refresh-${channel}`,
+          status: 'requires_capture', amount_authorized: 5,
+        }) });
+      }
+      if(String(url).includes(`/api/bookings/${bookingId}/authorize`)) {
+        authorizationReady = true;
+        return Promise.resolve({ ok: true, json: async () => ({ success: true, authorization_ready: true }) });
+      }
+      return Promise.resolve({ ok: false, json: async () => ({ error: 'unexpected request' }) });
+    },
+  });
+  const overlay = new FakeElement('div'); overlay.id = 'booking-join-overlay';
+  const panel = new FakeElement('div'); panel.appendChild(new FakeElement('div')); overlay.appendChild(panel); harness.body.appendChild(overlay);
+  let getUserMediaCalls = 0;
+  harness.sandbox.navigator = {
+    mediaDevices: { getUserMedia: async () => { getUserMediaCalls += 1; return stream; } },
+  };
+  let registeredPrewarm = null;
+  const prewarmRegistrations = [];
+  const prewarmClears = [];
+  harness.sandbox.ExpertSfuClient = {
+    setPrewarmedStream(role, ownedStream, ownedChannel, owner) {
+      registeredPrewarm = { role, stream: ownedStream, channel: ownedChannel, owner };
+      prewarmRegistrations.push(registeredPrewarm);
+      return true;
+    },
+    clearPrewarmedStream(role, expectedStream) {
+      prewarmClears.push({ role, stream: expectedStream });
+      if(!registeredPrewarm || registeredPrewarm.role !== role || registeredPrewarm.stream !== expectedStream) return false;
+      registeredPrewarm = null;
+      expectedStream.getTracks().forEach((track) => track.stop());
+      return true;
+    },
+  };
+  const hooks = harness.sandbox.obPayPerMinuteAuthorizationTestHooks;
+
+  await hooks.enhanceBookingJoinOverlay({ force: true });
+  await harness.document.getElementById('ob-booking-media-enable').click();
+  await settleAsync();
+  const originalContext = hooks.bookingController.context;
+  assert.equal(hooks.bookingController.media.stream, stream, `${channel} owns its ready scheduled stream before refresh`);
+  assert.equal(harness.document.getElementById('ob-booking-media-enable'), null, `${channel} removes its enable action after the exact grant`);
+
+  await hooks.enhanceBookingJoinOverlay({ force: true });
+  assert.equal(hooks.bookingController.context, originalContext, `${channel} reuses the exact controller context for a same-credential force reload`);
+  assert.equal(hooks.bookingController.media.stream, stream, `${channel} force reload preserves the exact scheduled stream`);
+  assert.equal(harness.document.getElementById('ob-booking-media-enable'), null, `${channel} force reload cannot resurrect the enable action`);
+  assert.deepEqual(stoppedTracks, [], `${channel} force reload cannot stop scheduled tracks`);
+
+  await hooks.authorizeScheduledBooking(false);
+  assert.equal(authorizationReady, true, `${channel} scheduled authorization binds successfully`);
+  assert.equal(hooks.bookingController.media.stream, stream, `${channel} authorize, bind, and reload preserve the exact scheduled stream`);
+  assert.equal(harness.document.getElementById('ob-booking-media-enable'), null, `${channel} authorization cannot resurrect the enable action`);
+  assert.match(harness.document.getElementById('ob-booking-media-status').textContent, /ready\./,
+    `${channel} remains visibly media-ready after authorization`);
+  assert.deepEqual(stoppedTracks, [], `${channel} authorization cannot stop scheduled tracks`);
+
+  await changeAuth(harness, clientARotatedToken);
+  assert.equal(hooks.bookingController.context.token, clientARotatedToken, `${channel} controller adopts the rotated credential`);
+  assert.equal(hooks.bookingController.media.stream, stream, `${channel} same-principal rotation preserves the exact scheduled stream`);
+  assert.equal(harness.document.getElementById('ob-booking-media-enable'), null, `${channel} rotation keeps the ready state rendered`);
+  assert.equal(getUserMediaCalls, 1, `${channel} refresh and rotation never request devices twice`);
+  assert.deepEqual(stoppedTracks, [], `${channel} same-principal rotation cannot stop scheduled tracks`);
+  assert.equal(registeredPrewarm?.stream, stream, `${channel} SFU prewarm is rebound to the live stream`);
+  assert(prewarmRegistrations.length >= 2, `${channel} rotation republishes the stream under current ownership`);
+
+  await changeAuth(harness, null);
+  assert.equal(hooks.bookingController.media.stream, null, `${channel} logout clears scheduled media ownership`);
+  assert.deepEqual(stoppedTracks, channel === 'video' ? ['audio', 'video'] : ['audio'], `${channel} logout stops each scheduled track exactly once`);
+  assert.equal(prewarmClears.length, 1, `${channel} logout clears the exact SFU prewarm owner once`);
+  assert.equal(registeredPrewarm, null, `${channel} logout leaves no SFU prewarm owner`);
+  assert.equal(requests.filter((request) => request.url.includes('/join')).length >= 3, true,
+    `${channel} initial, forced, and rotated readiness loads all execute`);
+}
+await assertScheduledMediaSurvivesOwnedRefresh('voice');
+await assertScheduledMediaSurvivesOwnedRefresh('video');
+
+async function assertScheduledPendingGrantRejectsRotation(channel) {
+  const bookingId = `booking-pending-rotation-${channel}`;
+  let resolveMedia;
+  const lateStops = [];
+  const audioTrack = { kind: 'audio', readyState: 'live', stop() { if(this.readyState !== 'ended') { this.readyState = 'ended'; lateStops.push('audio'); } } };
+  const videoTrack = { kind: 'video', readyState: 'live', stop() { if(this.readyState !== 'ended') { this.readyState = 'ended'; lateStops.push('video'); } } };
+  const tracks = channel === 'video' ? [audioTrack, videoTrack] : [audioTrack];
+  const lateStream = {
+    getTracks: () => tracks,
+    getAudioTracks: () => [audioTrack],
+    getVideoTracks: () => channel === 'video' ? [videoTrack] : [],
+  };
+  const harness = createHarness({
+    search: `?booking=${bookingId}`,
+    session: { ob_t: clientAToken },
+    fetchImpl: (url) => {
+      if(String(url).includes(`/api/bookings/${bookingId}/join`)) {
+        return Promise.resolve({ ok: true, json: async () => ({
+          status: 'waiting', authorization_required: true, authorization_ready: false, authorization_available: true,
+          booking: { id: bookingId, expert_id: 'expert-pending-rotation', channel, status: 'confirmed', payment_mode: 'minute' },
+        }) });
+      }
+      if(String(url).includes('/api/payments/methods/status')) {
+        return Promise.resolve({ ok: true, json: async () => ({ has_saved_payment_method: true, mode: 'test' }) });
+      }
+      return Promise.resolve({ ok: false, json: async () => ({ error: 'unexpected request' }) });
+    },
+  });
+  const overlay = new FakeElement('div'); overlay.id = 'booking-join-overlay';
+  const panel = new FakeElement('div'); panel.appendChild(new FakeElement('div')); overlay.appendChild(panel); harness.body.appendChild(overlay);
+  harness.sandbox.navigator = { mediaDevices: { getUserMedia: () => new Promise((resolve) => { resolveMedia = resolve; }) } };
+  let registered = 0;
+  harness.sandbox.ExpertSfuClient = {
+    setPrewarmedStream() { registered += 1; return true; },
+    clearPrewarmedStream() { return false; },
+  };
+  const hooks = harness.sandbox.obPayPerMinuteAuthorizationTestHooks;
+  await hooks.enhanceBookingJoinOverlay({ force: true });
+  const pendingGrant = harness.document.getElementById('ob-booking-media-enable').click();
+  await settleAsync();
+  assert(resolveMedia, `${channel} permission request is pending before rotation`);
+  assert.equal(hooks.bookingController.media.phase, 'requesting', `${channel} controller records its pending grant`);
+
+  await changeAuth(harness, clientARotatedToken);
+  resolveMedia(lateStream);
+  await pendingGrant;
+  await settleAsync();
+  assert.equal(hooks.bookingController.context.token, clientARotatedToken, `${channel} pending-grant controller adopts the rotated credential`);
+  assert.equal(hooks.bookingController.media.stream, null, `${channel} late pre-rotation grant cannot install after rotation`);
+  assert.equal(registered, 0, `${channel} late pre-rotation grant cannot register with SFU`);
+  assert.deepEqual(lateStops, channel === 'video' ? ['audio', 'video'] : ['audio'], `${channel} late pre-rotation tracks stop exactly once`);
+  assert(harness.document.getElementById('ob-booking-media-enable'), `${channel} current credential receives a fresh explicit media action`);
+}
+await assertScheduledPendingGrantRejectsRotation('voice');
+await assertScheduledPendingGrantRejectsRotation('video');
+
+// Every accepted join snapshot reconciles the immutable booking/channel before
+// lifecycle rendering. A late permission grant from an older channel cannot
+// publish media after the server advances the booking into a different channel.
+async function assertScheduledPendingGrantRejectsChannelChange() {
+  const bookingId = 'booking-pending-channel-change';
+  let channel = 'video';
+  let status = 'waiting';
+  let resolveMedia;
+  let registered = 0;
+  const tracks = ['audio', 'video'].map((kind) => ({
+    kind, readyState: 'live', stopCalls: 0,
+    stop() { this.stopCalls += 1; this.readyState = 'ended'; },
+  }));
+  const lateVideoStream = {
+    getTracks: () => tracks,
+    getAudioTracks: () => [tracks[0]],
+    getVideoTracks: () => [tracks[1]],
+  };
+  const harness = createHarness({
+    search: `?booking=${bookingId}`,
+    session: { ob_t: clientAToken },
+    fetchImpl: (url) => {
+      if(String(url).includes(`/api/bookings/${bookingId}/join`)) {
+        return Promise.resolve({ ok: true, json: async () => ({
+          status,
+          authorization_required: true,
+          authorization_available: true,
+          authorization_ready: false,
+          booking: {
+            id: bookingId,
+            expert_id: 'expert-channel-change',
+            channel,
+            status: status === 'active' ? 'started' : 'confirmed',
+            payment_mode: 'minute',
+          },
+        }) });
+      }
+      if(String(url).includes('/api/payments/methods/status')) {
+        return Promise.resolve({ ok: true, json: async () => ({ has_saved_payment_method: true, mode: 'test' }) });
+      }
+      return Promise.resolve({ ok: false, json: async () => ({ error: 'unexpected request' }) });
+    },
+  });
+  const overlay = new FakeElement('div'); overlay.id = 'booking-join-overlay';
+  const panel = new FakeElement('div'); panel.appendChild(new FakeElement('div')); overlay.appendChild(panel); harness.body.appendChild(overlay);
+  harness.sandbox.navigator = { mediaDevices: { getUserMedia: () => new Promise((resolve) => { resolveMedia = resolve; }) } };
+  harness.sandbox.ExpertSfuClient = {
+    setPrewarmedStream() { registered += 1; return true; },
+    clearPrewarmedStream() { return false; },
+  };
+  const hooks = harness.sandbox.obPayPerMinuteAuthorizationTestHooks;
+  await hooks.enhanceBookingJoinOverlay({ force: true });
+  const pendingGrant = harness.document.getElementById('ob-booking-media-enable').click();
+  await settleAsync();
+  assert(resolveMedia, 'Video permission remains pending before the authoritative channel transition');
+
+  channel = 'voice';
+  status = 'active';
+  await hooks.enhanceBookingJoinOverlay({ force: true });
+  assert.equal(hooks.bookingController.media.channel, 'voice', 'accepted starting lifecycle reconciles the current Voice channel');
+  resolveMedia(lateVideoStream);
+  await pendingGrant;
+  await settleAsync();
+
+  assert.equal(hooks.bookingController.media.stream, null, 'late Video grant cannot install after the booking becomes Voice');
+  assert.equal(registered, 0, 'late mismatched Video grant is never registered with SFU');
+  assert.deepEqual(tracks.map((track) => track.stopCalls), [1, 1], 'late mismatched media tracks stop exactly once');
+}
+await assertScheduledPendingGrantRejectsChannelChange();
+
+// The real page registers media-prewarm before RTC and scheduled-booking
+// teardown. All adapters may observe the same old stream, but only one owns the
+// SFU release and an already-ended MediaStreamTrack is never stopped twice.
+async function assertScheduledFullAdapterTeardownStopsOnce() {
+  const bookingId = 'booking-full-adapter-teardown';
+  const tracks = ['audio', 'video'].map((kind) => ({
+    kind, readyState: 'live', stopCalls: 0,
+    stop() { this.stopCalls += 1; this.readyState = 'ended'; },
+  }));
+  const stream = {
+    getTracks: () => tracks,
+    getAudioTracks: () => [tracks[0]],
+    getVideoTracks: () => [tracks[1]],
+  };
+  const harness = createHarness({
+    search: `?booking=${bookingId}`,
+    session: { ob_t: clientAToken },
+    beforeControllerSources: [mediaPrewarmOwnerSource],
+    fetchImpl: (url) => {
+      if(String(url).includes(`/api/bookings/${bookingId}/join`)) {
+        return Promise.resolve({ ok: true, json: async () => ({
+          status: 'waiting', authorization_required: true, authorization_available: true, authorization_ready: false,
+          booking: { id: bookingId, expert_id: 'expert-full-adapter', channel: 'video', status: 'confirmed', payment_mode: 'minute' },
+        }) });
+      }
+      if(String(url).includes('/api/payments/methods/status')) {
+        return Promise.resolve({ ok: true, json: async () => ({ has_saved_payment_method: true, mode: 'test' }) });
+      }
+      return Promise.resolve({ ok: false, json: async () => ({ error: 'unexpected request' }) });
+    },
+  });
+  const overlay = new FakeElement('div'); overlay.id = 'booking-join-overlay';
+  const panel = new FakeElement('div'); panel.appendChild(new FakeElement('div')); overlay.appendChild(panel); harness.body.appendChild(overlay);
+  harness.sandbox.navigator = { mediaDevices: { getUserMedia: async () => stream } };
+  let ownedStream = null;
+  let ownershipReleases = 0;
+  let clearAttempts = 0;
+  harness.sandbox.ExpertSfuClient = {
+    setPrewarmedStream(role, candidate) { if(role === 'client') ownedStream = candidate; return true; },
+    clearPrewarmedStream(role, expected) {
+      clearAttempts += 1;
+      if(role !== 'client' || !ownedStream || (expected && expected !== ownedStream)) return false;
+      const released = ownedStream; ownedStream = null; ownershipReleases += 1;
+      if(harness.sandbox._obClientMediaReadyStream === released) {
+        harness.sandbox._obClientMediaReadyStream = null;
+        harness.sandbox._obClientMediaReadyChannel = '';
+      }
+      if(harness.sandbox._obRtcPrewarmedStream === released) harness.sandbox._obRtcPrewarmedStream = null;
+      released.getTracks().forEach((track) => track.stop());
+      return true;
+    },
+  };
+  harness.sandbox.OB_RTC = {
+    getRole: () => 'client',
+    resetClientContext: () => harness.sandbox.ExpertSfuClient.clearPrewarmedStream('client', stream),
+  };
+  const hooks = harness.sandbox.obPayPerMinuteAuthorizationTestHooks;
+  await hooks.enhanceBookingJoinOverlay({ force: true });
+  await harness.document.getElementById('ob-booking-media-enable').click();
+  await settleAsync();
+  assert.equal(ownedStream, stream, 'scheduled Video stream is SFU-owned before full identity teardown');
+
+  await changeAuth(harness, null);
+  assert(clearAttempts >= 2, 'full page adapter order observes the old stream from more than one teardown owner');
+  assert.equal(ownershipReleases, 1, 'only one adapter removes the exact SFU owner');
+  assert.deepEqual(tracks.map((track) => track.stopCalls), [1, 1], 'full adapter teardown invokes stop exactly once per track');
+  assert.equal(hooks.bookingController.media.stream, null, 'scheduled controller discards the released stream reference');
+}
+await assertScheduledFullAdapterTeardownStopsOnce();
 
 async function assertScheduledLifecycleHeading(status, expectedHeading, sessionStatus = status) {
   const bookingId = `booking-${status}`;

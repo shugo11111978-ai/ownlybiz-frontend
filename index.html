@@ -64244,7 +64244,10 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
   function bookingIdFromUrl(){ return new URLSearchParams(window.location.search).get('booking') || ''; }
   function bookingOperationContext(bookingId,token){
     token=String(token||authToken()||'');
-    var context=captureClientContext('scheduled-booking',{accountKey:accountKeyForToken(token),bookingId:String(bookingId||bookingIdFromUrl()||'')});
+    var resolvedBookingId=String(bookingId||bookingIdFromUrl()||'');
+    var existing=bookingController&&bookingController.context;
+    if(existing&&bookingController.id===resolvedBookingId&&existing.bookingId===resolvedBookingId&&existing.token===token&&bookingContextIsCurrent(existing))return existing;
+    var context=captureClientContext('scheduled-booking',{accountKey:accountKeyForToken(token),bookingId:resolvedBookingId});
     return context.token===token?context:null;
   }
   function bookingContextIsCurrent(context){
@@ -64270,9 +64273,38 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
   }
   function stopScheduledBookingMediaStream(stream){
     if(!stream)return;
-    try{if(stream.getTracks)stream.getTracks().forEach(function(track){try{track.stop();}catch(e){}});}catch(e2){}
+    var clearedBySfu=false;
+    try{
+      if(window.ExpertSfuClient&&typeof window.ExpertSfuClient.clearPrewarmedStream==='function'){
+        clearedBySfu=!!window.ExpertSfuClient.clearPrewarmedStream('client',stream);
+      }
+    }catch(e){}
+    if(!clearedBySfu){
+      try{if(stream.getTracks)stream.getTracks().forEach(function(track){try{if(track&&track.readyState!=='ended'&&typeof track.stop==='function')track.stop();}catch(e2){}});}catch(e3){}
+    }
     if(window._obClientMediaReadyStream===stream){window._obClientMediaReadyStream=null;window._obClientMediaReadyChannel='';}
     if(window._obRtcPrewarmedStream===stream)window._obRtcPrewarmedStream=null;
+  }
+  function scheduledBookingMediaCanRebind(current,bookingId){
+    var media=bookingController.media;var previous=bookingController.context;
+    bookingId=String(bookingId||bookingIdFromUrl()||'');
+    if(!media||!previous||!current||!bookingId)return false;
+    if(previous.principal!==current.principal||previous.accountKey!==accountKeyForToken(current.token))return false;
+    if(previous.bookingId!==bookingId||bookingController.id!==bookingId||media.bookingId!==bookingId)return false;
+    var currentChannel=bookingMediaChannel(bookingController.data);
+    if(currentChannel&&currentChannel!==media.channel)return false;
+    return scheduledBookingMediaStreamReady(media.stream,media.channel);
+  }
+  function rebindScheduledBookingMedia(context){
+    var media=bookingController.media;
+    if(!media||!context||!scheduledBookingMediaStreamReady(media.stream,media.channel))return false;
+    window._obClientMediaReadyStream=media.stream;window._obClientMediaReadyChannel=media.channel;window._obRtcPrewarmedStream=media.stream;
+    try{
+      if(window.ExpertSfuClient&&typeof window.ExpertSfuClient.setPrewarmedStream==='function'&&
+        window.ExpertSfuClient.setPrewarmedStream('client',media.stream,media.channel,context)===false)return false;
+    }catch(e){return false;}
+    media.phase='ready';media.error='';media.promise=null;media.pendingJoin=null;
+    return true;
   }
   function resetScheduledBookingMedia(options){
     options=options||{};var media=bookingController.media;if(!media)return;
@@ -64283,6 +64315,9 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
   function clearBookingControllerState(options){
     options=options||{};
     if(!bookingController||typeof bookingController!=='object')return;
+    var preserveMedia=!!options.preserveScheduledMedia&&
+      bookingController.media.bookingId===bookingIdFromUrl()&&
+      scheduledBookingMediaStreamReady(bookingController.media.stream,bookingController.media.channel);
     bookingController.loadSeq+=1;bookingController.actionSeq+=1;
     if(bookingController.refreshTimer){clearTimeout(bookingController.refreshTimer);bookingController.refreshTimer=null;}
     if(bookingController.card){
@@ -64290,7 +64325,10 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
       try{if(typeof bookingController.card.unmount==='function')bookingController.card.unmount();}catch(e2){}
       try{if(typeof bookingController.card.destroy==='function')bookingController.card.destroy();}catch(e3){}
     }
-    resetScheduledBookingMedia({keepStream:!!options.keepMediaStream});
+    if(preserveMedia){
+      bookingController.media.requestSeq+=1;bookingController.media.promise=null;bookingController.media.pendingJoin=null;
+      bookingController.media.phase='ready';bookingController.media.error='';
+    }else resetScheduledBookingMedia({keepStream:!!options.keepMediaStream});
     bookingController.id='';bookingController.data=null;bookingController.lifecycle=null;bookingController.view=null;bookingController.loading=null;bookingController.error='';
     bookingController.card=null;bookingController.cardMountPromise=null;bookingController.stripe=null;bookingController.cardComplete=false;bookingController.busy=false;
     bookingController.context=null;
@@ -64359,7 +64397,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
         var data=await responseJson(response);
         if(!bookingControllerOwns(context)||bookingController.loadSeq!==loadSeq)return null;
         if(!response.ok){var error=new Error(data.error||'Could not refresh this booking.');error.code=data.code||'';throw error;}
-        bookingController.data=data;bookingController.lifecycle=bookingLifecycleState(data);
+        bookingController.data=data;bookingController.lifecycle=bookingLifecycleState(data);syncScheduledBookingMedia(data);
         bookingController.view=bookingController.lifecycle.kind==='waiting'?bookingAuthorizationView(data,Date.now()):null;bookingController.error='';
         return data;
       }).catch(function(error){
@@ -64517,7 +64555,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
         }
         media.stream=stream;media.phase='ready';media.error='';
         window._obClientMediaReadyStream=stream;window._obClientMediaReadyChannel=channel;window._obRtcPrewarmedStream=stream;
-        try{if(window.ExpertSfuClient&&typeof window.ExpertSfuClient.setPrewarmedStream==='function')window.ExpertSfuClient.setPrewarmedStream('client',stream,channel);}catch(e){}
+        try{if(window.ExpertSfuClient&&typeof window.ExpertSfuClient.setPrewarmedStream==='function')window.ExpertSfuClient.setPrewarmedStream('client',stream,channel,context);}catch(e){}
         if((bookingController.lifecycle||bookingLifecycleState(data)).kind==='active')return completeScheduledBookingJoin();
         refreshScheduledBookingMediaUi();return true;
       }catch(errorValue){
@@ -64894,7 +64932,17 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
       if(isClientIdentity(current))enhanceBookingJoinOverlay({force:true,focus:true});
       else if(transition&&isClientIdentity(transition.previous))renderBookingCard(null,{focus:true});
     },
-    credentialRotated:function(current){if(!isClientIdentity(current))return;clearBookingControllerState({removeUi:true});if(bookingIdFromUrl())enhanceBookingJoinOverlay({force:true,focus:true});}
+    credentialRotated:function(current){
+      if(!isClientIdentity(current))return;
+      var bookingId=bookingIdFromUrl();var preserveMedia=scheduledBookingMediaCanRebind(current,bookingId);
+      clearBookingControllerState({removeUi:true,preserveScheduledMedia:preserveMedia});
+      if(!bookingId)return;
+      var context=bookingOperationContext(bookingId,current.token);
+      if(!context){resetScheduledBookingMedia();return;}
+      bookingController.id=bookingId;bookingController.context=context;
+      if(preserveMedia&&!rebindScheduledBookingMedia(context))resetScheduledBookingMedia();
+      enhanceBookingJoinOverlay({force:true,focus:true});
+    }
   });
   clientContext.register('payment-authorization',{
     teardown:function(previous,transition){if(isClientIdentity(previous))resetAccountScopedPaymentState(previous,transition);},

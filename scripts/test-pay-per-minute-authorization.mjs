@@ -4,9 +4,19 @@ import vm from 'node:vm';
 
 const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 const sfuClientSource = readFileSync(new URL('../assets/sfu-client.js', import.meta.url), 'utf8');
+const authorizationPolicyMatch = html.match(/<script id="ownlybiz-session-authorization-policy-20260816">([\s\S]*?)<\/script>/);
+assert(authorizationPolicyMatch, 'one first-class session-authorization policy owner is installed');
+const authorizationPolicyEnd = authorizationPolicyMatch[1].indexOf('\n(function(){\n  if(window.__obCreditWalletV1) return;');
+assert(authorizationPolicyEnd > 0, 'session-authorization policy has one bounded source owner');
+const authorizationPolicySource = authorizationPolicyMatch[1].slice(0, authorizationPolicyEnd);
 const controllerMatch = html.match(/<script id="ownlybiz-pay-per-minute-authorization-20260814-js">([\s\S]*?)<\/script>/);
 assert(controllerMatch, 'pay-per-minute authorization controller is installed');
 const controllerSource = controllerMatch[1];
+const adminAuthorizationStart = html.indexOf('var sessionAuthorizationPolicy = window.OB_SESSION_AUTHORIZATION_POLICY;');
+const adminAuthorizationEnd = html.indexOf('\n  function platformPaymentServiceConfigHtml(){', adminAuthorizationStart);
+assert(adminAuthorizationStart >= 0 && adminAuthorizationEnd > adminAuthorizationStart,
+  'live Platform Payments authorization-setting owner is installed');
+const adminAuthorizationSource = html.slice(adminAuthorizationStart, adminAuthorizationEnd);
 const authContextStart = html.indexOf('window.obAuthPrincipalFingerprint =');
 const authContextEnd = html.indexOf('window.obPublicLoaderCanFetchProfile =', authContextStart);
 assert(authContextStart >= 0 && authContextEnd > authContextStart, 'central client identity context is installed');
@@ -66,13 +76,21 @@ assert(clientBookingHelpersStart >= 0 && clientBookingHelpersEnd > clientBooking
   'client booking lifecycle and route helpers are installed');
 const clientBookingHelpersSource = html.slice(clientBookingHelpersStart, clientBookingHelpersEnd);
 
-assert.match(html, /A temporary \$5 authorization may appear to confirm your payment method/,
-  'immediate payment page discloses the temporary authorization');
+assert.match(authorizationPolicySource, /clientPayments = config && config\.client_payments/,
+  'public display policy reads the canonical nested client-payments config');
+assert.match(authorizationPolicySource, /policyLoaded = false;[\s\S]*policyRevision = 0;/,
+  'central policy owns explicit loaded and revision state');
+assert.match(authorizationPolicySource, /session_authorization_policy_revision/,
+  'central policy adopts the server opaque authorization-policy revision');
+assert.match(authorizationPolicySource, /adoptPaymentsConfig:adoptPaymentsConfig/,
+  'fresh payments config has one canonical policy adoption path');
+assert.match(html, /data-ob-session-authorization-copy="disclosure"/,
+  'immediate payment disclosure is owned by the dynamic authorization policy');
 assert.match(html, /Any unused amount is released after the session/,
   'payment page explains release of the unused authorization');
 assert.match(html, /your bank may show it as pending briefly/,
   'payment page calmly explains that the released authorization can remain visible temporarily');
-assert.match(html, /The \$5 is a temporary authorization, not an extra session charge/,
+assert.match(authorizationPolicySource, /is a temporary authorization, not an extra session charge/,
   'payment page does not describe the hold as a charge or card test');
 assert.match(html, />Verify payment &amp; Continue|>Verify payment & Continue/,
   'primary action uses calm payment-confirmation language');
@@ -83,12 +101,40 @@ assert.match(controllerSource, /fetch\(BASE \+ '\/api\/payments\/authorize'/,
   'live flow creates a backend-owned authorization');
 assert.match(controllerSource, /var body = \{expert_id:opts\.expertId, channel:opts\.channel, authorization_request_id:flowRequestId\}/,
   'authorization request includes expert, channel, and one client UUID');
+assert.match(controllerSource, /body\.authorization_policy_revision=disclosedPolicy\.revision/,
+  'authorization request echoes only the exact revision of the policy disclosed before consent');
 assert.match(controllerSource, /body\.marketplace_expert_id = opts\.marketplaceExpertId/,
   'marketplace authorization includes the same selected mini expert');
 assert.match(controllerSource, /'live:' \+ opts\.expertId \+ ':' \+ \(opts\.marketplaceExpertId \|\| 'owner'\) \+ ':' \+ opts\.channel/,
   'authorization reuse is scoped to the selected marketplace expert');
 assert.doesNotMatch(controllerSource, /authorization_request_id:state\.requestId, amount:/,
   'frontend cannot choose or tamper with the server-controlled amount');
+assert.doesNotMatch(controllerSource, /body\.(?:amount|amount_cents|amount_authorized|amount_authorized_cents)\s*=/,
+  'authorization request remains amount-free after the setting becomes configurable');
+assert.match(controllerSource, /exactResponseCents=authorizationPolicy\.validCents\(data\.amount_authorized_cents\)/,
+  'authorization success requires the exact top-level integer-cent transaction snapshot');
+assert.match(controllerSource, /exactResponseCurrency=typeof data\.currency==='string'/,
+  'authorization success requires the exact top-level transaction currency');
+assert.doesNotMatch(controllerSource, /responseAuthorization=authorizationPolicy\.snapshotFromRecord\(data,null,null\)/,
+  'authorization success cannot silently accept a legacy dollar or fallback policy snapshot');
+assert.match(controllerSource, /amount_authorized_cents:state\.amountCents/,
+  'session handoff exposes the integer-cent transaction snapshot');
+assert.match(controllerSource, /amount_authorized:state\.amountCents \/ 100/,
+  'legacy dollar display is derived from the integer-cent snapshot');
+assert.match(controllerSource, /currency:state\.currency/,
+  'authorization snapshot preserves its server currency');
+assert.match(controllerSource, /validatedPolicy=await ensureDisclosedPolicy\(opts\.expertId,disclosedPolicy,null,true\)/,
+  'central authorization owner fails closed unless fresh policy matches disclosed consent');
+assert.match(controllerSource, /ensureDisclosedPolicy\(expertId,disclosedPolicy,config,true\)/,
+  'immediate payment compares its fresh payments-config policy with the clicked disclosure');
+assert.match(controllerSource, /ensureDisclosedPolicy\(expertId,disclosedPolicy,null,true\)/,
+  'Book Later uses the shared revision-bound consent gate with a fresh payments config');
+assert.match(controllerSource, /disclosedPolicy=authorizationPolicy\.disclosedSnapshot\(document\.getElementById\('bov-pay-explainer'\)\);\s*syncPaymentCopy\(\)/,
+  'immediate card consent captures the rendered policy before click-time rerender work');
+assert.match(controllerSource, /async function authorizeScheduledBooking\(useReplacement\)\{[\s\S]*?disclosedPolicy=authorizationPolicy\.disclosedSnapshot\(document\.getElementById\('ob-booking-auth-policy-disclosure'\)\);[\s\S]*?var data=await loadBookingAuthorizationData/,
+  'Book Later captures its rendered policy before any click continuation awaits');
+assert.match(html, /express\.on\('click',[\s\S]*?disclosedAuthorizationPolicy[\s\S]*?express\.on\('confirm'/,
+  'Express Checkout snapshots disclosure on wallet click rather than after wallet confirmation');
 assert.match(controllerSource, /status !== 'requires_capture'/,
   'frontend waits for a real manual-capture authorization');
 assert.match(controllerSource, /stripe\.confirmCardPayment\(state\.clientSecret\)/,
@@ -143,8 +189,26 @@ assert.doesNotMatch(controllerSource, /window\.fetch\s*=|fetch\s*=\s*function/,
 assert.match(controllerSource, /\/api\/sessions\/'\+encodeURIComponent\(sid\)\+'\/decline/,
   'waiting Cancel releases the pending session and its hold server-side');
 
-assert.match(html, /Save your payment method now; the \$5 authorization happens only when it is time to join/,
+assert.match(authorizationPolicySource, /kind === 'scheduled-save'/,
   'scheduled booking does not place a long-lived hold at booking time');
+assert.match(html, /id="ob-session-authorization-config-card"/,
+  'Platform Payments renders the authorization setting in its live content owner');
+assert.match(html, /id="ob-session-authorization-amount"[^>]*type="number"[^>]*inputmode="decimal"[^>]*step="0\.01"/,
+  'admin amount input supports accessible exact-cent entry');
+assert.match(html, /id="ob-session-authorization-status" role="status" aria-live="polite" aria-atomic="true"/,
+  'admin setting exposes loading, validation, and save feedback to assistive technology');
+assert.match(html, /api\('\/admin\/settings\/session-authorization'\)/,
+  'admin setting loads through its dedicated endpoint');
+assert.match(html, /api\('\/admin\/settings\/session-authorization',\{method:'PUT',body:body\}\)/,
+  'admin setting saves through its dedicated endpoint without touching wallet or Stripe secrets');
+assert.match(html, /body=\{session_authorization_amount_cents:parsed\.cents,expected_updated_at:sessionAuthorizationAdminState\.updatedAt\}/,
+  'admin always sends integer cents plus the explicit hydrated revision');
+assert.match(html, /id="ob-session-authorization-save" type="submit" disabled/,
+  'admin Save starts disabled until dedicated hydration succeeds');
+assert.doesNotMatch(html, /id="(?:bov-step-pay-badge|presess-payment)"[^>]*data-ob-session-authorization-copy/,
+  'approved transaction nodes are never registered for current-policy rerender');
+assert.doesNotMatch(html, /temporary \$5(?:\.00)? authorization|\$5(?:\.00)? authorization approved|The \$5(?:\.00)? is a temporary authorization/,
+  'authorization-facing copy has no stale hardcoded five-dollar amount');
 assert.match(controllerSource, /bookingButton\('ob-booking-auth-submit','Confirm payment & get ready','btn-primary',function\(\)\{authorizeScheduledBooking\(false\);\}\)/,
   'scheduled join action is wired with a real event listener');
 assert.match(controllerSource, /if\(opts\.bookingId\) body\.booking_id = opts\.bookingId/,
@@ -428,6 +492,7 @@ class FakeElement {
   remove() { if (this.parentNode) this.parentNode.children = this.parentNode.children.filter((child) => child !== this); this.parentNode = null; }
   setAttribute(name, value) { this.attributes[name] = String(value); if (name === 'id') this.id = value; }
   getAttribute(name) { return this.attributes[name] ?? null; }
+  removeAttribute(name) { delete this.attributes[name]; }
   addEventListener(name, handler) { this.listeners[name] = handler; }
   click() { if (this.listeners.click) return this.listeners.click({ target: this }); }
   focus() { this.focusCount += 1; }
@@ -464,7 +529,14 @@ function storage(initial = {}) {
   };
 }
 
-function createHarness({ search = '', session = {}, fetchImpl, beforeControllerSources = [] } = {}) {
+function createHarness({
+  search = '', session = {}, fetchImpl, beforeControllerSources = [],
+  policyConfig = { client_payments: {
+    session_authorization_amount_cents: 500,
+    session_authorization_currency: 'usd',
+    session_authorization_policy_revision: 'policy-default-500-v1',
+  } },
+} = {}) {
   const body = new FakeElement('body');
   const documentElement = new FakeElement('html');
   documentElement.appendChild(body);
@@ -512,6 +584,8 @@ function createHarness({ search = '', session = {}, fetchImpl, beforeControllerS
   sandbox.window.dispatchEvent = (event) => { const handler = eventHandlers[`window:${event.type}`]; if (handler) handler(event); return true; };
   sandbox.obResolveAuthToken = () => sandbox.sessionStorage.getItem('ob_t') || sandbox.localStorage.getItem('ob_t') || sandbox.localStorage.getItem('ob_client_token') || '';
   vm.createContext(sandbox);
+  new vm.Script(authorizationPolicySource, { filename: 'session-authorization-policy.js' }).runInContext(sandbox);
+  if (policyConfig !== null) sandbox.OB_SESSION_AUTHORIZATION_POLICY.adoptConfig(policyConfig);
   new vm.Script(authContextSource, { filename: 'client-identity-context.js' }).runInContext(sandbox);
   beforeControllerSources.forEach((source, index) => {
     new vm.Script(source, { filename: `before-payment-controller-${index}.js` }).runInContext(sandbox);
@@ -560,9 +634,62 @@ function attachPersistentExpertEndButton(harness, label = 'End Session') {
 // Executable XSS regression: an expert name remains a text node, never markup.
 const disclosureAssignment = html.match(/window\.obSetPayPerMinuteDisclosure = function\(element, expertName\)\{[\s\S]*?\n  \};/);
 assert(disclosureAssignment, 'safe disclosure renderer is defined');
-const disclosureDocument = { createElement: (tag) => new FakeElement(tag), createTextNode: (text) => new FakeText(text) };
-const disclosureSandbox = { window: {}, document: disclosureDocument };
+const disclosureDocument = {
+  readyState: 'complete',
+  createElement: (tag) => new FakeElement(tag),
+  createTextNode: (text) => new FakeText(text),
+  querySelectorAll: () => [],
+  addEventListener() {},
+};
+const disclosureSandbox = { document: disclosureDocument, Intl };
+disclosureSandbox.window = disclosureSandbox;
 vm.createContext(disclosureSandbox);
+new vm.Script(authorizationPolicySource, { filename: 'session-authorization-policy-unit.js' }).runInContext(disclosureSandbox);
+const policy = disclosureSandbox.OB_SESSION_AUTHORIZATION_POLICY;
+assert.deepEqual(JSON.parse(JSON.stringify(policy.state())), {
+  loaded: false, revision: 0, serverRevision: null, cents: null, currency: 'usd', source: '',
+}, 'authorization policy exposes an unloaded, revisioned state instead of a visible numeric fallback');
+assert.equal(policy.configuredCents(), null, 'the default cannot masquerade as authoritative policy before config loads');
+assert.equal(policy.formatCents(), '', 'unloaded policy cannot format a numeric fallback');
+assert.doesNotMatch(policy.copy('disclosure-body'), /\$5(?:\.00)?/,
+  'unloaded payment disclosure remains amount-neutral');
+assert.deepEqual(
+  JSON.parse(JSON.stringify(policy.parseDollars('12.34'))),
+  { ok: true, cents: 1234, dollars: '12.34' },
+  'admin dollar entry converts exactly to integer cents',
+);
+for (const invalid of ['', '0.49', '500.01', '7.001', '-2', '$7.25', '1e2']) {
+  assert.equal(policy.parseDollars(invalid).ok, false, `admin amount rejects invalid value ${JSON.stringify(invalid)}`);
+}
+assert.equal(policy.adoptConfig({ session_authorization_amount_cents: 999 }), false,
+  'a flat public-config lookalike cannot become a second frontend authority');
+assert.equal(policy.adoptConfig({ client_payments: {
+  session_authorization_amount_cents: 725,
+  session_authorization_currency: 'usd',
+} }), false, 'legacy public config without an opaque revision remains fail-closed');
+assert.equal(policy.adoptConfig({ client_payments: {
+  session_authorization_amount_cents: 725,
+  session_authorization_currency: 'usd',
+  session_authorization_policy_revision: ' policy-with-mutated-whitespace ',
+} }), false, 'frontend never trims or changes an opaque server revision');
+assert.equal(policy.adoptConfig({ client_payments: {
+  session_authorization_amount_cents: 725,
+  session_authorization_currency: 'usd',
+  session_authorization_policy_revision: 'policy-public-725-v1',
+} }), true, 'canonical nested public config updates the preflight display amount');
+assert.equal(policy.configuredCents(), 725);
+assert.equal(policy.formatCents(), '$7.25');
+assert.deepEqual(JSON.parse(JSON.stringify(policy.state())), {
+  loaded: true, revision: 1, serverRevision: 'policy-public-725-v1', cents: 725, currency: 'usd', source: 'public',
+}, 'successful public hydration records the authoritative source and advances the local revision');
+const exactTransaction = policy.snapshotFromRecord({ amount_authorized_cents: 880, currency: 'usd' }, null, null);
+policy.adoptPaymentsConfig({
+  session_authorization_amount_cents: 1000,
+  session_authorization_currency: 'usd',
+  session_authorization_policy_revision: 'policy-payments-1000-v2',
+});
+assert.equal(exactTransaction.cents, 880, 'an existing transaction snapshot does not change with the admin setting');
+assert.equal(policy.formatCents(exactTransaction.cents, exactTransaction.currency), '$8.80');
 new vm.Script(disclosureAssignment[0]).runInContext(disclosureSandbox);
 const disclosureTarget = new FakeElement('div');
 const maliciousName = '<img src=x onerror="globalThis.pwned=true">';
@@ -570,7 +697,96 @@ disclosureSandbox.window.obSetPayPerMinuteDisclosure(disclosureTarget, malicious
 assert.equal(disclosureTarget.children.length, 2, 'disclosure contains one strong element and one text node');
 assert.equal(disclosureTarget.children[1].nodeType, 3, 'untrusted expert name is rendered as text');
 assert(disclosureTarget.textContent.includes(maliciousName), 'untrusted characters remain literal text');
+assert(disclosureTarget.textContent.includes('$10.00'), 'safe disclosure renderer uses the current central policy amount');
 assert.equal(disclosureSandbox.pwned, undefined, 'untrusted disclosure text cannot execute');
+
+// Executable Admin -> Platform Payments load, validation, and exact-cent save.
+const adminBody = new FakeElement('body');
+const adminDocument = {
+  readyState: 'complete',
+  createElement: (tag) => new FakeElement(tag),
+  createTextNode: (text) => new FakeText(text),
+  getElementById(id) { return adminBody.id === id ? adminBody : adminBody.querySelector(`#${id}`); },
+  querySelectorAll: () => [],
+  addEventListener() {},
+};
+for (const [id, tag] of [
+  ['ob-session-authorization-config-card', 'section'],
+  ['ob-session-authorization-amount', 'input'],
+  ['ob-session-authorization-save', 'button'],
+  ['ob-session-authorization-reload', 'button'],
+  ['ob-session-authorization-status', 'div'],
+]) {
+  const element = new FakeElement(tag); element.id = id; adminBody.appendChild(element);
+}
+const adminRequests = [];
+const adminSandbox = { document: adminDocument, Intl, __OB_TEST_HOOKS__: true };
+adminSandbox.window = adminSandbox;
+adminSandbox.__adminApi = async (path, options = {}) => {
+  adminRequests.push({ path, options });
+  if ((options.method || 'GET') === 'GET') return {
+    success: true,
+    session_authorization_amount_cents: 725,
+    session_authorization_currency: 'usd',
+    updated_at: null,
+  };
+  return {
+    success: true,
+    session_authorization_amount_cents: options.body.session_authorization_amount_cents,
+    session_authorization_currency: 'usd',
+    updated_at: 'setting-v2',
+  };
+};
+vm.createContext(adminSandbox);
+new vm.Script(authorizationPolicySource, { filename: 'admin-session-authorization-policy.js' }).runInContext(adminSandbox);
+new vm.Script(`(function(){
+  function esc(value){return String(value == null ? '' : value);}
+  function role(){return 'admin';}
+  var readCache={};
+  function api(path,options){return window.__adminApi(path,options||{});}
+  ${adminAuthorizationSource}
+})();`, { filename: 'admin-session-authorization-setting.js' }).runInContext(adminSandbox);
+const adminHooks = adminSandbox.obSessionAuthorizationAdminTestHooks;
+assert(adminHooks, 'admin setting exposes explicit test hooks only in the executable harness');
+await adminHooks.hydrate();
+const adminAmountInput = adminDocument.getElementById('ob-session-authorization-amount');
+assert.equal(adminAmountInput.value, '7.25', 'dedicated GET renders the integer-cent value as dollars');
+assert.equal(adminDocument.getElementById('ob-session-authorization-save').disabled, false,
+  'successful dedicated hydration enables Save');
+assert.equal(adminSandbox.OB_SESSION_AUTHORIZATION_POLICY.configuredCents(), 725,
+  'admin GET updates the same central frontend owner used by public copy');
+adminAmountInput.value = '12.34';
+assert.equal(await adminHooks.save({ preventDefault() {} }), true, 'valid exact-cent admin save succeeds');
+assert.deepEqual(JSON.parse(JSON.stringify(adminRequests[1])), {
+  path: '/admin/settings/session-authorization',
+  options: {
+    method: 'PUT',
+    body: { session_authorization_amount_cents: 1234, expected_updated_at: null },
+  },
+}, 'first admin save sends explicit null as the no-row revision');
+assert.equal(adminSandbox.OB_SESSION_AUTHORIZATION_POLICY.configuredCents(), 1234,
+  'confirmed save updates the single frontend policy owner');
+assert(adminDocument.getElementById('ob-session-authorization-status').textContent.includes('Saved $12.34'),
+  'successful save produces an accessible confirmation with the exact amount');
+const requestCountBeforeInvalidSave = adminRequests.length;
+adminAmountInput.value = '12.345';
+assert.equal(await adminHooks.save({ preventDefault() {} }), false, 'fractional sub-cent admin input is rejected');
+assert.equal(adminRequests.length, requestCountBeforeInvalidSave, 'invalid admin input never reaches the backend');
+assert.equal(adminAmountInput.getAttribute('aria-invalid'), 'true', 'invalid admin input is exposed accessibly');
+adminSandbox.__adminApi = async (path, options = {}) => {
+  adminRequests.push({ path, options });
+  throw new Error('hydration offline');
+};
+assert.equal(await adminHooks.hydrate(), null, 'failed dedicated hydration is reported without a fallback value');
+assert.equal(adminHooks.state.hydrated, false, 'failed hydration clears the admin save authority');
+assert.equal(adminDocument.getElementById('ob-session-authorization-save').disabled, true,
+  'failed hydration leaves Save disabled');
+adminAmountInput.value = '20.00';
+const requestsBeforeBlockedSave = adminRequests.length;
+assert.equal(await adminHooks.save({ preventDefault() {} }), false,
+  'admin cannot save after hydration fails');
+assert.equal(adminRequests.length, requestsBeforeBlockedSave,
+  'hydration failure cannot fall through to a PUT');
 
 const authTokenFor = (id, extra = {}) => `e30.${Buffer.from(JSON.stringify({ id, role: 'client', ...extra })).toString('base64url')}.signature`;
 const clientAToken = authTokenFor('client-a');
@@ -1008,6 +1224,286 @@ assert.equal(promoHooks.state.mountSeq, mountAfterLatestPreview, 'older request 
 const baseHarness = createHarness({ session: { ob_t: clientAToken } });
 const hooks = baseHarness.sandbox.obPayPerMinuteAuthorizationTestHooks;
 assert(hooks, 'controller exposes test hooks only when explicitly enabled');
+const idlePolicyHarness = createHarness();
+idlePolicyHarness.sandbox.OB_SESSION_AUTHORIZATION_POLICY.adoptConfig({ client_payments: {
+  session_authorization_amount_cents: 725,
+  session_authorization_currency: 'usd',
+  session_authorization_policy_revision: 'policy-public-725-late',
+} });
+assert.equal(idlePolicyHarness.sandbox.OB_SESSION_AUTHORIZATION_POLICY.state().loaded, true,
+  'late public config becomes authoritative preflight policy');
+assert.equal(idlePolicyHarness.sandbox.obPayPerMinuteAuthorizationTestHooks.state.amountCents, null,
+  'an idle controller never mistakes current policy for a transaction snapshot');
+
+for (const [name, configResponse] of [
+  ['failed', { ok: false, json: async () => ({ error: 'config unavailable' }) }],
+  ['incomplete', { ok: true, json: async () => ({
+    publishable_key: 'pk_test_missing_policy',
+    session_authorization_amount_cents: 500,
+    session_authorization_currency: 'usd',
+  }) }],
+]) {
+  const policyRequests = [];
+  const failClosedHarness = createHarness({
+    session: { ob_t: clientAToken },
+    policyConfig: null,
+    fetchImpl: async (url) => {
+      policyRequests.push(String(url));
+      if (String(url).includes('/api/payments/config')) return configResponse;
+      if (String(url).endsWith('/api/payments/authorize')) {
+        return { ok: true, json: async () => ({
+          payment_intent_id: 'pi_must_not_exist', authorization_request_id: 'request_must_not_exist',
+          status: 'requires_capture', amount_authorized_cents: 500, currency: 'usd',
+        }) };
+      }
+      throw new Error(`unexpected ${name} policy request: ${url}`);
+    },
+  });
+  await assert.rejects(
+    failClosedHarness.sandbox.obAuthorizeSessionHold({ expertId: 'expert-policy-gate', channel: 'chat', token: clientAToken }),
+    /authorization amount is unavailable|config unavailable/i,
+    `${name} policy cannot fall back to the built-in default`,
+  );
+  assert.equal(policyRequests.some((url) => url.endsWith('/api/payments/authorize')), false,
+    `${name} policy blocks the authorization request`);
+  assert.deepEqual(JSON.parse(JSON.stringify(failClosedHarness.sandbox.OB_SESSION_AUTHORIZATION_POLICY.state())), {
+    loaded: false, revision: 0, serverRevision: null, cents: null, currency: 'usd', source: '',
+  }, `${name} policy leaves no stale numeric authority`);
+  assert.doesNotMatch(failClosedHarness.sandbox.OB_SESSION_AUTHORIZATION_POLICY.copy('disclosure-body'), /\$5(?:\.00)?/,
+    `${name} policy leaves disclosure amount-neutral`);
+}
+
+const staleFreshHarness = createHarness({ session: { ob_t: clientAToken } });
+await assert.rejects(
+  staleFreshHarness.sandbox.obPayPerMinuteAuthorizationTestHooks.ensureCurrentPolicy(
+    'expert-stale-policy', { publishable_key: 'pk_test_stale_without_amount' }, true,
+  ),
+  /authorization amount is unavailable/i,
+  'a stale public amount cannot validate an incomplete fresh payments config',
+);
+const staleFetchRequests = [];
+const staleFetchHarness = createHarness({
+  session: { ob_t: clientAToken },
+  fetchImpl: async (url) => {
+    staleFetchRequests.push(String(url));
+    if (String(url).includes('/api/payments/config')) return { ok: false, json: async () => ({ error: 'fresh policy offline' }) };
+    if (String(url).endsWith('/api/payments/authorize')) return { ok: true, json: async () => ({ payment_intent_id: 'pi_stale_policy_must_not_authorize' }) };
+    throw new Error(`unexpected stale policy request: ${url}`);
+  },
+});
+await assert.rejects(
+  staleFetchHarness.sandbox.obPayPerMinuteAuthorizationTestHooks.ensureCurrentPolicy('expert-stale-policy', null, true),
+  /fresh policy offline/i,
+  'a failed fresh payments-config request cannot silently accept a previously loaded public amount',
+);
+assert.equal(staleFetchRequests.some((url) => url.endsWith('/api/payments/authorize')), false,
+  'a failed fresh policy gate cannot reach authorization');
+assert.deepEqual(JSON.parse(JSON.stringify(staleFetchHarness.sandbox.OB_SESSION_AUTHORIZATION_POLICY.state())), {
+  loaded: true, revision: 1, serverRevision: 'policy-default-500-v1', cents: 500, currency: 'usd', source: 'public',
+}, 'the prior public amount remains display-only when a fresh action gate fails');
+
+function attachPolicyDisclosure(harness, id) {
+  const disclosure = new FakeElement('div');
+  disclosure.id = id;
+  disclosure.setAttribute('data-ob-session-authorization-copy', 'disclosure');
+  harness.body.appendChild(disclosure);
+  harness.sandbox.OB_SESSION_AUTHORIZATION_POLICY.render(disclosure);
+  return disclosure;
+}
+
+// A click consented to the exact revision rendered in its disclosure. If the
+// fresh preflight has already changed $5 -> $7.50, the first click only updates
+// that disclosure; a second explicit click is required to create the hold.
+const preClickRequests = [];
+let preClickAuthorizeCalls = 0;
+let preClickStripeConfirms = 0;
+const preClickHarness = createHarness({
+  session: { ob_t: clientAToken },
+  fetchImpl: async (url, init = {}) => {
+    const request = { url: String(url), body: init.body ? JSON.parse(init.body) : null };
+    preClickRequests.push(request);
+    if (request.url.includes('/api/payments/config')) return { ok: true, status: 200, json: async () => ({
+      publishable_key: 'pk_test_preclick',
+      session_authorization_amount_cents: 750,
+      session_authorization_currency: 'usd',
+      session_authorization_policy_revision: 'policy-preclick-750-v2',
+    }) };
+    if (request.url.endsWith('/api/payments/authorize')) {
+      preClickAuthorizeCalls += 1;
+      return { ok: true, status: 200, json: async () => ({
+        payment_intent_id: 'pi_preclick_second_click', authorization_request_id: request.body.authorization_request_id,
+        status: 'requires_capture', amount_authorized_cents: 750, currency: 'usd',
+      }) };
+    }
+    throw new Error(`unexpected pre-click request: ${url}`);
+  },
+});
+const preClickDisclosure = attachPolicyDisclosure(preClickHarness, 'preclick-policy-disclosure');
+const firstPreClickPolicy = preClickHarness.sandbox.OB_SESSION_AUTHORIZATION_POLICY.disclosedSnapshot(preClickDisclosure);
+assert.equal(preClickDisclosure.textContent.includes('$5.00'), true, 'the first click starts from the amount actually disclosed');
+await assert.rejects(
+  preClickHarness.sandbox.obAuthorizeSessionHold({
+    expertId: 'expert-preclick-policy', channel: 'chat', token: clientAToken,
+    stripe: { confirmCardPayment: async () => { preClickStripeConfirms += 1; } },
+    disclosedPolicy: firstPreClickPolicy,
+  }),
+  /changed[\s\S]*review[\s\S]*click again/i,
+  'a fresh pre-click policy change stops and requires new consent',
+);
+assert.equal(preClickAuthorizeCalls, 0, 'the first click cannot POST after its disclosed policy changes');
+assert.equal(preClickStripeConfirms, 0, 'the first click cannot reach Stripe confirmation');
+assert.equal(preClickDisclosure.textContent.includes('$7.50'), true, 'the stopped click rerenders the fresh amount');
+const secondPreClickPolicy = preClickHarness.sandbox.OB_SESSION_AUTHORIZATION_POLICY.disclosedSnapshot(preClickDisclosure);
+const preClickApproved = await preClickHarness.sandbox.obAuthorizeSessionHold({
+  expertId: 'expert-preclick-policy', channel: 'chat', token: clientAToken,
+  stripe: { confirmCardPayment: async () => { preClickStripeConfirms += 1; } },
+  disclosedPolicy: secondPreClickPolicy,
+});
+assert.equal(preClickApproved.amount_authorized_cents, 750, 'the second click may approve the newly disclosed amount');
+assert.equal(preClickAuthorizeCalls, 1, 'only the second explicit click creates a hold');
+const preClickAuthorizeBody = preClickRequests.find((request) => request.url.endsWith('/api/payments/authorize')).body;
+assert.equal(preClickAuthorizeBody.authorization_policy_revision, 'policy-preclick-750-v2',
+  'the POST echoes the exact disclosed opaque revision');
+for (const amountKey of ['amount', 'amount_cents', 'amount_authorized', 'amount_authorized_cents', 'session_authorization_amount_cents']) {
+  assert.equal(Object.hasOwn(preClickAuthorizeBody, amountKey), false, `authorization request never sends ${amountKey}`);
+}
+
+// If the policy changes after the fresh GET but before POST, backend 409 creates
+// no hold. The client refreshes $50 copy and requires a second click.
+let postRaceConfigCalls = 0;
+let postRaceAuthorizeCalls = 0;
+let postRaceStripeConfirms = 0;
+let postRaceCancelCalls = 0;
+const postRaceBodies = [];
+const postRaceHarness = createHarness({
+  session: { ob_t: clientAToken },
+  policyConfig: { client_payments: {
+    session_authorization_amount_cents: 750,
+    session_authorization_currency: 'usd',
+    session_authorization_policy_revision: 'policy-post-race-750-v1',
+  } },
+  fetchImpl: async (url, init = {}) => {
+    const requestUrl = String(url);
+    if (requestUrl.includes('/api/payments/config')) {
+      postRaceConfigCalls += 1;
+      const changed = postRaceConfigCalls >= 2;
+      return { ok: true, status: 200, json: async () => ({
+        publishable_key: 'pk_test_post_race',
+        session_authorization_amount_cents: changed ? 5000 : 750,
+        session_authorization_currency: 'usd',
+        session_authorization_policy_revision: changed ? 'policy-post-race-5000-v2' : 'policy-post-race-750-v1',
+      }) };
+    }
+    if (requestUrl.endsWith('/api/payments/authorize')) {
+      const body = JSON.parse(init.body); postRaceBodies.push(body); postRaceAuthorizeCalls += 1;
+      if (postRaceAuthorizeCalls === 1) return { ok: false, status: 409, json: async () => ({
+        code: 'session_authorization_policy_refresh_required', error: 'Authorization policy changed',
+      }) };
+      return { ok: true, status: 200, json: async () => ({
+        payment_intent_id: 'pi_post_race_second_click', authorization_request_id: body.authorization_request_id,
+        status: 'requires_capture', amount_authorized_cents: 5000, currency: 'usd',
+      }) };
+    }
+    if (requestUrl.includes('/api/payments/authorize/cancel')) {
+      postRaceCancelCalls += 1;
+      return { ok: true, status: 200, json: async () => ({ released: true }) };
+    }
+    throw new Error(`unexpected post-race request: ${url}`);
+  },
+});
+const postRaceDisclosure = attachPolicyDisclosure(postRaceHarness, 'post-race-policy-disclosure');
+await assert.rejects(
+  postRaceHarness.sandbox.obAuthorizeSessionHold({
+    expertId: 'expert-post-race', channel: 'chat', token: clientAToken,
+    stripe: { confirmCardPayment: async () => { postRaceStripeConfirms += 1; } },
+    disclosedPolicy: postRaceHarness.sandbox.OB_SESSION_AUTHORIZATION_POLICY.disclosedSnapshot(postRaceDisclosure),
+  }),
+  /changed[\s\S]*review[\s\S]*click again/i,
+  'backend stale-policy 409 refreshes the disclosure and stops',
+);
+assert.equal(postRaceAuthorizeCalls, 1, 'the stale first click sends one revision-guarded POST');
+assert.equal(postRaceCancelCalls, 0, 'backend 409 creates no hold that needs release');
+assert.equal(postRaceStripeConfirms, 0, 'stale-policy 409 never reaches Stripe confirmation');
+assert.equal(postRaceHarness.sandbox.obPayPerMinuteAuthorizationTestHooks.state.paymentIntentId, '',
+  'stale-policy 409 leaves no local hold ownership');
+assert.equal(postRaceDisclosure.textContent.includes('$50.00'), true, '409 refresh rerenders the new $50 amount');
+assert.equal(postRaceBodies[0].authorization_policy_revision, 'policy-post-race-750-v1');
+const postRaceApproved = await postRaceHarness.sandbox.obAuthorizeSessionHold({
+  expertId: 'expert-post-race', channel: 'chat', token: clientAToken,
+  stripe: { confirmCardPayment: async () => { postRaceStripeConfirms += 1; } },
+  disclosedPolicy: postRaceHarness.sandbox.OB_SESSION_AUTHORIZATION_POLICY.disclosedSnapshot(postRaceDisclosure),
+});
+assert.equal(postRaceApproved.amount_authorized_cents, 5000, 'second click approves the newly disclosed $50 snapshot');
+assert.equal(postRaceAuthorizeCalls, 2, 'a second explicit click is required after 409');
+assert.equal(postRaceBodies[1].authorization_policy_revision, 'policy-post-race-5000-v2');
+
+// Defensive invariant: even a malformed success cannot be Stripe-confirmed if
+// its durable snapshot differs from consent. Release it, refresh, and stop.
+let mismatchConfigCalls = 0;
+let mismatchAuthorizeCalls = 0;
+let mismatchStripeConfirms = 0;
+let mismatchHoldOpen = false;
+let mismatchCancelCalls = 0;
+const mismatchBodies = [];
+const mismatchHarness = createHarness({
+  session: { ob_t: clientAToken },
+  policyConfig: { client_payments: {
+    session_authorization_amount_cents: 750,
+    session_authorization_currency: 'usd',
+    session_authorization_policy_revision: 'policy-mismatch-750-v1',
+  } },
+  fetchImpl: async (url, init = {}) => {
+    const requestUrl = String(url);
+    if (requestUrl.includes('/api/payments/config')) {
+      mismatchConfigCalls += 1;
+      const changed = mismatchConfigCalls >= 2;
+      return { ok: true, status: 200, json: async () => ({
+        publishable_key: 'pk_test_snapshot_mismatch',
+        session_authorization_amount_cents: changed ? 5000 : 750,
+        session_authorization_currency: 'usd',
+        session_authorization_policy_revision: changed ? 'policy-mismatch-5000-v2' : 'policy-mismatch-750-v1',
+      }) };
+    }
+    if (requestUrl.endsWith('/api/payments/authorize')) {
+      const body = JSON.parse(init.body); mismatchBodies.push(body); mismatchAuthorizeCalls += 1; mismatchHoldOpen = true;
+      return { ok: true, status: 200, json: async () => ({
+        payment_intent_id: `pi_snapshot_mismatch_${mismatchAuthorizeCalls}`,
+        authorization_request_id: body.authorization_request_id,
+        client_secret: 'pi_snapshot_mismatch_secret',
+        status: mismatchAuthorizeCalls === 1 ? 'requires_action' : 'requires_capture',
+        amount_authorized_cents: 5000,
+        currency: 'usd',
+      }) };
+    }
+    if (requestUrl.includes('/api/payments/authorize/cancel')) {
+      mismatchCancelCalls += 1; mismatchHoldOpen = false;
+      return { ok: true, status: 200, json: async () => ({ released: true }) };
+    }
+    throw new Error(`unexpected snapshot-mismatch request: ${url}`);
+  },
+});
+const mismatchDisclosure = attachPolicyDisclosure(mismatchHarness, 'mismatch-policy-disclosure');
+await assert.rejects(
+  mismatchHarness.sandbox.obAuthorizeSessionHold({
+    expertId: 'expert-snapshot-mismatch', channel: 'chat', token: clientAToken,
+    stripe: { confirmCardPayment: async () => { mismatchStripeConfirms += 1; return { paymentIntent: { status: 'requires_capture' } }; } },
+    disclosedPolicy: mismatchHarness.sandbox.OB_SESSION_AUTHORIZATION_POLICY.disclosedSnapshot(mismatchDisclosure),
+  }),
+  /changed[\s\S]*review[\s\S]*click again/i,
+  'mismatched success snapshot is released and requires renewed consent',
+);
+assert.equal(mismatchStripeConfirms, 0, 'snapshot mismatch is detected before Stripe confirmation');
+assert.equal(mismatchCancelCalls, 1, 'the inconsistent unbound hold is explicitly released');
+assert.equal(mismatchHoldOpen, false, 'no inconsistent hold leaks after the stopped click');
+assert.equal(mismatchDisclosure.textContent.includes('$50.00'), true, 'defensive mismatch refreshes the disclosed amount');
+const mismatchApproved = await mismatchHarness.sandbox.obAuthorizeSessionHold({
+  expertId: 'expert-snapshot-mismatch', channel: 'chat', token: clientAToken,
+  stripe: { confirmCardPayment: async () => { mismatchStripeConfirms += 1; } },
+  disclosedPolicy: mismatchHarness.sandbox.OB_SESSION_AUTHORIZATION_POLICY.disclosedSnapshot(mismatchDisclosure),
+});
+assert.equal(mismatchApproved.amount_authorized_cents, 5000, 'second click can approve the matching refreshed snapshot');
+assert.equal(mismatchBodies[0].authorization_policy_revision, 'policy-mismatch-750-v1');
+assert.equal(mismatchBodies[1].authorization_policy_revision, 'policy-mismatch-5000-v2');
 
 // RFC 4122 fallback UUID, including version and variant bits.
 const id = hooks.uuid();
@@ -1093,7 +1589,7 @@ for (const elementId of ['bov-pay-btn', 'bov-step-pay-badge', 'bov-step-conn-bad
 let launchCount = 0;
 baseHarness.sandbox._bovGoStep = () => {};
 baseHarness.sandbox._launchSession = () => { launchCount += 1; };
-hooks.state.phase = 'ready'; hooks.state.abandoned = false;
+hooks.state.phase = 'ready'; hooks.state.abandoned = false; hooks.state.amountCents = 500; hooks.state.currency = 'usd'; hooks.state.hasAmountSnapshot = true;
 hooks.completeMainAuthorizationUi();
 hooks.state.abandoned = true;
 hooks.cancelPendingMainLaunch();
@@ -1153,10 +1649,12 @@ assert.equal(mismatchedOwnerHarness.sandbox.sessionStorage.getItem('ob_live_auth
 
 assert.equal(hooks.expertBillingLabel({ payment_mode: 'prepaid' }, 0), 'Prepaid credit selected');
 assert.equal(hooks.expertBillingLabel({ credit_mode: 'prepaid' }, 1), 'Client is in free intro time · prepaid credit selected');
-assert.doesNotMatch(hooks.expertBillingLabel({ payment_mode: 'prepaid' }, 0), /\$5 authorization/,
+assert.doesNotMatch(hooks.expertBillingLabel({ payment_mode: 'prepaid' }, 0), /authorization approved/,
   'expert prepaid label never claims a card authorization');
-assert.equal(hooks.expertBillingLabel({ payment_authorization_id: id }, 0), '$5 authorization approved',
-  'expert billing reads the server authorization record without relying on a legacy payment_method field');
+assert.equal(hooks.expertBillingLabel({ payment_authorization_id: id }, 0), 'Authorization approved',
+  'expert billing stays amount-neutral when a legacy session has no durable amount snapshot');
+assert.equal(hooks.expertBillingLabel({ payment_authorization_id: id, amount_authorized_cents: 725, currency: 'usd' }, 0), '$7.25 authorization approved',
+  'expert billing reads the durable server amount without relying on a legacy payment_method field');
 
 // Saved-card readiness cache and Stripe mode are scoped to the selected expert.
 const statusRequests = [];
@@ -1195,6 +1693,9 @@ identityHooks.state.context = 'live:expert-account-isolation:owner:chat';
 identityHooks.state.paymentIntentId = 'pi_client_a';
 identityHooks.state.requestId = id;
 identityHooks.state.accountKey = clientAKey;
+identityHooks.state.amountCents = 500;
+identityHooks.state.currency = 'usd';
+identityHooks.state.hasAmountSnapshot = true;
 identityHarness.sandbox.sessionStorage.setItem('ob_live_authorization', JSON.stringify({ accountKey: clientAKey }));
 let clearedCardElements = 0;
 identityHarness.sandbox._bovPaymentMethodId = 'pm_client_a';
@@ -1397,6 +1898,9 @@ rotationHooks.state.context = 'live:expert-rotation:owner:chat';
 rotationHooks.state.paymentIntentId = 'pi_same_principal';
 rotationHooks.state.requestId = 'request_same_principal';
 rotationHooks.state.accountKey = clientAKey;
+rotationHooks.state.amountCents = 500;
+rotationHooks.state.currency = 'usd';
+rotationHooks.state.hasAmountSnapshot = true;
 rotationHarness.sandbox._obActiveSessId = 'session-same-principal';
 rotationHarness.sandbox._sessId = 'session-same-principal';
 rotationHarness.sandbox._obClientLiveSessionToken = clientAToken;
@@ -1428,9 +1932,22 @@ assert.equal(rotationRequests.some((request) => request.url.includes('/authorize
 // attached to the same stable principal and never abandons or duplicates the approved hold.
 let resolveRotatingAuthorization;
 const rotatingAuthorizationRequests = [];
-const rotatingAuthorizationHarness = createHarness({ session: { ob_t: clientAToken }, fetchImpl: (url, init = {}) => {
+const rotatingAuthorizationHarness = createHarness({
+  session: { ob_t: clientAToken },
+  policyConfig: { client_payments: {
+    session_authorization_amount_cents: 725,
+    session_authorization_currency: 'usd',
+    session_authorization_policy_revision: 'policy-rotation-725-v1',
+  } },
+  fetchImpl: (url, init = {}) => {
   const request = { url: String(url), authorization: init.headers?.Authorization || '', body: init.body ? JSON.parse(init.body) : null };
   rotatingAuthorizationRequests.push(request);
+  if (request.url.includes('/api/payments/config')) {
+    return Promise.resolve({ ok: true, status: 200, json: async () => ({
+      publishable_key: 'pk_test_rotation', session_authorization_amount_cents: 725,
+      session_authorization_currency: 'usd', session_authorization_policy_revision: 'policy-rotation-725-v1',
+    }) });
+  }
   if (request.url.endsWith('/api/payments/authorize')) {
     return new Promise((resolve) => { resolveRotatingAuthorization = resolve; });
   }
@@ -1445,25 +1962,58 @@ const rotatingAuthorizationHarness = createHarness({ session: { ob_t: clientATok
 const rotatingAuthorizationHooks = rotatingAuthorizationHarness.sandbox.obPayPerMinuteAuthorizationTestHooks;
 const rotatingAuthorizationPromise = rotatingAuthorizationHarness.sandbox.obAuthorizeSessionHold({
   expertId: 'expert-rotation-in-flight', channel: 'chat', token: clientAToken,
+  disclosedPolicy: rotatingAuthorizationHarness.sandbox.OB_SESSION_AUTHORIZATION_POLICY.consentSnapshot(),
 });
 await settleAsync();
 assert(resolveRotatingAuthorization, 'authorization request is pending before the credential rotates');
 await changeAuth(rotatingAuthorizationHarness, clientARotatedToken);
 resolveRotatingAuthorization({ ok: true, json: async () => ({
   payment_intent_id: 'pi_rotation_in_flight', authorization_request_id: 'request_rotation_in_flight',
-  status: 'requires_capture', amount_authorized: 5,
+  status: 'requires_capture', amount_authorized_cents: 725, amount_authorized: 7.25, currency: 'usd',
 }) });
 const rotatingAuthorization = await rotatingAuthorizationPromise;
 assert.equal(rotatingAuthorization.payment_intent_id, 'pi_rotation_in_flight',
   'same-principal rotation accepts the already-approved in-flight authorization');
 assert.equal(rotatingAuthorizationHooks.state.phase, 'ready',
   'same-principal rotation leaves the approved hold ready for the session request');
+assert.equal(rotatingAuthorization.amount_authorized_cents, 725,
+  'authorization result exposes the exact server-returned integer cents');
+assert.equal(rotatingAuthorization.amount_authorized, 7.25,
+  'dollar display is derived from the transaction cents snapshot');
+assert.equal(rotatingAuthorization.currency, 'usd');
+assert.equal(rotatingAuthorizationHooks.state.amountCents, 725,
+  'live controller retains the server transaction amount instead of current config');
 assert.equal(rotatingAuthorizationRequests.filter((request) => request.url.endsWith('/api/payments/authorize')).length, 1,
   'same-principal rotation does not create a duplicate authorization');
 assert.equal(rotatingAuthorizationRequests.some((request) => request.url.includes('/api/payments/authorize/cancel')), false,
   'same-principal rotation does not release the approved in-flight hold');
 assert.equal(rotatingAuthorizationRequests.find((request) => request.url.endsWith('/api/payments/authorize')).authorization, `Bearer ${clientAToken}`,
   'the in-flight authorization uses its immutable originating credential throughout');
+assert.equal(Object.hasOwn(rotatingAuthorizationRequests.find((request) => request.url.endsWith('/api/payments/authorize')).body, 'amount'), false,
+  'the real authorization request body contains no client-selected dollar amount');
+assert.equal(Object.hasOwn(rotatingAuthorizationRequests.find((request) => request.url.endsWith('/api/payments/authorize')).body, 'amount_cents'), false,
+  'the real authorization request body contains no client-selected cents amount');
+const immutableApprovedButton = new FakeElement('button'); immutableApprovedButton.id = 'bov-pay-btn';
+const immutableApprovedBadge = new FakeElement('div'); immutableApprovedBadge.id = 'bov-step-pay-badge';
+immutableApprovedButton.setAttribute('data-ob-session-authorization-copy', 'disclosure');
+immutableApprovedBadge.setAttribute('data-ob-session-authorization-copy', 'disclosure');
+rotatingAuthorizationHarness.body.append(immutableApprovedButton, immutableApprovedBadge);
+rotatingAuthorizationHooks.completeMainAuthorizationUi();
+assert.equal(immutableApprovedBadge.textContent, '✓ $7.25 authorization approved',
+  'approved UI renders the immutable transaction snapshot');
+assert.equal(immutableApprovedBadge.getAttribute('data-ob-session-authorization-copy'), null,
+  'approved UI is not registered for current-policy rendering');
+assert.equal(immutableApprovedButton.getAttribute('data-ob-session-authorization-copy'), null,
+  'approved action copy is detached from current-policy rendering');
+rotatingAuthorizationHarness.sandbox.OB_SESSION_AUTHORIZATION_POLICY.setConfigured(1000, 'usd');
+assert.equal(rotatingAuthorizationHooks.state.amountCents, 725,
+  'changing configured policy cannot mutate an already-approved hold');
+assert.equal(immutableApprovedBadge.textContent, '✓ $7.25 authorization approved',
+  'post-authorization policy changes cannot rewrite an approved transaction node');
+assert.equal(rotatingAuthorizationHarness.sandbox.obCreditPreSessionPaymentLabel(0), '$7.25 temporary authorization approved',
+  'post-authorization pre-session copy remains bound to the same immutable snapshot');
+assert.equal(rotatingAuthorizationHarness.sandbox.obGetSessionAuthorizationForRequest('expert-rotation-in-flight', 'chat').amount_authorized_cents, 725,
+  'session handoff continues to use the immutable transaction snapshot after a policy change');
 
 // BOV/BFL Express Checkout mounts and confirm operations are owned by one immutable client context.
 const walletRequests = [];
@@ -3206,6 +3756,9 @@ const liveRequestId = 'request-client-a';
 liveRaceHooks.state.phase = 'binding';
 liveRaceHooks.state.requestId = liveRequestId;
 liveRaceHooks.state.accountKey = clientAKey;
+liveRaceHooks.state.amountCents = 500;
+liveRaceHooks.state.currency = 'usd';
+liveRaceHooks.state.hasAmountSnapshot = true;
 assert.equal(liveRaceHarness.sandbox.obClientSessionRequestContinuationAllowed('minute', liveRequestId, clientAToken), true,
   'the originating client can continue its card-backed live request');
 assert.equal(liveRaceHarness.sandbox.obClientSessionRequestContinuationAllowed('prepaid', '', clientAToken), true,
@@ -3217,6 +3770,9 @@ await changeAuth(liveRaceHarness, clientBToken);
 liveRaceHooks.state.phase = 'binding';
 liveRaceHooks.state.requestId = liveRequestId;
 liveRaceHooks.state.accountKey = clientBKey;
+liveRaceHooks.state.amountCents = 500;
+liveRaceHooks.state.currency = 'usd';
+liveRaceHooks.state.hasAmountSnapshot = true;
 let lateSessionInstalls = 0;
 let lateSessionErrors = 0;
 const applyLateSessionResponse = (mode, kind) => {
@@ -3298,6 +3854,8 @@ const scheduledData = (owner, ready = true) => ({
   authorization_ready: ready,
   authorization_available: true,
   authorization_expires_at: Math.floor((Date.now() + 5 * 60_000) / 1000),
+  amount_authorized_cents: ready ? 725 : null,
+  currency: ready ? 'usd' : null,
   booking: { id: 'booking-account-isolation', expert_id: 'expert-scheduled', channel: 'chat', payment_mode: 'minute', booking_type: 'permin' },
 });
 
@@ -3409,9 +3967,16 @@ async function assertScheduledMediaSurvivesOwnedRefresh(channel) {
           json: async () => ({
             status: 'waiting', authorization_required: true, authorization_ready: authorizationReady, authorization_available: true,
             authorization_expires_at: Math.floor((Date.now() + 5 * 60_000) / 1000),
+            amount_authorized_cents: authorizationReady ? 500 : null, currency: authorizationReady ? 'usd' : null,
             booking: { id: bookingId, expert_id: 'expert-owned-refresh', channel, status: 'confirmed', payment_mode: 'minute' },
           }),
         });
+      }
+      if(String(url).includes('/api/payments/config')) {
+        return Promise.resolve({ ok: true, json: async () => ({
+          publishable_key: 'pk_test_owned_refresh', session_authorization_amount_cents: 500, session_authorization_currency: 'usd',
+          session_authorization_policy_revision: 'policy-default-500-v1',
+        }) });
       }
       if(String(url).includes('/api/payments/methods/status')) {
         return Promise.resolve({ ok: true, json: async () => ({ has_saved_payment_method: true, mode: 'test' }) });
@@ -3420,7 +3985,7 @@ async function assertScheduledMediaSurvivesOwnedRefresh(channel) {
         return Promise.resolve({ ok: true, json: async () => ({
           payment_intent_id: `pi-owned-refresh-${channel}`,
           authorization_request_id: `request-owned-refresh-${channel}`,
-          status: 'requires_capture', amount_authorized: 5,
+          status: 'requires_capture', amount_authorized_cents: 500, amount_authorized: 5, currency: 'usd',
         }) });
       }
       if(String(url).includes(`/api/bookings/${bookingId}/authorize`)) {
@@ -3767,7 +4332,7 @@ assert.equal(scheduledJoinHarness.document.getElementById('ob-booking-auth-headi
 await changeAuth(scheduledJoinHarness, clientBToken);
 assert.equal(scheduledJoinHooks.bookingController.context.accountKey, clientBKey, 'scheduled controller is rebound to client B');
 assert.equal(scheduledJoinHooks.bookingController.data.owner, 'client-b', 'client B receives a fresh scheduled readiness response');
-assert.equal(scheduledJoinHarness.document.getElementById('ob-booking-auth-heading').textContent, '✓ $5 temporary authorization approved',
+assert.equal(scheduledJoinHarness.document.getElementById('ob-booking-auth-heading').textContent, '✓ $7.25 temporary authorization approved',
   'signup/login immediately re-renders client B scheduled payment readiness');
 
 resolveScheduledAJoin({
@@ -3782,7 +4347,7 @@ resolveScheduledAJoin({
 await lateScheduledAJoin;
 assert.equal(scheduledJoinHooks.bookingController.context.accountKey, clientBKey, 'late client-A join response cannot reclaim the scheduled controller');
 assert.equal(scheduledJoinHooks.bookingController.data.owner, 'client-b', 'late client-A join data cannot replace client B data');
-assert.equal(scheduledJoinHarness.document.getElementById('ob-booking-auth-heading').textContent, '✓ $5 temporary authorization approved',
+assert.equal(scheduledJoinHarness.document.getElementById('ob-booking-auth-heading').textContent, '✓ $7.25 temporary authorization approved',
   'late client-A join response cannot replace client B scheduled UI');
 assert.equal(staleScheduledActiveJoins, 0,
   'a late active-session response for client A cannot route client B into A\'s session');
@@ -3974,10 +4539,17 @@ const scheduledBindHarness = createHarness({
       const owner = request.authorization === `Bearer ${clientAToken}` ? 'client-a' : 'client-b';
       return Promise.resolve({ ok: true, json: async () => scheduledData(owner, owner === 'client-b') });
     }
+    if (request.url.includes('/api/payments/config')) {
+      return Promise.resolve({ ok: true, json: async () => ({
+        publishable_key: 'pk_test_account_isolation', session_authorization_amount_cents: 500, session_authorization_currency: 'usd',
+        session_authorization_policy_revision: 'policy-default-500-v1',
+      }) });
+    }
     if (request.url.includes('/api/payments/authorize/cancel')) return Promise.resolve({ ok: true, json: async () => ({ released: true }) });
     if (request.url.endsWith('/api/payments/authorize')) {
       return Promise.resolve({ ok: true, json: async () => ({
-        payment_intent_id: 'pi-client-a', authorization_request_id: 'authorization-client-a', status: 'requires_capture', amount_authorized: 5,
+        payment_intent_id: 'pi-client-a', authorization_request_id: 'authorization-client-a', status: 'requires_capture',
+        amount_authorized_cents: 500, amount_authorized: 5, currency: 'usd',
       }) });
     }
     if (request.url.includes('/api/bookings/booking-account-isolation/authorize')) {
@@ -3989,6 +4561,7 @@ const scheduledBindHarness = createHarness({
 const scheduledBindOverlay = new FakeElement('div'); scheduledBindOverlay.id = 'booking-join-overlay';
 const scheduledBindPanel = new FakeElement('div'); scheduledBindPanel.appendChild(new FakeElement('div')); scheduledBindOverlay.appendChild(scheduledBindPanel); scheduledBindHarness.body.appendChild(scheduledBindOverlay);
 const scheduledBindHooks = scheduledBindHarness.sandbox.obPayPerMinuteAuthorizationTestHooks;
+await scheduledBindHooks.enhanceBookingJoinOverlay({ force: true });
 const scheduledBindAction = scheduledBindHooks.authorizeScheduledBooking(false);
 for (let turn = 0; turn < 30 && !resolveScheduledBind; turn += 1) await Promise.resolve();
 assert(resolveScheduledBind, 'client A scheduled bind is in flight before the identity changes');
@@ -4034,6 +4607,12 @@ const rotatedScheduledHarness = createHarness({
     if (request.url.includes('/api/bookings/booking-rotation-bind/join')) {
       return Promise.resolve({ ok: true, json: async () => rotatedScheduledData });
     }
+    if (request.url.includes('/api/payments/config')) {
+      return Promise.resolve({ ok: true, json: async () => ({
+        publishable_key: 'pk_test_rotation_bind', session_authorization_amount_cents: 500, session_authorization_currency: 'usd',
+        session_authorization_policy_revision: 'policy-default-500-v1',
+      }) });
+    }
     if (request.url.includes('/api/payments/methods/status')) {
       return Promise.resolve({ ok: true, json: async () => ({ has_saved_payment_method: false, mode: 'test' }) });
     }
@@ -4046,14 +4625,18 @@ const rotatedScheduledHarness = createHarness({
           payment_intent_id: 'pi-scheduled-rotation',
           authorization_request_id: 'authorization-scheduled-rotation',
           status: 'requires_capture',
+          amount_authorized_cents: 500,
           amount_authorized: 5,
+          currency: 'usd',
         }) });
       }
       return Promise.resolve({ ok: true, json: async () => ({
         payment_intent_id: 'pi-immediate-after-bind',
         authorization_request_id: 'authorization-immediate-after-bind',
         status: 'requires_capture',
+        amount_authorized_cents: 500,
         amount_authorized: 5,
+        currency: 'usd',
       }) });
     }
     if (request.url.includes('/api/bookings/booking-rotation-bind/authorize')) {
@@ -4065,12 +4648,19 @@ const rotatedScheduledHarness = createHarness({
 const rotatedScheduledOverlay = new FakeElement('div'); rotatedScheduledOverlay.id = 'booking-join-overlay';
 const rotatedScheduledPanel = new FakeElement('div'); rotatedScheduledPanel.appendChild(new FakeElement('div')); rotatedScheduledOverlay.appendChild(rotatedScheduledPanel); rotatedScheduledHarness.body.appendChild(rotatedScheduledOverlay);
 const rotatedScheduledHooks = rotatedScheduledHarness.sandbox.obPayPerMinuteAuthorizationTestHooks;
+await rotatedScheduledHooks.enhanceBookingJoinOverlay({ force: true });
 const rotatedScheduledAction = rotatedScheduledHooks.authorizeScheduledBooking(false);
 for (let turn = 0; turn < 30 && !resolveRotatedScheduledBind; turn += 1) await Promise.resolve();
 assert(resolveRotatedScheduledBind, 'scheduled bind is pending before the same-principal credential rotates');
 const originatingScheduledContext = rotatedScheduledHooks.bookingController.context;
 assert.equal(rotatedScheduledHooks.state.phase, 'ready', 'the scheduled hold is locally ready while server binding is pending');
 assert.equal(rotatedScheduledHooks.state.paymentIntentId, 'pi-scheduled-rotation', 'the pending bind owns the scheduled PaymentIntent');
+const rotatedScheduledHoldPost = rotatedScheduledRequests.find((request) => request.url.endsWith('/api/payments/authorize') && request.body?.booking_id === 'booking-rotation-bind');
+assert.equal(rotatedScheduledHoldPost.body.authorization_policy_revision, 'policy-default-500-v1',
+  'Book Later echoes the exact revision displayed before its click');
+for (const amountKey of ['amount', 'amount_cents', 'amount_authorized', 'amount_authorized_cents', 'session_authorization_amount_cents']) {
+  assert.equal(Object.hasOwn(rotatedScheduledHoldPost.body, amountKey), false, `Book Later never sends ${amountKey}`);
+}
 assert(rotatedScheduledHarness.sandbox.sessionStorage.getItem('ob_live_authorization')?.includes('pi-scheduled-rotation'),
   'the pending scheduled hold is persisted before server binding succeeds');
 
@@ -4089,6 +4679,7 @@ assert.equal(rotatedScheduledRequests.some((request) => request.url.includes('/a
 
 const immediateAfterBind = await rotatedScheduledHarness.sandbox.obAuthorizeSessionHold({
   expertId: 'expert-immediate-after-bind', channel: 'chat', token: clientARotatedToken,
+  disclosedPolicy: rotatedScheduledHarness.sandbox.OB_SESSION_AUTHORIZATION_POLICY.consentSnapshot(),
 });
 assert.equal(immediateAfterBind.payment_intent_id, 'pi-immediate-after-bind',
   'the rotated principal can immediately create an unrelated live-session hold');
@@ -4147,7 +4738,12 @@ const firstDuplicateMount = duplicateMountHooks.mountBookingReplacementCard();
 const secondDuplicateMount = duplicateMountHooks.mountBookingReplacementCard();
 assert.equal(duplicateMountConfigRequests, 1, 'duplicate replacement-card actions share one in-flight config request');
 assert(resolveDuplicateMountConfig, 'the shared Stripe config request is pending before either mount completes');
-resolveDuplicateMountConfig({ ok: true, json: async () => ({ publishable_key: 'pk_test_duplicate_mount' }) });
+resolveDuplicateMountConfig({ ok: true, json: async () => ({
+  publishable_key: 'pk_test_duplicate_mount',
+  session_authorization_amount_cents: 500,
+  session_authorization_currency: 'usd',
+  session_authorization_policy_revision: 'policy-default-500-v1',
+}) });
 await Promise.all([firstDuplicateMount, secondDuplicateMount]);
 assert.equal(duplicateCardCreates, 1, 'duplicate replacement-card actions create exactly one CardElement');
 assert.equal(duplicateCardMounts, 1, 'the one replacement CardElement is mounted exactly once');
@@ -4190,9 +4786,11 @@ await assertAuthoritativeScheduledStateSkipsHold({
     authorization_ready: true,
     authorization_available: true,
     authorization_expires_at: Math.floor((Date.now() + 5 * 60_000) / 1000),
+    amount_authorized_cents: 725,
+    currency: 'usd',
     booking: { id: 'booking-already-ready', expert_id: 'expert-scheduled', channel: 'chat', payment_mode: 'minute', booking_type: 'permin' },
   },
-  expectedHeading: '✓ $5 temporary authorization approved',
+  expectedHeading: '✓ $7.25 temporary authorization approved',
   message: 'a stale payment button cannot create a second hold after the fresh join response is already ready',
 });
 

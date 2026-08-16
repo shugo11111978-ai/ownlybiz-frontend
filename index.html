@@ -259,7 +259,241 @@
   }, 400);
 })();
 </script>
-<script>
+<script id="ownlybiz-session-authorization-policy-20260816">
+(function(){
+  'use strict';
+  if(window.OB_SESSION_AUTHORIZATION_POLICY) return;
+
+  var DEFAULT_CENTS = 500;
+  var MIN_CENTS = 50;
+  var MAX_CENTS = 50000;
+  var DEFAULT_CURRENCY = 'usd';
+  var configuredCents = DEFAULT_CENTS;
+  var configuredCurrency = DEFAULT_CURRENCY;
+  var policyLoaded = false;
+  var policyRevision = 0;
+  var policyServerRevision = null;
+  var policySource = '';
+  var subscribers = [];
+  var disclosureSnapshots = new WeakMap();
+  var disclosureElements = [];
+
+  function validCents(value){
+    var cents = Number(value);
+    return Number.isInteger(cents) && cents >= MIN_CENTS && cents <= MAX_CENTS ? cents : null;
+  }
+  function normalizeCurrency(value, fallback){
+    var currency = String(value || fallback || DEFAULT_CURRENCY).trim().toLowerCase();
+    return /^[a-z]{3}$/.test(currency) ? currency : String(fallback || DEFAULT_CURRENCY).toLowerCase();
+  }
+  function validServerRevision(value){
+    return typeof value === 'string' && value.length > 0 && value.trim() === value ? value : null;
+  }
+  function consentSnapshot(){
+    var revision=validServerRevision(policyServerRevision);
+    if(!policyLoaded||!revision||(policySource!=='public'&&policySource!=='payments'))return null;
+    return {cents:configuredCents,currency:configuredCurrency,revision:revision};
+  }
+  function rememberDisclosure(element,snapshot){
+    if(!element)return null;
+    if(disclosureElements.indexOf(element)<0)disclosureElements.push(element);
+    if(!snapshot){disclosureSnapshots.delete(element);return null;}
+    var stored={cents:snapshot.cents,currency:snapshot.currency,revision:snapshot.revision};
+    disclosureSnapshots.set(element,stored);
+    return {cents:stored.cents,currency:stored.currency,revision:stored.revision};
+  }
+  function disclosedSnapshot(element){
+    var snapshot=element&&disclosureSnapshots.get(element);
+    return snapshot?{cents:snapshot.cents,currency:snapshot.currency,revision:snapshot.revision}:null;
+  }
+  function parseDollars(value){
+    var raw = String(value == null ? '' : value).trim();
+    if(!raw) return {ok:false,error:'Enter an authorization amount.'};
+    var match = raw.match(/^(?:0|[1-9]\d*)(?:\.(\d{1,2}))?$/);
+    if(!match) return {ok:false,error:'Use dollars and cents with no more than two decimal places.'};
+    var parts = raw.split('.');
+    var cents = Number(parts[0]) * 100 + Number(((parts[1] || '') + '00').slice(0,2));
+    if(validCents(cents) == null) return {ok:false,error:'Enter an amount from $0.50 to $500.00.'};
+    return {ok:true,cents:cents,dollars:(cents / 100).toFixed(2)};
+  }
+  function inputDollars(cents){
+    var normalized = validCents(cents);
+    if(normalized == null && !policyLoaded) return '';
+    return ((normalized == null ? configuredCents : normalized) / 100).toFixed(2);
+  }
+  function formatCents(cents, currency){
+    var normalized = validCents(cents);
+    if(normalized == null && !policyLoaded) return '';
+    if(normalized == null) normalized = configuredCents;
+    var code = normalizeCurrency(currency, configuredCurrency).toUpperCase();
+    try{
+      return new Intl.NumberFormat('en-US',{style:'currency',currency:code,minimumFractionDigits:2,maximumFractionDigits:2}).format(normalized / 100);
+    }catch(e){
+      return '$' + (normalized / 100).toFixed(2);
+    }
+  }
+  function candidateRecords(record){
+    if(!record || typeof record !== 'object') return [];
+    var records = [record];
+    ['authorization','session_authorization','payment_authorization','booking','session'].forEach(function(key){
+      if(record[key] && typeof record[key] === 'object') records.push(record[key]);
+    });
+    return records;
+  }
+  function centsFromRecord(record, fallbackCents){
+    var records = candidateRecords(record);
+    var centFields = ['amount_authorized_cents','authorization_amount_cents','session_authorization_amount_cents','authorized_amount_cents','amountCents'];
+    for(var i=0;i<records.length;i++){
+      for(var j=0;j<centFields.length;j++){
+        var cents = validCents(records[i][centFields[j]]);
+        if(cents != null) return cents;
+      }
+    }
+    var dollarFields = ['amount_authorized','authorized_amount'];
+    for(var k=0;k<records.length;k++){
+      for(var l=0;l<dollarFields.length;l++){
+        if(records[k][dollarFields[l]] == null || records[k][dollarFields[l]] === '') continue;
+        var parsed = parseDollars(records[k][dollarFields[l]]);
+        if(parsed.ok) return parsed.cents;
+      }
+    }
+    if(fallbackCents === null) return null;
+    var fallback = validCents(fallbackCents);
+    if(fallback != null) return fallback;
+    return policyLoaded ? configuredCents : null;
+  }
+  function currencyFromRecord(record, fallbackCurrency){
+    var records = candidateRecords(record);
+    for(var i=0;i<records.length;i++){
+      if(records[i].currency) return normalizeCurrency(records[i].currency, fallbackCurrency || configuredCurrency);
+      if(records[i].authorization_currency) return normalizeCurrency(records[i].authorization_currency, fallbackCurrency || configuredCurrency);
+      if(records[i].session_authorization_currency) return normalizeCurrency(records[i].session_authorization_currency, fallbackCurrency || configuredCurrency);
+    }
+    return normalizeCurrency(fallbackCurrency, configuredCurrency);
+  }
+  function snapshotFromRecord(record, fallbackCents, fallbackCurrency){
+    var cents = centsFromRecord(record, fallbackCents);
+    if(cents == null) return null;
+    return {cents:cents,currency:currencyFromRecord(record,fallbackCurrency)};
+  }
+  function copy(kind, cents, currency){
+    var explicitAmount = validCents(cents) != null;
+    var currentConsent=explicitAmount?null:consentSnapshot();
+    if(!explicitAmount&&currentConsent){cents=currentConsent.cents;currency=currentConsent.currency;}
+    var amount = explicitAmount||currentConsent?formatCents(cents, currency):'';
+    var amountPrefix = amount ? amount + ' ' : '';
+    if(kind === 'disclosure-body') return 'A temporary ' + amountPrefix + 'authorization may appear to confirm your payment method. Any unused amount is released after the session; your bank may show it as pending briefly.';
+    if(kind === 'not-extra') return amount ? 'Secure Stripe checkout · The ' + amount + ' is a temporary authorization, not an extra session charge.' : 'Secure Stripe checkout · This is a temporary authorization, not an extra session charge.';
+    if(kind === 'approved-short') return explicitAmount ? amount + ' authorization approved' : 'Authorization approved';
+    if(kind === 'approved-badge') return explicitAmount ? '\u2713 ' + amount + ' authorization approved' : '\u2713 Authorization approved';
+    if(kind === 'approved') return explicitAmount ? amount + ' temporary authorization approved' : 'Temporary authorization approved';
+    if(kind === 'immediate-choice') return 'Card or eligible wallet. A temporary ' + amountPrefix + 'authorization confirms your payment method before the live session.';
+    if(kind === 'immediate-empty') return 'Pay by minute is selected. A temporary ' + amountPrefix + 'authorization confirms your payment method; you only pay for time used.';
+    if(kind === 'scheduled-choice') return 'Save a card or eligible wallet now. A temporary ' + amountPrefix + 'authorization is confirmed shortly before the live session.';
+    if(kind === 'scheduled-save') return 'Pay by minute is selected. Save your payment method now; the ' + (amount ? amount + ' ' : 'temporary ') + 'authorization happens only when it is time to join.';
+    if(kind === 'scheduled-card') return 'Save a card or eligible wallet for this booking. Shortly before the live session, a temporary ' + amountPrefix + 'authorization confirms the payment method. You only pay for time used.';
+    if(kind === 'scheduled-consent') return 'A temporary ' + amountPrefix + 'authorization may appear. You will only be charged for the time you use, and any unused amount is released after the session; your bank may show it as pending briefly.';
+    return amount;
+  }
+  function renderDisclosure(element, expertName, cents, currency){
+    if(!element) return;
+    var currentConsent=consentSnapshot();
+    var normalized=validCents(cents);
+    var matchesConsent=currentConsent&&normalized!=null&&normalized===currentConsent.cents&&normalizeCurrency(currency,configuredCurrency)===currentConsent.currency;
+    if(normalized==null&&currentConsent){normalized=currentConsent.cents;currency=currentConsent.currency;matchesConsent=true;}
+    var amount = normalized==null?'':formatCents(normalized,currency);
+    var strong = document.createElement('strong');
+    strong.textContent = 'Pay only for the time you use.';
+    element.replaceChildren(strong, document.createTextNode(
+      ' A temporary ' + (amount ? amount + ' ' : '') + 'authorization may appear to confirm your payment method' +
+      (expertName ? ' for your session with ' + String(expertName) : '') +
+      '. Any unused amount is released after the session; your bank may show it as pending briefly.'
+    ));
+    rememberDisclosure(element,matchesConsent?currentConsent:null);
+  }
+  function renderElement(element){
+    var kind = element && element.getAttribute && element.getAttribute('data-ob-session-authorization-copy');
+    if(!kind) return;
+    if(/^approved(?:-|$)/.test(kind)){
+      element.removeAttribute('data-ob-session-authorization-copy');
+      rememberDisclosure(element,null);
+      element.textContent = copy(kind,null,configuredCurrency);
+      return;
+    }
+    var currentConsent=consentSnapshot();
+    var currentCents=currentConsent?currentConsent.cents:null;
+    var currentCurrency=currentConsent?currentConsent.currency:configuredCurrency;
+    if(kind === 'disclosure') renderDisclosure(element, element.getAttribute('data-ob-expert-name') || '', currentCents, currentCurrency);
+    else{element.textContent = copy(kind, currentCents, currentCurrency);rememberDisclosure(element,currentConsent);}
+  }
+  function render(root){
+    root = root || document;
+    if(root.getAttribute && root.getAttribute('data-ob-session-authorization-copy')) renderElement(root);
+    if(root.querySelectorAll) Array.prototype.forEach.call(root.querySelectorAll('[data-ob-session-authorization-copy]'),renderElement);
+  }
+  function notify(){
+    render(document);
+    disclosureElements.slice().forEach(function(element){
+      if(element&&element.getAttribute&&element.getAttribute('data-ob-session-authorization-copy'))renderElement(element);
+    });
+    subscribers.slice().forEach(function(listener){try{listener(configuredCents,configuredCurrency);}catch(e){}});
+  }
+  function commit(cents, currency, serverRevision, source){
+    var normalized = validCents(cents);
+    if(normalized == null) return false;
+    var authoritative=source==='public'||source==='payments';
+    var revision=validServerRevision(serverRevision);
+    if(authoritative&&!revision)return false;
+    if(source==='public'&&policyLoaded&&(policySource==='payments'||policySource==='admin'))return true;
+    configuredCents = normalized;
+    configuredCurrency = normalizeCurrency(currency, configuredCurrency);
+    policyLoaded = true;
+    policyRevision += 1;
+    policyServerRevision = authoritative?revision:null;
+    policySource = String(source||'local');
+    notify();
+    return true;
+  }
+  function setConfigured(cents, currency){return commit(cents,currency,null,'local');}
+  function invalidateConsent(){
+    policyLoaded=false;policyServerRevision=null;policySource='';policyRevision+=1;notify();return true;
+  }
+  function adoptConfig(config){
+    var clientPayments = config && config.client_payments;
+    if(!clientPayments && config && config.config) clientPayments = config.config.client_payments;
+    if(!clientPayments) return false;
+    return commit(clientPayments.session_authorization_amount_cents,clientPayments.session_authorization_currency,
+      clientPayments.session_authorization_policy_revision,'public');
+  }
+  function adoptPaymentsConfig(config){
+    config=config||{};
+    return commit(config.session_authorization_amount_cents,config.session_authorization_currency,
+      config.session_authorization_policy_revision,'payments');
+  }
+  function adoptAdminSetting(setting){
+    setting = setting || {};
+    return commit(setting.session_authorization_amount_cents,setting.session_authorization_currency,null,'admin');
+  }
+  function subscribe(listener){
+    if(typeof listener !== 'function') return function(){};
+    subscribers.push(listener);
+    return function(){subscribers=subscribers.filter(function(item){return item!==listener;});};
+  }
+
+  window.OB_SESSION_AUTHORIZATION_POLICY = Object.freeze({
+    defaultCents:DEFAULT_CENTS,minCents:MIN_CENTS,maxCents:MAX_CENTS,
+    configuredCents:function(){return policyLoaded?configuredCents:null;},currency:function(){return configuredCurrency;},
+    isLoaded:function(){return policyLoaded;},state:function(){return {loaded:policyLoaded,revision:policyRevision,serverRevision:policyServerRevision,cents:policyLoaded?configuredCents:null,currency:configuredCurrency,source:policySource};},
+    consentSnapshot:consentSnapshot,disclosedSnapshot:disclosedSnapshot,bindDisclosure:function(element){return rememberDisclosure(element,consentSnapshot());},
+    validCents:validCents,parseDollars:parseDollars,inputDollars:inputDollars,formatCents:formatCents,
+    centsFromRecord:centsFromRecord,currencyFromRecord:currencyFromRecord,snapshotFromRecord:snapshotFromRecord,
+    copy:copy,renderDisclosure:renderDisclosure,render:render,setConfigured:setConfigured,invalidateConsent:invalidateConsent,
+    adoptConfig:adoptConfig,adoptPaymentsConfig:adoptPaymentsConfig,adoptAdminSetting:adoptAdminSetting,subscribe:subscribe
+  });
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded',function(){render(document);},{once:true});
+  else render(document);
+  if(window.OWNLY_CONFIG) adoptConfig(window.OWNLY_CONFIG);
+})();
 (function(){
   if(window.__obCreditWalletV1) return;
   window.__obCreditWalletV1 = true;
@@ -269,6 +503,7 @@
   window.__obProdBillingTruthReceiptOps20260516 = true;
 
   var BASE = (window.OWNLYBIZ_API_URL || window._OB_BACKEND || 'https://victorious-wisdom-production-a6b0.up.railway.app').replace(/\/+$/,'');
+  var authorizationPolicy = window.OB_SESSION_AUTHORIZATION_POLICY;
   var CREDIT_AMOUNTS = [10,20,30,50,75,100,150,200,250,500];
   var state = { settings:null, summary:null, summaryKey:'', summaryOperation:null, summaryPromise:null, amount:0, promo:null, sessionPromo:null, promoError:null, promotions:[], promoEligible:null, promoPlan:'starter', intent:null, stripe:null, elements:null, expressElements:null, cardElement:null, expressElement:null, paymentMounted:false, paymentMounting:false, confirming:false, context:null, paymentContext:null, bookingCreditRequest:0, bookingPayMode:'minute', bookLaterCreditRequest:0, bookLaterPayMode:'minute', openRequest:0, promoRequest:0, mountSeq:0, mountTimer:null };
   var creditPaymentConfigPromise = null;
@@ -283,7 +518,12 @@
     var mode = normalizeCreditMode(window._obSelectedPaymentMode || window._obActiveSessionCreditMode || (state.bookingPayMode === 'topup' ? 'prepaid' : 'minute'));
     var code = window._obSessionPromoCode || '';
     if(mode === 'prepaid') return code ? 'Prepaid credit selected · promo ' + code : 'Prepaid credit selected';
-    return code ? '$5 temporary authorization approved · promo ' + code : '$5 temporary authorization approved';
+    var authorization = window.obSessionAuthorizationState || {};
+    var transaction = authorization.hasAmountSnapshot===true&&/^(ready|binding|bound)$/.test(String(authorization.phase||''))
+      ? authorizationPolicy.snapshotFromRecord(authorization,null,null) : null;
+    if(!transaction)return 'Payment authorization required';
+    var approved = authorizationPolicy.copy('approved',transaction.cents,transaction.currency);
+    return code ? approved + ' · promo ' + code : approved;
   }
   window.obCreditPreSessionPaymentLabel = preSessionPaymentLabel;
   function expertId(){
@@ -1076,11 +1316,12 @@
         '<h3>Choose how to pay</h3>' +
         '<p class="ob-credit-sub">Choose a payment option first. The checkout below updates to match your choice.</p>' +
         '<div class="ob-payment-mode-grid">' +
-          '<button type="button" class="ob-payment-mode-btn" data-ob-payment-mode="minute" onclick="obBookingPaymentMode(&quot;minute&quot;)"><strong>Pay by minute</strong><span>Card or eligible wallet. A temporary $5 authorization confirms your payment method before the live session.</span></button>' +
+          '<button type="button" class="ob-payment-mode-btn" data-ob-payment-mode="minute" onclick="obBookingPaymentMode(&quot;minute&quot;)"><strong>Pay by minute</strong><span data-ob-session-authorization-copy="immediate-choice">Card or eligible wallet. A temporary authorization confirms your payment method before the live session.</span></button>' +
           '<button type="button" class="ob-payment-mode-btn" data-ob-payment-mode="topup" onclick="obBookingPaymentMode(&quot;topup&quot;)"><strong>Prepaid credit</strong><span>Add credit first. Credit is used automatically and has no expiration.</span></button>' +
         '</div>' +
         '<div class="ob-credit-row"><div><strong>Prepaid balance</strong><div style="font-size:12px;color:var(--gray-400)">Used only when you choose prepaid credit</div></div><span class="ob-credit-balance-pill">' + money(balance) + '</span></div>' +
-        (balance > 0 ? '<button type="button" class="ob-credit-btn secondary" style="width:100%;margin-top:6px" onclick="obCreditStartWithCredit()">Use prepaid balance</button>' : '<div id="ob-credit-booking-empty-note" class="ob-credit-note" style="margin-top:6px">Pay by minute is selected. A temporary $5 authorization confirms your payment method; you only pay for time used.</div>');
+        (balance > 0 ? '<button type="button" class="ob-credit-btn secondary" style="width:100%;margin-top:6px" onclick="obCreditStartWithCredit()">Use prepaid balance</button>' : '<div id="ob-credit-booking-empty-note" class="ob-credit-note" data-ob-session-authorization-copy="immediate-empty" style="margin-top:6px">Pay by minute is selected. A temporary authorization confirms your payment method; you only pay for time used.</div>');
+      authorizationPolicy.render(mount);
       setBookingPaymentMode(state.bookingPayMode || 'minute');
     }).catch(function(){
       if(mount.dataset.obCreditRequest !== requestId || mount.dataset.obCreditReady === '1') return;
@@ -1325,7 +1566,7 @@
     if(emptyNote) {
       emptyNote.textContent = state.bookLaterPayMode === 'prepaid'
         ? 'Add prepaid credit first, then confirm the booking with credit.'
-        : 'Pay by minute is selected. Save your payment method now; the $5 authorization happens only when it is time to join.';
+        : authorizationPolicy.copy('scheduled-save');
     }
     sessionPromoStatus('book_later');
   }
@@ -1402,11 +1643,12 @@
         '<h3>Choose how to pay</h3>' +
         '<p class="ob-credit-sub">Choose a payment option first. The checkout below updates to match your choice.</p>' +
         '<div class="ob-payment-mode-grid">' +
-          '<button type="button" class="ob-payment-mode-btn" data-ob-bfl-payment-mode="minute" onclick="obBookLaterPaymentMode(&quot;minute&quot;)"><strong>Pay by minute</strong><span>Save a card or eligible wallet now. A temporary $5 authorization is confirmed shortly before the live session.</span></button>' +
+          '<button type="button" class="ob-payment-mode-btn" data-ob-bfl-payment-mode="minute" onclick="obBookLaterPaymentMode(&quot;minute&quot;)"><strong>Pay by minute</strong><span data-ob-session-authorization-copy="scheduled-choice">Save a card or eligible wallet now. A temporary authorization is confirmed shortly before the live session.</span></button>' +
           '<button type="button" class="ob-payment-mode-btn" data-ob-bfl-payment-mode="prepaid" onclick="obBookLaterPaymentMode(&quot;topup&quot;)"><strong>Prepaid credit</strong><span>Add credit first. Credit is used automatically and has no expiration.</span></button>' +
         '</div>' +
         '<div class="ob-credit-row"><div><strong>Prepaid balance</strong><div style="font-size:12px;color:var(--gray-400)">Used only when you choose prepaid credit</div></div><span class="ob-credit-balance-pill">' + money(balance) + '</span></div>' +
-        (balance > 0 ? '<button type="button" class="ob-credit-btn secondary" style="width:100%;margin-top:6px" onclick="obBookLaterUseCredit()">Use prepaid balance</button>' : '<div id="ob-credit-bfl-empty-note" class="ob-credit-note" style="margin-top:6px">' + (signedIn ? 'Pay by minute is selected. Save your payment method now; the $5 authorization happens only when it is time to join.' : 'Create or log in to add prepaid credit. Pay by minute stays available after your account is ready.') + '</div>');
+        (balance > 0 ? '<button type="button" class="ob-credit-btn secondary" style="width:100%;margin-top:6px" onclick="obBookLaterUseCredit()">Use prepaid balance</button>' : '<div id="ob-credit-bfl-empty-note" class="ob-credit-note"' + (signedIn ? ' data-ob-session-authorization-copy="scheduled-save"' : '') + ' style="margin-top:6px">' + (signedIn ? 'Pay by minute is selected. Save your payment method now; the temporary authorization happens only when it is time to join.' : 'Create or log in to add prepaid credit. Pay by minute stays available after your account is ready.') + '</div>');
+      authorizationPolicy.render(mount);
       setBookLaterPaymentMode(bookLaterPaymentMode());
       injectSessionPromo('book_later');
     }).catch(function(){
@@ -4590,6 +4832,7 @@ body{font-feature-settings:"ss01","cv11";background:
 (function(){
   fetch(window.OWNLY_API+"/api/config").then(function(r){return r.json();}).then(function(c){
     window.OWNLY_CONFIG=c;
+    if(window.OB_SESSION_AUTHORIZATION_POLICY) window.OB_SESSION_AUTHORIZATION_POLICY.adoptConfig(c);
     /* Update fee % displays */
     if(c.plans){
       var starter=c.plans.starter;
@@ -8314,8 +8557,8 @@ if (!window.toast) {
         <!-- STEP 2: Payment -->
         <div id="bov-step2" style="display:none;padding:20px 24px 24px;">
           <h2 style="font-size:20px;font-family:var(--font-head);color:var(--brown);margin-bottom:6px;" id="bov-pay-title">Add payment method</h2>
-          <div id="bov-pay-explainer" role="note" aria-live="polite" style="background:rgba(122,140,110,.07);border:1px solid rgba(122,140,110,.2);border-radius:10px;padding:12px 14px;margin-bottom:18px;font-size:12px;color:var(--brown);line-height:1.6;">
-            <strong>Pay only for the time you use.</strong> A temporary $5 authorization may appear to confirm your payment method. Any unused amount is released after the session; your bank may show it as pending briefly.
+          <div id="bov-pay-explainer" role="note" aria-live="polite" data-ob-session-authorization-copy="disclosure" style="background:rgba(122,140,110,.07);border:1px solid rgba(122,140,110,.2);border-radius:10px;padding:12px 14px;margin-bottom:18px;font-size:12px;color:var(--brown);line-height:1.6;">
+            <strong>Pay only for the time you use.</strong> A temporary authorization may appear to confirm your payment method. Any unused amount is released after the session; your bank may show it as pending briefly.
           </div>
           <div id="bov-wallet-section" style="display:none;margin-bottom:16px;background:#fff;border:1.5px solid var(--gray-200);border-radius:12px;padding:12px;">
             <div style="font-size:12px;font-weight:800;color:var(--brown);margin-bottom:4px;">Express checkout</div>
@@ -8328,7 +8571,7 @@ if (!window.toast) {
           <div id="bov-card-element" style="background:#fff;border:2px solid #d1d5db;border-radius:10px;padding:4px 12px;margin-bottom:16px;font-size:14px;min-height:56px;pointer-events:all;position:relative;z-index:10;cursor:text;"></div>
           <div id="bov-card-error" style="color:#dc2626;font-size:12px;margin-bottom:10px;min-height:16px;display:none;"></div>
           <button class="btn btn-primary" style="width:100%;margin-top:16px;padding:14px;" id="bov-pay-btn" onclick="bovAuthorize()">Verify payment & Continue →</button>
-          <p style="font-size:11px;color:var(--gray-400);text-align:center;margin-top:8px;line-height:1.5;">Secure Stripe checkout · The $5 is a temporary authorization, not an extra session charge.</p>
+          <p data-ob-session-authorization-copy="not-extra" style="font-size:11px;color:var(--gray-400);text-align:center;margin-top:8px;line-height:1.5;">Secure Stripe checkout · This is a temporary authorization, not an extra session charge.</p>
 
         </div>
 
@@ -8339,7 +8582,7 @@ if (!window.toast) {
           <div style="font-size:13px;color:var(--gray-400);margin-bottom:28px;" id="bov-connect-sub">Setting up your session · usually takes under 5 seconds</div>
           <div style="display:flex;justify-content:center;gap:8px;" id="bov-connect-steps">
             <div style="padding:6px 14px;border-radius:100px;font-size:12px;font-weight:700;background:#dcfce7;color:#166534;">✓ Account ready</div>
-            <div style="padding:6px 14px;border-radius:100px;font-size:12px;font-weight:700;background:#dcfce7;color:#166534;" id="bov-step-pay-badge">✓ $5 authorization approved</div>
+            <div style="padding:6px 14px;border-radius:100px;font-size:12px;font-weight:700;background:#dcfce7;color:#166534;" id="bov-step-pay-badge">✓ Authorization approved</div>
             <div style="padding:6px 14px;border-radius:100px;font-size:12px;font-weight:700;background:var(--cream);color:var(--gray-400);" id="bov-step-conn-badge">● Connecting...</div>
           </div>
         </div>
@@ -8900,7 +9143,7 @@ if (!window.toast) {
                 </div>
                 <div class="ob-session-detail-row ob-session-detail-row-payment">
                   <span class="ob-session-detail-label" style="color:var(--gray-400);">Payment</span>
-                  <span class="ob-session-detail-value" style="font-weight:600;color:var(--brown);" id="presess-payment">$5 temporary authorization approved</span>
+                  <span class="ob-session-detail-value" style="font-weight:600;color:var(--brown);" id="presess-payment">Payment authorization required</span>
                 </div>
               </div>
 
@@ -11624,7 +11867,7 @@ function _bovGoStep(n) {
     var mode = sessionStartMode[ch.id] || 'upfront';
     if (mode === 'upfront' || fm === 0) {
       if (title) title.textContent = 'Confirm payment method';
-      if (expl) expl.innerHTML = '<strong>Pay only for the time you use.</strong> A temporary $5 authorization may appear to confirm your payment method. Any unused amount is released after the session; your bank may show it as pending briefly.';
+      if (expl) window.OB_SESSION_AUTHORIZATION_POLICY.renderDisclosure(expl,'');
       if (payBtn) payBtn.textContent = 'Verify payment & Continue →';
     }
   }
@@ -11715,7 +11958,7 @@ async function bovAuthorize() {
               : Promise.resolve();
             saveDefault.then(function(){
               if (btn) { btn.textContent = 'Payment method saved ✓'; }
-              // The final pay-per-minute controller below performs the real $5 authorization before continuing.
+              // The final pay-per-minute controller below performs the server-configured authorization before continuing.
               localStorage.setItem('ob_hpm','1');
               _bovGoStep(3);
               var badge = document.getElementById('bov-step-pay-badge');
@@ -11762,7 +12005,7 @@ function _launchSession(isPaid) {
   if(el) {
     el.textContent = typeof window.obCreditPreSessionPaymentLabel === 'function'
       ? window.obCreditPreSessionPaymentLabel(fm)
-      : (isPaid ? '$5 temporary authorization approved' : 'Payment method ready');
+      : (isPaid ? 'Payment authorization required' : 'Payment method ready');
   }
   var freeRow = document.getElementById('presess-free-row');
   var freeNote = document.getElementById('presess-free-note');
@@ -19707,14 +19950,7 @@ setTimeout(function(){
 (function(){
   if(window.obSetPayPerMinuteDisclosure) return;
   window.obSetPayPerMinuteDisclosure = function(element, expertName){
-    if(!element) return;
-    var strong = document.createElement('strong');
-    strong.textContent = 'Pay only for the time you use.';
-    element.replaceChildren(strong, document.createTextNode(
-      ' A temporary $5 authorization may appear to confirm your payment method' +
-      (expertName ? ' for your session with ' + String(expertName) : '') +
-      '. Any unused amount is released after the session; your bank may show it as pending briefly.'
-    ));
+    window.OB_SESSION_AUTHORIZATION_POLICY.renderDisclosure(element,expertName);
   };
 })();
 (function(){
@@ -21653,7 +21889,7 @@ body.expert-page #mob-cta-bar{display:none!important;}
           if(typeof window.obCreditRememberSessionMode === 'function') window.obCreditRememberSessionMode(d.session);
           _sessId=d.session.id;window._obPendingSessId=d.session.id;window._obPendingExpertName=expertName;
           window._obClientSessionSnapshot=Object.assign(window._obClientSessionSnapshot||{},d.session);
-          // A successful backend session request means the $5 authorization was verified and consumed once.
+          // A successful backend session request means the configured authorization was verified and consumed once.
           try{localStorage.setItem('ob_hpm','1');}catch(e){}
           var ws=window._obWs||window._obClientWs;if(ws&&ws.readyState===1)sendWsAuth(ws);
           if(d.auto_accepted || d.session.status === 'active'){
@@ -23683,7 +23919,7 @@ function loadClientCredit() {
       <div id="ob-credit-bfl-choice" class="ob-credit-card" style="margin:0 0 16px;"></div>
       <div id="bfl-card-section" style="margin-bottom:16px;">
         <label style="font-size:12px;font-weight:700;color:var(--brown);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:8px;">Payment method</label>
-        <div style="font-size:12px;color:var(--gray-400);margin-bottom:10px;line-height:1.5;">Save a card or eligible wallet for this booking. Shortly before the live session, a temporary $5 authorization confirms the payment method. You only pay for time used.</div>
+        <div data-ob-session-authorization-copy="scheduled-card" style="font-size:12px;color:var(--gray-400);margin-bottom:10px;line-height:1.5;">Save a card or eligible wallet for this booking. Shortly before the live session, a temporary authorization confirms the payment method. You only pay for time used.</div>
         <div id="bfl-wallet-section" style="display:none;margin-bottom:12px;background:#fff;border:1.5px solid var(--gray-200);border-radius:12px;padding:12px;">
           <div style="font-size:12px;font-weight:800;color:var(--brown);margin-bottom:4px;">Express checkout</div>
           <div style="font-size:11px;color:var(--gray-400);line-height:1.4;margin-bottom:10px;">Apple Pay or Google Pay appears here when it is available on this browser and device.</div>
@@ -25735,6 +25971,11 @@ window._handleRTCMessage=function(d){
     window._obActiveSessId = null; window._sid = null; window._sessId = null; window._expertSessActive = false;
     toastMsg('Session ended - earned: ' + earned, 'ok');
   }
+  function expertAuthorizationApprovedLabel(sess){
+    var policy=window.OB_SESSION_AUTHORIZATION_POLICY;
+    var cents=policy.centsFromRecord(sess,null);
+    return cents == null ? 'Authorization approved' : policy.copy('approved-short',cents,policy.currencyFromRecord(sess));
+  }
   function applyExpertSessionUi(sess){
     if(!sess || !sess.id) return;
     var ch = (sess.channel || 'chat').toLowerCase();
@@ -25756,7 +25997,7 @@ window._handleRTCMessage=function(d){
       ? window.obSessionExpertBillingLabel(sess,free)
       : (String(sess.credit_mode || sess.payment_mode || '').toLowerCase()==='prepaid'
         ? (free > 0 ? 'Client is in free intro time · prepaid credit selected' : 'Prepaid credit selected')
-        : (free > 0 ? 'Client is in free intro time · $5 authorization approved' : (sess.payment_method ? '$5 authorization approved' : 'Payment pending')));
+        : (free > 0 ? 'Client is in free intro time · ' + expertAuthorizationApprovedLabel(sess) : (sess.payment_method ? expertAuthorizationApprovedLabel(sess) : 'Payment pending')));
     var sec = Math.max(0, Math.floor(Date.now()/1000) - int(sess.started_at, Math.floor(Date.now()/1000)));
     var billed = billableMinutes(sec, free);
     if(free > 0 && billed <= 0){
@@ -26687,7 +26928,7 @@ window._handleRTCMessage=function(d){
     setText('bk-total', label);
     setText('presess-free', obMinuteText(free,'free'));
     setText('presess-free-mins', obMinuteText(free));
-    setText('presess-payment', typeof window.obCreditPreSessionPaymentLabel === 'function' ? window.obCreditPreSessionPaymentLabel(free) : '$5 temporary authorization approved');
+    setText('presess-payment', typeof window.obCreditPreSessionPaymentLabel === 'function' ? window.obCreditPreSessionPaymentLabel(free) : 'Payment authorization required');
     show('presess-free-row', free > 0);
     show('presess-free-note', free > 0);
     var row = document.getElementById('bk-free-row');
@@ -34331,6 +34572,11 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
         return;
       }
       entry.elements=elements;entry.express=express;
+      express.on('click',function(){
+        if(!walletMountIsCurrent(mountContext))return;
+        entry.disclosedAuthorizationPolicy=opts.policyDisclosureId&&window.OB_SESSION_AUTHORIZATION_POLICY
+          ? window.OB_SESSION_AUTHORIZATION_POLICY.disclosedSnapshot(document.getElementById(opts.policyDisclosureId)):null;
+      });
       express.on('ready', function(ev){
         if(!walletMountIsCurrent(mountContext))return;
         readyFired = true;
@@ -34351,6 +34597,7 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
       express.on('confirm', function(ev){
         (async function(){
           var operation=walletOperation();
+          operation.disclosedAuthorizationPolicy=entry.disclosedAuthorizationPolicy||null;entry.disclosedAuthorizationPolicy=null;
           if(operation.expertId!==mountContext.expertId||!walletOperationIsCurrent(operation,mountContext))return;
           try {
             var submit = await elements.submit();
@@ -34410,6 +34657,7 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
       sectionId:'bov-wallet-section',
       buttonId:'bov-wallet-button',
       errorId:'bov-card-error',
+      policyDisclosureId:'bov-pay-explainer',
       onSuccess:async function(pm,operation,mountContext){
         if(!walletOperationIsCurrent(operation,mountContext))return;
         window._bovPaymentMethodId = pm;
@@ -34419,7 +34667,7 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
         if(errEl) errEl.style.display = 'none';
         try {
           if(typeof window.obAuthorizeSessionHold !== 'function') throw new Error('Session authorization is not ready. Please refresh and try again.');
-          await window.obAuthorizeSessionHold({stripe:stripe,token:operation.token,expertId:operation.expertId,channel:operation.channel});
+          await window.obAuthorizeSessionHold({stripe:stripe,token:operation.token,expertId:operation.expertId,channel:operation.channel,disclosedPolicy:operation.disclosedAuthorizationPolicy});
           if(!walletOperationIsCurrent(operation,mountContext))return;
           localStorage.setItem('ob_hpm','1');
           if(typeof window.obCompleteSessionAuthorizationUi === 'function') window.obCompleteSessionAuthorizationUi();
@@ -45889,9 +46137,132 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     var el = document.getElementById(id);
     return el && el.checked ? '1' : '0';
   }
+  var sessionAuthorizationPolicy = window.OB_SESSION_AUTHORIZATION_POLICY;
+  var sessionAuthorizationAdminState = {updatedAt:null,revisionKnown:false,hydrated:false,saving:false,loadSeq:0};
+  function sessionAuthorizationConfigHtml(){
+    var amount = sessionAuthorizationPolicy.inputDollars();
+    var minimum = sessionAuthorizationPolicy.inputDollars(sessionAuthorizationPolicy.minCents);
+    var maximum = sessionAuthorizationPolicy.inputDollars(sessionAuthorizationPolicy.maxCents);
+    return ''
+      + '<div class="admin-card" id="ob-session-authorization-config-card" style="margin-top:20px;">'
+      +   '<div class="admin-card-title">Session authorization amount <span class="admin-card-title-sub">Pay-by-minute sessions</span></div>'
+      +   '<div style="font-size:12px;color:rgba(246,241,233,.68);line-height:1.65;margin-bottom:16px;max-width:760px;">Set the temporary Stripe authorization used to confirm a client payment method for immediate and Book Later sessions. This is not a fee or final charge. A saved change applies only to new authorizations; existing authorizations keep the amount recorded when Stripe approved them.</div>'
+      +   '<form onsubmit="obAdminSaveSessionAuthorizationAmount(event)" novalidate style="display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap;">'
+      +     '<div style="min-width:220px;max-width:300px;flex:1;">'
+      +       '<label class="ps-label" for="ob-session-authorization-amount" style="display:block;margin-bottom:6px;">Temporary authorization (USD)</label>'
+      +       '<div style="position:relative;"><span aria-hidden="true" style="position:absolute;left:13px;top:50%;transform:translateY(-50%);color:#6b7280;font-weight:800;">$</span><input class="admin-input" id="ob-session-authorization-amount" name="session_authorization_amount" type="number" inputmode="decimal" autocomplete="off" min="' + minimum + '" max="' + maximum + '" step="0.01" value="' + esc(amount) + '" aria-describedby="ob-session-authorization-help ob-session-authorization-status" style="width:100%;box-sizing:border-box;padding-left:30px;" disabled></div>'
+      +     '</div>'
+      +     '<button class="admin-action-btn" id="ob-session-authorization-save" type="submit" disabled>Save authorization amount</button>'
+      +     '<button class="admin-action-btn" id="ob-session-authorization-reload" type="button" onclick="obAdminReloadSessionAuthorizationAmount()">Reload current amount</button>'
+      +   '</form>'
+      +   '<div id="ob-session-authorization-help" style="font-size:11px;color:rgba(246,241,233,.54);line-height:1.5;margin-top:9px;">Enter any amount from $' + minimum + ' to $' + maximum + ', with up to two decimal places. The server remains the only authority that creates the hold.</div>'
+      +   '<div id="ob-session-authorization-status" role="status" aria-live="polite" aria-atomic="true" style="min-height:18px;margin-top:10px;font-size:12px;color:rgba(246,241,233,.62);">Loading current authorization amount...</div>'
+      + '</div>';
+  }
+  function setSessionAuthorizationAdminStatus(message,isError){
+    var status=document.getElementById('ob-session-authorization-status');
+    if(!status)return;
+    status.textContent=message;
+    status.setAttribute('role',isError?'alert':'status');
+    status.style.color=isError?'#fca5a5':'rgba(246,241,233,.72)';
+  }
+  function syncSessionAuthorizationAdminControls(){
+    var input=document.getElementById('ob-session-authorization-amount');
+    var button=document.getElementById('ob-session-authorization-save');
+    var reload=document.getElementById('ob-session-authorization-reload');
+    var locked=sessionAuthorizationAdminState.saving||!sessionAuthorizationAdminState.hydrated;
+    if(input)input.disabled=locked;
+    if(button){button.disabled=locked;button.textContent=sessionAuthorizationAdminState.saving?'Saving...':'Save authorization amount';}
+    if(reload)reload.disabled=sessionAuthorizationAdminState.saving;
+  }
+  async function hydrateSessionAuthorizationSetting(){
+    sessionAuthorizationAdminState.hydrated=false;
+    sessionAuthorizationAdminState.revisionKnown=false;
+    sessionAuthorizationAdminState.updatedAt=null;
+    syncSessionAuthorizationAdminControls();
+    if(role()!=='admin'){
+      setSessionAuthorizationAdminStatus('Admin access is required to view or change this setting.',true);
+      return null;
+    }
+    var loadSeq=++sessionAuthorizationAdminState.loadSeq;
+    setSessionAuthorizationAdminStatus('Loading current authorization amount...',false);
+    try{
+      delete readCache['/admin/settings/session-authorization'];
+      var data=await api('/admin/settings/session-authorization');
+      if(loadSeq!==sessionAuthorizationAdminState.loadSeq||!document.getElementById('ob-session-authorization-config-card'))return null;
+      if(!Object.prototype.hasOwnProperty.call(data,'updated_at'))throw new Error('The server did not return the setting revision.');
+      if(!sessionAuthorizationPolicy.adoptAdminSetting(data))throw new Error('The server returned an invalid authorization amount.');
+      sessionAuthorizationAdminState.updatedAt=data.updated_at==null?null:String(data.updated_at);
+      sessionAuthorizationAdminState.revisionKnown=true;
+      sessionAuthorizationAdminState.hydrated=true;
+      var input=document.getElementById('ob-session-authorization-amount');
+      if(input)input.value=sessionAuthorizationPolicy.inputDollars();
+      syncSessionAuthorizationAdminControls();
+      setSessionAuthorizationAdminStatus('Current setting: '+sessionAuthorizationPolicy.formatCents()+'. New authorizations use this amount; existing authorizations are unchanged.',false);
+      return data;
+    }catch(err){
+      if(loadSeq===sessionAuthorizationAdminState.loadSeq){
+        sessionAuthorizationAdminState.hydrated=false;sessionAuthorizationAdminState.revisionKnown=false;sessionAuthorizationAdminState.updatedAt=null;
+        syncSessionAuthorizationAdminControls();
+        setSessionAuthorizationAdminStatus(err&&err.message||'Could not load the authorization amount.',true);
+      }
+      return null;
+    }
+  }
+  window.obAdminReloadSessionAuthorizationAmount=hydrateSessionAuthorizationSetting;
+  window.obAdminSaveSessionAuthorizationAmount = async function(event){
+    if(event&&typeof event.preventDefault==='function')event.preventDefault();
+    if(sessionAuthorizationAdminState.saving)return false;
+    if(role()!=='admin'){
+      setSessionAuthorizationAdminStatus('Admin access is required to change this setting.',true);
+      return false;
+    }
+    if(!sessionAuthorizationAdminState.hydrated||!sessionAuthorizationAdminState.revisionKnown){
+      setSessionAuthorizationAdminStatus('Load the current authorization amount before saving.',true);
+      return false;
+    }
+    var input=document.getElementById('ob-session-authorization-amount');
+    var parsed=sessionAuthorizationPolicy.parseDollars(input&&input.value);
+    if(!parsed.ok){
+      setSessionAuthorizationAdminStatus(parsed.error,true);
+      if(input){input.setAttribute('aria-invalid','true');input.focus();}
+      return false;
+    }
+    if(input)input.removeAttribute('aria-invalid');
+    sessionAuthorizationAdminState.loadSeq+=1;
+    sessionAuthorizationAdminState.saving=true;
+    syncSessionAuthorizationAdminControls();
+    setSessionAuthorizationAdminStatus('Saving '+sessionAuthorizationPolicy.formatCents(parsed.cents)+' for new authorizations...',false);
+    try{
+      var body={session_authorization_amount_cents:parsed.cents,expected_updated_at:sessionAuthorizationAdminState.updatedAt};
+      var data=await api('/admin/settings/session-authorization',{method:'PUT',body:body});
+      if(!Object.prototype.hasOwnProperty.call(data,'updated_at'))throw new Error('The server did not confirm the setting revision.');
+      if(!sessionAuthorizationPolicy.adoptAdminSetting(data))throw new Error('The server did not confirm the saved authorization amount.');
+      sessionAuthorizationAdminState.updatedAt=data.updated_at==null?null:String(data.updated_at);
+      sessionAuthorizationAdminState.revisionKnown=true;
+      sessionAuthorizationAdminState.hydrated=true;
+      delete readCache['/admin/settings/session-authorization'];
+      if(input)input.value=sessionAuthorizationPolicy.inputDollars();
+      setSessionAuthorizationAdminStatus('Saved '+sessionAuthorizationPolicy.formatCents()+'. New authorizations use this amount; existing authorizations keep their original amount.',false);
+      return true;
+    }catch(err){
+      var stale=/conflict|changed|stale|updated/i.test(String(err&&err.message||''));
+      sessionAuthorizationAdminState.hydrated=false;sessionAuthorizationAdminState.revisionKnown=false;sessionAuthorizationAdminState.updatedAt=null;
+      setSessionAuthorizationAdminStatus(stale?'This setting changed in another admin session. Reload the current value before saving again.':((err&&err.message||'Authorization amount save failed.')+' Reload the current value before saving again.'),true);
+      return false;
+    }finally{
+      sessionAuthorizationAdminState.saving=false;
+      syncSessionAuthorizationAdminControls();
+    }
+  };
+  if(window.__OB_TEST_HOOKS__)window.obSessionAuthorizationAdminTestHooks={
+    state:sessionAuthorizationAdminState,configHtml:sessionAuthorizationConfigHtml,
+    hydrate:hydrateSessionAuthorizationSetting,save:window.obAdminSaveSessionAuthorizationAmount
+  };
   function platformPaymentServiceConfigHtml(){
     return ''
       + '<div class="ob-admin-live-empty" style="margin-top:20px;">Fee percentages and settlement math stay in Fee Configuration. Stripe service keys, webhook secrets, wallet toggles, and payment domains are managed below.</div>'
+      + sessionAuthorizationConfigHtml()
       + '<div class="admin-card" id="ob-platform-stripe-config-card" style="margin-top:20px;">'
       +   '<div class="admin-card-title">Stripe test/live keys <span class="admin-card-title-sub">Secret key, publishable key, webhook secret</span></div>'
       +   '<div style="font-size:12px;color:rgba(246,241,233,.58);line-height:1.6;margin-bottom:16px;">Choose Test mode or Live mode, enter the Stripe keys for that mode, test the connection, then save. Saved secrets stay masked; leave a secret field blank to keep the current saved value.</div>'
@@ -45936,6 +46307,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       + '</div>';
   }
   async function hydratePlatformPaymentServiceSettings(){
+    hydrateSessionAuthorizationSetting();
     try {
       if(typeof window.loadAdminPaymentSettings === 'function') window.loadAdminPaymentSettings();
       var d = await api('/admin/settings');
@@ -46835,7 +47207,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     }
     var baseLabel = typeof window.obCreditPreSessionPaymentLabel === 'function'
       ? window.obCreditPreSessionPaymentLabel(free)
-      : '$5 temporary authorization approved';
+      : 'Payment authorization required';
     if(free <= 0 && (alreadyUsed || configured > 0) && baseLabel.indexOf('from minute one') === -1) {
       baseLabel += ' · from minute one';
     }
@@ -63226,8 +63598,8 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
   window.__obPayPerMinuteAuthorization20260814 = true;
 
   var BASE = (window.OWNLYBIZ_API_URL || window._OB_BACKEND || 'https://victorious-wisdom-production-a6b0.up.railway.app').replace(/\/+$/,'');
+  var authorizationPolicy = window.OB_SESSION_AUTHORIZATION_POLICY;
   var DISCLOSURE_TITLE = 'Pay only for the time you use.';
-  var DISCLOSURE_BODY = 'A temporary $5 authorization may appear to confirm your payment method. Any unused amount is released after the session; your bank may show it as pending briefly.';
   var clientContext = window.OB_CLIENT_CONTEXT;
   function accountKeyForToken(token){
     token=String(token||'');
@@ -63251,7 +63623,8 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     return !/^\/(?:dash|admin)(?:\/|$)/i.test(String(window.location&&window.location.pathname||''));
   }
   var state = {
-    phase:'idle', context:'', requestId:'', paymentIntentId:'', clientSecret:'', amount:5,
+    phase:'idle', context:'', requestId:'', paymentIntentId:'', clientSecret:'',
+    amountCents:null,currency:'',hasAmountSnapshot:false,
     expertId:'', marketplaceExpertId:'', channel:'chat', bookingId:'', accountKey:'', inFlight:null, abandoned:false, lastError:'',recoveryAction:'authorization',cancellationSessionId:''
   };
   var expertBookingStartSeq=0;
@@ -63281,6 +63654,73 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     if(typeof window.obMarketplaceSelectedId !== 'function') return '';
     return String(window.obMarketplaceSelectedId() || '');
   }
+  var currentPolicyRequest={expertId:'',promise:null};
+  function policyUnavailableError(message){
+    var error=new Error(message||'The current payment authorization amount is unavailable. Refresh and try again.');
+    error.code='session_authorization_policy_unavailable';
+    return error;
+  }
+  function configuredAuthorizationPhrase(){
+    var policy=authorizationPolicy.consentSnapshot();
+    var amount=policy?authorizationPolicy.formatCents(policy.cents,policy.currency):'';
+    return amount?'temporary '+amount+' authorization':'temporary authorization';
+  }
+  function ensureCurrentPolicy(expertId,freshConfig,forceFresh){
+    expertId=String(expertId||currentExpertId()||'');
+    if(freshConfig){
+      if(!authorizationPolicy.adoptPaymentsConfig(freshConfig))return Promise.reject(policyUnavailableError());
+      return Promise.resolve(authorizationPolicy.state());
+    }
+    var currentPolicy=authorizationPolicy.state();
+    if(!forceFresh&&authorizationPolicy.consentSnapshot())return Promise.resolve(currentPolicy);
+    if(!expertId)return Promise.reject(policyUnavailableError('The expert could not be identified. Refresh and try again.'));
+    if(currentPolicyRequest.promise&&currentPolicyRequest.expertId===expertId)return currentPolicyRequest.promise;
+    var request=(async function(){
+      var response=await fetch(BASE+'/api/payments/config?expert_id='+encodeURIComponent(expertId),{cache:'no-store'});
+      var config=await responseJson(response);
+      if(!response.ok)throw policyUnavailableError(config.error||config.message);
+      if(!authorizationPolicy.adoptPaymentsConfig(config))throw policyUnavailableError();
+      return authorizationPolicy.state();
+    })();
+    currentPolicyRequest={expertId:expertId,promise:request};
+    return request.finally(function(){if(currentPolicyRequest.promise===request)currentPolicyRequest={expertId:'',promise:null};});
+  }
+  function normalizeDisclosedPolicy(snapshot){
+    snapshot=snapshot||{};
+    var cents=authorizationPolicy.validCents(snapshot.cents);
+    var revision=typeof snapshot.revision==='string'&&snapshot.revision.length>0&&snapshot.revision.trim()===snapshot.revision?snapshot.revision:null;
+    var currency=String(snapshot.currency||'').toLowerCase();
+    if(cents==null||!revision||!/^[a-z]{3}$/.test(currency))return null;
+    return {cents:cents,currency:currency,revision:revision};
+  }
+  function sameDisclosedPolicy(left,right){
+    left=normalizeDisclosedPolicy(left);right=normalizeDisclosedPolicy(right);
+    return !!left&&!!right&&left.cents===right.cents&&left.currency===right.currency&&left.revision===right.revision;
+  }
+  function policyReviewError(current){
+    current=normalizeDisclosedPolicy(current);
+    var amount=current?authorizationPolicy.formatCents(current.cents,current.currency):'';
+    var error=new Error(amount
+      ? 'The temporary authorization amount changed to '+amount+'. Review the updated amount, then click again to continue.'
+      : 'The temporary authorization policy changed. Review the updated disclosure, then click again to continue.');
+    error.code='session_authorization_policy_review_required';
+    error._obPolicyReview=true;
+    return error;
+  }
+  async function ensureDisclosedPolicy(expertId,disclosed,freshConfig,forceFresh){
+    disclosed=normalizeDisclosedPolicy(disclosed);
+    await ensureCurrentPolicy(expertId,freshConfig,forceFresh!==false);
+    var current=normalizeDisclosedPolicy(authorizationPolicy.consentSnapshot());
+    if(!current)throw policyUnavailableError();
+    if(!disclosed)throw policyReviewError(current);
+    if(!sameDisclosedPolicy(disclosed,current))throw policyReviewError(current);
+    return current;
+  }
+  async function refreshedPolicyReviewError(expertId){
+    var current=null;
+    try{await ensureCurrentPolicy(expertId,null,true);current=authorizationPolicy.consentSnapshot();return policyReviewError(current);}
+    catch(e){authorizationPolicy.invalidateConsent();return policyUnavailableError('The updated authorization policy could not be loaded. Try again after the disclosure refreshes.');}
+  }
   function uuid(){
     if(window.crypto && typeof window.crypto.randomUUID === 'function') return window.crypto.randomUUID();
     var bytes = new Uint8Array(16);
@@ -63306,24 +63746,31 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     sess=sess||{};free=Math.max(0,Number(free||0));
     var prepaid=String(sess.credit_mode||sess.payment_mode||'').toLowerCase()==='prepaid';
     if(prepaid)return free>0?'Client is in free intro time · prepaid credit selected':'Prepaid credit selected';
-    if(free>0)return 'Client is in free intro time · $5 authorization approved';
+    var authorization=authorizationPolicy.snapshotFromRecord(sess,null,null);
+    var approved=authorization
+      ? authorizationPolicy.copy('approved-short',authorization.cents,authorization.currency)
+      : 'Authorization approved';
+    if(free>0)return 'Client is in free intro time · '+approved;
     var authorized=!!(sess.payment_authorization_id||sess.authorization_request_id||sess.stripe_pi_id||sess.authorization_payment_intent_id)
       ||Number(sess.authorized_amount||sess.amount_authorized||0)>0
       ||!!sess.payment_method;
-    return authorized?'$5 authorization approved':'Payment pending';
+    return authorized?approved:'Payment pending';
   }
   window.obSessionExpertBillingLabel=expertBillingLabel;
   function isReadyFor(opts){
     var accountKey=currentAccountKey(opts&&opts.token);
-    return state.phase === 'ready' && state.paymentIntentId && state.requestId && state.context === contextKey(opts) && state.accountKey===accountKey;
+    return state.phase === 'ready' && state.paymentIntentId && state.requestId && state.hasAmountSnapshot && state.context === contextKey(opts) && state.accountKey===accountKey;
   }
   function snapshot(){
+    if(!state.hasAmountSnapshot||authorizationPolicy.validCents(state.amountCents)==null)throw policyUnavailableError('The approved authorization amount is unavailable. Confirm payment again.');
     return {
       payment_intent_id:state.paymentIntentId,
       authorization_payment_intent_id:state.paymentIntentId,
       authorization_request_id:state.requestId,
       marketplace_expert_id:state.marketplaceExpertId || null,
-      amount_authorized:state.amount,
+      amount_authorized_cents:state.amountCents,
+      amount_authorized:state.amountCents / 100,
+      currency:state.currency,
       status:state.phase
     };
   }
@@ -63341,7 +63788,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
   };
   window.obMarkSessionAuthorizationBound = function(sessionId,authorizationRequestId){
     if(authorizationRequestId&&String(authorizationRequestId)!==state.requestId)return;
-    if(state.phase==='binding'||state.phase==='ready'){
+    if(state.hasAmountSnapshot&&(state.phase==='binding'||state.phase==='ready')){
       state.phase='bound';
       state.recoveryAction='session';
       state.cancellationSessionId=String(sessionId||'');
@@ -63351,7 +63798,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
   function sessionAuthorizationRequestIsCurrent(authorizationRequestId,expectedAccountKey){
     authorizationRequestId=String(authorizationRequestId||'');
     expectedAccountKey=String(expectedAccountKey||'');
-    return !!authorizationRequestId&&state.requestId===authorizationRequestId&&!!state.accountKey&&(!expectedAccountKey||state.accountKey===expectedAccountKey)&&state.accountKey===currentAccountKey()&&(state.phase==='binding'||state.phase==='ready');
+    return !!authorizationRequestId&&state.requestId===authorizationRequestId&&state.hasAmountSnapshot&&!!state.accountKey&&(!expectedAccountKey||state.accountKey===expectedAccountKey)&&state.accountKey===currentAccountKey()&&(state.phase==='binding'||state.phase==='ready');
   }
   window.obClientSessionRequestContinuationAllowed=function(creditMode,authorizationRequestId,requestToken){
     requestToken=String(requestToken||'');
@@ -63372,11 +63819,12 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
       else resetState();
       return;
     }
-    if(state.paymentIntentId&&state.requestId){state.phase='ready';rememberState();}
+    if(state.paymentIntentId&&state.requestId&&state.hasAmountSnapshot){state.phase='ready';rememberState();}
   };
   function resetState(){
     state.phase='idle'; state.context=''; state.requestId=''; state.paymentIntentId=''; state.clientSecret='';
-    state.amount=5; state.expertId=''; state.marketplaceExpertId=''; state.channel='chat'; state.bookingId=''; state.accountKey=''; state.inFlight=null;
+    state.amountCents=null; state.currency=''; state.hasAmountSnapshot=false;
+    state.expertId=''; state.marketplaceExpertId=''; state.channel='chat'; state.bookingId=''; state.accountKey=''; state.inFlight=null;
     state.abandoned=false; state.lastError=''; state.recoveryAction='authorization'; state.cancellationSessionId='';
     try{ sessionStorage.removeItem('ob_live_authorization'); }catch(e){}
   }
@@ -63385,7 +63833,8 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     try{
       sessionStorage.setItem('ob_live_authorization', JSON.stringify({
         context:state.context, requestId:state.requestId, paymentIntentId:state.paymentIntentId,
-        amount:state.amount, expertId:state.expertId, marketplaceExpertId:state.marketplaceExpertId,
+        amountCents:state.hasAmountSnapshot?state.amountCents:null, amount:state.hasAmountSnapshot?state.amountCents / 100:null, currency:state.hasAmountSnapshot?state.currency:'',
+        expertId:state.expertId, marketplaceExpertId:state.marketplaceExpertId,
         channel:state.channel, bookingId:state.bookingId, accountKey:state.accountKey,
         phase:state.phase, recoveryAction:state.recoveryAction, cancellationSessionId:state.cancellationSessionId, savedAt:Date.now()
       }));
@@ -63406,7 +63855,12 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
       state.context=String(saved.context||'');
       state.requestId=String(saved.requestId||'');
       state.paymentIntentId=String(saved.paymentIntentId||'');
-      state.amount=Number(saved.amount||5)||5;
+      var savedAuthorization=authorizationPolicy.snapshotFromRecord({
+        amount_authorized_cents:saved.amountCents,amount_authorized:saved.amount,currency:saved.currency
+      },null,null);
+      state.amountCents=savedAuthorization?savedAuthorization.cents:null;
+      state.currency=savedAuthorization?savedAuthorization.currency:'';
+      state.hasAmountSnapshot=!!savedAuthorization;
       state.expertId=String(saved.expertId||'');
       state.marketplaceExpertId=String(saved.marketplaceExpertId||'');
       state.channel=String(saved.channel||'chat');
@@ -63414,11 +63868,11 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
       state.accountKey=String(saved.accountKey||'');
       state.recoveryAction=saved.recoveryAction==='session'?'session':'authorization';
       state.cancellationSessionId=String(saved.cancellationSessionId||'');
-      if(state.paymentIntentId&&state.requestId&&String(saved.phase||'')==='bound'&&state.cancellationSessionId){
+      if(state.paymentIntentId&&state.requestId&&state.hasAmountSnapshot&&String(saved.phase||'')==='bound'&&state.cancellationSessionId){
         state.phase='bound';
         state.lastError='';
         state.recoveryAction='session';
-      }else if(state.paymentIntentId&&state.requestId&&String(saved.phase||'')==='binding'&&!state.cancellationSessionId){
+      }else if(state.paymentIntentId&&state.requestId&&state.hasAmountSnapshot&&String(saved.phase||'')==='binding'&&!state.cancellationSessionId){
         // The deterministic authorization request id is also the session id. A reload
         // before the request response is safe to retry; the backend returns the same
         // pending/active session instead of consuming the hold twice.
@@ -63442,10 +63896,13 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     var raw = String((err && err.message) || err || '').trim();
     var code = String((err && (err.code || err.decline_code)) || '').toLowerCase();
     var hay = (code + ' ' + raw).toLowerCase();
-    if(/declin|do_not_honor|insufficient|lost_card|stolen_card/.test(hay)) return 'This payment method could not approve the temporary $5 authorization. Try another card or wallet, or contact your bank.';
-    if(/authentication|3d secure|3ds/.test(hay)) return 'Please complete your bank\'s verification to approve the temporary $5 authorization.';
+    var currentPolicy=authorizationPolicy.consentSnapshot();
+    var amount=state.hasAmountSnapshot?authorizationPolicy.formatCents(state.amountCents,state.currency):(currentPolicy?authorizationPolicy.formatCents(currentPolicy.cents,currentPolicy.currency):'');
+    var description=amount?'temporary '+amount+' authorization':'temporary authorization';
+    if(/declin|do_not_honor|insufficient|lost_card|stolen_card/.test(hay)) return 'This payment method could not approve the '+description+'. Try another card or wallet, or contact your bank.';
+    if(/authentication|3d secure|3ds/.test(hay)) return 'Please complete your bank\'s verification to approve the '+description+'.';
     if(/network|fetch|offline|timed out|timeout/.test(hay)) return 'We could not reach the payment service. Check your connection and try again; a duplicate authorization will not be created.';
-    return raw || 'We could not approve the temporary $5 authorization. Try another card or wallet.';
+    return raw || 'We could not approve the '+description+'. Try another card or wallet.';
   }
   async function responseJson(response){
     return response.json().catch(function(){ return {}; });
@@ -63572,6 +64029,13 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     var flowAccountKey=accountKeyForToken(opts.token);
     if(!opts.expertId) throw new Error('The expert could not be identified. Please refresh and try again.');
     if(!/^(chat|voice|video)$/.test(opts.channel)) opts.channel = 'chat';
+    var disclosedPolicy=normalizeDisclosedPolicy(options.disclosedPolicy);
+    var validatedPolicy=normalizeDisclosedPolicy(options.validatedPolicy);
+    var currentConsent=normalizeDisclosedPolicy(authorizationPolicy.consentSnapshot());
+    if(!validatedPolicy||!sameDisclosedPolicy(disclosedPolicy,validatedPolicy)||!sameDisclosedPolicy(validatedPolicy,currentConsent)){
+      validatedPolicy=await ensureDisclosedPolicy(opts.expertId,disclosedPolicy,null,true);
+    }
+    assertClientContext(flowContext,false);
     if(state.accountKey&&state.accountKey!==flowAccountKey)resetState();
     var nextContext = contextKey(opts);
     if(isReadyFor(opts)) return snapshot();
@@ -63599,6 +64063,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     var flowPromise = (async function(){
       var headers = {'Content-Type':'application/json','Authorization':'Bearer ' + opts.token};
       var body = {expert_id:opts.expertId, channel:opts.channel, authorization_request_id:flowRequestId};
+      body.authorization_policy_revision=disclosedPolicy.revision;
       if(opts.bookingId) body.booking_id = opts.bookingId;
       else if(opts.marketplaceExpertId) body.marketplace_expert_id = opts.marketplaceExpertId;
       var response;
@@ -63614,14 +64079,34 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
         throw accountChangedError();
       }
       if(!response.ok) {
+        if(Number(response.status)===409&&data.code==='session_authorization_policy_refresh_required')throw await refreshedPolicyReviewError(opts.expertId);
         var apiError = new Error(data.error || data.message || 'Authorization was not approved.');
         apiError.code = data.code || data.decline_code || '';
         throw apiError;
       }
-      state.paymentIntentId = data.payment_intent_id || data.authorization_payment_intent_id || '';
+      var responsePaymentIntentId=data.payment_intent_id||data.authorization_payment_intent_id||'';
+      var responseRequestId=data.authorization_request_id||flowRequestId;
+      var exactResponseCents=authorizationPolicy.validCents(data.amount_authorized_cents);
+      var exactResponseCurrency=typeof data.currency==='string'&&/^[a-z]{3}$/i.test(data.currency)?data.currency.toLowerCase():'';
+      var responseAuthorization=exactResponseCents===null||!exactResponseCurrency?null:{cents:exactResponseCents,currency:exactResponseCurrency};
+      if(!responseAuthorization||responseAuthorization.cents!==disclosedPolicy.cents||responseAuthorization.currency!==disclosedPolicy.currency){
+        state.paymentIntentId=responsePaymentIntentId;state.clientSecret=data.client_secret||'';
+        state.amountCents=responseAuthorization?responseAuthorization.cents:null;
+        state.currency=responseAuthorization?responseAuthorization.currency:'';state.hasAmountSnapshot=!!responseAuthorization;
+        state.requestId=responseRequestId;state.phase='ready';rememberState();
+        var mismatchRelease=await cancelAuthorization('authorization_policy_snapshot_mismatch',{token:opts.token});
+        if(!mismatchRelease||!mismatchRelease.confirmed){
+          var releasePending=new Error(state.lastError||'Release the prior authorization before continuing.');
+          releasePending.code='session_authorization_release_pending';releasePending._obPreserveCancellation=true;throw releasePending;
+        }
+        throw await refreshedPolicyReviewError(opts.expertId);
+      }
+      state.paymentIntentId = responsePaymentIntentId;
       state.clientSecret = data.client_secret || '';
-      state.amount = Number(data.amount_authorized || (Number(data.amount_authorized_cents || 500) / 100)) || 5;
-      state.requestId = data.authorization_request_id || flowRequestId;
+      state.amountCents=responseAuthorization.cents;
+      state.currency=responseAuthorization.currency;
+      state.hasAmountSnapshot=true;
+      state.requestId = responseRequestId;
       var status = String(data.status || '').toLowerCase();
       if(status !== 'requires_capture'){
         var stripe = opts.stripe || (data.publishable_key && window.Stripe ? window.Stripe(data.publishable_key) : null);
@@ -63658,6 +64143,13 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     }catch(err){
       if(err&&err.code==='payment_account_changed')throw err;
       if(!clientContextCurrent(flowContext,false)||currentAccountKey()!==flowAccountKey)throw accountChangedError();
+      if(err&&err._obPreserveCancellation){
+        var cancellationError=new Error(friendlyError(err));cancellationError.code=err.code;throw cancellationError;
+      }
+      if(err&&err._obPolicyReview){
+        if(state.phase!=='cancel_retry')resetState();
+        var reviewError=new Error(err.message);reviewError.code=err.code;reviewError._obPolicyReview=true;throw reviewError;
+      }
       state.lastError = friendlyError(err);
       if(err && err._obNetwork){
         state.phase = 'retryable';
@@ -63899,7 +64391,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     if(title) title.textContent = 'Confirm payment method';
     if(explainer){
       if(typeof window.obSetPayPerMinuteDisclosure==='function') window.obSetPayPerMinuteDisclosure(explainer,'');
-      else explainer.textContent=DISCLOSURE_TITLE+' '+DISCLOSURE_BODY;
+      else explainer.textContent=DISCLOSURE_TITLE+' '+authorizationPolicy.copy('disclosure-body');
       explainer.setAttribute('role','note'); explainer.setAttribute('aria-live','polite');
     }
     if(button && !button.disabled) button.textContent = savedPayment.useSaved?'Verify saved payment & Continue \u2192':'Verify payment & Continue \u2192';
@@ -63921,14 +64413,16 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     if(element&&typeof element.focus==='function') setTimeout(function(){try{element.focus({preventScroll:true});}catch(e){element.focus();}},0);
   }
   function completeMainAuthorizationUi(){
+    if(!state.hasAmountSnapshot||authorizationPolicy.validCents(state.amountCents)==null)return false;
     cancelPendingMainLaunch();
     var button = document.getElementById('bov-pay-btn');
     var badge = document.getElementById('bov-step-pay-badge');
     var conn = document.getElementById('bov-step-conn-badge');
     var title = document.getElementById('bov-connect-title');
     var sub = document.getElementById('bov-connect-sub');
-    if(button){ button.disabled = true; button.textContent = '$5 authorization approved \u2713'; }
-    if(badge){ badge.textContent = '\u2713 $5 authorization approved'; badge.style.background='#dcfce7'; badge.style.color='#166534'; }
+    var approved=authorizationPolicy.copy('approved-short',state.amountCents,state.currency);
+    if(button){ button.removeAttribute('data-ob-session-authorization-copy'); button.disabled = true; button.textContent = approved+' \u2713'; }
+    if(badge){ badge.removeAttribute('data-ob-session-authorization-copy'); badge.textContent = '\u2713 '+approved; badge.style.background='#dcfce7'; badge.style.color='#166534'; }
     if(title) title.textContent = 'Payment method confirmed';
     if(sub) sub.textContent = 'Only your actual session time will be charged.';
     if(typeof window._bovGoStep === 'function') window._bovGoStep(3);
@@ -63942,6 +64436,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
         focusElement(document.getElementById('presess-begin-btn')||document.getElementById('presess-title'));
       },450));
     },350));
+    return true;
   }
   window.obCompleteSessionAuthorizationUi = completeMainAuthorizationUi;
 
@@ -63952,6 +64447,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     state.abandoned=false;
     var button = document.getElementById('bov-pay-btn');
     var error = document.getElementById('bov-card-error');
+    var disclosedPolicy=authorizationPolicy.disclosedSnapshot(document.getElementById('bov-pay-explainer'));
     syncPaymentCopy();
     if(button){ button.disabled=true; button.textContent=savedPayment.useSaved?'Verifying saved payment...':'Saving payment method...'; }
     if(error){ error.style.display='none'; error.textContent=''; }
@@ -63964,10 +64460,12 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
       if(!tok) throw new Error('Please sign in before confirming your payment method.');
       await refreshSavedPaymentStatus(false,expertId);
       assertClientContext(flowContext,false);
-      var configResponse = await fetch(BASE + '/api/payments/config' + (expertId ? '?expert_id=' + encodeURIComponent(expertId) : ''));
+      var configResponse = await fetch(BASE + '/api/payments/config' + (expertId ? '?expert_id=' + encodeURIComponent(expertId) : ''),{cache:'no-store'});
       var config = await responseJson(configResponse);
       assertClientContext(flowContext,false);
       if(!configResponse.ok || !config.publishable_key) throw new Error(config.error || 'Payment is temporarily unavailable. Please try again shortly.');
+      var validatedPolicy=await ensureDisclosedPolicy(expertId,disclosedPolicy,config,true);
+      assertClientContext(flowContext,false);
       var stripe = window._bovStripe || (window.Stripe && window.Stripe(config.publishable_key));
       var card = window._bovCardElement;
       if(!stripe || (!savedPayment.useSaved&&!card)) throw new Error('The secure card form is still loading. Wait a moment and try again.');
@@ -63997,7 +64495,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
         savedPayment.loaded=true;savedPayment.available=true;savedPayment.useSaved=true;savedPayment.accountKey=flowAccountKey;
       }
       if(button) button.textContent='Verifying payment...';
-      await createOrConfirmAuthorization({stripe:stripe,token:tok,expertId:expertId,channel:currentChannel()});
+      await createOrConfirmAuthorization({stripe:stripe,token:tok,expertId:expertId,channel:currentChannel(),disclosedPolicy:disclosedPolicy,validatedPolicy:validatedPolicy});
       assertClientContext(flowContext,false);
       localStorage.setItem('ob_hpm','1');
       completeMainAuthorizationUi();
@@ -64044,7 +64542,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     var mode = paymentMode();
     if(mode === 'prepaid' && typeof originalPaymentLabel === 'function') return originalPaymentLabel(freeMinutes);
     var promo = window._obSessionPromoCode || '';
-    if(state.phase === 'ready' || state.phase === 'binding' || state.phase === 'bound') return '$5 temporary authorization approved' + (promo ? ' \u00b7 promo ' + promo : '');
+    if(state.hasAmountSnapshot&&(state.phase === 'ready' || state.phase === 'binding' || state.phase === 'bound')) return authorizationPolicy.copy('approved',state.amountCents,state.currency) + (promo ? ' \u00b7 promo ' + promo : '');
     return 'Payment authorization required';
   };
 
@@ -64053,7 +64551,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     window._beginSession = function(){
       if(paymentMode() !== 'prepaid' && !isReadyFor({expertId:currentExpertId(),channel:currentChannel(),bookingId:''})){
         window._userClickedBegin = false;
-        var message = 'Please approve the temporary $5 authorization before requesting the session.';
+        var message = 'Please approve the '+configuredAuthorizationPhrase()+' before requesting the session.';
         if(typeof window.toast === 'function') window.toast(message,'err');
         else alert(message);
         return;
@@ -64238,7 +64736,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
 
   var bookingController={
     id:'',context:null,data:null,lifecycle:null,view:null,loading:null,error:'',card:null,cardMountPromise:null,
-    stripe:null,cardComplete:false,busy:false,refreshTimer:null,loadSeq:0,actionSeq:0,
+    stripe:null,cardComplete:false,busy:false,refreshTimer:null,loadSeq:0,actionSeq:0,authorizationAmountCents:null,authorizationCurrency:'',
     media:{bookingId:'',channel:'',stream:null,phase:'idle',error:'',promise:null,requestSeq:0,pendingJoin:null}
   };
   function bookingIdFromUrl(){ return new URLSearchParams(window.location.search).get('booking') || ''; }
@@ -64268,6 +64766,8 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
       &&state.paymentIntentId===paymentIntentId
       &&state.requestId===requestId;
     if(!stableOwner||!exactAuthorization)return false;
+    var transaction=authorizationPolicy.snapshotFromRecord(authorization,null,null);
+    if(transaction){bookingController.authorizationAmountCents=transaction.cents;bookingController.authorizationCurrency=transaction.currency;}
     resetState();
     return true;
   }
@@ -64330,6 +64830,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
       bookingController.media.phase='ready';bookingController.media.error='';
     }else resetScheduledBookingMedia({keepStream:!!options.keepMediaStream});
     bookingController.id='';bookingController.data=null;bookingController.lifecycle=null;bookingController.view=null;bookingController.loading=null;bookingController.error='';
+    bookingController.authorizationAmountCents=null;bookingController.authorizationCurrency='';
     bookingController.card=null;bookingController.cardMountPromise=null;bookingController.stripe=null;bookingController.cardComplete=false;bookingController.busy=false;
     bookingController.context=null;
     if(options.removeUi){var ui=document.getElementById('ob-booking-session-authorization');if(ui)ui.remove();}
@@ -64382,7 +64883,9 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     var ready=data.authorization_ready===true||booking.authorization_ready===true||/^(ready|authorized|bound|requires_capture)$/.test(authStatus);
     var expired=!!(ready&&expiresAt&&expiresAt<=now);
     if(expired)ready=false;
-    return {required:!!required,available:!!available,availableAt:availableAt,expiresAt:expiresAt,ready:!!ready,expired:expired,now:now};
+    var authorization=authorizationPolicy.snapshotFromRecord(data,null,null);
+    return {required:!!required,available:!!available,availableAt:availableAt,expiresAt:expiresAt,ready:!!ready,expired:expired,now:now,
+      amountCents:authorization&&authorization.cents,currency:authorization&&authorization.currency};
   }
   async function loadBookingAuthorizationData(force,explicitContext){
     var context=explicitContext||bookingOperationContext();
@@ -64398,6 +64901,9 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
         if(!bookingControllerOwns(context)||bookingController.loadSeq!==loadSeq)return null;
         if(!response.ok){var error=new Error(data.error||'Could not refresh this booking.');error.code=data.code||'';throw error;}
         bookingController.data=data;bookingController.lifecycle=bookingLifecycleState(data);syncScheduledBookingMedia(data);
+        var authorization=authorizationPolicy.snapshotFromRecord(data,null,null);
+        bookingController.authorizationAmountCents=authorization?authorization.cents:null;
+        bookingController.authorizationCurrency=authorization?authorization.currency:'';
         bookingController.view=bookingController.lifecycle.kind==='waiting'?bookingAuthorizationView(data,Date.now()):null;bookingController.error='';
         return data;
       }).catch(function(error){
@@ -64584,7 +65090,9 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
   }
   function renderBookingAuthorization(card,view){
     bookingHeading(card,'Confirm your payment method before the live session');
-    bookingCopy(card,(view&&view.expired?'The previous temporary authorization expired. Confirm again to get ready. ':'')+'A temporary $5 authorization may appear. You will only be charged for the time you use, and any unused amount is released after the session; your bank may show it as pending briefly.');
+    if(view&&view.expired)bookingCopy(card,'The previous temporary authorization expired. Confirm again to get ready.');
+    var disclosure=bookingCopy(card,authorizationPolicy.copy('scheduled-consent'));
+    disclosure.id='ob-booking-auth-policy-disclosure';disclosure.setAttribute('data-ob-session-authorization-copy','scheduled-consent');authorizationPolicy.render(disclosure);
     var actions=bookingActions(card);
     actions.appendChild(bookingButton('ob-booking-auth-submit','Confirm payment & get ready','btn-primary',function(){authorizeScheduledBooking(false);}));
     var change=bookingButton('ob-booking-auth-change','Use a different card','btn-secondary',window.obShowScheduledBookingCard);
@@ -64671,7 +65179,10 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
       bookingHeading(card,'Finish releasing the previous authorization');bookingCopy(card,state.lastError||'Release the previous temporary authorization before confirming another one.');
       bookingActions(card).appendChild(bookingButton('ob-booking-auth-release-retry','Retry release','btn-secondary',retryCancellationRecovery));
     }else if(bookingController.view&&bookingController.view.ready){
-      bookingHeading(card,'\u2713 $5 temporary authorization approved',true);bookingCopy(card,'You will only be charged for the session time you use. The expert can now start the session.');
+      var readyCents=bookingController.view.amountCents||bookingController.authorizationAmountCents;
+      var readyCurrency=bookingController.view.currency||bookingController.authorizationCurrency;
+      var readyLabel=readyCents==null?'Temporary authorization approved':authorizationPolicy.copy('approved',readyCents,readyCurrency);
+      bookingHeading(card,'\u2713 '+readyLabel,true);bookingCopy(card,'You will only be charged for the session time you use. The expert can now start the session.');
     }else if(!bookingController.view||!bookingController.view.available)renderBookingUnavailable(card,bookingController.view);
     else renderBookingAuthorization(card,bookingController.view);
     if(authToken()&&data&&bookingMediaChannel(data))renderBookingMediaPreflight(card,data);
@@ -64687,9 +65198,11 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     var mountPromise=(async function(){
       var mountedCard=null;
       try{
-        var response=await fetch(BASE+'/api/payments/config?expert_id='+encodeURIComponent(expertId));var config=await responseJson(response);
+        var response=await fetch(BASE+'/api/payments/config?expert_id='+encodeURIComponent(expertId),{cache:'no-store'});var config=await responseJson(response);
         if(!bookingControllerOwns(context)||bookingController.cardMountPromise!==mountPromise)throw accountChangedError();
         if(!response.ok||!config.publishable_key)throw new Error(config.error||'Payment form is unavailable.');
+        await ensureCurrentPolicy(expertId,config);
+        if(!bookingControllerOwns(context)||bookingController.cardMountPromise!==mountPromise)throw accountChangedError();
         if(bookingController.card){if(typeof bookingController.card.focus==='function')bookingController.card.focus();return bookingController.card;}
         bookingController.stripe=window.Stripe(config.publishable_key);var elements=bookingController.stripe.elements();
         mountedCard=elements.create('card',{hidePostalCode:true,style:{base:{fontSize:'16px',color:'#3b1f0e','::placeholder':{color:'#9ca3af'}}}});
@@ -64737,6 +65250,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     var context=bookingOperationContext();
     if(!bookingContextIsCurrent(context))return;
     if(bookingController.busy&&bookingControllerOwns(context))return;
+    var disclosedPolicy=authorizationPolicy.disclosedSnapshot(document.getElementById('ob-booking-auth-policy-disclosure'));
     var data=await loadBookingAuthorizationData(true,context);
     if(!bookingControllerOwns(context)||!data||bookingController.busy)return;
     if(applyBookingLifecycle(data,{focus:true}))return;
@@ -64748,9 +65262,11 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     var error=document.querySelector('.ob-booking-auth-error');var actionSeq=++bookingController.actionSeq;bookingController.busy=true;bookingController.error='';
     if(button){button.disabled=true;button.textContent=useReplacement?'Saving card...':'Confirming payment...';}if(error){error.style.display='none';error.textContent='';}
     try{
+      var validatedPolicy=await ensureDisclosedPolicy(expertId,disclosedPolicy,null,true);
+      if(!bookingControllerOwns(context)||bookingController.actionSeq!==actionSeq)return;
       if(useReplacement)await saveBookingReplacementCard(expertId,context);
       if(!bookingControllerOwns(context)||bookingController.actionSeq!==actionSeq)return;
-      var auth=await createOrConfirmAuthorization({expertId:expertId,channel:channel,bookingId:context.bookingId,token:context.token,stripe:bookingController.stripe});
+      var auth=await createOrConfirmAuthorization({expertId:expertId,channel:channel,bookingId:context.bookingId,token:context.token,stripe:bookingController.stripe,disclosedPolicy:disclosedPolicy,validatedPolicy:validatedPolicy});
       if(!bookingControllerOwns(context)||bookingController.actionSeq!==actionSeq)return;
       var bindResponse=await fetch(BASE+'/api/bookings/'+encodeURIComponent(context.bookingId)+'/authorize',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+context.token},body:JSON.stringify({authorization_payment_intent_id:auth.authorization_payment_intent_id,authorization_request_id:auth.authorization_request_id})});
       var bound=await responseJson(bindResponse);if(!bindResponse.ok){var bindError=new Error(bound.error||'Could not link the authorization to this booking.');bindError.code=bound.code||'';throw bindError;}
@@ -64825,7 +65341,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
         if(typeof window.loadExpertBookings==='function')window.loadExpertBookings();
       }).catch(function(err){
         if(!owns())return;
-        var message=err.code==='session_authorization_required'?'Waiting for the client to approve the temporary $5 authorization. Ask them to open their booking join link.':(err.message||'Failed to start booking');
+        var message=err.code==='session_authorization_required'?'Waiting for the client to approve the '+configuredAuthorizationPhrase()+'. Ask them to open their booking join link.':(err.message||'Failed to start booking');
         if(typeof window.toast==='function')window.toast(message,'err');else alert(message);
         if(button){button.disabled=false;button.textContent='\u25b6 Start Session';}
       });
@@ -64959,6 +65475,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
       bookingController:bookingController,expertBillingLabel:expertBillingLabel,restoreState:restoreState,
       savedPayment:savedPayment,refreshSavedPaymentStatus:refreshSavedPaymentStatus,
       accountKeyForToken:accountKeyForToken,resetAccountScopedPaymentState:resetAccountScopedPaymentState,
+      ensureCurrentPolicy:ensureCurrentPolicy,
       shouldClearClientSessionRuntime:shouldClearClientSessionRuntime,clearAccountScopedClientSessionRuntime:clearAccountScopedClientSessionRuntime,
       clearClientSessionTransport:clearClientSessionTransport,clearClientRtcMediaAndTimers:clearClientRtcMediaAndTimers,clearClientSessionDom:clearClientSessionDom,
       sessionAuthorizationRequestIsCurrent:sessionAuthorizationRequestIsCurrent,

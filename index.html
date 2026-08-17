@@ -7494,13 +7494,18 @@ if (!window.toast) {
                     <option>1 hour</option>
                   </select>
                 </div>
-                <div class="settings-field-row">
-                  <div><div class="settings-field-label">Concurrent session limit</div><div class="settings-field-sub">Max sessions running at once</div></div>
-                  <select class="settings-field-input" style="width:100px;cursor:pointer;">
-                    <option selected>1</option>
-                    <option>2</option>
-                    <option>3</option>
-                  </select>
+                <div class="settings-field-row ob-expert-live-capacity-editor" id="ob-expert-live-capacity-editor" hidden>
+                  <div class="ob-expert-live-capacity-copy">
+                    <label class="settings-field-label" for="avail-live-capacity">Parallel chat sessions</label>
+                    <div class="settings-field-sub">Choose how many human chat sessions you want open at once. Voice and video remain one at a time.</div>
+                    <div class="ob-expert-live-capacity-status" id="ob-expert-live-capacity-status" role="status" aria-live="polite" aria-atomic="true"></div>
+                  </div>
+                  <div class="ob-expert-live-capacity-actions">
+                    <select class="settings-field-input" id="avail-live-capacity" aria-describedby="ob-expert-live-capacity-status" disabled>
+                      <option value="">Loading…</option>
+                    </select>
+                    <button class="btn btn-secondary" id="ob-expert-live-capacity-save" type="button" onclick="return obExpertLiveCapacitySave()" disabled>Save chat limit</button>
+                  </div>
                 </div>
                 <div class="settings-field-row">
                   <div><div class="settings-field-label">Auto-accept bookings</div><div class="settings-field-sub">Skip manual approval for scheduled sessions</div></div>
@@ -67710,6 +67715,286 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
   }
   syncPaymentCopy();
 })();
+</script>
+<style id="ownlybiz-expert-live-capacity-editor-20260817-style">
+  #ob-expert-live-capacity-editor[hidden]{display:none!important;}
+  #ob-expert-live-capacity-editor{align-items:flex-start;gap:18px;}
+  .ob-expert-live-capacity-copy{min-width:0;flex:1;}
+  .ob-expert-live-capacity-copy .settings-field-label{display:block;}
+  .ob-expert-live-capacity-actions{display:flex;align-items:center;justify-content:flex-end;gap:10px;flex-wrap:wrap;}
+  #avail-live-capacity{width:118px;min-width:118px;min-height:44px;cursor:pointer;}
+  #avail-live-capacity:disabled{cursor:not-allowed;opacity:.68;}
+  #ob-expert-live-capacity-save{min-height:44px;white-space:nowrap;}
+  .ob-expert-live-capacity-status{max-width:720px;min-height:18px;margin-top:7px;font-size:11px;line-height:1.5;color:var(--gray-400,#81756e);}
+  .ob-expert-live-capacity-status[data-tone="ok"]{color:var(--sage,#15803d);}
+  .ob-expert-live-capacity-status[data-tone="warn"]{color:#b45309;}
+  .ob-expert-live-capacity-status[data-tone="error"]{color:#b91c1c;}
+  body:not(.ob-ui-light) .ob-expert-live-capacity-status[data-tone="ok"]{color:#86efac;}
+  body:not(.ob-ui-light) .ob-expert-live-capacity-status[data-tone="warn"]{color:#fdba74;}
+  body:not(.ob-ui-light) .ob-expert-live-capacity-status[data-tone="error"]{color:#fca5a5;}
+  #avail-live-capacity:focus-visible,#ob-expert-live-capacity-save:focus-visible{outline:3px solid var(--terra,#ff6b47);outline-offset:3px;}
+  @media(max-width:768px){
+    #ob-expert-live-capacity-editor{display:block;}
+    .ob-expert-live-capacity-actions{justify-content:stretch;margin-top:13px;}
+    #avail-live-capacity{font-size:16px;flex:0 0 118px;}
+    #ob-expert-live-capacity-save{flex:1 1 160px;}
+  }
+</style>
+<script id="ownlybiz-expert-live-capacity-editor-20260817">
+(function(root){
+  'use strict';
+  if(root.__obExpertLiveCapacityEditor20260817)return;
+  root.__obExpertLiveCapacityEditor20260817=true;
+
+  var ENDPOINT='/api/experts/me/live-capacity';
+  var state={
+    capacity:null,ownedPrincipal:'',loading:false,saving:false,dirty:false,pendingDraft:null,
+    loadSequence:0,saveSequence:0,editGeneration:0,loadPromise:null,savePromise:null
+  };
+
+  function byId(id){return document.getElementById(id);}
+  function own(value,key){return !!value&&Object.prototype.hasOwnProperty.call(value,key);}
+  function whole(value,min,max){return typeof value==='number'&&Number.isSafeInteger(value)&&value>=min&&value<=max?value:null;}
+  function supportActive(){try{return !!(root.obSupportSessionActive&&root.obSupportSessionActive());}catch(e){return true;}}
+  function isMini(){
+    try{if(root.obIsMiniSuiteRoute&&root.obIsMiniSuiteRoute())return true;}catch(e){return true;}
+    try{var path=String(root.location&&root.location.pathname||'').replace(/^\/+/, '').toLowerCase();return path==='mini-suite'||path.indexOf('mini-suite/')===0;}catch(e){return false;}
+  }
+  function elements(){return {editor:byId('ob-expert-live-capacity-editor'),select:byId('avail-live-capacity'),button:byId('ob-expert-live-capacity-save'),status:byId('ob-expert-live-capacity-status')};}
+  function clientContext(){return root.OB_CLIENT_CONTEXT&&typeof root.OB_CLIENT_CONTEXT.capture==='function'&&typeof root.OB_CLIENT_CONTEXT.isCurrent==='function'?root.OB_CLIENT_CONTEXT:null;}
+  function capture(scope){
+    var client=clientContext(),context=null;
+    if(!client||supportActive()||isMini())return null;
+    try{context=client.capture(scope||'expert-live-capacity');}catch(e){return null;}
+    return context&&context.token&&context.principal&&context.role==='expert'&&client.isCurrent(context)?context:null;
+  }
+  function contextCurrent(context){
+    var client=clientContext();
+    if(!client||supportActive()||isMini())return false;
+    try{return !!(context&&context.role==='expert'&&client.isCurrent(context));}catch(e){return false;}
+  }
+  function operationCurrent(operation,kind){
+    var live=elements();
+    if(!operation||!contextCurrent(operation.context)||operation.editor!==live.editor||operation.select!==live.select)return false;
+    return kind==='save'?operation.sequence===state.saveSequence:operation.sequence===state.loadSequence;
+  }
+  function boundedStatus(value){
+    value=String(value||'').replace(/[\u0000-\u001f\u007f]/g,' ').replace(/\s+/g,' ').trim();
+    return value.length>360?value.slice(0,359)+'…':value;
+  }
+  function setStatus(message,tone){
+    var node=byId('ob-expert-live-capacity-status');
+    if(!node)return;
+    node.textContent=boundedStatus(message);
+    node.setAttribute('data-tone',/^(ok|warn|error)$/.test(String(tone||''))?tone:'');
+  }
+  function clearSelect(select,loadingLabel){
+    if(!select)return;
+    while(select.firstChild)select.removeChild(select.firstChild);
+    var option=document.createElement('option');
+    option.value='';option.textContent=loadingLabel||'Loading…';select.appendChild(option);select.value='';
+  }
+  function updateControls(){
+    var live=elements();
+    if(!live.editor)return;
+    var selected=live.select?whole(Number(live.select.value),1,20):null;
+    var canReplaceAbovePlan=!!(state.capacity&&state.capacity.desired>state.capacity.planCeiling&&selected!==null&&selected<=state.capacity.planCeiling&&selected!==state.capacity.desired);
+    live.editor.setAttribute('aria-busy',state.loading||state.saving?'true':'false');
+    if(live.select)live.select.disabled=!!(state.saving||!state.capacity);
+    if(live.button){
+      live.button.textContent=state.saving?'Saving…':(!state.capacity?(state.loading?'Loading…':'Reload setting'):'Save chat limit');
+      live.button.disabled=!!(state.saving||state.loading||(state.capacity&&!state.dirty&&!canReplaceAbovePlan));
+    }
+  }
+  function resetPrivate(){
+    state.loadSequence+=1;state.saveSequence+=1;state.capacity=null;state.ownedPrincipal='';state.loading=false;state.saving=false;state.dirty=false;state.pendingDraft=null;state.loadPromise=null;state.savePromise=null;state.editGeneration+=1;
+    var live=elements();
+    if(live.editor){live.editor.hidden=true;live.editor.setAttribute('aria-busy','false');}
+    if(live.select){clearSelect(live.select,'Loading…');live.select.disabled=true;}
+    if(live.button){live.button.disabled=true;live.button.textContent='Save chat limit';}
+    if(live.status){live.status.textContent='';live.status.setAttribute('data-tone','');}
+  }
+  function reveal(context){
+    var live=elements();
+    if(!live.editor||!live.select||!live.button||!live.status)return null;
+    live.editor.hidden=false;state.ownedPrincipal=String(context.principal||'');return live;
+  }
+  function apiBase(){return String(root.OWNLYBIZ_API_URL||root._OB_BACKEND||'https://victorious-wisdom-production-a6b0.up.railway.app').replace(/\/+$/,'');}
+  function responseError(response,data){
+    var code=String(data&&data.code||'');
+    if(!/^live_capacity_[a-z0-9_]{1,72}$/.test(code))code='live_capacity_failed';
+    return {obLiveCapacityError:true,status:Number(response&&response.status||0),code:code};
+  }
+  function parseCapacity(data){
+    var source=data&&data.live_capacity,human=source&&source.human;
+    var desired=whole(human&&human.desired_concurrency,1,20);
+    var effective=whole(human&&human.effective_concurrency,1,20);
+    var plan=whole(human&&human.plan_ceiling,1,20);
+    var revision=whole(human&&human.revision,1,Number.MAX_SAFE_INTEGER);
+    var rollout=whole(source&&source.human_rollout_ceiling,1,20);
+    var mode=String(source&&source.rollout_mode||'');
+    if(!source||!human||desired===null||effective===null||plan===null||revision===null||rollout===null||['disabled','observe','enforce','paused'].indexOf(mode)<0||typeof source.admission_enforced!=='boolean'||effective>plan){
+      throw {obLiveCapacityError:true,status:502,code:'live_capacity_invalid_response'};
+    }
+    return {desired:desired,effective:effective,planCeiling:plan,revision:revision,rolloutCeiling:rollout,rolloutMode:mode,admissionEnforced:source.admission_enforced===true};
+  }
+  function request(context,method,body){
+    var options={method:method,cache:'no-store',headers:{'Accept':'application/json','Authorization':'Bearer '+String(context.token||'')},signal:context.signal};
+    if(body!==undefined){options.headers['Content-Type']='application/json';options.body=JSON.stringify(body);}
+    return root.fetch(apiBase()+ENDPOINT,options).then(function(response){
+      return response.json().catch(function(){return {};}).then(function(data){
+        if(!response.ok||data&&data.success===false)throw responseError(response,data);
+        return parseCapacity(data);
+      });
+    }).catch(function(error){
+      if(error&&error.obLiveCapacityError)throw error;
+      throw {obLiveCapacityError:true,status:0,code:error&&error.name==='AbortError'?'live_capacity_request_aborted':'live_capacity_network_error'};
+    });
+  }
+  function errorMessage(error,action){
+    var code=String(error&&error.code||''),status=Number(error&&error.status||0);
+    if(code==='live_capacity_revision_conflict')return 'This setting changed elsewhere. Reload the latest value before saving again.';
+    if(code==='live_capacity_plan_limit_exceeded')return 'Your confirmed plan no longer allows that choice. Reload the current limit before saving again.';
+    if(code==='live_capacity_revision_required'||code==='live_capacity_revision_invalid')return 'The saved version is no longer current. Reload the setting before saving again.';
+    if(code==='live_capacity_service_unavailable'||code==='live_capacity_price_authority_unavailable'||status===503)return 'Session capacity is temporarily unavailable. Try again shortly.';
+    if(code==='live_capacity_invalid_response')return 'Session capacity returned an invalid response. Reload before making changes.';
+    if(status===401||status===403)return 'Your expert access changed. Sign in again before changing session capacity.';
+    if(status===404)return 'Session capacity is not available for this expert account.';
+    return action==='save'?'The chat limit could not be saved. Reload the current value before trying again.':'The chat limit could not be loaded. Try again.';
+  }
+  function activeLimit(capacity){
+    if(!capacity||capacity.rolloutMode==='paused')return 0;
+    if(!capacity.admissionEnforced||capacity.rolloutMode!=='enforce')return 1;
+    return Math.min(capacity.effective,capacity.rolloutCeiling);
+  }
+  function capacitySummary(capacity){
+    var base='Saved preference: '+capacity.desired+'. Your plan allows '+capacity.planCeiling+' and currently makes '+capacity.effective+' effective. ';
+    var replace=capacity.desired>capacity.planCeiling?' Save the selected plan-allowed value only if you want to replace the higher saved preference.':'';
+    if(capacity.rolloutMode==='paused')return 'New live sessions are temporarily paused. '+base+'Voice and video remain one at a time.'+replace;
+    if(!capacity.admissionEnforced||capacity.rolloutMode!=='enforce')return base+'Multi-session admission is not active yet, so new live chat work remains single-session. Voice and video remain one at a time.'+replace;
+    return base+'The rollout ceiling is '+capacity.rolloutCeiling+', so up to '+activeLimit(capacity)+' parallel human chats are active. Voice and video remain one at a time.'+replace;
+  }
+  function draftSummary(capacity,draft){return 'Selected '+draft+' parallel chat'+(draft===1?'':'s')+'; this choice is not saved yet. '+capacitySummary(capacity);}
+  function defaultEditorValue(capacity){return capacity.desired<=capacity.planCeiling?capacity.desired:Math.max(1,Math.min(capacity.effective,capacity.planCeiling));}
+  function renderCapacity(capacity,options){
+    options=options||{};
+    var live=elements(),select=live.select;
+    if(!select)return {draftDropped:false};
+    var preserveDirty=!!options.preserveDirty,draft=whole(options.preserveDraft,1,20),draftDropped=preserveDirty&&draft!==null&&draft>capacity.planCeiling;
+    while(select.firstChild)select.removeChild(select.firstChild);
+    for(var value=1;value<=capacity.planCeiling;value+=1){
+      var option=document.createElement('option');option.value=String(value);option.textContent=value+(value===1?' chat':' chats');select.appendChild(option);
+    }
+    var chosen=defaultEditorValue(capacity);
+    if(preserveDirty&&draft!==null&&draft<=capacity.planCeiling)chosen=draft;
+    select.value=String(chosen);
+    state.capacity=capacity;
+    state.dirty=!!(preserveDirty&&draft!==null&&draft<=capacity.planCeiling&&draft!==capacity.desired);
+    state.pendingDraft=state.dirty?draft:null;
+    updateControls();
+    return {draftDropped:draftDropped};
+  }
+  function reconciliationNotice(error,capacity,submitted){
+    if(capacity.desired===submitted)return {tone:'ok',text:'Saved setting confirmed after checking the server. '+capacitySummary(capacity)};
+    if(error&&error.code==='live_capacity_revision_conflict')return {tone:'warn',text:'This setting changed elsewhere. The latest value is loaded; review it before saving again. '+capacitySummary(capacity)};
+    if(error&&error.code==='live_capacity_plan_limit_exceeded')return {tone:'warn',text:'Your confirmed plan no longer allows that choice. The current limit is loaded; review it before saving again. '+capacitySummary(capacity)};
+    return {tone:'warn',text:'The save outcome was checked against the server. Review the current value before saving again. '+capacitySummary(capacity)};
+  }
+  function load(options){
+    options=options||{};
+    var context=capture(options.reconcile?'expert-live-capacity-reconcile':'expert-live-capacity-load');
+    if(!context){resetPrivate();return Promise.resolve(false);}
+    var live=reveal(context);
+    if(!live)return Promise.resolve(false);
+    if(state.saving&&!options.reconcile)return state.savePromise||Promise.resolve(false);
+    if(state.loading&&!options.force)return state.loadPromise||Promise.resolve(false);
+    var sequence=++state.loadSequence;
+    var operation={context:context,sequence:sequence,editor:live.editor,select:live.select};
+    var suppliedDraft=own(options,'preserveDraft')?whole(options.preserveDraft,1,20):null;
+    var suppliedDirty=!!options.preserveDirty;
+    state.loading=true;
+    if(!state.capacity){clearSelect(live.select,'Loading…');setStatus('Loading your private chat limit…','');}
+    updateControls();
+    var promise=request(context,'GET').then(function(capacity){
+      if(!operationCurrent(operation,'load'))return false;
+      state.loading=false;
+      var currentDraft=state.dirty?whole(Number(live.select.value),1,20):null;
+      var preserveDirty=state.dirty||suppliedDirty;
+      var preserveDraft=state.dirty?currentDraft:suppliedDraft;
+      var result=renderCapacity(capacity,{preserveDirty:preserveDirty,preserveDraft:preserveDraft});
+      if(options.reconcile){
+        var notice=reconciliationNotice(options.saveError,capacity,whole(options.submitted,1,20));
+        setStatus(notice.text,notice.tone);
+      }else if(result.draftDropped){
+        setStatus('Your unsaved choice is above the refreshed plan limit and was not kept. '+capacitySummary(capacity),'warn');
+      }else if(state.dirty){
+        setStatus(draftSummary(capacity,whole(Number(live.select.value),1,20)),'warn');
+      }else{
+        setStatus(capacitySummary(capacity),'');
+      }
+      return true;
+    }).catch(function(error){
+      if(!operationCurrent(operation,'load'))return false;
+      state.loading=false;
+      if(options.reconcile){
+        state.capacity=null;state.dirty=false;state.pendingDraft=suppliedDraft;clearSelect(live.select,'Reload required');
+        setStatus('The save outcome could not be verified. Reload the current setting before trying again.','error');
+      }else{
+        if(!state.capacity)clearSelect(live.select,'Reload required');
+        setStatus(errorMessage(error,'load'),'error');
+      }
+      updateControls();return false;
+    }).then(function(result){if(operation.sequence===state.loadSequence)state.loadPromise=null;return result;});
+    state.loadPromise=promise;return promise;
+  }
+  function save(){
+    var context=capture('expert-live-capacity-save'),live=elements();
+    if(!context){resetPrivate();return Promise.resolve(false);}
+    reveal(context);
+    if(!state.capacity)return load({force:true,preserveDraft:state.pendingDraft,preserveDirty:state.pendingDraft!==null});
+    if(state.saving)return state.savePromise||Promise.resolve(false);
+    var desired=whole(Number(live.select&&live.select.value),1,state.capacity.planCeiling);
+    if(desired===null){setStatus('Choose a chat limit allowed by your current plan.','error');return Promise.resolve(false);}
+    if(!state.dirty&&desired===state.capacity.desired){setStatus(capacitySummary(state.capacity),'');return Promise.resolve(true);}
+    var expectedRevision=state.capacity.revision;
+    var sequence=++state.saveSequence;
+    var operation={context:context,sequence:sequence,editor:live.editor,select:live.select};
+    state.saving=true;state.pendingDraft=desired;setStatus('Saving your private chat limit…','');updateControls();
+    var body={desired_human_concurrency:desired,expected_revision:expectedRevision,reason:'expert_live_capacity_editor'};
+    var promise=request(context,'PUT',body).then(function(capacity){
+      if(!operationCurrent(operation,'save'))return false;
+      state.saving=false;state.pendingDraft=null;renderCapacity(capacity,{});setStatus('Saved. '+capacitySummary(capacity),'ok');return true;
+    }).catch(function(error){
+      if(!operationCurrent(operation,'save'))return false;
+      state.saving=false;state.pendingDraft=desired;updateControls();
+      return load({force:true,reconcile:true,preserveDraft:desired,preserveDirty:true,submitted:desired,saveError:error}).then(function(){return false;});
+    }).then(function(result){if(operation.sequence===state.saveSequence)state.savePromise=null;return result;});
+    state.savePromise=promise;return promise;
+  }
+  function onSelectInput(){
+    var select=byId('avail-live-capacity');
+    if(!select||!state.capacity||state.saving)return;
+    var desired=whole(Number(select.value),1,state.capacity.planCeiling);
+    state.editGeneration+=1;state.dirty=desired!==null&&desired!==state.capacity.desired;state.pendingDraft=state.dirty?desired:null;
+    setStatus(state.dirty?draftSummary(state.capacity,desired):capacitySummary(state.capacity),state.dirty?'warn':'');updateControls();
+  }
+  function bind(){
+    var select=byId('avail-live-capacity');
+    if(select&&!select._obLiveCapacityBound){select._obLiveCapacityBound=true;select.addEventListener('change',onSelectInput);select.addEventListener('input',onSelectInput);}
+  }
+  function boot(){bind();load();}
+  root.obExpertLiveCapacityLoad=load;
+  root.obExpertLiveCapacitySave=save;
+  var client=clientContext();
+  if(client&&typeof client.register==='function')client.register('expert-live-capacity-editor',{
+    teardown:function(){resetPrivate();},
+    changed:function(current){resetPrivate();if(current&&current.role==='expert'&&!supportActive()&&!isMini())load({force:true});},
+    credentialRotated:function(current){if(current&&current.role==='expert'&&!supportActive()&&!isMini())load({force:true});else resetPrivate();}
+  });
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',boot,{once:true});else boot();
+  if(root.addEventListener)root.addEventListener('pageshow',function(event){if(event&&event.persisted)load({force:true});});
+  if(root.__OB_TEST_HOOKS__)root.__OB_TEST_HOOKS__.expertLiveCapacity={load:load,save:save,reset:resetPrivate,render:renderCapacity,activeLimit:activeLimit,summary:capacitySummary,state:state};
+})(window);
 </script>
 <style id="ownlybiz-expert-live-workspace-20260817-style">
   #ob-expert-live-session-switcher[hidden]{display:none!important;}

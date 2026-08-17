@@ -99,6 +99,20 @@ assert.doesNotMatch(html, />Authorize \$5 & Continue/,
 
 assert.match(controllerSource, /fetch\(BASE \+ '\/api\/payments\/authorize'/,
   'live flow creates a backend-owned authorization');
+assert.match(html, /hdrs\['Idempotency-Key'\] = bflBookingRequestId\(/,
+  'Book Later sends its stable request identity only through the idempotency header');
+assert.doesNotMatch(html, /bookingPayload\.booking_request_id\s*=/,
+  'Book Later does not expose its retry identity in the public request payload');
+assert.match(html, /if\(operation\.marketplaceExpertId\)bookingPayload\.marketplace_expert_id=operation\.marketplaceExpertId/,
+  'Book Later sends the captured marketplace expert directly in the booking payload');
+assert.doesNotMatch(html, /bflBookingIntentFingerprint|var hashes=\[2166136261/,
+  'Book Later does not persist a weak fingerprint derived from client identity or notes');
+assert.doesNotMatch(bflOwnerSource, /Math\.random\(\)/,
+  'Book Later request IDs never fall back to collision-prone non-cryptographic randomness');
+assert.match(html, /bflClearBookingRequestIntent\(\);[\s\S]*?if \(d && d\.success\)|if \(d && d\.success\) \{[\s\S]*?bflClearBookingRequestIntent\(\)/,
+  'Book Later clears the persisted request identity after confirmed success');
+assert.match(html, /d\.code==='booking_request_conflict'\)bflClearBookingRequestIntent\(\)/,
+  'a server-confirmed changed request clears the stale retry key for the next deliberate attempt');
 assert.match(controllerSource, /var body = \{expert_id:opts\.expertId, channel:opts\.channel, authorization_request_id:flowRequestId\}/,
   'authorization request includes expert, channel, and one client UUID');
 assert.match(controllerSource, /body\.authorization_policy_revision=disclosedPolicy\.revision/,
@@ -999,15 +1013,115 @@ bflOwnerHarness.sandbox._currentExpert = { id: 'expert-bfl-a', user_id: 'expert-
 bflOwnerHarness.sandbox._currentExpertId = 'expert-bfl-a';
 bflOwnerHarness.sandbox._bflPaymentMode = 'minute';
 bflOwnerHarness.sandbox._obSessionPromoCode = 'PROMO-A';
-new vm.Script('var _bflSelectedDate="2026-09-10",_bflSelectedTime="14:30",_bflChannel="chat",_bflCardElement=null;\n' + bflOwnerSource,
+bflOwnerHarness.sandbox.crypto.getRandomValues = (() => {
+  let generation = 0;
+  return (array) => {
+    generation += 1;
+    for (let index = 0; index < array.length; index += 1) array[index] = (generation * 31 + index * 17) & 255;
+    return array;
+  };
+})();
+new vm.Script('var _bflSelectedDate="2026-09-10",_bflSelectedTime="14:30",_bflChannel="chat",_bflCardElement=null,_bflBookingRequestIntent=null,_bflBookingRequestSensitiveKey=null,_BFL_BOOKING_REQUEST_STORAGE_KEY="ob_bfl_booking_request_v1";\n' + bflOwnerSource,
   { filename: 'book-later-owner.js' }).runInContext(bflOwnerHarness.sandbox);
 const bflOperation = bflOwnerHarness.sandbox.OB_CLIENT_CONTEXT.capture('book-later-submit', {
   expertId: 'expert-bfl-a', expertSlug: 'expert-bfl-a', date: '2026-09-10', time: '14:30',
   channel: 'chat', paymentMode: 'minute', promoCode: 'PROMO-A',
 });
 assert.equal(bflOwnerHarness.sandbox.obBflTestHooks.operationCurrent(bflOperation), true, 'captured BFL target begins current');
+const bflBookingIntent = {
+  expertId: 'expert-bfl-a', expertSlug: 'expert-bfl-a', date: '2026-09-10', time: '14:30',
+  marketplaceExpertId: '', channel: 'chat', paymentMode: 'minute', promoCode: 'PROMO-A', clientName: 'Client A',
+  clientEmail: 'client-a@example.test', notes: 'Same booking intent', cardNumber: '4242424242424242',
+};
+const firstBookingRequestId = bflOwnerHarness.sandbox.obBflTestHooks.requestIdFor(bflBookingIntent);
+const retryBookingRequestId = bflOwnerHarness.sandbox.obBflTestHooks.requestIdFor({ ...bflBookingIntent });
+assert.equal(retryBookingRequestId, firstBookingRequestId,
+  'an exact Book Later retry after response loss reuses the original request identity');
+assert.match(firstBookingRequestId, /^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/,
+  'the opaque Book Later request identity satisfies the backend idempotency contract');
+assert.equal(bflOwnerHarness.body.textContent.includes(firstBookingRequestId), false,
+  'the Book Later request identity is never rendered into public DOM');
+bflOwnerHarness.sandbox.obBflTestHooks.resetRequestIntent();
+const reloadBookingRequestId = bflOwnerHarness.sandbox.obBflTestHooks.requestIdFor({ ...bflBookingIntent });
+assert.equal(reloadBookingRequestId, firstBookingRequestId,
+  'a same-tab reload recovers the request identity for the same non-sensitive booking target');
+const changedSensitiveRequestId = bflOwnerHarness.sandbox.obBflTestHooks.requestIdFor({
+  ...bflBookingIntent, notes: 'Changed during the current page lifetime',
+});
+assert.notEqual(changedSensitiveRequestId, firstBookingRequestId,
+  'a sensitive intent edit in the current page rotates to a new request identity without persisting that edit');
+const changedBookingRequestId = bflOwnerHarness.sandbox.obBflTestHooks.requestIdFor({
+  ...bflBookingIntent, time: '15:00',
+});
+assert.notEqual(changedBookingRequestId, changedSensitiveRequestId,
+  'a materially changed Book Later intent rotates to a new request identity');
+const marketplaceBookingRequestId = bflOwnerHarness.sandbox.obBflTestHooks.requestIdFor({
+  ...bflBookingIntent, time: '15:00', marketplaceExpertId: 'mini-expert-a',
+});
+assert.notEqual(marketplaceBookingRequestId, changedBookingRequestId,
+  'choosing a marketplace expert rotates the owner-level booking request identity');
+const otherMarketplaceBookingRequestId = bflOwnerHarness.sandbox.obBflTestHooks.requestIdFor({
+  ...bflBookingIntent, time: '15:00', marketplaceExpertId: 'mini-expert-b',
+});
+assert.notEqual(otherMarketplaceBookingRequestId, marketplaceBookingRequestId,
+  'two marketplace experts can never collide into one frontend retry identity');
+const restoredChangedBookingRequestId = bflOwnerHarness.sandbox.obBflTestHooks.requestIdFor({
+  ...bflBookingIntent, time: '15:00',
+});
+assert.notEqual(restoredChangedBookingRequestId, otherMarketplaceBookingRequestId,
+  'returning from a marketplace expert to the owner also rotates the retry identity');
+const storedBookingIntent = bflOwnerHarness.sandbox.sessionStorage.getItem('ob_bfl_booking_request_v1');
+assert(storedBookingIntent, 'the retry identity survives response loss in same-tab session storage');
+for (const sensitiveValue of [
+  bflBookingIntent.clientEmail, bflBookingIntent.clientName, bflBookingIntent.notes,
+  bflBookingIntent.promoCode, bflBookingIntent.cardNumber, clientAToken, clientAKey,
+]) {
+  assert.equal(storedBookingIntent.includes(sensitiveValue), false,
+    'persisted Book Later retry state contains no client identity, notes, or credential data');
+}
+const parsedStoredBookingIntent = JSON.parse(storedBookingIntent);
+assert.deepEqual(Object.keys(parsedStoredBookingIntent).sort(), ['intentKey', 'requestId'],
+  'persisted Book Later retry state contains only a non-sensitive target key and opaque request ID');
+bflOwnerHarness.sandbox.obBflTestHooks.resetRequestIntent();
+const reloadWithChangedNotesId = bflOwnerHarness.sandbox.obBflTestHooks.requestIdFor({
+  ...bflBookingIntent, time: '15:00', notes: 'Changed after reload',
+});
+assert.equal(reloadWithChangedNotesId, restoredChangedBookingRequestId,
+  'after reload the client honestly reuses the pending key because sensitive fields were never persisted');
+bflOwnerHarness.sandbox.obBflTestHooks.clearRequestIntent();
+const deliberateChangedNotesRetryId = bflOwnerHarness.sandbox.obBflTestHooks.requestIdFor({
+  ...bflBookingIntent, time: '15:00', notes: 'Changed after reload',
+});
+assert.notEqual(deliberateChangedNotesRetryId, reloadWithChangedNotesId,
+  'after the backend reports an intent conflict, the next deliberate attempt receives a fresh key');
+bflOwnerHarness.sandbox.obBflTestHooks.clearRequestIntent();
+assert.equal(bflOwnerHarness.sandbox.sessionStorage.getItem('ob_bfl_booking_request_v1'), null,
+  'confirmed success can clear the persisted Book Later retry state');
+const originalSessionGet = bflOwnerHarness.sandbox.sessionStorage.getItem;
+const originalSessionSet = bflOwnerHarness.sandbox.sessionStorage.setItem;
+bflOwnerHarness.sandbox.sessionStorage.getItem = () => { throw new Error('storage unavailable'); };
+bflOwnerHarness.sandbox.sessionStorage.setItem = () => { throw new Error('storage unavailable'); };
+const memoryOnlyRequestId = bflOwnerHarness.sandbox.obBflTestHooks.requestIdFor({
+  ...bflBookingIntent, time: '15:30',
+});
+const memoryOnlyRetryId = bflOwnerHarness.sandbox.obBflTestHooks.requestIdFor({
+  ...bflBookingIntent, time: '15:30',
+});
+assert.equal(memoryOnlyRetryId, memoryOnlyRequestId,
+  'when session storage is unavailable, exact retries safely reuse the in-memory request identity');
+bflOwnerHarness.sandbox.sessionStorage.getItem = originalSessionGet;
+bflOwnerHarness.sandbox.sessionStorage.setItem = originalSessionSet;
+const credentialStableRequestId = bflOwnerHarness.sandbox.obBflTestHooks.requestIdFor(bflBookingIntent);
 await changeAuth(bflOwnerHarness, clientARotatedToken);
 assert.equal(bflOwnerHarness.sandbox.obBflTestHooks.operationCurrent(bflOperation), true, 'same-principal credential rotation preserves the immutable BFL operation');
+assert.equal(bflOwnerHarness.sandbox.obBflTestHooks.requestIdFor(bflBookingIntent), credentialStableRequestId,
+  'same-principal credential rotation preserves the pending Book Later retry key');
+await changeAuth(bflOwnerHarness, clientBToken);
+assert.equal(bflOwnerHarness.sandbox.sessionStorage.getItem('ob_bfl_booking_request_v1'), null,
+  'a real account switch removes the prior account pending retry state');
+assert.notEqual(bflOwnerHarness.sandbox.obBflTestHooks.requestIdFor(bflBookingIntent), credentialStableRequestId,
+  'a different account receives a different Book Later request identity');
+await changeAuth(bflOwnerHarness, clientAToken);
 vm.runInContext('_bflChannel="video"', bflOwnerHarness.sandbox);
 assert.equal(bflOwnerHarness.sandbox.obBflTestHooks.operationCurrent(bflOperation), false, 'channel switch invalidates the prior BFL operation');
 vm.runInContext('_bflChannel="chat";_bflSelectedDate="2026-09-11"', bflOwnerHarness.sandbox);

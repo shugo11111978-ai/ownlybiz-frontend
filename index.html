@@ -22602,6 +22602,9 @@ var _bflCardReady = false;
 var _bflCardComplete = false;
 var _bflStripeConfigured = null;
 var _bflSlotsRequest = 0;
+var _bflBookingRequestIntent = null;
+var _bflBookingRequestSensitiveKey = null;
+var _BFL_BOOKING_REQUEST_STORAGE_KEY = 'ob_bfl_booking_request_v1';
 var _BFL_BASE = 'https://ownlybiz-backend-production.up.railway.app';
 
 window.openBookLaterModal = function() {
@@ -22856,6 +22859,85 @@ function bflCurrentExpertSlug(){
   if(!slug){var parts=String(window.location.hostname||'').split('.');if(parts.length>=3&&parts[1]==='ownlybiz')slug=parts[0];}
   return String(slug||'');
 }
+function bflCurrentMarketplaceExpertId(){
+  return typeof window.obMarketplaceSelectedId==='function'
+    ? String(window.obMarketplaceSelectedId()||'') : '';
+}
+function bflOpaqueRequestId(){
+  if(window.crypto&&typeof window.crypto.randomUUID==='function')return window.crypto.randomUUID();
+  if(!window.crypto||typeof window.crypto.getRandomValues!=='function'){
+    throw new Error('Secure booking retry protection is unavailable in this browser.');
+  }
+  var bytes=new Uint8Array(16);
+  window.crypto.getRandomValues(bytes);
+  bytes[6]=(bytes[6]&15)|64;bytes[8]=(bytes[8]&63)|128;
+  var hex=Array.prototype.map.call(bytes,function(value){return value.toString(16).padStart(2,'0');}).join('');
+  return hex.slice(0,8)+'-'+hex.slice(8,12)+'-'+hex.slice(12,16)+'-'+hex.slice(16,20)+'-'+hex.slice(20);
+}
+function bflBookingStoredIntentKey(intent){
+  var duration=Number(intent.durationMinutes||30);
+  if(!Number.isFinite(duration)||duration<=0)duration=30;
+  return JSON.stringify([
+    'bfl-v1',String(intent.expertId||''),String(intent.expertSlug||''),String(intent.marketplaceExpertId||''),
+    String(intent.date||''),String(intent.time||''),String(intent.channel||''),
+    String(intent.paymentMode||''),duration
+  ]);
+}
+function bflBookingSensitiveIntentKey(intent){
+  var principal=window.OB_CLIENT_CONTEXT&&typeof window.OB_CLIENT_CONTEXT.principal==='function'
+    ? window.OB_CLIENT_CONTEXT.principal() : '';
+  return JSON.stringify([
+    String(principal||''),String(intent.promoCode||'').trim().toUpperCase(),
+    String(intent.clientName||'').trim(),String(intent.clientEmail||'').trim().toLowerCase(),
+    String(intent.notes||'').trim()
+  ]);
+}
+function bflValidStoredIntentKey(value){
+  if(typeof value!=='string'||value.length<2||value.length>1024)return false;
+  try{
+    var parts=JSON.parse(value);
+    return Array.isArray(parts)&&parts.length===9&&parts[0]==='bfl-v1'&&
+      parts.slice(1,8).every(function(part){return typeof part==='string';})&&
+      Number.isFinite(parts[8])&&parts[8]>0;
+  }catch(e){return false;}
+}
+function bflReadBookingRequestIntent(){
+  if(_bflBookingRequestIntent)return _bflBookingRequestIntent;
+  try{
+    var parsed=JSON.parse(sessionStorage.getItem(_BFL_BOOKING_REQUEST_STORAGE_KEY)||'null');
+    if(parsed&&bflValidStoredIntentKey(parsed.intentKey)&&
+      /^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/.test(String(parsed.requestId||''))){
+      _bflBookingRequestIntent={intentKey:String(parsed.intentKey),requestId:String(parsed.requestId)};
+      return _bflBookingRequestIntent;
+    }
+  }catch(e){}
+  return null;
+}
+function bflRememberBookingRequestIntent(intent,sensitiveKey){
+  _bflBookingRequestIntent=intent;
+  _bflBookingRequestSensitiveKey=String(sensitiveKey||'');
+  try{sessionStorage.setItem(_BFL_BOOKING_REQUEST_STORAGE_KEY,JSON.stringify(intent));}catch(e){}
+  return intent;
+}
+function bflClearBookingRequestIntent(){
+  _bflBookingRequestIntent=null;
+  _bflBookingRequestSensitiveKey=null;
+  try{sessionStorage.removeItem(_BFL_BOOKING_REQUEST_STORAGE_KEY);}catch(e){}
+}
+function bflBookingRequestId(intent){
+  var storedKey=bflBookingStoredIntentKey(intent||{});
+  var sensitiveKey=bflBookingSensitiveIntentKey(intent||{});
+  var existing=bflReadBookingRequestIntent();
+  if(existing&&existing.intentKey===storedKey&&
+    (_bflBookingRequestSensitiveKey===null||_bflBookingRequestSensitiveKey===sensitiveKey)){
+    _bflBookingRequestSensitiveKey=sensitiveKey;
+    return existing.requestId;
+  }
+  return bflRememberBookingRequestIntent({
+    intentKey:storedKey,
+    requestId:bflOpaqueRequestId()
+  },sensitiveKey).requestId;
+}
 function bflCardOwnerCurrent(context, card) {
   return !!context && window._bflCardOwnerContext === context &&
     !!window.OB_CLIENT_CONTEXT && window.OB_CLIENT_CONTEXT.isCurrent(context) &&
@@ -22865,10 +22947,22 @@ function bflCardOwnerCurrent(context, card) {
 function bflBookingOperationCurrent(operation){
   return !!operation&&!!window.OB_CLIENT_CONTEXT&&window.OB_CLIENT_CONTEXT.isCurrent(operation)&&
     operation.expertId===bflCurrentExpertId()&&operation.expertSlug===bflCurrentExpertSlug()&&
+    String(operation.marketplaceExpertId||'')===bflCurrentMarketplaceExpertId()&&
     operation.date===_bflSelectedDate&&operation.time===_bflSelectedTime&&operation.channel===String(_bflChannel||'chat')&&
     operation.paymentMode===(window._bflPaymentMode==='prepaid'?'prepaid':'minute')&&operation.promoCode===String(window._obSessionPromoCode||'');
 }
-if(window.__OB_TEST_HOOKS__)window.obBflTestHooks={operationCurrent:bflBookingOperationCurrent,cardOwnerCurrent:bflCardOwnerCurrent};
+if(window.__OB_TEST_HOOKS__)window.obBflTestHooks={
+  operationCurrent:bflBookingOperationCurrent,
+  cardOwnerCurrent:bflCardOwnerCurrent,
+  requestIdFor:bflBookingRequestId,
+  resetRequestIntent:function(){_bflBookingRequestIntent=null;_bflBookingRequestSensitiveKey=null;},
+  clearRequestIntent:bflClearBookingRequestIntent
+};
+if(window.OB_CLIENT_CONTEXT&&typeof window.OB_CLIENT_CONTEXT.register==='function'){
+  window.OB_CLIENT_CONTEXT.register('book-later-request-identity',{
+    changed:function(){bflClearBookingRequestIntent();}
+  });
+}
 
 function mountBflCardElement() {
   var cardDiv = document.getElementById('bfl-card-element');
@@ -22954,13 +23048,14 @@ window.submitBookForLater = function() {
   btn.disabled = true; btn.textContent = 'Processing...';
 
   // STEP A: Use the account established in the previous step
-  var initialOperation=window.OB_CLIENT_CONTEXT&&window.OB_CLIENT_CONTEXT.capture('book-later-submit',{
-    expertId:bflCurrentExpertId(),expertSlug:slug,date:_bflSelectedDate,time:_bflSelectedTime,
+  var bookingIntent={
+    expertId:bflCurrentExpertId(),expertSlug:slug,marketplaceExpertId:bflCurrentMarketplaceExpertId(),date:_bflSelectedDate,time:_bflSelectedTime,
     channel:String(_bflChannel||'chat'),paymentMode:bflCreditMode,promoCode:String(window._obSessionPromoCode||''),
     clientName:String((document.getElementById('bfl-name')||{}).value||'').trim(),
     clientEmail:String((document.getElementById('bfl-email')||{}).value||'').trim(),
     notes:String((document.getElementById('bfl-notes')||{}).value||'').trim()
-  });
+  };
+  var initialOperation=window.OB_CLIENT_CONTEXT&&window.OB_CLIENT_CONTEXT.capture('book-later-submit',bookingIntent);
   if(initialOperation&&initialOperation.token)operation=initialOperation;
   var authPromise = bflReadExistingAuth().catch(function(e){
     if(e.message!=='account_changed')bflGoStep(3);
@@ -23048,17 +23143,25 @@ window.submitBookForLater = function() {
     var hdrs = { 'Content-Type': 'application/json' };
     if (operation.token) hdrs['Authorization'] = 'Bearer ' + operation.token;
     var bookingPayload = { expert_slug: operation.expertSlug, scheduled_date: operation.date, scheduled_time: operation.time, client_name: cName, client_email: cEmail, channel: operation.channel, notes: operation.notes, credit_mode: data.creditMode || operation.paymentMode };
+    if(operation.marketplaceExpertId)bookingPayload.marketplace_expert_id=operation.marketplaceExpertId;
     if (bookingPayload.credit_mode !== 'prepaid' && operation.promoCode) bookingPayload.promo_code = operation.promoCode;
+    hdrs['Idempotency-Key'] = bflBookingRequestId({
+      expertId:operation.expertId,expertSlug:operation.expertSlug,marketplaceExpertId:operation.marketplaceExpertId,date:operation.date,time:operation.time,
+      channel:operation.channel,paymentMode:bookingPayload.credit_mode,promoCode:bookingPayload.promo_code||'',
+      clientName:cName,clientEmail:cEmail,notes:operation.notes,durationMinutes:30
+    });
     return fetch(BASE + '/api/bookings', { method: 'POST', headers: hdrs, body: JSON.stringify(bookingPayload),signal:operation.signal })
       .then(function(r) { return r.json(); });
   }).then(function(d) {
     requireCurrent();
     btn.disabled = false; btn.textContent = 'Confirm Booking \u2192';
     if (d && d.success) {
+      bflClearBookingRequestIntent();
       [1, 2, 3, 4].forEach(function(s) { var el = document.getElementById('bfl-step-' + s); if (el) el.style.display = 'none'; });
       document.getElementById('bfl-step-success').style.display = 'block';
       [1, 2, 3, 4].forEach(function(s) { var dot = document.getElementById('bfl-dot-' + s); if (dot) dot.style.background = 'var(--terra)'; });
     } else if (d) {
+      if(d.code==='booking_request_conflict')bflClearBookingRequestIntent();
       if (status) { status.style.display = 'block'; status.style.background = 'rgba(239,68,68,.1)'; status.style.color = '#dc2626'; status.textContent = d.error || 'Something went wrong.'; }
     }
   }).catch(function(e) {

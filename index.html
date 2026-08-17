@@ -15479,6 +15479,15 @@ async function savePaymentConfig() {
   const WS = {
     ws:null, _ping:null, _retry:null,
     connect() {
+      if (Auth.isExpert) {
+        if (window.obIsMiniSuiteRoute && window.obIsMiniSuiteRoute()) return;
+        if (window._obExpertRealtime) {
+          window._obExpertRealtime.checkIdentity();
+          window._obExpertRealtime.connect();
+          if (typeof window._obHydrateExpertChatRooms === 'function') window._obHydrateExpertChatRooms(false);
+        }
+        return;
+      }
       if (this.ws?.readyState===1) return;
       clearTimeout(this._retry);
       try {
@@ -15493,10 +15502,21 @@ async function savePaymentConfig() {
         this.ws.onerror   = ()=>{};
       } catch {}
     },
-    send(d){ if(this.ws?.readyState===1) this.ws.send(JSON.stringify(d)); }
+    send(d){
+      if(Auth.isExpert && window._obExpertRealtime && !(window.obIsMiniSuiteRoute && window.obIsMiniSuiteRoute())){
+        if(d && (d.type==='join' || d.type==='join_session')) window._obExpertRealtime.subscribeRoom(d.session_id || d.sessionId);
+        else if(d && d.type!=='auth') window._obExpertRealtime.send(d);
+        return;
+      }
+      if(this.ws?.readyState===1) this.ws.send(JSON.stringify(d));
+    }
   };
 
   function _wsMsg(d) {
+    if(Auth.isExpert && typeof window._obRouteWsMessage === 'function'){
+      window._obRouteWsMessage(d, 'expert');
+      return;
+    }
     switch(d.type) {
       case 'session_request':
         window._pendingSid = d.session?.id;
@@ -17337,7 +17357,9 @@ async function savePaymentConfig() {
 
   /* ── Logout ───────────────────────────────────────── */
   window.logout=window.expertLogout=window.adminLogout=function(){
-    Auth.clear(); WS.ws?.close(); window._sid=null;
+    Auth.clear();
+    if(window._obExpertRealtime) window._obExpertRealtime.resetIdentity();
+    WS.ws?.close(); window._sid=null;
     toast('Logged out');
     setTimeout(()=>switchView(1), 400);
   };
@@ -22253,10 +22275,22 @@ window.obClientSessionRate = obClientSessionRate;
   }
   window._obAppendMsg = appendMsg;
   window.obAppendToPanel=appendMsg;
-  // === EXPERT DASHBOARD FIX: handle api-v2 READY gate safely ===
-  function fixExpertDashboard(){
-    function esc(s){var d=document.createElement("div");d.textContent=String(s||"");return d.innerHTML;}
+    // === EXPERT DASHBOARD FIX: handle api-v2 READY gate safely ===
+    function fixExpertDashboard(){
+      if(window._obExpertRealtime){
+        if(window.obIsMiniSuiteRoute&&window.obIsMiniSuiteRoute())return;
+        window._obExpertRealtime.connect();
+        if(typeof window._obHydrateExpertChatRooms==='function')window._obHydrateExpertChatRooms(false);
+        return;
+      }
+      function esc(s){var d=document.createElement("div");d.textContent=String(s||"");return d.innerHTML;}
     function connectExpertWs(sid){
+      if(window.obIsMiniSuiteRoute && window.obIsMiniSuiteRoute()) return window._expertWs || null;
+      if(window._obExpertRealtime){
+        if(sid) window._obExpertRealtime.subscribeRoom(sid);
+        window._obExpertRealtime.connect();
+        return window._obExpertRealtime.socket;
+      }
       if(window._expertWs&&window._expertWs.readyState<=1){
         if(sid)setTimeout(function(){if(window._expertWs&&window._expertWs.readyState===1)window._expertWs.send(JSON.stringify({type:"join",session_id:sid}));},300);
         return;
@@ -22358,6 +22392,10 @@ window.obClientSessionRate = obClientSessionRate;
               if(_camBtn)_camBtn.style.display=_rtcCh==='video'?'':'none';
               // Create expert WS and start RTC only after connected+joined
               var _rtcSid=sid,_rtcCh2=_rtcCh;
+              if(window._obExpertRealtime){
+                window._obExpertRealtime.setRtcSession(_rtcSid);
+                window._obExpertRealtime.whenOpen(function(){ window.OB_RTC.start(_rtcSid,_rtcCh2,'expert'); });
+              } else {
               var _wsUrl=BASE.replace('https://','wss://').replace('http://','ws://')+'/ws';
               var _rtcWs=new WebSocket(_wsUrl);
               var _dEl=document.getElementById('rtc-debug');
@@ -22386,6 +22424,7 @@ window.obClientSessionRate = obClientSessionRate;
               };
               _rtcWs.onerror=function(){if(_dEl)_dEl.innerHTML+='<div>WS ERROR</div>';};
               _rtcWs.onclose=function(){if(_dEl)_dEl.innerHTML+='<div>WS CLOSED</div>';};
+	            }
 	            }
 	            var cutEl=document.getElementById('live-sess-cut');
 	            var _erPrimeEl=document.getElementById('live-earn-rate');
@@ -24070,9 +24109,10 @@ window.OB_RTC = (function(){
   var ICE=DEFAULT_ICE;
   function _apiBase(){return window.OWNLYBIZ_API_URL||window._OB_BACKEND||'https://victorious-wisdom-production-a6b0.up.railway.app';}
   function _authToken(){
-    var miniSuite=window.location&&/^\/mini-suite(?:\/|$)/.test(String(window.location.pathname||''))?sessionStorage.getItem('ob_mini_suite_token'):'';
+    var onMiniSuite=window.location&&/^\/mini-suite(?:\/|$)/.test(String(window.location.pathname||''));
+    if(onMiniSuite)return sessionStorage.getItem('ob_mini_suite_token')||'';
     var central=window.OB_CLIENT_CONTEXT&&window.OB_CLIENT_CONTEXT.token?window.OB_CLIENT_CONTEXT.token():'';
-    return miniSuite||central||sessionStorage.getItem('ob_t')||localStorage.getItem('ob_t')||sessionStorage.getItem('ob_mini_suite_token')||localStorage.getItem('ob_client_token')||sessionStorage.getItem('ob_client_token')||sessionStorage.getItem('ob_token')||localStorage.getItem('ob_token')||'';
+    return central||sessionStorage.getItem('ob_t')||localStorage.getItem('ob_t')||localStorage.getItem('ob_client_token')||sessionStorage.getItem('ob_client_token')||sessionStorage.getItem('ob_token')||localStorage.getItem('ob_token')||'';
   }
   function _stopMediaStream(stream){
     if(!stream||typeof stream.getTracks!=='function')return;
@@ -24291,6 +24331,10 @@ window.OB_RTC = (function(){
   }
   function _joinRtcRoom(ws){
     if(!ws||ws.readyState!==1||!sid)return;
+    if(_role==='expert' && window._obExpertRealtime && !(window.obIsMiniSuiteRoute && window.obIsMiniSuiteRoute())){
+      window._obExpertRealtime.setRtcSession(sid);
+      return;
+    }
     var now=Date.now();
     if(ws._obRtcSid===sid&&ws._obRtcJoinAt&&(now-ws._obRtcJoinAt)<5000)return;
     ws._obRtcSid=sid;
@@ -24308,6 +24352,11 @@ window.OB_RTC = (function(){
   function _ensureRtcWs(cb){
     if(_rtcWs&&_rtcWs.readyState===1){cb(_rtcWs);return;}
     var w=_ws();if(w){cb(w);return;}
+    if(_role==='expert' && window._obExpertRealtime && !(window.obIsMiniSuiteRoute && window.obIsMiniSuiteRoute())){
+      window._obExpertRealtime.setRtcSession(sid);
+      window._obExpertRealtime.whenOpen(function(expertWs){ cb(expertWs); });
+      return;
+    }
     if(_rtcWs&&_rtcWs.readyState===0){_rtcWsCallbacks.push(cb);return;}
     if(_rtcWs&&_rtcWs.readyState>1)_rtcWs=null;
     // Create dedicated RTC WebSocket
@@ -24862,6 +24911,7 @@ window.OB_RTC = (function(){
 		        return true;
 		      }
 		    }
+    if(role==='expert' && window._obExpertRealtime && !(window.obIsMiniSuiteRoute && window.obIsMiniSuiteRoute())) window._obExpertRealtime.setRtcSession(sessionId);
 	    sid=sessionId; ch=channel; _role=role; _muted=false; _camOff=false;
 	    var startContext={epoch:++_lifecycleEpoch,role:role,authIdentity:_captureRtcIdentity(role,'rtc-start',{sid:sessionId,channel:channel}),sid:sessionId,channel:channel};
 	    window._obRtcStartedAt=Date.now();
@@ -25089,6 +25139,7 @@ window.OB_RTC = (function(){
 	  }
   function cleanup(){
     var cleanupRole=_role;
+    var cleanupSid=sid;
     _clearConnectionTimers();
     _stopQualityMonitor();
     if(pc){try{pc.close();}catch(e){}pc=null;}
@@ -25111,6 +25162,7 @@ window.OB_RTC = (function(){
     var ph=document.getElementById('vid-placeholder');if(ph)ph.style.display='';
     try{if(typeof window._obClearSessionConnectionIssue==='function')window._obClearSessionConnectionIssue();}catch(e){}
 	    sid=null;ch=null;_role=null;_muted=false;_camOff=false;_connectedOnce=false;_endingForIssue=false;_iceRestartAttempted=false;_lastIceRestartAt=0;
+    if(cleanupRole==='expert' && window._obExpertRealtime && !(window.obIsMiniSuiteRoute && window.obIsMiniSuiteRoute()) && window._obExpertRealtime.rtcSessionId===String(cleanupSid||'')) window._obExpertRealtime.setRtcSession('');
   }
 
   var rtcApi={start:start,handleOffer:handleOffer,handleAnswer:handleAnswer,handleIce:handleIce,handleReady:handleReady,toggleMute:toggleMute,toggleCamera:toggleCamera,end:end,cleanup:cleanup,resetClientContext:resetClientContext,resetExpertContext:resetExpertContext,refreshClientCredential:refreshClientCredential,setScheduledPreflightStream:setScheduledPreflightStream,settleScheduledPreflight:settleScheduledPreflight,isActive:function(){return pc!==null;},getChannel:function(){return ch;},getSid:function(){return sid;},getRole:function(){return _role;},getMediaHealth:_getMediaHealth,getQuality:function(){return{level:_qualityLevel,profile:_qualityProfile,weak_samples:_qualityWeakSamples,good_samples:_qualityGoodSamples};}};
@@ -25122,6 +25174,12 @@ window._handleRTCMessage=function(d){
   if(window._rtcDbg)window._rtcDbg('WS msg: '+d.type);
   if(!window.OB_RTC)return;
   var signalSid=d&&(d.session_id||d.sessionId)||'';
+  var expertRealtime=(window.obIsMiniSuiteRoute && window.obIsMiniSuiteRoute())?null:window._obExpertRealtime;
+  if(expertRealtime && expertRealtime.checkIdentity) expertRealtime.checkIdentity();
+  if(expertRealtime && expertRealtime.isExpertIdentity && expertRealtime.isExpertIdentity()){
+    var explicitRtcSid=String(expertRealtime.rtcSessionId||'');
+    if(!signalSid || !explicitRtcSid || String(signalSid)!==explicitRtcSid)return;
+  }
   var activeRtcSid=window.OB_RTC.getSid&&window.OB_RTC.getSid()||'';
   if(signalSid&&activeRtcSid&&signalSid!==activeRtcSid)return;
   if(d.type==='rtc_offer')window.OB_RTC.handleOffer(d.sdp);
@@ -26025,6 +26083,15 @@ window._handleRTCMessage=function(d){
     if(typeof phoneGo === 'function') phoneGo('A5');
   }
   function ensureExpertWsJoined(sid, done){
+    if(window.obIsMiniSuiteRoute && window.obIsMiniSuiteRoute()){ if(done) done(); return; }
+    if(window._obExpertRealtime){
+      if(sid){
+        if(window._obExpertRealtime.rtcSessionId === String(sid)) window._obExpertRealtime.setRtcSession(sid);
+        else window._obExpertRealtime.subscribeRoom(sid);
+      }
+      window._obExpertRealtime.whenOpen(function(){ if(done) done(); });
+      return;
+    }
     if(!sid || !tok()){ if(done) done(); return; }
     function join(ws){
       try{ ws.send(JSON.stringify({type:'auth',token:tok()})); }catch(e){}
@@ -26230,7 +26297,7 @@ window._handleRTCMessage=function(d){
 	      _origOpenExpertLivePanelCritical = window.openExpertLivePanel;
 	      window.openExpertLivePanel = criticalOpenExpertLivePanel;
 	    }
-	    if(window.sendExpertMsg !== criticalSendExpertMsg) window.sendExpertMsg = criticalSendExpertMsg;
+	    if(window.sendExpertMsg !== criticalSendExpertMsg && !(window.sendExpertMsg && window.sendExpertMsg.__obOutboxGuarded)) window.sendExpertMsg = criticalSendExpertMsg;
 	    // The final live-flow stabilizer owns showSessionRequest. Reinstalling
 	    // this older wrapper after it loads creates a recursive wrapper loop.
 	    if(window.adminNav !== criticalAdminNav){
@@ -26248,6 +26315,964 @@ window._handleRTCMessage=function(d){
     }
   });
 })();
+</script>
+<script id="ownlybiz-expert-live-runtime-20260817">
+/* EXPERT MULTI-CHAT RUNTIME V1: keyed rooms over one authenticated expert socket. */
+(function(root){
+  'use strict';
+  if(root.OBExpertLiveRuntimeFactory) return;
+  var BACKEND_TERMINAL_SESSION_STATUSES = ['cancelled','ended','completed','failed','expired','declined','no_show'];
+  if(typeof root.obIsTerminalSessionStatus !== 'function'){
+    root.obIsTerminalSessionStatus = function(value){ return BACKEND_TERMINAL_SESSION_STATUSES.indexOf(String(value == null ? '' : value).toLowerCase()) >= 0; };
+  }
+
+  function create(options){
+    options = options || {};
+    var Socket = options.WebSocket || root.WebSocket;
+    var later = options.setTimeout || root.setTimeout;
+    var cancelLater = options.clearTimeout || root.clearTimeout;
+    var reconnectDelay = Number(options.reconnectDelayMs || 1800);
+    var maxMessages = Math.max(1, Number(options.maxMessagesPerRoom || 500));
+    var maxEvents = Number(options.maxEventsPerRoom || 500);
+    var maxOutstandingSubscriptions = Math.max(1, Math.min(8, Number(options.maxOutstandingSubscriptions || 8)));
+    var maxSubscriptionAttempts = Math.max(1, Number(options.maxSubscriptionAttempts || 4));
+    var historyRecoveryMaxPages = Math.max(1, Number(options.historyRecoveryMaxPages || 8));
+    var historyRecoveryMaxMessages = Math.max(1, Math.min(maxMessages, Number(options.historyRecoveryMaxMessages || maxMessages)));
+    var historyRecoveryMaxMs = Math.max(250, Number(options.historyRecoveryMaxMs || 5000));
+    var random = options.random || Math.random;
+    var roomsById = Object.create(null);
+    var pendingRequestsById = Object.create(null);
+    var desiredRoomIds = new Set();
+    var subscribedRoomIds = new Set();
+    var inFlightSubscriptionIds = new Set();
+    var queuedSubscriptionIds = new Set();
+    var subscriptionQueue = [];
+    var pendingOrder = [];
+    var openWaiters = [];
+    var socket = null;
+    var socketGeneration = 0;
+    var reconnectTimer = null;
+    var identityKey = '';
+    var principalKey = '';
+    var principalGeneration = 0;
+    var credentialGeneration = 0;
+    var identity = {token:'', accountId:'', role:''};
+    var capabilities = {};
+    var focusedRoomId = '';
+    var rtcSessionId = '';
+    var rtcJoinedSessionId = '';
+    var rtcJoinedGeneration = 0;
+    var rtcJoinPendingSessionId = '';
+    var rtcJoinPendingGeneration = 0;
+    var rtcJoinAttempts = 0;
+    var rtcJoinRetryTimer = null;
+    var rtcJoinBlockedSessionId = '';
+    var rtcJoinBlockedGeneration = 0;
+    var stopped = false;
+
+    function text(value){ return value == null ? '' : String(value); }
+    function normalizeSid(value){ return text(value).trim(); }
+    function eventSid(event){
+      event = event || {};
+      return normalizeSid(event.session_id || event.sessionId || event.sid || (event.session && (event.session.id || event.session.session_id || event.session.sessionId)) || '');
+    }
+    function readIdentity(){
+      var current = options.getIdentity ? options.getIdentity() : {};
+      if(typeof current === 'string') current = {token:current};
+      current = current || {};
+      return {
+        token:text(current.token),
+        accountId:text(current.accountId || current.account_id || current.userId || current.user_id),
+        role:text(current.role).toLowerCase()
+      };
+    }
+    function keyForPrincipal(value){
+      var account = text(value && value.accountId).trim();
+      if(!account) account = value && value.token ? 'credential:' + text(value.token) : 'anonymous';
+      return [text(value && value.role).toLowerCase(), account].join('|');
+    }
+    function keyForIdentity(value){ return [keyForPrincipal(value), text(value && value.token)].join('|'); }
+    function isTerminalStatus(value){ return root.obIsTerminalSessionStatus(value); }
+    function isExpertIdentity(){ return identity.role === 'expert'; }
+    function notify(reason, room, event){
+      if(typeof options.onStateChange === 'function') options.onStateChange(api, reason, room || null, event || null);
+    }
+    function clearObject(object){ Object.keys(object).forEach(function(key){ delete object[key]; }); }
+    function resetSubscriptionTransportState(){
+      inFlightSubscriptionIds.clear();
+      queuedSubscriptionIds.clear();
+      subscriptionQueue.length = 0;
+      Object.keys(roomsById).forEach(function(sid){
+        var room = roomsById[sid];
+        room.subscriptionAnchor = null;
+        if(room.subscriptionRetryTimer){ cancelLater(room.subscriptionRetryTimer); room.subscriptionRetryTimer = null; }
+        room.subscriptionAttempts = 0;
+      });
+      rtcJoinedSessionId = '';
+      rtcJoinedGeneration = 0;
+      rtcJoinPendingSessionId = '';
+      rtcJoinPendingGeneration = 0;
+      rtcJoinAttempts = 0;
+      rtcJoinBlockedSessionId = '';
+      rtcJoinBlockedGeneration = 0;
+      if(rtcJoinRetryTimer){ cancelLater(rtcJoinRetryTimer); rtcJoinRetryTimer = null; }
+    }
+    function closeOwnedSocket(){
+      socketGeneration += 1;
+      var owned = socket;
+      socket = null;
+      subscribedRoomIds.clear();
+      resetSubscriptionTransportState();
+      if(reconnectTimer){ cancelLater(reconnectTimer); reconnectTimer = null; }
+      if(owned){
+        try { owned.onopen = owned.onmessage = owned.onerror = owned.onclose = null; } catch(e) {}
+        try { if(owned.readyState <= 1 && typeof owned.close === 'function') owned.close(); } catch(e2) {}
+      }
+      if(typeof options.onSocketChange === 'function') options.onSocketChange(null, owned || null);
+    }
+    function clearRuntimeState(reason){
+      closeOwnedSocket();
+      Object.keys(roomsById).forEach(function(sid){
+        var room = roomsById[sid];
+        if(room.typingTimer) cancelLater(room.typingTimer);
+        if(room.subscriptionRetryTimer) cancelLater(room.subscriptionRetryTimer);
+        if(room.historyRecoveryTimer) cancelLater(room.historyRecoveryTimer);
+      });
+      clearObject(roomsById);
+      clearObject(pendingRequestsById);
+      desiredRoomIds.clear();
+      subscribedRoomIds.clear();
+      inFlightSubscriptionIds.clear();
+      queuedSubscriptionIds.clear();
+      subscriptionQueue.length = 0;
+      pendingOrder.length = 0;
+      openWaiters.length = 0;
+      focusedRoomId = '';
+      rtcSessionId = '';
+      rtcJoinedSessionId = '';
+      rtcJoinedGeneration = 0;
+      rtcJoinPendingSessionId = '';
+      rtcJoinPendingGeneration = 0;
+      rtcJoinAttempts = 0;
+      rtcJoinBlockedSessionId = '';
+      rtcJoinBlockedGeneration = 0;
+      if(rtcJoinRetryTimer){ cancelLater(rtcJoinRetryTimer); rtcJoinRetryTimer = null; }
+      capabilities = {};
+      notify(reason || 'identity_reset');
+    }
+    function checkIdentity(){
+      var next = readIdentity();
+      var nextKey = keyForIdentity(next);
+      var nextPrincipalKey = keyForPrincipal(next);
+      if(!identityKey){
+        identity = next;
+        identityKey = nextKey;
+        principalKey = nextPrincipalKey;
+        principalGeneration = 1;
+        credentialGeneration = 1;
+        return identity;
+      }
+      var credentialLost = identity.role === 'expert' && !!identity.token && (!next.token || next.role !== 'expert');
+      if(nextPrincipalKey !== principalKey || credentialLost){
+        var previousPrincipal = identity;
+        var resetKind = credentialLost ? 'credential_cleared' : 'principal_changed';
+        identity = next;
+        identityKey = nextKey;
+        principalKey = nextPrincipalKey;
+        principalGeneration += 1;
+        credentialGeneration += 1;
+        clearRuntimeState(resetKind);
+        if(typeof options.onIdentityTransition === 'function') options.onIdentityTransition(resetKind, previousPrincipal, next, api);
+        if(typeof options.onIdentityReset === 'function') options.onIdentityReset(previousPrincipal, next, {kind:resetKind,principalGeneration:principalGeneration,credentialGeneration:credentialGeneration});
+      } else if(nextKey !== identityKey){
+        var previousCredential = identity;
+        var shouldReconnect = !!(socket || desiredRoomIds.size || rtcSessionId);
+        identity = next;
+        identityKey = nextKey;
+        credentialGeneration += 1;
+        closeOwnedSocket();
+        notify('credential_rotated');
+        if(typeof options.onIdentityTransition === 'function') options.onIdentityTransition('credential_rotated', previousCredential, next, api);
+        if(typeof options.onCredentialRotated === 'function') options.onCredentialRotated(previousCredential, next, {kind:'credential_rotated',principalGeneration:principalGeneration,credentialGeneration:credentialGeneration});
+        if(shouldReconnect && next.token && next.role === 'expert') connect();
+      } else {
+        identity = next;
+      }
+      return identity;
+    }
+    function resetIdentity(){
+      var previous = identity;
+      var next = readIdentity();
+      identity = next;
+      identityKey = keyForIdentity(next);
+      principalKey = keyForPrincipal(next);
+      principalGeneration += 1;
+      credentialGeneration += 1;
+      clearRuntimeState('identity_reset');
+      if(typeof options.onIdentityTransition === 'function') options.onIdentityTransition('identity_reset', previous, next, api);
+      if(typeof options.onIdentityReset === 'function') options.onIdentityReset(previous, next, {kind:'identity_reset',principalGeneration:principalGeneration,credentialGeneration:credentialGeneration});
+    }
+    function ensureRoom(sid){
+      sid = normalizeSid(sid);
+      if(!sid) return null;
+      if(!roomsById[sid]){
+        roomsById[sid] = {
+          id:sid,
+          session:null,
+          status:'',
+          messages:[],
+          messageKeys:new Set(),
+          eventKeys:new Set(),
+          unread:0,
+          typing:null,
+          typingTimer:null,
+          lastEvent:null,
+          lastMessageAck:null,
+          lastRoomSequence:0,
+          historyPage:null,
+          subscriptionSnapshotLoaded:false,
+          subscriptionAnchor:null,
+          subscriptionAttempts:0,
+          subscriptionRetryTimer:null,
+          historyRecovery:null,
+          historyRecoveryTimer:null,
+          nextMessageOrder:0,
+          terminal:false,
+          subscriptionError:null,
+          lastError:null,
+          updatedAt:0
+        };
+      }
+      return roomsById[sid];
+    }
+    function trimSet(set, max){
+      while(set.size > max){
+        var first = set.values().next();
+        if(first.done) break;
+        set.delete(first.value);
+      }
+    }
+    function positiveSequence(value){
+      if(value == null || value === '') return 0;
+      var normalized = text(value).trim();
+      if(!/^\d+$/.test(normalized)) return 0;
+      var sequence = Number(normalized);
+      return Number.isSafeInteger(sequence) && sequence > 0 ? sequence : 0;
+    }
+    function messageDedupeKeys(message, sid){
+      message = message || {};
+      var keys = [];
+      var clientId = text(message.client_message_id || message.clientMessageId).trim();
+      var serverId = text(message.id || message.message_id || message.messageId).trim();
+      var sequence = positiveSequence(message.room_sequence || message.roomSequence);
+      if(clientId) keys.push('client:' + clientId);
+      if(serverId) keys.push('id:' + serverId);
+      if(sequence) keys.push('sequence:' + sequence);
+      if(!keys.length) keys.push(['msg', sid, message.sender_id || message.senderId || message.user_id || '', message.sent_at || message.ts || message.created_at || '', message.content || ''].join('|'));
+      return keys;
+    }
+    function messageOverlapsRoom(room, message){
+      return !!(room && messageDedupeKeys(message, room.id).some(function(key){ return room.messageKeys.has(key); }));
+    }
+    function compareRoomMessages(left, right){
+      var leftSequence = positiveSequence(left && (left.room_sequence || left.roomSequence));
+      var rightSequence = positiveSequence(right && (right.room_sequence || right.roomSequence));
+      if(leftSequence && rightSequence && leftSequence !== rightSequence) return leftSequence - rightSequence;
+      var leftTime = Number(left && (left.sent_at || left.ts || left.created_at) || 0);
+      var rightTime = Number(right && (right.sent_at || right.ts || right.created_at) || 0);
+      if(leftTime && rightTime && leftTime !== rightTime) return leftTime - rightTime;
+      return Number(left && left.__obRuntimeOrder || 0) - Number(right && right.__obRuntimeOrder || 0);
+    }
+    function storedMessageKeys(message, sid){ return message && message.__obDedupeKeys ? message.__obDedupeKeys.slice() : messageDedupeKeys(message, sid); }
+    function removeMessageKeys(room, message){ storedMessageKeys(message, room.id).forEach(function(key){ room.messageKeys.delete(key); }); }
+    function sortAndTrimRoom(room){
+      room.messages.sort(compareRoomMessages);
+      while(room.messages.length > maxMessages){ removeMessageKeys(room, room.messages.shift()); }
+    }
+    function ownMessage(message){
+      if(typeof options.isOwnMessage === 'function') return !!options.isOwnMessage(message || {});
+      var sender = text(message && (message.sender_id || message.senderId || message.user_id));
+      return !!(sender && identity.accountId && sender === identity.accountId);
+    }
+    function enrichMessage(room, existing, incoming){
+      if(!room || !existing || !incoming) return existing;
+      var existingKeys = storedMessageKeys(existing, room.id);
+      var incomingKeys = messageDedupeKeys(incoming, room.id);
+      var sameDurableId = incomingKeys.some(function(key){ return (key.indexOf('id:') === 0 || key.indexOf('client:') === 0) && existingKeys.indexOf(key) >= 0; });
+      if(sameDurableId){
+        var order = existing.__obRuntimeOrder;
+        var dedupeKeys = existing.__obDedupeKeys;
+        Object.assign(existing, incoming);
+        existing.__obRuntimeOrder = order;
+        existing.__obDedupeKeys = dedupeKeys;
+      } else {
+        ['room_sequence','roomSequence','event_id','eventId','sent_at','created_at','created'].forEach(function(key){
+          if(existing[key] == null && incoming[key] != null) existing[key] = incoming[key];
+        });
+      }
+      var mergedKeys = existingKeys.slice();
+      incomingKeys.forEach(function(key){ if(mergedKeys.indexOf(key) < 0) mergedKeys.push(key); room.messageKeys.add(key); });
+      existing.__obDedupeKeys = mergedKeys;
+      var sequence = positiveSequence(existing.room_sequence || existing.roomSequence);
+      if(sequence > room.lastRoomSequence) room.lastRoomSequence = sequence;
+      sortAndTrimRoom(room);
+      return existing;
+    }
+    function addMessage(room, message, history){
+      if(!room || !message) return {added:false, key:''};
+      var copy = Object.assign({}, message);
+      if(!eventSid(copy)) copy.session_id = room.id;
+      var keys = messageDedupeKeys(copy, room.id);
+      var duplicateKey = keys.find(function(key){ return room.messageKeys.has(key); });
+      if(duplicateKey){
+        var existing = room.messages.find(function(candidate){ return storedMessageKeys(candidate, room.id).some(function(key){ return keys.indexOf(key) >= 0; }); });
+        if(existing) enrichMessage(room, existing, copy);
+        return {added:false, key:duplicateKey, message:existing || null, enriched:!!existing};
+      }
+      keys.forEach(function(key){ room.messageKeys.add(key); });
+      copy.__obRuntimeOrder = ++room.nextMessageOrder;
+      copy.__obDedupeKeys = keys.slice();
+      room.messages.push(copy);
+      var sequence = positiveSequence(copy.room_sequence || copy.roomSequence);
+      if(sequence > room.lastRoomSequence) room.lastRoomSequence = sequence;
+      sortAndTrimRoom(room);
+      if(!history && room.id !== focusedRoomId && !ownMessage(copy)) room.unread += 1;
+      room.updatedAt = Date.now();
+      return {added:true, key:keys[0], message:copy};
+    }
+    function applyMessageAck(room, event){
+      if(!room || !event) return false;
+      var clientId = text(event.client_message_id || event.clientMessageId);
+      var serverId = text(event.id || event.message_id || event.messageId);
+      var existing = room.messages.find(function(message){
+        return (clientId && text(message.client_message_id || message.clientMessageId || message.id) === clientId) ||
+          (serverId && text(message.id || message.message_id || message.messageId) === serverId);
+      });
+      if(existing) enrichMessage(room, existing, event);
+      else if(event.content) addMessage(room, event, true);
+      var sequence = positiveSequence(event.room_sequence || event.roomSequence);
+      if(sequence > room.lastRoomSequence) room.lastRoomSequence = sequence;
+      room.lastMessageAck = Object.assign({}, event);
+      room.updatedAt = Date.now();
+      return !!existing;
+    }
+    function retireTerminalRoom(room){
+      if(!room || !room.terminal) return false;
+      clearPending(room.id);
+      desiredRoomIds.delete(room.id);
+      removeQueuedSubscription(room.id);
+      if(room.historyRecovery && room.historyRecovery.active) finishHistoryRecovery(room, 'terminal');
+      if(subscribedRoomIds.delete(room.id) && socket && socket.readyState === 1) send({type:'session_unsubscribe', session_id:room.id});
+      return true;
+    }
+    function mergeSnapshot(sid, session, messages, mergeOptions){
+      var room = ensureRoom(sid || (session && session.id));
+      if(!room) return null;
+      if(session){
+        room.session = Object.assign({}, room.session || {}, session);
+        room.status = text(room.session.status || room.status).toLowerCase();
+        room.terminal = isTerminalStatus(room.status);
+      }
+      (messages || []).forEach(function(message){ addMessage(room, message, !(mergeOptions && mergeOptions.countNewAsUnread)); });
+      retireTerminalRoom(room);
+      room.updatedAt = Date.now();
+      notify('snapshot', room);
+      return room;
+    }
+    function normalizeHistoryCursor(value){
+      var cursor = positiveSequence(value);
+      return cursor ? String(cursor) : '';
+    }
+    function finishHistoryRecovery(room, reason){
+      if(!room || !room.historyRecovery) return;
+      if(room.historyRecoveryTimer){ cancelLater(room.historyRecoveryTimer); room.historyRecoveryTimer = null; }
+      room.historyRecovery.active = false;
+      room.historyRecovery.inFlightCursor = '';
+      room.historyRecovery.truncated = false;
+      room.historyRecovery.budget_exhausted = false;
+      room.historyRecovery.deferredCursor = '';
+      room.historyRecovery.completedReason = reason || 'complete';
+      notify('history_recovery_' + room.historyRecovery.completedReason, room);
+    }
+    function deferHistoryRecovery(room, cursor, reason, budgetExhausted){
+      if(!room || !room.historyRecovery) return false;
+      var recovery = room.historyRecovery;
+      var normalized = normalizeHistoryCursor(cursor);
+      recovery.active = false;
+      recovery.inFlightCursor = '';
+      recovery.truncated = true;
+      recovery.budget_exhausted = budgetExhausted !== false;
+      recovery.deferredCursor = normalized;
+      recovery.completedReason = reason || 'budget_exhausted';
+      if(room.historyRecoveryTimer) cancelLater(room.historyRecoveryTimer);
+      room.historyRecoveryTimer = null;
+      notify(recovery.budget_exhausted ? 'history_recovery_budget_exhausted' : 'history_recovery_deferred', room);
+      return false;
+    }
+    function recoveryBudgetReason(recovery){
+      if(recovery.pagesReceived >= historyRecoveryMaxPages) return 'budget_pages';
+      if(recovery.messagesRecovered >= historyRecoveryMaxMessages) return 'budget_messages';
+      if(Date.now() - recovery.startedAt >= historyRecoveryMaxMs) return 'budget_time';
+      return '';
+    }
+    function requestHistoryPage(room, cursor){
+      if(!room || !room.historyRecovery || !room.historyRecovery.active) return false;
+      var recovery = room.historyRecovery;
+      var normalized = normalizeHistoryCursor(cursor);
+      if(!normalized){ finishHistoryRecovery(room, 'cursor_invalid'); return false; }
+      if(recovery.inFlightCursor) return false;
+      if(recovery.seenCursors.has(normalized)){ finishHistoryRecovery(room, 'non_progress'); return false; }
+      if(recovery.lastRequestedCursor && positiveSequence(normalized) >= positiveSequence(recovery.lastRequestedCursor)){
+        finishHistoryRecovery(room, 'non_progress');
+        return false;
+      }
+      if(recovery.socketGeneration !== socketGeneration || !socket || socket.readyState !== 1){
+        finishHistoryRecovery(room, 'socket_changed');
+        return false;
+      }
+      recovery.seenCursors.add(normalized);
+      recovery.lastRequestedCursor = normalized;
+      recovery.inFlightCursor = normalized;
+      recovery.pagesRequested += 1;
+      if(!send({type:'session_history', session_id:room.id, before_sequence:normalized})){
+        finishHistoryRecovery(room, 'send_failed');
+        return false;
+      }
+      notify('history_recovery_requested', room);
+      return true;
+    }
+    function beginHistoryRecovery(room, previousMaxSequence, cursor, anchorKeys){
+      if(!room) return false;
+      var deferred = room.historyRecovery;
+      if(deferred && deferred.truncated && deferred.socketGeneration === socketGeneration) return false;
+      room.historyRecovery = {
+        active:true,
+        socketGeneration:socketGeneration,
+        previousMaxSequence:positiveSequence(previousMaxSequence),
+        anchorKeys:anchorKeys || new Set(),
+        inFlightCursor:'',
+        lastRequestedCursor:'',
+        seenCursors:new Set(),
+        pagesRequested:0,
+        pagesReceived:0,
+        messagesRecovered:0,
+        startedAt:Date.now(),
+        truncated:false,
+        budget_exhausted:false,
+        deferredCursor:'',
+        completedReason:''
+      };
+      return requestHistoryPage(room, cursor);
+    }
+    function stableEventKey(event, sid){
+      var id = event && (event.event_id || event.eventId);
+      if(id) return 'event:' + text(id);
+      return [event && event.type || '', sid, event && (event.id || ''), event && (event.status || ''), event && (event.started_at || event.ended_at || event.updated_at || ''), event && (event.reason || '')].join('|');
+    }
+    function rememberEvent(room, event){
+      if(!room || !event) return false;
+      var type = text(event.type);
+      if(type === 'message' || type === 'message_ack' || type === 'joined' || type === 'session_subscribed' || type === 'session_snapshot' || type === 'typing' || type.indexOf('rtc_') === 0) return false;
+      var key = stableEventKey(event, room.id);
+      if(room.eventKeys.has(key)) return true;
+      room.eventKeys.add(key);
+      trimSet(room.eventKeys, maxEvents);
+      return false;
+    }
+    function aggregateUnread(){
+      return Object.keys(roomsById).reduce(function(total, sid){ return total + Number(roomsById[sid].unread || 0); }, 0);
+    }
+    function pendingIds(){ return pendingOrder.filter(function(sid){ return !!pendingRequestsById[sid]; }); }
+    function rememberPendingRequest(event){
+      event = event || {};
+      var sid = eventSid(event);
+      if(!sid) return {sid:'', added:false, isHead:false};
+      var added = !pendingRequestsById[sid];
+      pendingRequestsById[sid] = {
+        id:sid,
+        session:Object.assign({}, (pendingRequestsById[sid] && pendingRequestsById[sid].session) || {}, event.session || {id:sid}),
+        client:event.client || (pendingRequestsById[sid] && pendingRequestsById[sid].client) || null,
+        event:Object.assign({}, event),
+        updatedAt:Date.now()
+      };
+      if(added) pendingOrder.push(sid);
+      notify(added ? 'pending_added' : 'pending_updated', ensureRoom(sid), event);
+      return {sid:sid, added:added, isHead:pendingIds()[0] === sid, request:pendingRequestsById[sid]};
+    }
+    function clearPending(sid){
+      sid = normalizeSid(sid);
+      if(!sid || !pendingRequestsById[sid]) return false;
+      delete pendingRequestsById[sid];
+      pendingOrder = pendingOrder.filter(function(id){ return id !== sid; });
+      notify('pending_removed', roomsById[sid] || null);
+      return true;
+    }
+    function send(payload){
+      checkIdentity();
+      if(!socket || socket.readyState !== 1 || !isExpertIdentity()) return false;
+      try { socket.send(JSON.stringify(payload)); return true; } catch(e) { return false; }
+    }
+    function removeQueuedSubscription(sid){
+      sid = normalizeSid(sid);
+      queuedSubscriptionIds.delete(sid);
+      subscriptionQueue = subscriptionQueue.filter(function(roomId){ return roomId !== sid; });
+    }
+    function queueSubscription(sid, front){
+      sid = normalizeSid(sid);
+      if(!sid || !desiredRoomIds.has(sid) || subscribedRoomIds.has(sid) || inFlightSubscriptionIds.has(sid) || queuedSubscriptionIds.has(sid)) return false;
+      var room = ensureRoom(sid);
+      if(!room || room.terminal) return false;
+      queuedSubscriptionIds.add(sid);
+      if(front) subscriptionQueue.unshift(sid); else subscriptionQueue.push(sid);
+      return true;
+    }
+    function sendSubscribe(sid){
+      sid = normalizeSid(sid);
+      if(!sid || !desiredRoomIds.has(sid) || subscribedRoomIds.has(sid) || inFlightSubscriptionIds.has(sid) || !socket || socket.readyState !== 1) return false;
+      var room = ensureRoom(sid);
+      if(!room || room.terminal) return false;
+      var anchor = {
+        socketGeneration:socketGeneration,
+        wasLoaded:room.subscriptionSnapshotLoaded,
+        maxSequence:room.lastRoomSequence,
+        messageKeys:new Set(room.messageKeys)
+      };
+      if(!send({type:'session_subscribe', session_id:sid})) return false;
+      room.subscriptionAnchor = anchor;
+      room.subscriptionAttempts += 1;
+      inFlightSubscriptionIds.add(sid);
+      return true;
+    }
+    function pumpSubscriptions(){
+      if(!socket || socket.readyState !== 1) return;
+      while(inFlightSubscriptionIds.size < maxOutstandingSubscriptions && subscriptionQueue.length){
+        var sid = subscriptionQueue.shift();
+        queuedSubscriptionIds.delete(sid);
+        if(!sendSubscribe(sid) && desiredRoomIds.has(sid) && !subscribedRoomIds.has(sid) && !inFlightSubscriptionIds.has(sid)){
+          queueSubscription(sid, true);
+          break;
+        }
+      }
+    }
+    function releaseSubscriptionSlot(sid){
+      sid = normalizeSid(sid);
+      if(!sid) return false;
+      return inFlightSubscriptionIds.delete(sid);
+    }
+    function scheduleSubscriptionRetry(room){
+      if(!room || !desiredRoomIds.has(room.id)) return false;
+      if(room.subscriptionAttempts >= maxSubscriptionAttempts){
+        desiredRoomIds.delete(room.id);
+        room.subscriptionError = Object.assign({}, room.subscriptionError || {}, {retryable:false,retry_exhausted:true});
+        notify('subscription_retry_exhausted', room);
+        return false;
+      }
+      if(room.subscriptionRetryTimer) cancelLater(room.subscriptionRetryTimer);
+      var delay = Math.min(8000, 500 * Math.pow(2, Math.max(0, room.subscriptionAttempts - 1))) + Math.floor(Math.max(0, Math.min(1, Number(random()) || 0)) * 250);
+      var scheduledPrincipalGeneration = principalGeneration;
+      room.subscriptionRetryTimer = later(function(){
+        room.subscriptionRetryTimer = null;
+        if(principalGeneration !== scheduledPrincipalGeneration || roomsById[room.id] !== room || !desiredRoomIds.has(room.id)) return;
+        queueSubscription(room.id, true);
+        pumpSubscriptions();
+      }, delay);
+      notify('subscription_retry_scheduled', room);
+      return true;
+    }
+    function sendRtcJoin(){
+      if(!rtcSessionId || !socket || socket.readyState !== 1) return false;
+      if(rtcJoinedSessionId === rtcSessionId && rtcJoinedGeneration === socketGeneration) return true;
+      if(rtcJoinPendingSessionId === rtcSessionId && rtcJoinPendingGeneration === socketGeneration) return true;
+      if(rtcJoinBlockedSessionId === rtcSessionId && rtcJoinBlockedGeneration === socketGeneration) return false;
+      var sent = send({type:'join', session_id:rtcSessionId});
+      if(sent){
+        rtcJoinPendingSessionId = rtcSessionId;
+        rtcJoinPendingGeneration = socketGeneration;
+        rtcJoinAttempts += 1;
+      }
+      return sent;
+    }
+    function scheduleRtcJoinRetry(){
+      if(!rtcSessionId || !socket || socket.readyState !== 1 || rtcJoinAttempts >= maxSubscriptionAttempts){
+        rtcJoinBlockedSessionId = rtcSessionId;
+        rtcJoinBlockedGeneration = socketGeneration;
+        notify('rtc_join_retry_exhausted', rtcSessionId ? ensureRoom(rtcSessionId) : null);
+        return false;
+      }
+      if(rtcJoinRetryTimer) cancelLater(rtcJoinRetryTimer);
+      var scheduledSid = rtcSessionId;
+      var scheduledSocketGeneration = socketGeneration;
+      var scheduledPrincipalGeneration = principalGeneration;
+      var delay = Math.min(8000, 500 * Math.pow(2, Math.max(0, rtcJoinAttempts - 1))) + Math.floor(Math.max(0, Math.min(1, Number(random()) || 0)) * 250);
+      rtcJoinRetryTimer = later(function(){
+        rtcJoinRetryTimer = null;
+        if(principalGeneration !== scheduledPrincipalGeneration || socketGeneration !== scheduledSocketGeneration || rtcSessionId !== scheduledSid) return;
+        sendRtcJoin();
+      }, delay);
+      notify('rtc_join_retry_scheduled', ensureRoom(scheduledSid));
+      return true;
+    }
+    function replayDesiredRooms(){
+      sendRtcJoin();
+      desiredRoomIds.forEach(function(sid){ queueSubscription(sid, false); });
+      pumpSubscriptions();
+    }
+    function flushOpenWaiters(){
+      var waiters = openWaiters.splice(0, openWaiters.length);
+      waiters.forEach(function(waiter){ try { waiter(socket); } catch(e) {} });
+    }
+    function scheduleReconnect(generation){
+      if(stopped || reconnectTimer || generation !== socketGeneration) return;
+      checkIdentity();
+      if(!identity.token || !isExpertIdentity()) return;
+      reconnectTimer = later(function(){ reconnectTimer = null; connect(); }, reconnectDelay);
+    }
+    function connect(){
+      stopped = false;
+      checkIdentity();
+      if(!Socket || !identity.token || !isExpertIdentity()) return null;
+      if(socket && socket.readyState <= 1) return socket;
+      if(reconnectTimer){ cancelLater(reconnectTimer); reconnectTimer = null; }
+      var generation = ++socketGeneration;
+      var owned;
+      try { owned = new Socket(options.wsUrl); } catch(e) { scheduleReconnect(generation); return null; }
+      socket = owned;
+      owned._obExpertRuntimeOwner = true;
+      if(typeof options.onSocketChange === 'function') options.onSocketChange(owned, null);
+      owned.onopen = function(){
+        if(generation !== socketGeneration || socket !== owned) return;
+        var current = checkIdentity();
+        if(!current.token || !isExpertIdentity()) { closeOwnedSocket(); return; }
+        subscribedRoomIds.clear();
+        try { owned.send(JSON.stringify({type:'auth', token:current.token})); } catch(e) { return; }
+        replayDesiredRooms();
+        flushOpenWaiters();
+        notify('socket_open');
+      };
+      owned.onmessage = function(event){
+        if(generation !== socketGeneration || socket !== owned) return;
+        if(keyForIdentity(readIdentity()) !== identityKey){ checkIdentity(); return; }
+        var decision = ingest(event);
+        if(typeof options.onMessage === 'function') options.onMessage(event, decision);
+      };
+      owned.onerror = function(){};
+      owned.onclose = function(){
+        if(generation !== socketGeneration || socket !== owned) return;
+        socket = null;
+        subscribedRoomIds.clear();
+        resetSubscriptionTransportState();
+        Object.keys(roomsById).forEach(function(sid){
+          var room = roomsById[sid];
+          if(room.historyRecovery && room.historyRecovery.active) finishHistoryRecovery(room, 'socket_closed');
+        });
+        if(typeof options.onSocketChange === 'function') options.onSocketChange(null, owned);
+        notify('socket_closed');
+        scheduleReconnect(generation);
+      };
+      return owned;
+    }
+    function whenOpen(callback){
+      if(typeof callback !== 'function') return;
+      if(socket && socket.readyState === 1){ callback(socket); return; }
+      openWaiters.push(callback);
+      connect();
+    }
+    function subscribeRoom(sid){
+      sid = normalizeSid(sid);
+      if(!sid) return null;
+      checkIdentity();
+      var room = ensureRoom(sid);
+      desiredRoomIds.add(sid);
+      if(!socket || socket.readyState > 1) connect();
+      if(socket && socket.readyState === 1){ queueSubscription(sid, false); pumpSubscriptions(); }
+      notify('room_desired', room);
+      return room;
+    }
+    function unsubscribeRoom(sid, keepRoom){
+      sid = normalizeSid(sid);
+      if(!sid) return false;
+      desiredRoomIds.delete(sid);
+      removeQueuedSubscription(sid);
+      var subscribeStillInFlight = inFlightSubscriptionIds.has(sid);
+      var wasSubscribed = subscribedRoomIds.delete(sid);
+      if(socket && socket.readyState === 1) send({type:'session_unsubscribe', session_id:sid});
+      if(!keepRoom) delete roomsById[sid];
+      else if(roomsById[sid] && roomsById[sid].historyRecovery && roomsById[sid].historyRecovery.active) finishHistoryRecovery(roomsById[sid], 'unsubscribed');
+      if(focusedRoomId === sid) focusedRoomId = '';
+      if(rtcSessionId === sid) rtcSessionId = '';
+      notify('room_unsubscribed', roomsById[sid] || null);
+      if(!subscribeStillInFlight) pumpSubscriptions();
+      return wasSubscribed;
+    }
+    function focusRoom(sid, focusOptions){
+      sid = normalizeSid(sid);
+      if(!sid){ focusedRoomId = ''; notify('focus_cleared'); return null; }
+      var room = ensureRoom(sid);
+      var channel = text(room && room.session && room.session.channel).toLowerCase();
+      if(!(focusOptions && focusOptions.deferSubscription) && channel !== 'voice' && channel !== 'video') subscribeRoom(sid);
+      else connect();
+      focusedRoomId = sid;
+      room.unread = 0;
+      notify('focus_changed', room);
+      return room;
+    }
+    function setRtcSession(sid){
+      sid = normalizeSid(sid);
+      if(sid !== rtcSessionId){
+        rtcJoinedSessionId = '';
+        rtcJoinedGeneration = 0;
+        rtcJoinPendingSessionId = '';
+        rtcJoinPendingGeneration = 0;
+        rtcJoinAttempts = 0;
+        rtcJoinBlockedSessionId = '';
+        rtcJoinBlockedGeneration = 0;
+        if(rtcJoinRetryTimer){ cancelLater(rtcJoinRetryTimer); rtcJoinRetryTimer = null; }
+      }
+      rtcSessionId = sid;
+      if(sid){ ensureRoom(sid); connect(); sendRtcJoin(); }
+      notify(sid ? 'rtc_focus_changed' : 'rtc_focus_cleared', sid ? ensureRoom(sid) : null);
+      return rtcSessionId;
+    }
+    function markRead(sid){
+      var room = ensureRoom(sid);
+      if(!room) return false;
+      room.unread = 0;
+      notify('room_read', room);
+      return true;
+    }
+    function ingest(raw){
+      var event = raw;
+      if(raw && typeof raw.data === 'string') event = raw.data;
+      if(typeof event === 'string') { try { event = JSON.parse(event); } catch(e) { return {handled:false, invalid:true}; } }
+      if(!event || typeof event !== 'object') return {handled:false, invalid:true};
+      var type = text(event.type);
+      var sid = eventSid(event);
+      var isRtcSignal = type.indexOf('rtc_') === 0;
+      var sessionScoped = type === 'message' || type === 'message_ack' || type === 'typing' || type === 'joined' || type === 'session_snapshot' || type === 'session_subscribed' || type === 'session_unsubscribed' || type === 'session_history_page' || type === 'session_started' || type === 'session_accepted' || type === 'booking_session_started' || type === 'session_ended' || type === 'session_request' || type === 'session_declined' || type === 'session_expired' || type.indexOf('rtc_') === 0 || type.indexOf('participant_') === 0 || type.indexOf('session_connection_') === 0 || type === 'session_resume_ack';
+      if(!sid && sessionScoped && type !== 'session_request' && !isRtcSignal) sid = focusedRoomId;
+      var focused = !!(sid && sid === focusedRoomId);
+      if(isRtcSignal){
+        return {handled:true, event:event, sid:sid, focused:focused, rtc:true, deliverRtc:!!(sid && rtcSessionId && sid === rtcSessionId)};
+      }
+      if(type === 'session_request'){
+        var pending = rememberPendingRequest(event);
+        return {handled:true, event:event, sid:pending.sid, room:pending.sid ? roomsById[pending.sid] : null, focused:false, pending:true, showPending:pending.isHead, duplicate:!pending.added};
+      }
+      if(type === 'auth_ok' || type === 'authenticated' || type === 'authed' || type === 'auth_success' || type === 'pong'){
+        if(event.capabilities) capabilities = Object.assign({}, event.capabilities);
+        return {handled:true, event:event, sid:'', focused:false, transport:true};
+      }
+      if(type === 'error'){
+        var errorRoom = sid ? ensureRoom(sid) : null;
+        var errorCode = String(event.code || '');
+        var actionType = String(event.action_type || '');
+        if(errorRoom){
+          errorRoom.lastError = {code:errorCode, message:event.message || '', status:event.status || 0, client_message_id:event.client_message_id || '', action_type:actionType, retryable:event.retryable === true};
+          if(errorCode === 'session_message_history_cursor_invalid' && errorRoom.historyRecovery && errorRoom.historyRecovery.active) finishHistoryRecovery(errorRoom, 'cursor_invalid');
+          else if(actionType === 'session_history' && errorRoom.historyRecovery && errorRoom.historyRecovery.active){
+            deferHistoryRecovery(errorRoom, errorRoom.historyRecovery.inFlightCursor || errorRoom.historyRecovery.lastRequestedCursor, 'transport_' + (errorCode || 'error'), false);
+          }
+          var subscriptionAction = inFlightSubscriptionIds.has(sid) && (actionType === 'session_subscribe' || errorCode === 'expert_multiplex_required' || errorCode === 'session_access_denied' || errorCode === 'session_subscription_chat_only' || errorCode === 'session_subscription_limit' || errorCode === 'session_not_active' || errorCode === 'session_not_found' || errorCode === 'realtime_backpressure' || errorCode === 'realtime_rate_limited');
+          if(subscriptionAction){
+            releaseSubscriptionSlot(sid);
+            errorRoom.subscriptionError = errorRoom.lastError;
+            errorRoom.subscriptionAnchor = null;
+            subscribedRoomIds.delete(sid);
+            if(event.retryable === true && (errorCode === 'realtime_backpressure' || errorCode === 'realtime_rate_limited')) scheduleSubscriptionRetry(errorRoom);
+            else {
+              desiredRoomIds.delete(sid);
+              removeQueuedSubscription(sid);
+            }
+            pumpSubscriptions();
+          }
+        }
+        if(actionType === 'join' && sid && sid === rtcSessionId && rtcJoinPendingSessionId === sid && rtcJoinPendingGeneration === socketGeneration){
+          rtcJoinPendingSessionId = '';
+          rtcJoinPendingGeneration = 0;
+          if(event.retryable === true && (errorCode === 'realtime_backpressure' || errorCode === 'realtime_rate_limited')) scheduleRtcJoinRetry();
+          else {
+            rtcJoinBlockedSessionId = sid;
+            rtcJoinBlockedGeneration = socketGeneration;
+            notify('rtc_join_failed', errorRoom, event);
+          }
+        }
+        notify('transport_error', errorRoom, event);
+        return {handled:true, event:event, sid:sid, room:errorRoom, focused:focused, transport:true};
+      }
+      if(type === 'expert_status') return {handled:true, event:event, sid:'', focused:false, expertStatus:true};
+      if(!sessionScoped) return {handled:false, event:event, sid:sid, focused:focused};
+      if(!sid) return {handled:true, event:event, sid:'', focused:false, missingSession:true};
+      var room = ensureRoom(sid);
+      if(type === 'joined' && sid === rtcSessionId && rtcJoinPendingSessionId === sid && rtcJoinPendingGeneration === socketGeneration){
+        rtcJoinedSessionId = sid;
+        rtcJoinedGeneration = socketGeneration;
+        rtcJoinPendingSessionId = '';
+        rtcJoinPendingGeneration = 0;
+        rtcJoinAttempts = 0;
+        rtcJoinBlockedSessionId = '';
+        rtcJoinBlockedGeneration = 0;
+        if(rtcJoinRetryTimer){ cancelLater(rtcJoinRetryTimer); rtcJoinRetryTimer = null; }
+        notify('rtc_joined', room, event);
+      }
+      if(type === 'session_history_page'){
+        var recovery = room.historyRecovery;
+        var responseCursor = normalizeHistoryCursor(event.before_sequence);
+        if(!recovery || !recovery.active || !responseCursor || recovery.inFlightCursor !== responseCursor || recovery.socketGeneration !== socketGeneration){
+          return {handled:true, event:event, sid:sid, room:room, focused:focused, staleHistoryPage:true};
+        }
+        recovery.inFlightCursor = '';
+        recovery.pagesReceived += 1;
+        var pageHistory = Array.isArray(event.history) ? event.history : [];
+        var pageNewMessages = pageHistory.filter(function(message){ return !messageOverlapsRoom(room, message); }).length;
+        recovery.messagesRecovered += pageNewMessages;
+        var pageOverlaps = pageHistory.some(function(message){
+          return messageDedupeKeys(message, sid).some(function(key){ return recovery.anchorKeys.has(key); });
+        });
+        mergeSnapshot(sid, null, pageHistory, {countNewAsUnread:true});
+        room.historyPage = event.history_page ? Object.assign({}, event.history_page) : null;
+        var nextHistoryCursor = normalizeHistoryCursor(room.historyPage && room.historyPage.next_cursor);
+        if(pageOverlaps){ finishHistoryRecovery(room, 'overlap'); }
+        else if(!pageHistory.length || !room.historyPage || room.historyPage.has_more !== true || !nextHistoryCursor){ finishHistoryRecovery(room, 'complete'); }
+        else if(positiveSequence(nextHistoryCursor) >= positiveSequence(responseCursor)){ finishHistoryRecovery(room, 'non_progress'); }
+        else if(recoveryBudgetReason(recovery)){ deferHistoryRecovery(room, nextHistoryCursor, recoveryBudgetReason(recovery)); }
+        else requestHistoryPage(room, nextHistoryCursor);
+        notify('session_history_page', room, event);
+        return {handled:true, event:event, sid:sid, room:room, focused:focused, historyPage:true, overlap:pageOverlaps};
+      }
+      var duplicate = rememberEvent(room, event);
+      if(duplicate) return {handled:true, event:event, sid:sid, room:room, focused:focused, duplicate:true};
+      room.lastEvent = event;
+      room.updatedAt = Date.now();
+      if(type === 'joined' || type === 'session_snapshot' || type === 'session_subscribed'){
+        var subscriptionAnchor = type === 'session_subscribed' && room.subscriptionAnchor && room.subscriptionAnchor.socketGeneration === socketGeneration ? room.subscriptionAnchor : null;
+        var priorSubscriptionLoaded = subscriptionAnchor ? subscriptionAnchor.wasLoaded : room.subscriptionSnapshotLoaded;
+        var priorMaxSequence = subscriptionAnchor ? subscriptionAnchor.maxSequence : room.lastRoomSequence;
+        var priorMessageKeys = priorSubscriptionLoaded ? new Set(subscriptionAnchor ? subscriptionAnchor.messageKeys : room.messageKeys) : null;
+        var subscriptionHistory = event.history || event.messages || [];
+        var subscriptionOverlaps = priorMessageKeys ? subscriptionHistory.some(function(message){
+          return messageDedupeKeys(message, sid).some(function(key){ return priorMessageKeys.has(key); });
+        }) : false;
+        if(type === 'session_subscribed'){
+          room.subscriptionAnchor = null;
+          releaseSubscriptionSlot(sid);
+          if(event.subscribed !== false && desiredRoomIds.has(sid)){
+            subscribedRoomIds.add(sid);
+            room.subscriptionAttempts = 0;
+            room.subscriptionError = null;
+          }
+          else subscribedRoomIds.delete(sid);
+        }
+        var countRecoveredUnread = priorSubscriptionLoaded;
+        mergeSnapshot(sid, event.session || null, subscriptionHistory, {countNewAsUnread:countRecoveredUnread});
+        room.subscriptionSnapshotLoaded = true;
+        room.historyPage = event.history_page ? Object.assign({}, event.history_page) : room.historyPage;
+        if(type === 'session_subscribed' && priorSubscriptionLoaded && subscriptionHistory.length && !subscriptionOverlaps && room.historyPage && room.historyPage.has_more === true && normalizeHistoryCursor(room.historyPage.next_cursor)){
+          beginHistoryRecovery(room, priorMaxSequence, room.historyPage.next_cursor, priorMessageKeys);
+        } else if(type === 'session_subscribed' && room.historyRecovery && (room.historyRecovery.active || (subscriptionOverlaps && room.historyRecovery.truncated))){
+          finishHistoryRecovery(room, subscriptionOverlaps ? 'overlap' : 'complete');
+        }
+        if(event.terminal || event.subscribed === false || isTerminalStatus(room.status)){
+          room.terminal = !!event.terminal || isTerminalStatus(room.status);
+          desiredRoomIds.delete(sid);
+          removeQueuedSubscription(sid);
+          subscribedRoomIds.delete(sid);
+        }
+        if(type === 'session_subscribed') pumpSubscriptions();
+      } else if(type === 'session_unsubscribed'){
+        subscribedRoomIds.delete(sid);
+      } else if(type === 'message'){
+        var added = addMessage(room, event, false);
+        if(!added.added) duplicate = true;
+      } else if(type === 'message_ack'){
+        applyMessageAck(room, event);
+      } else if(type === 'typing'){
+        if(room.typingTimer){ cancelLater(room.typingTimer); room.typingTimer = null; }
+        if(event.is_typing === false){
+          room.typing = null;
+        } else {
+          var typingLifetime = event.ai_typing ? 90000 : 1800;
+          room.typing = Object.assign({}, event, {expiresAt:Date.now() + typingLifetime});
+          room.typingTimer = later(function(){
+            if(!roomsById[sid] || roomsById[sid] !== room) return;
+            room.typing = null;
+            room.typingTimer = null;
+            notify('typing_expired', room, event);
+          }, typingLifetime);
+        }
+      } else if(type === 'session_accepted' || type === 'booking_session_started' || type === 'session_started'){
+        clearPending(sid);
+        if(event.session) room.session = Object.assign({}, room.session || {}, event.session);
+        room.status = text((room.session && room.session.status) || event.status || (type === 'session_started' ? 'active' : room.status)).toLowerCase();
+        room.terminal = isTerminalStatus(room.status);
+        var activeChannel = text((event.session && event.session.channel) || (room.session && room.session.channel) || event.channel || 'chat').toLowerCase();
+        if(!room.terminal && activeChannel !== 'voice' && activeChannel !== 'video') subscribeRoom(sid);
+      } else if(type === 'session_declined' || type === 'session_expired'){
+        clearPending(sid);
+        room.status = type === 'session_declined' ? 'declined' : 'expired';
+        room.terminal = true;
+      } else if(type === 'session_ended'){
+        clearPending(sid);
+        if(event.session) room.session = Object.assign({}, room.session || {}, event.session);
+        room.status = text((room.session && room.session.status) || event.status || 'ended').toLowerCase();
+        room.terminal = isTerminalStatus(room.status) || type === 'session_ended';
+        if(room.historyRecovery && room.historyRecovery.active) finishHistoryRecovery(room, 'terminal');
+        desiredRoomIds.delete(sid);
+        if(subscribedRoomIds.delete(sid) && socket && socket.readyState === 1) send({type:'session_unsubscribe', session_id:sid});
+      }
+      retireTerminalRoom(room);
+      notify(type, room, event);
+      return {handled:true, event:event, sid:sid, room:room, focused:focused, duplicate:duplicate};
+    }
+    function stop(){ stopped = true; clearRuntimeState('stopped'); }
+
+    var api = {
+      connect:connect,
+      whenOpen:whenOpen,
+      send:send,
+      subscribeRoom:subscribeRoom,
+      unsubscribeRoom:unsubscribeRoom,
+      focusRoom:focusRoom,
+      setRtcSession:setRtcSession,
+      markRead:markRead,
+      ingest:ingest,
+      mergeSnapshot:mergeSnapshot,
+      rememberPendingRequest:rememberPendingRequest,
+      clearPending:clearPending,
+      pendingIds:pendingIds,
+      aggregateUnread:aggregateUnread,
+      checkIdentity:checkIdentity,
+      resetIdentity:resetIdentity,
+      isExpertIdentity:isExpertIdentity,
+      isTerminalStatus:isTerminalStatus,
+      pumpSubscriptions:pumpSubscriptions,
+      stop:stop
+    };
+    Object.defineProperties(api, {
+      roomsById:{get:function(){ return roomsById; }},
+      pendingRequestsById:{get:function(){ return pendingRequestsById; }},
+      desiredRoomIds:{get:function(){ return desiredRoomIds; }},
+      subscribedRoomIds:{get:function(){ return subscribedRoomIds; }},
+      inFlightSubscriptionIds:{get:function(){ return inFlightSubscriptionIds; }},
+      queuedSubscriptionIds:{get:function(){ return queuedSubscriptionIds; }},
+      focusedRoomId:{get:function(){ return focusedRoomId; }},
+      rtcSessionId:{get:function(){ return rtcSessionId; }},
+      rtcJoinedSessionId:{get:function(){ return rtcJoinedSessionId; }},
+      rtcJoinPendingSessionId:{get:function(){ return rtcJoinPendingSessionId; }},
+      rtcJoinAttempts:{get:function(){ return rtcJoinAttempts; }},
+      socket:{get:function(){ return socket; }},
+      identity:{get:function(){ return Object.assign({}, identity); }},
+      principalKey:{get:function(){ return principalKey; }},
+      principalGeneration:{get:function(){ return principalGeneration; }},
+      credentialGeneration:{get:function(){ return credentialGeneration; }},
+      maxOutstandingSubscriptions:{get:function(){ return maxOutstandingSubscriptions; }},
+      capabilities:{get:function(){ return Object.assign({}, capabilities); }}
+    });
+    checkIdentity();
+    return api;
+  }
+
+  root.OBExpertLiveRuntimeFactory = {create:create};
+})(window);
 </script>
 <script>
 /* FLOW STABILIZER V2.3: authoritative timers, scheduled RTC, admin view, messaging */
@@ -26460,30 +27485,25 @@ window._handleRTCMessage=function(d){
     if(!box) return;
     var seen = {};
     Array.prototype.slice.call(box.children).forEach(function(row){
-      var bubble = row.querySelector('div');
-      var txt = '';
-      if(bubble){
-        Array.prototype.slice.call(bubble.childNodes).forEach(function(node){
-          if(node.nodeType === 3) txt += node.nodeValue || '';
-        });
-      }
-      if(!txt) txt = (row.textContent || '');
-      txt = txt
-        .replace(/\b\d{1,2}:\d{2}\s*(?:AM|PM)?\b/gi, '')
-        .replace(/\s+/g, ' ')
-        .trim();
-      if(!txt) return;
-      var side = /mine/.test(row.className || '') || /flex-end/.test(row.getAttribute('style') || '') ? 'mine' : 'theirs';
-      var key = side + ':' + txt;
+      var key = row.getAttribute && row.getAttribute('data-ob-msg-key');
+      if(!key) return;
       if(seen[key]) row.remove();
       else seen[key] = true;
     });
   }
   function scheduleDedupe(panelId){
-    [30,160,420,900].forEach(function(ms){ setTimeout(function(){ dedupePanelMessages(panelId); }, ms); });
+    var box = document.getElementById(panelId);
+    if(!box || box._obDedupeTimer) return;
+    box._obDedupeTimer = setTimeout(function(){
+      box._obDedupeTimer = null;
+      dedupePanelMessages(panelId);
+    }, 30);
   }
+	function durablePanelMessageKey(msg){
+	  return String(msg && (msg.client_message_id || msg.clientMessageId || msg.id || msg.message_id || msg.messageId || msg.event_id || msg.eventId) || '');
+	}
 	  function activeExpertSessionId(){
-	    var sid = window._obActiveSessId || window._sid || '';
+	    var sid = (window._obExpertRealtime && window._obExpertRealtime.focusedRoomId) || window._obActiveSessId || window._sid || '';
 	    if(!sid){
 	      try {
 	        var q = new URLSearchParams(location.search || '');
@@ -26492,6 +27512,29 @@ window._handleRTCMessage=function(d){
 	    }
 	    return String(sid || '');
 	  }
+	function applyPanelMessageDelivery(row, status, error){
+	  if(!row || !row.setAttribute || !status) return;
+	  status = String(status || '').toLowerCase();
+	  var deliveryError = String(error || 'Message was not sent');
+	  row.setAttribute('data-ob-delivery-status', status);
+	  var failed = row.querySelector && row.querySelector('[data-ob-message-failed]');
+	  if(status === 'failed'){
+	    if(row.style) row.style.opacity = '.62';
+	    row.title = 'Not sent: ' + deliveryError;
+	    if(!failed && document.createElement){
+	      failed = document.createElement('span');
+	      failed.setAttribute('data-ob-message-failed','1');
+	      failed.textContent = 'Not sent';
+	      failed.style.cssText = 'align-self:center;margin-left:6px;color:#b91c1c;font-size:10px;font-weight:800;';
+	      row.appendChild(failed);
+	    }
+	  } else {
+	    if(row.style) row.style.opacity = '';
+	    row.title = '';
+	    if(failed && failed.parentNode) failed.parentNode.removeChild(failed);
+	  }
+	}
+	window._obApplyPanelMessageDelivery = applyPanelMessageDelivery;
   function prepareExpertMessagePanel(sessionId, opts){
     opts = opts || {};
     var box = document.getElementById('expert-chat-messages');
@@ -26499,6 +27542,7 @@ window._handleRTCMessage=function(d){
     var sid = String(sessionId || '');
     if(!sid){
       if(opts.clear){
+        if(box._obDedupeTimer){ clearTimeout(box._obDedupeTimer); box._obDedupeTimer = null; }
         box.innerHTML = '';
         box._obSeen = {};
         if(box.dataset) delete box.dataset.obSessionId;
@@ -26506,6 +27550,7 @@ window._handleRTCMessage=function(d){
       return box;
     }
     if((box.dataset && box.dataset.obSessionId !== sid) || opts.force){
+      if(box._obDedupeTimer){ clearTimeout(box._obDedupeTimer); box._obDedupeTimer = null; }
       box.innerHTML = '';
       box._obSeen = {};
       if(box.dataset) box.dataset.obSessionId = sid;
@@ -26526,11 +27571,10 @@ window._handleRTCMessage=function(d){
         prepareExpertMessagePanel(activeSid);
       }
     }
-    var sessionKey = msgSid || (box.dataset && box.dataset.obSessionId) || '';
-    var key = msg.id || msg.messageId || [sessionKey, msg.sender_id, msg.sent_at || msg.ts || msg.created_at, msg.content].join(':');
+    var key = durablePanelMessageKey(msg);
     box._obSeen = box._obSeen || {};
-    if(box._obSeen[key]) { scheduleDedupe(panelId); return; }
-    box._obSeen[key] = true;
+    if(key && box._obSeen[key]) { scheduleDedupe(panelId); return; }
+    if(key) box._obSeen[key] = true;
     var before = box.children.length;
     if(window._obAppendMsg) window._obAppendMsg(panelId, msg.content, mine, msg.sent_at || msg.ts || msg.created_at);
     else if(typeof appendMsg === 'function') appendMsg(panelId, msg.content, mine, msg.sent_at || msg.ts || msg.created_at);
@@ -26542,13 +27586,15 @@ window._handleRTCMessage=function(d){
       box.scrollTop = box.scrollHeight;
     }
     Array.prototype.slice.call(box.children, before).forEach(function(row){
-      row.setAttribute('data-ob-msg-key', key);
+      if(key) row.setAttribute('data-ob-msg-key', key);
       row.setAttribute('data-ob-msg-content', msg.content);
+      applyPanelMessageDelivery(row, msg.delivery_status || msg.deliveryStatus || '', msg.delivery_error || msg.deliveryError || '');
     });
     scheduleDedupe(panelId);
   }
-  window._obShowNoActiveExpertLiveSession = function(){
-    if(activeExpertSessionId()) return;
+  window.appendPanelMessage = appendPanelMessage;
+  window._obShowNoActiveExpertLiveSession = function(force){
+    if(!force && activeExpertSessionId()) return;
     prepareExpertMessagePanel('', {clear:true});
     stopExpertTimerKeepDisplay();
     setText('live-sess-subtitle', 'No active client session');
@@ -26649,7 +27695,7 @@ window._handleRTCMessage=function(d){
   function endedPayload(d){
     d = d || {};
     var status = String(d.status || (d.session && d.session.status) || '').toLowerCase();
-    return status === 'ended' || status === 'cancelled' || status === 'failed';
+    return !!(window.obIsTerminalSessionStatus && window.obIsTerminalSessionStatus(status));
   }
   function clearRtcRecoveryStatus(message){
     var finalMessage = message || 'Connection ended';
@@ -26786,6 +27832,243 @@ window._handleRTCMessage=function(d){
     return true;
   }
 
+  var expertPrivateOperations = {epoch:0,controllers:new Set(),byKey:Object.create(null)};
+  var expertPrivateTimers = new Set();
+  function scheduleExpertPrivateTimer(handler, delay){
+    var ownerKey = expertRealtime && expertRealtime.principalKey || '';
+    var ownerGeneration = expertRealtime && expertRealtime.principalGeneration || 0;
+    var timer = setTimeout(function(){
+      expertPrivateTimers.delete(timer);
+      if(!expertRealtime || expertRealtime.principalKey !== ownerKey || expertRealtime.principalGeneration !== ownerGeneration) return;
+      handler();
+    }, delay);
+    expertPrivateTimers.add(timer);
+    return timer;
+  }
+  function abortExpertPrivateOperations(reason){
+    expertPrivateOperations.epoch += 1;
+    expertPrivateOperations.controllers.forEach(function(controller){ try { controller.abort(reason || 'expert_identity_changed'); } catch(e) {} });
+    expertPrivateOperations.controllers.clear();
+    expertPrivateOperations.byKey = Object.create(null);
+  }
+  function captureExpertPrivateOperation(scope, sid, replaceKey){
+    if(!expertRealtime) return null;
+    expertRealtime.checkIdentity();
+    var identity = expertRealtime.identity;
+    if(!identity.token || identity.role !== 'expert') return null;
+    var key = replaceKey || '';
+    if(key && expertPrivateOperations.byKey[key]){
+      try { expertPrivateOperations.byKey[key].abort('superseded'); } catch(e) {}
+      expertPrivateOperations.controllers.delete(expertPrivateOperations.byKey[key]);
+    }
+    var controller = typeof AbortController === 'function' ? new AbortController() : {signal:null,abort:function(){}};
+    if(key) expertPrivateOperations.byKey[key] = controller;
+    expertPrivateOperations.controllers.add(controller);
+    return {
+      scope:String(scope || ''),sid:String(sid || ''),key:key,controller:controller,signal:controller.signal || undefined,
+      epoch:expertPrivateOperations.epoch,principalKey:expertRealtime.principalKey,
+      principalGeneration:expertRealtime.principalGeneration,credentialGeneration:expertRealtime.credentialGeneration,
+      token:identity.token
+    };
+  }
+  function expertPrivateOperationCurrent(context){
+    if(!context || (context.signal && context.signal.aborted) || !expertRealtime) return false;
+    expertRealtime.checkIdentity();
+    return context.epoch === expertPrivateOperations.epoch &&
+      context.principalKey === expertRealtime.principalKey &&
+      context.principalGeneration === expertRealtime.principalGeneration &&
+      context.credentialGeneration === expertRealtime.credentialGeneration &&
+      context.token === expertRealtime.identity.token;
+  }
+  function releaseExpertPrivateOperation(context){
+    if(!context) return;
+    expertPrivateOperations.controllers.delete(context.controller);
+    if(context.key && expertPrivateOperations.byKey[context.key] === context.controller) delete expertPrivateOperations.byKey[context.key];
+  }
+  function scrubExpertPrivateUi(){
+    expertPrivateTimers.forEach(function(timer){ clearTimeout(timer); });
+    expertPrivateTimers.clear();
+    ['_sessionRequestTimer','_obRequestVisibilityGuard','_expertSessInterval','_expertTimerInterval','_expertSessionPoller','_obExpertSessionPoller'].forEach(function(name){
+      try { if(window[name]){ clearInterval(window[name]); clearTimeout(window[name]); } } catch(e) {}
+      window[name] = null;
+    });
+    window._pendingSid = null;
+    window._obIncomingSessId = null;
+    window._obRequestVisibleSid = null;
+    window._obDismissedPendingSid = null;
+    window._sid = null;
+    window._sessId = null;
+    window._obActiveSessId = null;
+    window._expertSessActive = false;
+    ['session-request-overlay','session-request-sheet'].forEach(function(id){
+      var el = document.getElementById(id);
+      if(!el) return;
+      if(el.dataset) el.dataset.sessionId = '';
+      try { el.style.setProperty('display','none','important'); } catch(e) { el.style.display = 'none'; }
+      if(el.classList) el.classList.remove('show');
+    });
+    var incoming = document.getElementById('ob-expert-incoming');
+    if(incoming){ if(incoming.classList) incoming.classList.remove('show'); incoming.style.display = 'none'; }
+    ['req-client-name','req-client-sub','req-avatar','req-session-type','req-rate','req-free','expert-typing-indicator'].forEach(function(id){ var el=document.getElementById(id); if(el){ el.textContent=''; el.innerHTML=''; } });
+    prepareExpertMessagePanel('', {clear:true});
+    stopExpertTimerKeepDisplay();
+    var endedNote = document.getElementById('ob-expert-ended-inline-note');
+    if(endedNote && endedNote.parentNode) endedNote.parentNode.removeChild(endedNote);
+    var endedBanner = document.getElementById('ob-client-ended-session-banner');
+    if(endedBanner && endedBanner.parentNode) endedBanner.parentNode.removeChild(endedBanner);
+    try {
+      var scrubUrl = new URL(window.location.href);
+      scrubUrl.searchParams.delete('session');
+      scrubUrl.searchParams.delete('session_id');
+      scrubUrl.searchParams.delete('sid');
+      if(scrubUrl.href !== window.location.href) window.history.replaceState({obRoute:true},'',scrubUrl.pathname + scrubUrl.search + scrubUrl.hash);
+    } catch(e) {}
+    if(typeof window._obShowNoActiveExpertLiveSession === 'function') window._obShowNoActiveExpertLiveSession(true);
+    try { sessionStorage.removeItem('ob_realtime_resume_state_v2'); } catch(e) {}
+    if(typeof window._obClearExpertOutboxForPrincipalReset === 'function') window._obClearExpertOutboxForPrincipalReset();
+    if(typeof window._obClearRealtimeResumeForPrincipalChange === 'function') window._obClearRealtimeResumeForPrincipalChange();
+  }
+  window._obAbortExpertPrivateOperations = abortExpertPrivateOperations;
+  window._obScrubExpertPrivateUi = scrubExpertPrivateUi;
+
+  function expertTokenClaims(value){
+    try {
+      var encoded=String(value||'').split('.')[1]||'';
+      var normalized=encoded.replace(/-/g,'+').replace(/_/g,'/');
+      while(normalized.length%4)normalized+='=';
+      return JSON.parse(atob(normalized)||'{}')||{};
+    } catch(e){ return {}; }
+  }
+  function expertRealtimeIdentity(){
+    var user = {};
+    try { user = JSON.parse(sessionStorage.getItem('ob_u') || localStorage.getItem('ob_u') || '{}') || {}; } catch(e) {}
+    var credential=tok();
+    var claims=expertTokenClaims(credential);
+    return {
+      token:credential,
+      accountId:claims.id || claims.user_id || claims.expert_id || claims.sub || user.id || user.user_id || user.expert_id || user.email || user.slug || '',
+      role:String(claims.role || user.role || '').toLowerCase()
+    };
+  }
+  function refreshExpertRealtimeBadges(){
+    var runtime = window._obExpertRealtime;
+    if(!runtime) return;
+    var unread = runtime.aggregateUnread();
+    var pending = runtime.pendingIds().length;
+    var total = unread + pending;
+    var notif = document.getElementById('notif-count');
+    if(notif){ notif.textContent = String(total); notif.style.display = total > 0 ? '' : 'none'; }
+    var messages = document.getElementById('dbt-msg-badge');
+    if(messages){ messages.textContent = String(unread); messages.style.display = unread > 0 ? '' : 'none'; }
+  }
+  window._obRefreshExpertRealtimeBadge = refreshExpertRealtimeBadges;
+
+  var expertRealtime = window._obExpertRealtime;
+  if(!expertRealtime && window.OBExpertLiveRuntimeFactory){
+    expertRealtime = window.OBExpertLiveRuntimeFactory.create({
+      WebSocket:window.WebSocket,
+      wsUrl:WS_URL,
+      getIdentity:expertRealtimeIdentity,
+      isOwnMessage:function(message){ return String(message && (message.sender_id || message.senderId || message.user_id) || '') === String(myId() || ''); },
+      onSocketChange:function(next, previous){
+        if(next){
+          if(!(window._expertWs && window._expertWs._obMiniSuiteSignalOwner)) window._expertWs = next;
+        } else if(previous && window._expertWs === previous) window._expertWs = null;
+      },
+      onMessage:function(evt, decision){ routeWsMessage(evt, 'expert', decision); },
+      onStateChange:function(owner, reason, room){
+        refreshExpertRealtimeBadges();
+        if(reason === 'transport_error' && room && room.subscriptionError && room.subscriptionError.retryable !== true){
+          var code = String(room.subscriptionError.code || '');
+          if(code === 'session_subscription_limit') toastMsg('This chat could not be kept live because the expert chat limit was reached.', 'err');
+          else if(code === 'session_access_denied' || code === 'session_not_active' || code === 'session_not_found') toastMsg(room.subscriptionError.message || 'This chat is no longer available.', 'err');
+        } else if(reason === 'subscription_retry_exhausted') {
+          toastMsg('A chat could not reconnect after repeated realtime backpressure.', 'err');
+        } else if(reason === 'rtc_join_retry_exhausted' || reason === 'rtc_join_failed') {
+          toastMsg('The media session could not rejoin realtime signaling. Reconnect to retry.', 'err');
+        }
+      },
+      onIdentityTransition:function(kind){ abortExpertPrivateOperations(kind); },
+      onCredentialRotated:function(){
+        if(typeof window._obRefreshExpertRealtimeBadge === 'function') window._obRefreshExpertRealtimeBadge();
+        setTimeout(function(){ hydrateExpertChatRooms(true); reconcileExpertPendingRequests(true); }, 0);
+      },
+      onIdentityReset:function(previous){
+        var previousRole = String(previous && previous.role || '').toLowerCase();
+        if(previousRole !== 'expert' && previousRole !== 'admin' && previousRole !== 'support') return;
+        expertHydrateAt = 0;
+        expertHydratePromise = null;
+        expertHydrateContext = null;
+        pendingReconcileAt = 0;
+        try { if(window.OB_RTC && typeof window.OB_RTC.resetExpertContext === 'function') window.OB_RTC.resetExpertContext(); } catch(e) {}
+        scrubExpertPrivateUi();
+      }
+    });
+    window._obExpertRealtime = expertRealtime;
+  }
+  var expertHydrateAt = 0;
+  var expertHydratePromise = null;
+  var expertHydrateContext = null;
+  function isMiniSuiteRealtimeRoute(){
+    try { return !!(window.obIsMiniSuiteRoute && window.obIsMiniSuiteRoute()); } catch(e) { return false; }
+  }
+  function hydrateExpertChatRooms(force){
+    if(!expertRealtime || !expertRealtime.isExpertIdentity() || isMiniSuiteRealtimeRoute()) return Promise.resolve([]);
+    if(expertHydratePromise && expertPrivateOperationCurrent(expertHydrateContext)) return expertHydratePromise;
+    if(!force && Date.now() - expertHydrateAt < 5000) return Promise.resolve([]);
+    var context = captureExpertPrivateOperation('expert-room-hydrate', '', 'hydrate');
+    if(!context) return Promise.resolve([]);
+    expertHydrateAt = Date.now();
+    expertHydrateContext = context;
+    var ownedPromise = api('/api/sessions?status=active&limit=100&include_messages=0', {signal:context.signal}).then(function(data){
+      if(!expertPrivateOperationCurrent(context)) return [];
+      var sessions = data.sessions || [];
+      sessions.forEach(function(session){
+        if(!expertPrivateOperationCurrent(context)) return;
+        if(!session || !session.id || String(session.status || 'active').toLowerCase() !== 'active') return;
+        if(String(session.channel || 'chat').toLowerCase() !== 'chat') return;
+        expertRealtime.mergeSnapshot(session.id, session, []);
+        expertRealtime.subscribeRoom(session.id);
+      });
+      return sessions;
+    }).catch(function(){ return []; }).then(function(value){
+      releaseExpertPrivateOperation(context);
+      if(expertHydrateContext === context){ expertHydrateContext = null; expertHydratePromise = null; }
+      return value;
+    });
+    expertHydratePromise = ownedPromise;
+    return expertHydratePromise;
+  }
+  function canonicalConnectExpertWs(sid){
+    if(!expertRealtime || isMiniSuiteRealtimeRoute()) return window._expertWs || null;
+    expertRealtime.checkIdentity();
+    if(!expertRealtime.isExpertIdentity()) return null;
+    sid = String(sid || '');
+    if(sid){
+      if(expertRealtime.rtcSessionId === sid) expertRealtime.setRtcSession(sid);
+      else expertRealtime.subscribeRoom(sid);
+    }
+    expertRealtime.connect();
+    hydrateExpertChatRooms(false);
+    reconcileExpertPendingRequests(false);
+    return expertRealtime.socket;
+  }
+  window.connectExpertWs = canonicalConnectExpertWs;
+  window._obHydrateExpertChatRooms = hydrateExpertChatRooms;
+  if(window.__OB_TEST_HOOKS__ && expertRealtime){
+    window.obExpertLiveRuntimeTestHooks = {
+      runtime:expertRealtime,
+      snapshot:function(){
+        var rooms = {};
+        Object.keys(expertRealtime.roomsById).forEach(function(sid){
+          var room = expertRealtime.roomsById[sid];
+          rooms[sid] = {status:room.status, terminal:room.terminal, unread:room.unread, typing:room.typing, messageIds:room.messages.map(function(message){ return message.id || message.message_id || message.messageId || message.client_message_id || ''; })};
+        });
+        return {focusSessionId:expertRealtime.focusedRoomId || null, rtcSessionId:expertRealtime.rtcSessionId || null, desiredSessionIds:Array.from(expertRealtime.desiredRoomIds), subscribedSessionIds:Array.from(expertRealtime.subscribedRoomIds), pendingSessionIds:expertRealtime.pendingIds(), totalUnread:expertRealtime.aggregateUnread(), rooms:rooms};
+      }
+    };
+  }
+
   function showLiveSessionRequestFromWs(d){
     d = d || {};
     var sess = d.session || {};
@@ -26793,8 +28076,13 @@ window._handleRTCMessage=function(d){
     if(!sid) return false;
     if(window._obDismissedPendingSid === sid) return true;
 
+    var keyedPending = expertRealtime && expertRealtime.isExpertIdentity()
+      ? expertRealtime.rememberPendingRequest(d)
+      : null;
+    if(keyedPending && !keyedPending.isHead) return true;
+
     var current = window._obActiveSessId || window._sid || '';
-    if(current && current !== sid){
+    if(current && current !== sid && !keyedPending){
       api('/api/sessions/' + encodeURIComponent(current)).then(function(info){
         var cur = info.session || info || {};
         if(cur.status === 'active') return;
@@ -26859,11 +28147,52 @@ window._handleRTCMessage=function(d){
     return true;
   }
 
-  function routeWsMessage(evt, roleName){
+  function routeWsMessage(evt, roleName, expertDecision){
     var d;
-    try { d = typeof evt === 'string' ? JSON.parse(evt) : JSON.parse(evt.data); } catch(e) { return false; }
+    try {
+      if(typeof evt === 'string') d = JSON.parse(evt);
+      else if(evt && typeof evt.data === 'string') d = JSON.parse(evt.data);
+      else d = evt;
+    } catch(e) { return false; }
+    if(!d || typeof d !== 'object') return false;
     var sid = d.session_id || d.sessionId || (d.session && d.session.id);
     var handled = false;
+    var expertRoute = roleName === 'expert' || (typeof role === 'function' && role() === 'expert');
+    if(expertRoute && expertRealtime){
+      var decision = expertDecision || expertRealtime.ingest(d);
+      sid = decision.sid || sid || '';
+      if(decision.rtc){
+        if(decision.deliverRtc && typeof window._handleRTCMessage === 'function') window._handleRTCMessage(d);
+        return true;
+      }
+      if(decision.expertStatus){
+        if(typeof setExpertOnlineStatus === 'function') setExpertOnlineStatus(d.is_online);
+        return true;
+      }
+      if(decision.pending){
+        if(decision.duplicate || !decision.showPending) return true;
+        return showLiveSessionRequestFromWs(d);
+      }
+      if(decision.staleHistoryPage) return true;
+      if(decision.historyPage){
+        if(decision.focused) renderFocusedExpertRoom(sid);
+        return true;
+      }
+      if(decision.duplicate || decision.transport || decision.missingSession) return true;
+      if((d.type === 'session_accepted' || d.type === 'session_declined' || d.type === 'session_expired') && sid && (window._pendingSid === sid || requestSidFromDom() === sid)) hideRequestOverlay(sid);
+      var terminalSignal = d.terminal === true || d.type === 'session_ended' || d.type === 'session_declined' || d.type === 'session_expired' || (window.obIsTerminalSessionStatus && window.obIsTerminalSessionStatus(d.status || (d.session && d.session.status)));
+      if(decision.handled && decision.room && decision.room.terminal && terminalSignal){
+        if(!decision.focused) return true;
+        applyExpertEnded(Object.assign({id:sid,status:decision.room.status}, decision.room.session || {}, d.session || {}), d.status || d.type || 'terminal');
+        return true;
+      }
+      if(decision.handled && sid && !decision.focused) return true;
+      if(d.type === 'message_ack') return true;
+      if(d.type === 'session_unsubscribed') return true;
+      if(d.type === 'session_subscribed' || d.type === 'session_snapshot'){
+        d = Object.assign({}, d, {type:'joined', history:d.history || d.messages || []});
+      }
+    }
     if(d.type === 'session_connection_waiting' || d.type === 'session_connection_recovering' || d.type === 'participant_reconnecting'){
       return showSessionConnectionStatus(d, roleName);
     }
@@ -26962,6 +28291,7 @@ window._handleRTCMessage=function(d){
   function wireWs(ws, roleName){
     if(!ws) return ws;
     if(ws._obMiniSuiteSignalOwner) return ws;
+    if(ws._obExpertRuntimeOwner) return ws;
     if(ws._obStagingV2Wired){
       if(roleName === 'expert') ws._obStagingV2Role = 'expert';
       else if(!ws._obStagingV2Role) ws._obStagingV2Role = roleName;
@@ -26986,6 +28316,7 @@ window._handleRTCMessage=function(d){
   function sendJoin(ws, sid, roleName, expectedToken){
     if(!ws || ws.readyState !== 1 || !sid) return;
     if(!transportContextCurrent(roleName,expectedToken))return;
+    if(roleName === 'expert' && expertRealtime){ expertRealtime.subscribeRoom(sid); return; }
     try { ws.send(JSON.stringify({type:'auth', token:tok()})); } catch(e) {}
     setTimeout(function(){
       if(!transportContextCurrent(roleName,expectedToken))return;
@@ -26995,6 +28326,17 @@ window._handleRTCMessage=function(d){
   }
   function ensureWs(roleName, sid, done){
     refreshClientSessionCredential();
+    if(roleName === 'expert' && expertRealtime){
+      expertRealtime.checkIdentity();
+      if(!expertRealtime.isExpertIdentity()) return;
+      if(sid){
+        if(expertRealtime.rtcSessionId === String(sid)) expertRealtime.setRtcSession(sid);
+        else expertRealtime.subscribeRoom(sid);
+      }
+      expertRealtime.whenOpen(function(){ if(done) done(); });
+      hydrateExpertChatRooms(false);
+      return;
+    }
     var transportToken=roleName==='expert'?'':tok();
     if(!transportContextCurrent(roleName,transportToken))return;
     var prop = roleName === 'expert' ? '_expertWs' : '_obClientWs';
@@ -27349,9 +28691,9 @@ window._handleRTCMessage=function(d){
     var msg = reason === 'client' ? 'Client ended the session' : 'Session ended';
     toastMsg(msg + ' - final payout: ' + earned, 'ok');
     markExpertLivePanelEnded(msg);
-    setTimeout(function(){
+    scheduleExpertPrivateTimer(function(){
       goExpertSessionsPage();
-      setTimeout(function(){
+      scheduleExpertPrivateTimer(function(){
         try {
           if(typeof window.loadExpertDashboard === 'function') window.loadExpertDashboard();
         } catch(e) {}
@@ -27364,12 +28706,19 @@ window._handleRTCMessage=function(d){
         banner.style.cssText = 'margin:0 0 16px;padding:14px 16px;border:1px solid rgba(34,197,94,.28);background:rgba(34,197,94,.09);border-radius:10px;color:#166534;font-weight:700;';
         banner.textContent = msg + '. Final payout: ' + earned;
         target.insertBefore(banner, target.firstChild);
-        setTimeout(function(){ if(banner && banner.parentNode) banner.parentNode.removeChild(banner); }, 14000);
+        scheduleExpertPrivateTimer(function(){ if(banner && banner.parentNode) banner.parentNode.removeChild(banner); }, 14000);
       }, 650);
     }, 900);
   }
   function applyExpertEnded(sess, reason){
     sess = sess || {};
+    var endedSid = String(sess.id || sess.session_id || sess.sessionId || activeExpertSessionId() || '');
+    if(expertRealtime && endedSid){
+      if(!expertRealtime.roomsById[endedSid] || !expertRealtime.roomsById[endedSid].terminal){
+        expertRealtime.ingest({type:'session_ended', session_id:endedSid, session:sess});
+      }
+      if(expertRealtime.focusedRoomId && expertRealtime.focusedRoomId !== endedSid) return;
+    }
     stopExpertTimerKeepDisplay();
     try { if(window._expertTimerInterval) clearInterval(window._expertTimerInterval); } catch(e) {}
     window._expertTimerInterval = null;
@@ -27378,7 +28727,7 @@ window._handleRTCMessage=function(d){
     try { if(window._obExpertSessionPoller) clearInterval(window._obExpertSessionPoller); } catch(e) {}
     window._obExpertSessionPoller = null;
     window._obExpertSessionEndedAt = Date.now();
-    if(window.OB_RTC && window.OB_RTC.isActive && window.OB_RTC.isActive()){
+    if(window.OB_RTC && window.OB_RTC.isActive && window.OB_RTC.isActive() && (!expertRealtime || !expertRealtime.rtcSessionId || expertRealtime.rtcSessionId === endedSid)){
       try { if(typeof window.OB_RTC.cleanup === 'function') window.OB_RTC.cleanup(); else if(typeof window.OB_RTC.end === 'function') window.OB_RTC.end(); } catch(e) {}
     }
     setText('expert-session-earnings', money(sess.expert_earned || 0));
@@ -27388,6 +28737,7 @@ window._handleRTCMessage=function(d){
     window._sid = null;
     window._sessId = null;
     window._expertSessActive = false;
+    if(expertRealtime && (!expertRealtime.focusedRoomId || expertRealtime.focusedRoomId === endedSid)) expertRealtime.focusRoom('');
     showExpertEndedNotice(sess, reason);
   }
   window.obApplyAuthoritativeExpertEnded = function(payload, reason){
@@ -27396,6 +28746,14 @@ window._handleRTCMessage=function(d){
   };
   function applyExpertSessionUi(sess){
     if(!sess || !sess.id) return;
+    if(expertRealtime){
+      expertRealtime.mergeSnapshot(sess.id, sess, []);
+      if(expertRealtime.focusedRoomId && expertRealtime.focusedRoomId !== String(sess.id)) return;
+    }
+    if(window.obIsTerminalSessionStatus && window.obIsTerminalSessionStatus(sess.status)){
+      applyExpertEnded(sess, sess.status || 'terminal');
+      return;
+    }
     var ch = (sess.channel || 'chat').toLowerCase();
     var rate = channelRate(ch, sess);
     var free = channelFree(ch, sess);
@@ -27421,6 +28779,7 @@ window._handleRTCMessage=function(d){
     var chat = document.getElementById('expert-chat-area');
     var rtc = document.getElementById('expert-rtc-area');
     if(ch === 'voice' || ch === 'video'){
+      if(expertRealtime) expertRealtime.setRtcSession(sess.id);
       if(chat) chat.style.display = 'none';
       if(rtc) rtc.style.display = 'block';
       setText('expert-rtc-channel', ch === 'video' ? 'Video Call' : 'Voice Call');
@@ -27433,39 +28792,56 @@ window._handleRTCMessage=function(d){
         }
       });
     } else {
+      if(expertRealtime) expertRealtime.subscribeRoom(sess.id);
       if(chat) chat.style.display = '';
       if(rtc) rtc.style.display = 'none';
-      if(window.OB_RTC && window.OB_RTC.isActive && window.OB_RTC.isActive()){ if(typeof window.OB_RTC.cleanup === 'function') window.OB_RTC.cleanup(); else if(typeof window.OB_RTC.end === 'function') window.OB_RTC.end(); }
+      if(window.OB_RTC && window.OB_RTC.isActive && window.OB_RTC.isActive() && (!expertRealtime || !expertRealtime.rtcSessionId || expertRealtime.rtcSessionId === String(sess.id))){ if(typeof window.OB_RTC.cleanup === 'function') window.OB_RTC.cleanup(); else if(typeof window.OB_RTC.end === 'function') window.OB_RTC.end(); }
       ensureExpertWsJoined(sess.id);
       bindExpertChatControls();
     }
     if(sess.started_at) startExpertTimer(sess.started_at); else startExpertTimer(null);
   }
+  function renderFocusedExpertRoom(sid){
+    if(!expertRealtime || expertRealtime.focusedRoomId !== String(sid || '')) return;
+    var room = expertRealtime.roomsById[String(sid || '')];
+    if(!room) return;
+    prepareExpertMessagePanel(sid, {force:true});
+    room.messages.forEach(function(message){ appendPanelMessage('expert-chat-messages', message, String(message.sender_id || '') === String(myId() || '')); });
+    var typing = room.typing;
+    var typingEl = document.getElementById('expert-typing-indicator');
+    if(typing && typing.expiresAt > Date.now() && window.obRenderTypingEvent) window.obRenderTypingEvent(typing, 'expert');
+    else if(typingEl){ typingEl.textContent = ''; typingEl.innerHTML = ''; }
+  }
 	  function syncExpertSession(sid){
     if(!sid) return Promise.resolve();
     var requestedSid = String(sid);
-    prepareExpertMessagePanel(requestedSid);
-    return api('/api/sessions/' + encodeURIComponent(sid)).then(function(d){
+    var context = captureExpertPrivateOperation('expert-session-sync', requestedSid, 'sync:' + requestedSid);
+    if(!context) return Promise.resolve(null);
+    if(activeExpertSessionId() === requestedSid) prepareExpertMessagePanel(requestedSid);
+    return api('/api/sessions/' + encodeURIComponent(sid) + '?include_messages=0', {signal:context.signal}).then(function(d){
+      if(!expertPrivateOperationCurrent(context)) return null;
       var sess = d.session || d || {};
       if(sess.id && String(sess.id) !== requestedSid) return sess;
+      if(expertRealtime) expertRealtime.mergeSnapshot(requestedSid, sess, []);
       var currentSid = activeExpertSessionId();
       if(currentSid && currentSid !== requestedSid) return sess;
-      if(sess.status === 'ended'){
-        applyExpertEnded(sess, 'client');
+      if(window.obIsTerminalSessionStatus && window.obIsTerminalSessionStatus(sess.status)){
+        applyExpertEnded(sess, sess.status || 'client');
         return sess;
       }
       applyExpertSessionUi(sess);
-      prepareExpertMessagePanel(requestedSid);
-      (d.messages || []).forEach(function(m){
-        if(!m.session_id && !m.sessionId) m.session_id = requestedSid;
-        appendPanelMessage('expert-chat-messages', m, m.sender_id === myId());
-      });
       return sess;
-    }).catch(function(){});
+    }).catch(function(){ return null; }).then(function(value){ releaseExpertPrivateOperation(context); return value; });
   }
 	  window._obPreferModernLiveSessionHandlers = true;
 	  window.openExpertLivePanel = function(sid){
 	    if(!sid) return;
+	    sid = String(sid);
+      if(expertRealtime && expertRealtime.rtcSessionId && expertRealtime.rtcSessionId !== sid){
+        toastMsg('Finish the active voice or video session before switching chats.','err');
+        return false;
+      }
+      if(expertRealtime) expertRealtime.focusRoom(sid, {deferSubscription:true});
 	    window._sid = sid;
 	    window._obActiveSessId = sid;
 	    try { if(location.pathname.indexOf('/dash/') === 0) window._sessId = sid; } catch(e) {}
@@ -27477,12 +28853,16 @@ window._handleRTCMessage=function(d){
 	      }
 	    } catch(e) {}
 	    prepareExpertMessagePanel(sid, {force:true});
+	    renderFocusedExpertRoom(sid);
 	    if(typeof dbNav === 'function') {
 	      try { dbNav(document.querySelector('[onclick*="live-session"]'), 'live-session'); } catch(e) {}
 	    }
-    ensureExpertWsJoined(sid);
+    var knownRoom = expertRealtime && expertRealtime.roomsById[sid];
+    var knownChannel = String(knownRoom && knownRoom.session && knownRoom.session.channel || '').toLowerCase();
+    if(knownChannel === 'voice' || knownChannel === 'video') expertRealtime.setRtcSession(sid);
+    else if(knownChannel === 'chat') expertRealtime.subscribeRoom(sid);
+    canonicalConnectExpertWs(knownChannel === 'chat' ? sid : '');
     syncExpertSession(sid);
-    setTimeout(function(){ syncExpertSession(sid); }, 900);
     startExpertSessionPollerSafe(sid);
     bindExpertChatControls();
   };
@@ -27491,16 +28871,28 @@ window._handleRTCMessage=function(d){
     window._obExpertSessionPoller = setInterval(function(){
       if(!window._obActiveSessId || window._obActiveSessId !== sid){ clearInterval(window._obExpertSessionPoller); window._obExpertSessionPoller = null; return; }
       syncExpertSession(sid);
-    }, 2500);
+    }, 5000);
   }
+	window.startExpertSessionPoller = startExpertSessionPollerSafe;
 	  async function resolveExpertSessionId(){
 	    var sid = activeExpertSessionId() || window._sessId;
 	    if(sid) return sid;
-	    var d = await api('/api/sessions?status=active&limit=5');
+	    if(expertRealtime){
+      var storedSid = Object.keys(expertRealtime.roomsById).find(function(roomId){ return !expertRealtime.roomsById[roomId].terminal; });
+      if(storedSid){ expertRealtime.focusRoom(storedSid); window._sid = storedSid; window._obActiveSessId = storedSid; return storedSid; }
+    }
+	    var context = captureExpertPrivateOperation('expert-session-resolve', '', 'resolve-active-session');
+      if(!context) return null;
+      var d;
+      try { d = await api('/api/sessions?status=active&limit=5&include_messages=0', {signal:context.signal}); }
+      catch(e){ releaseExpertPrivateOperation(context); return null; }
+      if(!expertPrivateOperationCurrent(context)){ releaseExpertPrivateOperation(context); return null; }
+      releaseExpertPrivateOperation(context);
     var list = d.sessions || [];
     if(list[0] && list[0].id){
       window._sid = list[0].id;
       window._obActiveSessId = list[0].id;
+      if(expertRealtime){ expertRealtime.mergeSnapshot(list[0].id, list[0], []); expertRealtime.focusRoom(list[0].id); }
       return list[0].id;
     }
     return null;
@@ -27511,9 +28903,18 @@ window._handleRTCMessage=function(d){
     if(!content) return;
     var sid = await resolveExpertSessionId();
     if(!sid){ toastMsg('No active session found','err'); return; }
+    var context = captureExpertPrivateOperation('expert-message-send', sid, 'message:' + Date.now());
+    if(!context){ toastMsg('Your expert session changed. Please try again.','err'); return; }
     if(input) input.value = '';
-    appendPanelMessage('expert-chat-messages', {id:'expert-local-' + Date.now(), session_id:sid, sender_id:myId(), content:content, sent_at:Math.floor(Date.now()/1000)}, true);
-    api('/api/sessions/' + encodeURIComponent(sid) + '/message', {method:'POST', body:JSON.stringify({content:content})}).catch(function(e){ toastMsg(e.message || 'Message failed','err'); });
+    var clientMessageId = 'expert-local-' + Date.now() + '-' + Math.random().toString(36).slice(2,10);
+    var localMessage = {id:clientMessageId, client_message_id:clientMessageId, session_id:sid, sender_id:myId(), content:content, sent_at:Math.floor(Date.now()/1000)};
+    if(expertRealtime) expertRealtime.ingest(Object.assign({type:'message'}, localMessage));
+    appendPanelMessage('expert-chat-messages', localMessage, true);
+    api('/api/sessions/' + encodeURIComponent(sid) + '/message', {method:'POST', body:JSON.stringify({content:content,client_message_id:clientMessageId}),signal:context && context.signal}).then(function(data){
+      if(!context || !expertPrivateOperationCurrent(context) || !expertRealtime) return;
+      var canonical = Object.assign({}, localMessage, data && (data.message || data) || {}, {type:'message_ack',session_id:sid,client_message_id:clientMessageId});
+      expertRealtime.ingest(canonical);
+    }).catch(function(e){ if(!context || expertPrivateOperationCurrent(context)) toastMsg(e.message || 'Message failed','err'); }).then(function(){ releaseExpertPrivateOperation(context); });
   };
   function bindExpertChatControls(){
     var inp = document.getElementById('expert-chat-input');
@@ -27535,6 +28936,10 @@ window._handleRTCMessage=function(d){
     opts = opts || {};
     var sid = sess.id || sess.session_id || sess.sessionId || opts.id || opts.session_id || opts.sessionId || opts.sid || window._pendingSid || window._obIncomingSessId || '';
     if(!sid) return '';
+    if(expertRealtime && expertRealtime.isExpertIdentity()){
+      var pendingInfo = expertRealtime.rememberPendingRequest({type:'session_request', session:Object.assign({id:sid}, sess), client:opts.client || null});
+      if(!pendingInfo.isHead) return sid;
+    }
     window._pendingSid = sid;
     window._obIncomingSessId = sid;
     var sheet = document.getElementById('session-request-sheet');
@@ -27562,7 +28967,7 @@ window._handleRTCMessage=function(d){
   }
   function forcePendingRequestVisible(){
     if(role() !== 'expert') return;
-    if(window._obActiveSessId || window._sid) return;
+    if((window._obActiveSessId || window._sid) && !expertRealtime) return;
     var sid = window._pendingSid || requestSidFromDom() || window._obIncomingSessId;
     if(!sid) return;
     if(window._obDismissedPendingSid === sid) return;
@@ -27586,7 +28991,7 @@ window._handleRTCMessage=function(d){
     window._obRequestVisibilityGuardStarted = Date.now();
     window._obRequestVisibilityGuard = setInterval(function(){
       var sid = window._pendingSid || requestSidFromDom() || window._obIncomingSessId;
-      if(!sid || window._obDismissedPendingSid === sid || window._obActiveSessId || window._sid || Date.now() - (window._obRequestVisibilityGuardStarted || 0) > 18000){
+      if(!sid || window._obDismissedPendingSid === sid || ((window._obActiveSessId || window._sid) && !expertRealtime) || Date.now() - (window._obRequestVisibilityGuardStarted || 0) > 18000){
         clearInterval(window._obRequestVisibilityGuard);
         window._obRequestVisibilityGuard = null;
         return;
@@ -27625,17 +29030,51 @@ window._handleRTCMessage=function(d){
     schedulePendingRequestVisible();
     var sid = requestSidFromDom();
     if(sid){
-      api('/api/sessions/' + encodeURIComponent(sid)).then(function(d){ applyRequestFreeText(d.session || {}, opts); }).catch(function(){});
+      var context = captureExpertPrivateOperation('expert-pending-detail', sid, 'pending-detail:' + sid);
+      if(context) api('/api/sessions/' + encodeURIComponent(sid) + '?include_messages=0', {signal:context.signal}).then(function(d){
+        if(expertPrivateOperationCurrent(context) && requestSidFromDom() === sid) applyRequestFreeText(d.session || {}, opts);
+      }).catch(function(){}).then(function(){ releaseExpertPrivateOperation(context); });
     }
     return ret;
   };
+  function reconcilePendingList(list, context){
+    if(!expertPrivateOperationCurrent(context) || !expertRealtime) return [];
+    list = (list || []).filter(function(item){ return item && item.id; });
+    var authoritativeIds = new Set(list.map(function(item){ return String(item.id); }));
+    var visibleSid = String(window._pendingSid || requestSidFromDom() || window._obIncomingSessId || '');
+    expertRealtime.pendingIds().forEach(function(sid){
+      if(!authoritativeIds.has(String(sid))) expertRealtime.clearPending(sid);
+    });
+    if(visibleSid && !authoritativeIds.has(visibleSid)) hideRequestOverlay(visibleSid);
+    list.forEach(function(item){
+      expertRealtime.rememberPendingRequest({type:'session_request',session:item,client:{name:item.client_name || 'Client'},channel:item.channel || 'chat'});
+    });
+    return list;
+  }
+  var pendingReconcileAt = 0;
+  function reconcileExpertPendingRequests(force){
+    if(!expertRealtime || !expertRealtime.isExpertIdentity() || isMiniSuiteRealtimeRoute()) return Promise.resolve([]);
+    if(!force && Date.now() - pendingReconcileAt < 1500) return Promise.resolve([]);
+    var context = captureExpertPrivateOperation('expert-pending-reconcile', '', 'pending-reconcile');
+    if(!context) return Promise.resolve([]);
+    pendingReconcileAt = Date.now();
+    return api('/api/sessions/pending', {signal:context.signal}).then(function(d){
+      return reconcilePendingList(d.sessions || [], context);
+    }).catch(function(){ return []; }).then(function(list){ releaseExpertPrivateOperation(context); return list; });
+  }
+  window._obReconcileExpertPendingRequests = reconcileExpertPendingRequests;
   function pollPendingLiveRequestsFallback(){
     if(role() !== 'expert') return;
-    if(window._obActiveSessId || window._sid) return;
+    var hasFocusedSession = !!(window._obActiveSessId || window._sid);
+    if(hasFocusedSession && !expertRealtime) return;
     var overlay = document.getElementById('session-request-overlay');
-    if(overlay && getComputedStyle(overlay).display === 'flex') return;
-    api('/api/sessions/pending').then(function(d){
-      var list = d.sessions || [];
+    if(!hasFocusedSession && overlay && getComputedStyle(overlay).display === 'flex') return;
+    reconcileExpertPendingRequests(true).then(function(list){
+      if(hasFocusedSession){
+        var activeHead = list[0];
+        if(activeHead && activeHead.id) showLiveSessionRequestFromWs({type:'session_request', session:activeHead, client:{name:activeHead.client_name || 'Client'}, channel:activeHead.channel || 'chat'});
+        return;
+      }
       var sess = list[0];
       if(!sess || !sess.id) return;
       var age = (Date.now()/1000) - int(sess.created_at, 0);
@@ -27653,10 +29092,12 @@ window._handleRTCMessage=function(d){
   document.addEventListener('visibilitychange', function(){
     if(!document.hidden) setTimeout(pollPendingLiveRequestsFallback, 250);
   });
-  async function resolvePendingSessionForAccept(){
+  async function resolvePendingSessionForAccept(context){
+    if(!expertPrivateOperationCurrent(context)) return '';
     var sid = window._pendingSid || requestSidFromDom() || window._obIncomingSessId;
     if(sid) return sid;
-    var d = await api('/api/sessions/pending');
+    var d = await api('/api/sessions/pending', {signal:context.signal});
+    if(!expertPrivateOperationCurrent(context)) return '';
     var list = d.sessions || [];
     if(list[0] && list[0].id){
       rememberPendingSession(list[0], {});
@@ -27664,7 +29105,8 @@ window._handleRTCMessage=function(d){
       return list[0].id;
     }
     try {
-      var active = await api('/api/sessions?status=active&limit=5');
+      var active = await api('/api/sessions?status=active&limit=5&include_messages=0', {signal:context.signal});
+      if(!expertPrivateOperationCurrent(context)) return '';
       var activeList = active.sessions || [];
       if(activeList[0] && activeList[0].id){
         window._sid = activeList[0].id;
@@ -27676,6 +29118,7 @@ window._handleRTCMessage=function(d){
     return '';
   }
   function hideRequestOverlay(sid){
+    if(expertRealtime && sid) expertRealtime.clearPending(sid);
     window._pendingSid = null;
     window._obIncomingSessId = null;
     window._obRequestVisibleSid = null;
@@ -27697,46 +29140,68 @@ window._handleRTCMessage=function(d){
       sheet.classList.remove('show');
     }
     if(inc) inc.classList.remove('show');
+    if(expertRealtime){
+      var nextPendingSid = expertRealtime.pendingIds()[0];
+      var nextPending = nextPendingSid && expertRealtime.pendingRequestsById[nextPendingSid];
+      if(nextPending && nextPending.event){
+        var pendingPrincipalGeneration = expertRealtime.principalGeneration;
+        var nextPendingEvent = nextPending.event;
+        setTimeout(function(){
+          if(!expertRealtime || expertRealtime.principalGeneration !== pendingPrincipalGeneration || !expertRealtime.pendingRequestsById[nextPendingSid]) return;
+          showLiveSessionRequestFromWs(nextPendingEvent);
+        }, 0);
+      }
+    }
   }
   window._obAcceptPendingRequest = async function(){
-    var sid = await resolvePendingSessionForAccept();
-    if(!sid){ toastMsg('No pending session found','err'); return; }
+    var context = captureExpertPrivateOperation('expert-pending-accept', '', 'pending-accept');
+    if(!context) return;
+    var sid;
+    try { sid = await resolvePendingSessionForAccept(context); } catch(e) { sid = ''; }
+    if(!expertPrivateOperationCurrent(context)){ releaseExpertPrivateOperation(context); return; }
+    if(!sid){ releaseExpertPrivateOperation(context); toastMsg('No pending session found','err'); return; }
+    context.sid = String(sid);
     try {
-      var d = await api('/api/sessions/' + encodeURIComponent(sid) + '/accept', {method:'POST', body:'{}'});
+      var d = await api('/api/sessions/' + encodeURIComponent(sid) + '/accept', {method:'POST', body:'{}',signal:context.signal});
+      if(!expertPrivateOperationCurrent(context)) return;
       var sess = d.session || {};
-      window._sid = sess.id || sid;
-      window._obActiveSessId = sess.id || sid;
+      var acceptedSid = String(sess.id || sid);
+      if(expertRealtime) expertRealtime.ingest({type:'session_accepted', session_id:acceptedSid, session:Object.assign({id:acceptedSid}, sess)});
       hideRequestOverlay(sid);
-      window.openExpertLivePanel(sess.id || sid);
+      window.openExpertLivePanel(acceptedSid);
 	    } catch(e) {
 	      if(String(e.message || '').toLowerCase().indexOf('expired') >= 0){
 	        hideRequestOverlay(sid);
 	        toastMsg('That session request expired. Ask the client to start again.','err');
 	        return;
 	      }
-	      if(String(e.message || '').toLowerCase().indexOf('not pending') >= 0){
+      if(String(e.message || '').toLowerCase().indexOf('not pending') >= 0){
         try {
-          var current = await api('/api/sessions/' + encodeURIComponent(sid));
+          var current = await api('/api/sessions/' + encodeURIComponent(sid) + '?include_messages=0', {signal:context.signal});
+          if(!expertPrivateOperationCurrent(context)) return;
           if(current && current.session && current.session.status === 'active'){
-            window._sid = current.session.id;
-            window._obActiveSessId = current.session.id;
+            if(expertRealtime) expertRealtime.ingest({type:'session_accepted', session_id:current.session.id, session:current.session});
             hideRequestOverlay(sid);
             window.openExpertLivePanel(current.session.id);
             return;
           }
         } catch(_e) {}
       }
-      toastMsg(e.message || 'Accept failed','err');
+      if(expertPrivateOperationCurrent(context)) toastMsg(e.message || 'Accept failed','err');
+    } finally {
+      releaseExpertPrivateOperation(context);
     }
   };
   window.acceptSessionRequest = window._obAcceptPendingRequest;
   var prevDeclineSessionRequestV22 = window.declineSessionRequest;
   window.declineSessionRequest = async function(){
     var sid = window._pendingSid || requestSidFromDom() || window._obIncomingSessId;
+    var context = captureExpertPrivateOperation('expert-pending-decline', sid, 'pending-decline');
     hideRequestOverlay(sid);
-    if(sid){
-      try { await api('/api/sessions/' + encodeURIComponent(sid) + '/decline', {method:'POST', body:'{}'}); } catch(e) {}
-    } else if(prevDeclineSessionRequestV22) {
+    if(sid && context){
+      try { await api('/api/sessions/' + encodeURIComponent(sid) + '/decline', {method:'POST', body:'{}',signal:context.signal}); } catch(e) {}
+      releaseExpertPrivateOperation(context);
+    } else if(!sid && prevDeclineSessionRequestV22) {
       try { return prevDeclineSessionRequestV22.apply(this, arguments); } catch(e) {}
     }
   };
@@ -28166,6 +29631,7 @@ window._handleRTCMessage=function(d){
   var installed = {
     phoneGo: guardedPhoneGo,
     startExpertSessionTimer: startExpertTimer,
+    connectExpertWs: canonicalConnectExpertWs,
     openExpertLivePanel: window.openExpertLivePanel,
     sendExpertMsg: window.sendExpertMsg,
     acceptSessionRequest: window._obAcceptPendingRequest,
@@ -28177,8 +29643,12 @@ window._handleRTCMessage=function(d){
 	  };
   function reinstall(){
     refreshClientSessionCredential();
+    if(expertRealtime) expertRealtime.checkIdentity();
     if(document.getElementById('booking-join-overlay')) document.documentElement.classList.remove('ob-session-boot');
-    Object.keys(installed).forEach(function(k){ if(window[k] !== installed[k]) window[k] = installed[k]; });
+    Object.keys(installed).forEach(function(k){
+      if(k === 'sendExpertMsg' && window[k] && window[k].__obOutboxGuarded) return;
+      if(window[k] !== installed[k]) window[k] = installed[k];
+    });
     bindExpertChatControls();
     bindClientChatControls();
     ['expert-chat-messages','paid-chat-messages'].forEach(dedupePanelMessages);
@@ -28187,6 +29657,10 @@ window._handleRTCMessage=function(d){
     if(window._expertWs) wireWs(window._expertWs, 'expert');
   }
   [50,300,900,1800,3200,5200,8000,12000].forEach(function(ms){ setTimeout(reinstall, ms); });
+  window.addEventListener('storage', function(event){
+    if(event && (event.key === 'ob_t' || event.key === 'ob_u')) expertRealtime && expertRealtime.checkIdentity();
+  });
+  setInterval(function(){ if(expertRealtime && (expertRealtime.socket || expertRealtime.isExpertIdentity())) expertRealtime.checkIdentity(); }, 1500);
   setTimeout(function(){
     if(queryParam('admin') === '1' && dashPathSlug()) loadAdminViewedExpertDashboard();
   }, 800);
@@ -32626,10 +34100,18 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
   function wrapRtcFreshness(){
     if(!window.OB_RTC || !window.OB_RTC.start || window.OB_RTC.start._obFreshGuarded) return;
     var oldStart = window.OB_RTC.start;
+    var queuedStartGuard = null;
+    window.OB_RTC._obSetNextStartGuard = function(startGuard){ queuedStartGuard = typeof startGuard === 'function' ? startGuard : null; };
     window.OB_RTC.start = function(){
-      var args = arguments;
+      var args = Array.prototype.slice.call(arguments);
+      var startGuard = typeof args[3] === 'function' ? args[3] : queuedStartGuard;
+      queuedStartGuard = null;
+      if(startGuard && typeof args[3] !== 'function') args[3] = startGuard;
       return window.obEnsureFreshRuntime().then(function(ok){
         if(!ok) return false;
+        if(startGuard){
+          try { if(!startGuard()) return false; } catch(guardError) { return false; }
+        }
         return oldStart.apply(window.OB_RTC, args);
       });
     };
@@ -39163,7 +40645,7 @@ body.ob-ui-dark .ob-connection-note,
 	      [window._rtcWs, (typeof myRole === 'function' ? myRole() : 'client')]
 	    ].forEach(function(pair){
 	      var ws = pair[0], roleName = pair[1] || 'client';
-	      if(!ws || ws.__obTypingTapInstalled) return;
+	      if(!ws || ws.__obTypingTapInstalled || ws._obExpertRuntimeOwner || ws._obMiniSuiteSignalOwner) return;
 	      ws.__obTypingTapInstalled = true;
 	      try {
 	        ws.addEventListener('message', function(evt){
@@ -40175,15 +41657,40 @@ body.ob-ui-dark .ob-connection-note,
   var wakeLock = null;
   var hiddenAt = 0;
   var STORE_KEY = 'ob_realtime_resume_state_v2';
-  var resumeState = { sid:'', channel:'', role:'', active:false, lastResumeAt:0, hardAttempts:0 };
+  var resumeState = { sid:'', channel:'', role:'', principalKey:'', active:false, lastResumeAt:0, hardAttempts:0 };
   var lastWatchdogResumeAt = 0;
 
   function now(){ return Date.now(); }
-  function token(){ return sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || localStorage.getItem('ob_client_token') || sessionStorage.getItem('ob_client_token') || ''; }
+  function isMiniSuiteRoute(){ return !!(window.location && /^\/mini-suite(?:\/|$)/.test(String(window.location.pathname || ''))); }
+  function token(){
+    if(isMiniSuiteRoute()) return sessionStorage.getItem('ob_mini_suite_token') || '';
+    return sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || localStorage.getItem('ob_client_token') || sessionStorage.getItem('ob_client_token') || '';
+  }
   function apiBase(){ return (window.OWNLYBIZ_API_URL || window._OB_BACKEND || 'https://victorious-wisdom-production-a6b0.up.railway.app').replace(/\/+$/,''); }
+  function currentUser(){ try { return JSON.parse(sessionStorage.getItem('ob_u') || localStorage.getItem('ob_u') || '{}') || {}; } catch(e){ return {}; } }
+  function currentTokenClaims(){
+    try {
+      var encoded=String(token()||'').split('.')[1]||'';
+      var normalized=encoded.replace(/-/g,'+').replace(/_/g,'/');
+      while(normalized.length%4)normalized+='=';
+      return JSON.parse(atob(normalized)||'{}')||{};
+    } catch(e){ return {}; }
+  }
+  function currentRole(){ var claims=currentTokenClaims(); return String(claims.role || (isMiniSuiteRoute() && token() ? 'expert' : '') || currentUser().role || '').toLowerCase(); }
+  function currentPrincipalKey(roleHint){
+    var roleName = String(roleHint || currentRole() || '').toLowerCase();
+    if(roleName === 'expert' && !isMiniSuiteRoute() && window._obExpertRealtime){
+      if(typeof window._obExpertRealtime.checkIdentity === 'function') window._obExpertRealtime.checkIdentity();
+      if(window._obExpertRealtime.principalKey) return String(window._obExpertRealtime.principalKey);
+    }
+    var user = currentUser();
+    var claims = currentTokenClaims();
+    var account = claims.mini_expert_id || claims.marketplace_expert_id || claims.id || claims.user_id || claims.expert_id || claims.sub || user.id || user.account_id || user.user_id || user.expert_id || user.email || user.slug || '';
+    if(!account && token()) account = 'credential:' + token();
+    return roleName && account ? roleName + '|' + String(account) : '';
+  }
   function role(){
-    if(resumeState.role) return resumeState.role;
-    try { return (JSON.parse(sessionStorage.getItem('ob_u') || localStorage.getItem('ob_u') || '{}').role || '').toLowerCase(); } catch(e){ return ''; }
+    return currentRole() || resumeState.role || '';
   }
   function activeSid(){
     return (window.OB_RTC && window.OB_RTC.getSid && window.OB_RTC.getSid()) ||
@@ -40209,27 +41716,77 @@ body.ob-ui-dark .ob-connection-note,
       if(el && reconnectCopy.test(el.textContent || '')) el.textContent = 'Session complete';
     });
   }
+  function discardResumeClosure(removeStored){
+    var clearedSid = String(resumeState.sid || '');
+    resumeState.active = false;
+    resumeState.sid = '';
+    resumeState.channel = '';
+    resumeState.role = '';
+    resumeState.principalKey = '';
+    resumeState.lastResumeAt = 0;
+    resumeState.hardAttempts = 0;
+    if(!clearedSid || String(window._obRtcLastSid || '') === clearedSid){
+      window._obRtcLastSid = '';
+      window._obRtcLastChannel = '';
+      window._obRtcLastRole = '';
+    }
+    if(removeStored){
+      try { sessionStorage.removeItem(STORE_KEY); } catch(e) {}
+    }
+    hideReconnectPrompt();
+    return clearedSid;
+  }
+  function resumeMemoryOwned(){
+    if(!resumeState.sid) return true;
+    var boundPrincipal = String(resumeState.principalKey || '');
+    var currentPrincipal = currentPrincipalKey(resumeState.role);
+    return !!boundPrincipal && !!currentPrincipal && boundPrincipal === currentPrincipal;
+  }
   function saveResumeState(){
-    if(!resumeState.sid || sessionEndedOrReceipt()) return;
+    if(!resumeState.sid) return;
+    var principal = currentPrincipalKey(resumeState.role);
+    if(resumeState.principalKey && String(resumeState.principalKey) !== String(principal)){
+      discardResumeClosure(true);
+      return;
+    }
+    if(sessionEndedOrReceipt()) return;
+    if(resumeState.role === 'expert' && !isMediaChannel(resumeState.channel)) return;
+    if(!principal || !resumeState.sid) return;
+    resumeState.principalKey = principal;
     try {
       sessionStorage.setItem(STORE_KEY, JSON.stringify({
         sid: resumeState.sid,
         channel: resumeState.channel,
         role: resumeState.role,
+        principal_key: principal,
         active: !!resumeState.active,
         saved_at: now()
       }));
     } catch(e) {}
   }
   function restoreResumeState(){
+    if(resumeState.sid && !resumeMemoryOwned()) discardResumeClosure(true);
     if(sessionEndedOrReceipt()) return false;
     try {
       var saved = JSON.parse(sessionStorage.getItem(STORE_KEY) || '{}');
-      if(!saved || !saved.sid || now() - Number(saved.saved_at || 0) > 6 * 60 * 60 * 1000) return false;
+      if(!saved || !saved.sid) return !!resumeState.sid;
+      if(now() - Number(saved.saved_at || 0) > 6 * 60 * 60 * 1000){
+        try { sessionStorage.removeItem(STORE_KEY); } catch(expiredRemoveError) {}
+        return !!resumeState.sid;
+      }
+      var savedPrincipal = String(saved.principal_key || '');
+      var currentPrincipal = currentPrincipalKey(saved.role);
+      if(!savedPrincipal || !currentPrincipal || savedPrincipal !== currentPrincipal){
+        try { sessionStorage.removeItem(STORE_KEY); } catch(removeError) {}
+        return !!resumeState.sid;
+      }
       if(!resumeState.sid) resumeState.sid = saved.sid;
       if(!resumeState.channel) resumeState.channel = String(saved.channel || '').toLowerCase();
       if(!resumeState.role) resumeState.role = String(saved.role || '').toLowerCase();
+      resumeState.principalKey = savedPrincipal;
+      if(resumeState.role === 'expert' && !isMediaChannel(resumeState.channel)){ clearResumeState(); return false; }
       resumeState.active = resumeState.active || !!saved.active;
+      if(resumeState.role === 'expert' && window._obExpertRealtime && !(window.obIsMiniSuiteRoute && window.obIsMiniSuiteRoute())) window._obExpertRealtime.setRtcSession(saved.sid);
       window._obRtcLastSid = window._obRtcLastSid || saved.sid;
       window._obRtcLastChannel = window._obRtcLastChannel || resumeState.channel;
       window._obRtcLastRole = window._obRtcLastRole || resumeState.role;
@@ -40237,13 +41794,8 @@ body.ob-ui-dark .ob-connection-note,
     } catch(e) { return false; }
   }
   function clearResumeState(){
-    resumeState.active = false;
-    resumeState.sid = '';
-    resumeState.channel = '';
-    resumeState.role = '';
-    resumeState.hardAttempts = 0;
-    try { sessionStorage.removeItem(STORE_KEY); } catch(e) {}
-    hideReconnectPrompt();
+    var clearedSid = discardResumeClosure(true);
+    if(clearedSid && !isMiniSuiteRoute() && window._obExpertRealtime && window._obExpertRealtime.rtcSessionId === String(clearedSid)) window._obExpertRealtime.setRtcSession('');
   }
   function setText(id, value){ var el=document.getElementById(id); if(el) el.textContent = value; }
   function status(value){
@@ -40297,7 +41849,20 @@ body.ob-ui-dark .ob-connection-note,
   function joinAndResume(reason){
     var sid = activeSid();
     if(!sid) return;
+    if(isMiniSuiteRoute()){
+      if(typeof window._obMiniSuiteResumeRealtime === 'function') window._obMiniSuiteResumeRealtime(sid, reason || 'page_resume');
+      return;
+    }
     var roleName = role() || 'client';
+    if(roleName === 'expert' && window._obExpertRealtime && !(window.obIsMiniSuiteRoute && window.obIsMiniSuiteRoute())){
+      sid = String(window._obExpertRealtime.rtcSessionId || '');
+      if(!sid) return;
+      window._obExpertRealtime.setRtcSession(sid);
+      window._obExpertRealtime.whenOpen(function(ws){
+        send(ws, {type:'session_resume', session_id:sid, sessionId:sid, reason:reason || 'page_resume'});
+      });
+      return;
+    }
     function sendResume(ws){
       if(!ws || ws.readyState !== 1) return;
       var t = token();
@@ -40381,6 +41946,7 @@ body.ob-ui-dark .ob-connection-note,
     resumeState.sid = sessionId;
     resumeState.channel = String(channel || resumeState.channel || '').toLowerCase();
     resumeState.role = String(roleName || resumeState.role || role() || 'client').toLowerCase();
+    resumeState.principalKey = currentPrincipalKey(resumeState.role);
     resumeState.active = true;
     resumeState.hardAttempts = 0;
     window._obRtcLastSid = sessionId;
@@ -40416,6 +41982,10 @@ body.ob-ui-dark .ob-connection-note,
     showReconnectPrompt('Restoring audio/video. Keep this page open.');
     status('Reconnecting - restoring audio/video...');
     joinAndResume(reason || 'hard_resume');
+    if(isMiniSuiteRoute() && typeof window.obMiniSuiteStartMedia === 'function'){
+      window.obMiniSuiteStartMedia();
+      return;
+    }
     var start = function(){ window.OB_RTC.start(sid, channel, roleName); };
     try {
       if(window.OB_RTC.isActive && window.OB_RTC.isActive() && typeof window.OB_RTC.cleanup === 'function') window.OB_RTC.cleanup();
@@ -40450,6 +42020,8 @@ body.ob-ui-dark .ob-connection-note,
     if(typeof rtc.start === 'function'){
       var priorStart = rtc.start;
       rtc.start = function(sessionId, channel, roleName){
+        var currentRtcSid = rtc.getSid && rtc.getSid() || '';
+        if(rtc.isActive && rtc.isActive() && currentRtcSid && String(currentRtcSid) !== String(sessionId || '')) return priorStart.apply(this, arguments);
         window._obSessionHasEnded = false;
         window._obSessionEnding = false;
         remember(sessionId, channel, roleName);
@@ -40469,11 +42041,13 @@ body.ob-ui-dark .ob-connection-note,
     if(typeof window.openExpertLivePanel === 'function' && !window.openExpertLivePanel.__obResumeGuarded){
       var priorExpert = window.openExpertLivePanel;
       window.openExpertLivePanel = function(sid){
-        if(sid) {
+        var rtcSid = window._obExpertRealtime && window._obExpertRealtime.rtcSessionId || '';
+        if(sid && rtcSid && String(sid) === String(rtcSid)) {
           window._obSessionHasEnded = false;
           window._obSessionEnding = false;
           resumeState.sid = sid;
           resumeState.role = 'expert';
+          resumeState.principalKey = currentPrincipalKey('expert');
           resumeState.active = true;
           saveResumeState();
           requestWakeLock();
@@ -40485,10 +42059,13 @@ body.ob-ui-dark .ob-connection-note,
   }
   window.obRememberSessionResume=function(sid,roleName){
     if(!sid)return;
+    if(roleName==='expert' && window._obExpertRealtime && !(window.obIsMiniSuiteRoute && window.obIsMiniSuiteRoute()) && String(window._obExpertRealtime.rtcSessionId||'')!==String(sid))return;
     window._obSessionHasEnded=false;window._obSessionEnding=false;
     resumeState.sid=sid;resumeState.role=roleName||'client';resumeState.active=true;
+    resumeState.principalKey=currentPrincipalKey(resumeState.role);
     saveResumeState();requestWakeLock();
   };
+  window._obClearRealtimeResumeForPrincipalChange = function(){ clearResumeState(); };
   function install(){
     restoreResumeState();
     hookRtc();
@@ -40541,12 +42118,39 @@ body.ob-ui-dark .ob-connection-note,
   window.__obChatOutboxV2 = true;
   var KEY = 'ob_chat_outbox_v2';
   var LEGACY_KEY = 'ob_chat_outbox_v1';
+  var MAX_ITEMS_PER_PRINCIPAL = 50;
+  var flushing = false;
+  function isMiniSuiteRoute(){ return !!(window.location && /^\/mini-suite(?:\/|$)/.test(String(window.location.pathname || ''))); }
   function apiBase(){ return (window.OWNLYBIZ_API_URL || window._OB_BACKEND || 'https://victorious-wisdom-production-a6b0.up.railway.app').replace(/\/+$/,''); }
   function token(){ return sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || localStorage.getItem('ob_client_token') || sessionStorage.getItem('ob_client_token') || ''; }
-  function role(){ try { return (JSON.parse(sessionStorage.getItem('ob_u') || localStorage.getItem('ob_u') || '{}').role || '').toLowerCase(); } catch(e){ return ''; } }
-  function activeSid(){ return window._obActiveSessId || window._sid || window._sessId || window._obRtcLastSid || ''; }
+  function user(){ try { return JSON.parse(sessionStorage.getItem('ob_u') || localStorage.getItem('ob_u') || '{}') || {}; } catch(e){ return {}; } }
+  function tokenClaims(){
+    try {
+      var encoded=String(token()||'').split('.')[1]||'';
+      var normalized=encoded.replace(/-/g,'+').replace(/_/g,'/');
+      while(normalized.length%4)normalized+='=';
+      return JSON.parse(atob(normalized)||'{}')||{};
+    } catch(e){ return {}; }
+  }
+  function role(){ var claims=tokenClaims(); return String(claims.role || user().role || '').toLowerCase(); }
+  function principalKey(){
+    var currentRole = role();
+    if(currentRole === 'expert' && window._obExpertRealtime){
+      if(typeof window._obExpertRealtime.checkIdentity === 'function') window._obExpertRealtime.checkIdentity();
+      if(window._obExpertRealtime.principalKey) return String(window._obExpertRealtime.principalKey);
+    }
+    var currentUser = user();
+    var claims = tokenClaims();
+    var account = claims.id || claims.user_id || claims.expert_id || claims.sub || currentUser.id || currentUser.account_id || currentUser.user_id || currentUser.expert_id || currentUser.email || currentUser.slug || '';
+    if(!account && token()) account = 'credential:' + token();
+    return currentRole && account ? currentRole + '|' + String(account) : '';
+  }
+  function activeSid(){
+    if(role()==='expert' && window._obExpertRealtime && !(window.obIsMiniSuiteRoute && window.obIsMiniSuiteRoute())) return window._obExpertRealtime.focusedRoomId || '';
+    return window._obActiveSessId || window._sid || window._sessId || window._obRtcLastSid || '';
+  }
   function messageId(){ return 'ob-msg-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 12); }
-  function myId(){ try { if(typeof window.myId === 'function') return window.myId(); return (JSON.parse(sessionStorage.getItem('ob_u') || localStorage.getItem('ob_u') || '{}').id || 'local'); } catch(e){ return 'local'; } }
+  function myId(){ try { if(typeof window.myId === 'function') return window.myId(); return (user().id || 'local'); } catch(e){ return 'local'; } }
   function read(){
     var current = [];
     var legacy = [];
@@ -40554,13 +42158,13 @@ body.ob-ui-dark .ob-connection-note,
     try { legacy = JSON.parse(sessionStorage.getItem(LEGACY_KEY) || '[]'); } catch(e){ legacy = []; }
     if(legacy.length) {
       try { sessionStorage.removeItem(LEGACY_KEY); } catch(e) {}
-      current = current.concat(legacy);
+      current = current.concat(legacy.map(function(item){ return Object.assign({principal_key:'',legacy_unbound:true}, item || {}); }));
       write(current);
     }
-    return current;
+    return Array.isArray(current) ? current : [];
   }
   function write(items){
-    try { sessionStorage.setItem(KEY, JSON.stringify((items || []).slice(-50))); } catch(e) {}
+    try { sessionStorage.setItem(KEY, JSON.stringify(items || [])); return true; } catch(e) { return false; }
   }
   function toastMsg(msg,type){
     if(typeof window.toast === 'function') window.toast(msg,type || 'ok');
@@ -40568,27 +42172,61 @@ body.ob-ui-dark .ob-connection-note,
   }
   function appendLocal(panelId, item){
     try {
+      var localMessage = {
+        id:item.id,
+        client_message_id:item.id,
+        session_id:item.sid,
+        sender_id:myId(),
+        content:item.content,
+        sent_at:Math.floor(Date.now()/1000)
+      };
+      if(item.role === 'expert' && window._obExpertRealtime && !(window.obIsMiniSuiteRoute && window.obIsMiniSuiteRoute())) window._obExpertRealtime.ingest(Object.assign({type:'message'}, localMessage));
       if(typeof window.appendPanelMessage === 'function'){
-        window.appendPanelMessage(panelId, {
-          id:item.id,
-          session_id:item.sid,
-          sender_id:myId(),
-          content:item.content,
-          sent_at:Math.floor(Date.now()/1000)
-        }, true);
+        window.appendPanelMessage(panelId, localMessage, true);
       }
     } catch(e) {}
   }
-  function queue(panelId, sid, content, existingId){
-    if(!sid || !content) return;
-    var item = { id:existingId || messageId(), sid:sid, content:content, panelId:panelId, role:role(), queuedAt:Date.now() };
+  function markDelivery(item, status, error){
+    if(!item || item.principal_key !== principalKey()) return false;
+    var deliveryError = String(error && (error.message || error.code) || 'Message was not sent');
+    if(item.role === 'expert' && window._obExpertRealtime && !(window.obIsMiniSuiteRoute && window.obIsMiniSuiteRoute())){
+      window._obExpertRealtime.ingest({type:'message_ack',session_id:item.sid,client_message_id:item.id,delivery_status:status,delivery_error:status === 'failed' ? deliveryError : ''});
+    }
+    var box = document.getElementById(item.panelId);
+    if(!box) return true;
+    Array.prototype.slice.call(box.children || []).forEach(function(row){
+      if(!row.getAttribute || row.getAttribute('data-ob-msg-key') !== item.id) return;
+      if(typeof window._obApplyPanelMessageDelivery === 'function') window._obApplyPanelMessageDelivery(row, status, deliveryError);
+    });
+    return true;
+  }
+  function removeItem(item){
+    var remaining = read().filter(function(candidate){ return !(candidate && candidate.id === item.id && candidate.principal_key === item.principal_key); });
+    return write(remaining);
+  }
+  function reserve(item){
+    if(!item || !item.principal_key || item.principal_key !== principalKey()) return false;
     var items = read();
-    if(!items.some(function(x){ return x && x.id === item.id; })) items.push(item);
-    write(items);
-    toastMsg('Message queued. It will send when the connection returns.', 'ok');
-    return item;
+    if(items.some(function(candidate){ return candidate && candidate.id === item.id && candidate.principal_key === item.principal_key; })) return true;
+    var principalCount = items.filter(function(candidate){ return candidate && candidate.principal_key === item.principal_key; }).length;
+    if(principalCount >= MAX_ITEMS_PER_PRINCIPAL){
+      toastMsg('Message queue is full. Reconnect before sending more messages.', 'err');
+      return false;
+    }
+    items.push(item);
+    if(!write(items)){
+      toastMsg('This message could not be safely queued. Please keep it and try again.', 'err');
+      return false;
+    }
+    return true;
   }
   async function postMessage(item){
+    if(!item || !item.principal_key || item.principal_key !== principalKey()){
+      var principalError = new Error('Account changed before message send');
+      principalError.code = 'principal_mismatch';
+      throw principalError;
+    }
+    var ownedPrincipal = item.principal_key;
     var res = await fetch(apiBase() + '/api/sessions/' + encodeURIComponent(item.sid) + '/message', {
       method:'POST',
       headers:{'Content-Type':'application/json','Authorization':'Bearer ' + token()},
@@ -40596,6 +42234,11 @@ body.ob-ui-dark .ob-connection-note,
     });
     var data = {};
     try { data = await res.json(); } catch(e) {}
+    if(ownedPrincipal !== principalKey()){
+      var staleError = new Error('Account changed before message response');
+      staleError.code = 'principal_mismatch';
+      throw staleError;
+    }
     if(!res.ok) {
       var err = new Error(data.error || data.message || 'Message send failed');
       err.status = res.status;
@@ -40603,40 +42246,76 @@ body.ob-ui-dark .ob-connection-note,
     }
     return data;
   }
-  async function flush(){
-    if(!navigator.onLine || !token()) return;
-    var items = read();
-    if(!items.length) return;
-    var remaining = [];
-    for(var i=0;i<items.length;i++){
-      try {
-        await postMessage(items[i]);
-      }
-      catch(e){ if(!e || !e.status || e.status >= 500) remaining.push(items[i]); }
+  function ingestCanonical(item, data){
+    if(!item || item.principal_key !== principalKey()) return false;
+    var canonical = Object.assign({}, data && data.message || data || {});
+    canonical.type = 'message_ack';
+    canonical.session_id = canonical.session_id || canonical.sessionId || item.sid;
+    canonical.client_message_id = canonical.client_message_id || canonical.clientMessageId || item.id;
+    canonical.delivery_status = 'sent';
+    if(item.role === 'expert' && window._obExpertRealtime && !(window.obIsMiniSuiteRoute && window.obIsMiniSuiteRoute())){
+      window._obExpertRealtime.ingest(canonical);
+      markDelivery(item, 'sent');
+      return true;
     }
-    write(remaining);
-    if(items.length && !remaining.length) toastMsg('Queued chat messages sent.', 'ok');
+    markDelivery(item, 'sent');
+    return false;
+  }
+  async function flush(){
+    if(isMiniSuiteRoute() || flushing || !navigator.onLine || !token()) return;
+    var ownedPrincipal = principalKey();
+    if(!ownedPrincipal) return;
+    var items = read();
+    var ownedItems = items.filter(function(item){ return item && item.principal_key === ownedPrincipal; });
+    if(!ownedItems.length) return;
+    flushing = true;
+    var sentCount = 0;
+    try {
+      for(var i=0;i<ownedItems.length;i++){
+        if(ownedPrincipal !== principalKey()) break;
+        try {
+          var data = await postMessage(ownedItems[i]);
+          if(ownedPrincipal !== principalKey()) break;
+          ingestCanonical(ownedItems[i], data);
+          removeItem(ownedItems[i]);
+          sentCount += 1;
+        }
+        catch(e){
+          if(e && e.code === 'principal_mismatch') break;
+          if(e && e.status && e.status < 500 && e.status !== 429){ removeItem(ownedItems[i]); markDelivery(ownedItems[i], 'failed', e); }
+        }
+      }
+    } finally {
+      flushing = false;
+    }
+    if(sentCount) toastMsg('Queued chat messages sent.', 'ok');
   }
   function sendWithRetry(panelId, sid, content, input){
     if(!sid || !content) return false;
-    var item = { id:messageId(), sid:sid, content:content, panelId:panelId, role:role(), queuedAt:Date.now() };
+    var currentPrincipal = principalKey();
+    if(!currentPrincipal){ toastMsg('Sign in again before sending this message.', 'err'); return false; }
+    var item = { id:messageId(), sid:sid, content:content, panelId:panelId, role:role(), principal_key:currentPrincipal, queuedAt:Date.now() };
+    if(!reserve(item)) return false;
     if(input) input.value = '';
     appendLocal(panelId, item);
     if(!navigator.onLine || !token()){
-      queue(panelId, sid, content, item.id);
+      toastMsg('Message queued. It will send when the connection returns.', 'ok');
       return true;
     }
-    // Persist first. The REST endpoint saves the message and broadcasts it to both live panes.
-    postMessage(item).catch(function(e){
-      if(e && e.status === 429) {
-        queue(panelId, sid, content, item.id);
-        return;
-      }
+    postMessage(item).then(function(data){
+      if(item.principal_key !== principalKey()) return;
+      ingestCanonical(item, data);
+      removeItem(item);
+    }).catch(function(e){
+      if(e && e.code === 'principal_mismatch') return;
       if(e && e.status && e.status < 500) {
+        if(e.status === 429){ toastMsg('Message queued. It will retry shortly.', 'ok'); return; }
+        removeItem(item);
+        markDelivery(item, 'failed', e);
         toastMsg(e.message || 'Message failed', 'err');
         return;
       }
-      queue(panelId, sid, content, item.id);
+      toastMsg('Message queued. It will retry shortly.', 'ok');
     });
     return true;
   }
@@ -40666,7 +42345,17 @@ body.ob-ui-dark .ob-connection-note,
     wrapped.__obOutboxGuarded = true;
     window.sendExpertMsg = wrapped;
   }
-  function install(){ wrapClient(); wrapExpert(); flush(); }
+  window._obClearExpertOutboxForPrincipalReset = function(){
+    var kept = read().filter(function(item){
+      if(!item) return false;
+      return item.role !== 'expert' && String(item.principal_key || '').indexOf('expert|') !== 0 && !item.legacy_unbound;
+    });
+    write(kept);
+  };
+  if(window.__OB_TEST_HOOKS__){
+    window.__OB_TEST_HOOKS__.chatOutbox = {read:read,write:write,reserve:reserve,flush:flush,sendWithRetry:sendWithRetry,principalKey:principalKey,maxItemsPerPrincipal:MAX_ITEMS_PER_PRINCIPAL};
+  }
+  function install(){ if(isMiniSuiteRoute()) return; wrapClient(); wrapExpert(); flush(); }
   window.addEventListener('online', function(){ setTimeout(flush, 500); });
   window.addEventListener('focus', function(){ setTimeout(flush, 500); });
   setInterval(flush, 5000);
@@ -45858,8 +47547,9 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       liveBtn.__obStatusPillClick20260514 = true;
     }
     syncStatusPill();
-    var notif = byId('notif-count'); if(notif){ notif.textContent='0'; notif.style.display='none'; }
-    var msg = byId('dbt-msg-badge'); if(msg){ msg.textContent='0'; msg.style.display='none'; }
+    var notif = byId('notif-count'); if(notif && !window._obRefreshExpertRealtimeBadge){ notif.textContent='0'; notif.style.display='none'; }
+    var msg = byId('dbt-msg-badge'); if(msg && !window._obRefreshExpertRealtimeBadge){ msg.textContent='0'; msg.style.display='none'; }
+    if(window._obRefreshExpertRealtimeBadge) window._obRefreshExpertRealtimeBadge();
   }
   if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded',boot); else boot();
   [200,700,1500,3000].forEach(function(ms){ setTimeout(boot,ms); });
@@ -62663,11 +64353,73 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
   };
 
   var miniSuiteState = {
-    token:'',tab:'live',data:null,sessions:[],bookings:[],clients:[],openSession:null,messages:[],ws:null,wsAuthenticated:false,wsWaiters:[],poll:null,
-    mediaSessionId:'',mediaChannel:'',mediaStarting:false,rtcHomeParent:null,rtcHomeNext:null,rtcHomeMargin:''
+    token:'',tokenGeneration:0,principalKey:'',tab:'live',data:null,sessions:[],bookings:[],clients:[],openSession:null,messages:[],ws:null,wsAuthenticated:false,wsWaiters:[],wsReconnectTimer:null,poll:null,
+    mediaSessionId:'',mediaChannel:'',mediaStarting:false,mediaStartGeneration:0,rtcHomeParent:null,rtcHomeNext:null,rtcHomeMargin:''
   };
   function isMiniSuiteRoute(){
     return /^\/mini-suite(\/|$)/.test(window.location.pathname || '');
+  }
+  function miniTokenPrincipal(value){
+    value = String(value || '');
+    if(!value) return '';
+    try {
+      var encoded = value.split('.')[1] || '';
+      var normalized = encoded.replace(/-/g,'+').replace(/_/g,'/');
+      while(normalized.length % 4) normalized += '=';
+      var claims = JSON.parse(atob(normalized) || '{}');
+      var subject = claims.mini_expert_id || claims.marketplace_expert_id || claims.expert_id || claims.sub || '';
+      if(subject) return 'mini|' + String(subject);
+    } catch(e) {}
+    return 'mini|credential:' + value;
+  }
+  function miniSuiteContext(){ return {token:miniSuiteState.token,generation:miniSuiteState.tokenGeneration,principalKey:miniSuiteState.principalKey}; }
+  function miniSuiteContextCurrent(context){
+    return !!context && context.token === miniSuiteState.token && context.generation === miniSuiteState.tokenGeneration && context.principalKey === miniSuiteState.principalKey;
+  }
+  function rejectMiniSuiteSocketWaiters(reason){
+    var waiters = miniSuiteState.wsWaiters.splice(0,miniSuiteState.wsWaiters.length);
+    waiters.forEach(function(waiter){ clearTimeout(waiter.timer); waiter.reject(new Error(reason || 'Mini suite session changed.')); });
+  }
+  function teardownMiniSuiteTransport(reason, releaseMedia){
+    if(miniSuiteState.wsReconnectTimer){ clearTimeout(miniSuiteState.wsReconnectTimer); miniSuiteState.wsReconnectTimer = null; }
+    var ws = miniSuiteState.ws;
+    miniSuiteState.ws = null;
+    miniSuiteState.wsAuthenticated = false;
+    rejectMiniSuiteSocketWaiters(reason);
+    if(window._expertWs === ws) window._expertWs = null;
+    if(ws){
+      try { ws.onopen = ws.onmessage = ws.onerror = ws.onclose = null; } catch(e) {}
+      try { if(ws.readyState <= 1 && typeof ws.close === 'function') ws.close(); } catch(closeError) {}
+    }
+    if(releaseMedia) releaseMiniRtcSurface(true);
+  }
+  function scrubMiniSuitePrincipalSurface(hasCredential){
+    var root = document.getElementById('ob-mini-suite-app');
+    if(!root) return;
+    root.innerHTML = '<div class="ob-mini-suite-shell"><div class="ob-mini-suite-empty">' + (hasCredential ? 'Loading suite...' : 'Mini suite access is unavailable.') + '</div></div>';
+  }
+  function setMiniSuiteToken(value){
+    var next = String(value || '');
+    var nextPrincipal = miniTokenPrincipal(next);
+    if(next === miniSuiteState.token && nextPrincipal === miniSuiteState.principalKey) return next;
+    var priorPrincipal = miniSuiteState.principalKey;
+    var hadCredentialOwner = !!(miniSuiteState.token || priorPrincipal || miniSuiteState.ws);
+    miniSuiteState.tokenGeneration += 1;
+    if(hadCredentialOwner) teardownMiniSuiteTransport('Mini suite credential changed.', true);
+    miniSuiteState.token = next;
+    miniSuiteState.principalKey = nextPrincipal;
+    if(priorPrincipal && priorPrincipal !== nextPrincipal){
+      miniSuiteState.data = null;
+      miniSuiteState.sessions = [];
+      miniSuiteState.bookings = [];
+      miniSuiteState.clients = [];
+      miniSuiteState.openSession = null;
+      miniSuiteState.messages = [];
+      window._obActiveSessId = null;
+      window._sid = null;
+      scrubMiniSuitePrincipalSurface(!!next);
+    }
+    return next;
   }
   function miniSuiteToken(){
     try {
@@ -62679,26 +64431,31 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
         params.delete('token');
         var next = window.location.pathname + (params.toString() ? '?' + params.toString() : '') + (window.location.hash || '');
         window.history.replaceState({}, '', next);
-        miniSuiteState.token = q;
-        return q;
+        return setMiniSuiteToken(q);
       }
-      miniSuiteState.token = miniSuiteState.token || sessionStorage.getItem('ob_mini_suite_token') || '';
-      return miniSuiteState.token;
+      return setMiniSuiteToken(sessionStorage.getItem('ob_mini_suite_token') || '');
     } catch(e) {
-      return miniSuiteState.token || '';
+      return setMiniSuiteToken(miniSuiteState.token || '');
     }
   }
   function miniApi(path, opts){
     opts = opts || {};
     var headers = {'Content-Type':'application/json'};
     var t = miniSuiteToken();
+    var context = miniSuiteContext();
     if(t) headers.Authorization = 'Bearer ' + t;
     return fetch(API_ROOT + path, {
       method: opts.method || 'GET',
       headers: headers,
-      body: opts.body ? JSON.stringify(opts.body) : undefined
+      body: opts.body ? JSON.stringify(opts.body) : undefined,
+      signal: opts.signal
     }).then(function(res){
       return res.json().catch(function(){ return {}; }).then(function(data){
+        if(!miniSuiteContextCurrent(context)){
+          var stale = new Error('Mini suite credential changed.');
+          stale.code = 'mini_suite_context_stale';
+          throw stale;
+        }
         if(!res.ok) throw new Error(data.error || data.message || ('Request failed: ' + res.status));
         return data;
       });
@@ -62792,6 +64549,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
   }
   function releaseMiniRtcSurface(stopMedia){
     var sessionId=miniSuiteState.mediaSessionId;
+    miniSuiteState.mediaStartGeneration+=1;
     if(stopMedia&&sessionId&&window.OB_RTC&&typeof window.OB_RTC.cleanup==='function'){
       var rtcSid=typeof window.OB_RTC.getSid==='function'?String(window.OB_RTC.getSid()||''):'';
       var rtcRole=typeof window.OB_RTC.getRole==='function'?String(window.OB_RTC.getRole()||''):'';
@@ -62804,7 +64562,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
   }
   function miniSuiteSessionIsTerminal(session){
     var status=String(session&&session.status||'').toLowerCase();
-    return ['ended','cancelled','canceled','declined','failed','expired'].indexOf(status)>=0;
+    return typeof window.obIsTerminalSessionStatus==='function' ? window.obIsTerminalSessionStatus(status) : ['cancelled','ended','completed','failed','expired','declined','no_show'].indexOf(status)>=0;
   }
   function renderMiniSuite(){
     restoreMiniRtcSurface(false);
@@ -62852,12 +64610,14 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
       miniSuiteRoot().innerHTML = '<div class="ob-mini-suite-shell"><div class="ob-mini-suite-error">Mini suite token is missing or expired.</div></div>';
       return Promise.resolve(null);
     }
+    var context = miniSuiteContext();
     return Promise.all([
       miniApi('/experts/mini-suite/me'),
       miniApi('/sessions?limit=40'),
       miniApi('/experts/mini-suite/bookings'),
       miniApi('/experts/mini-suite/clients')
     ]).then(function(results){
+      if(!miniSuiteContextCurrent(context)) return null;
       miniSuiteState.data = results[0] || {};
       miniSuiteState.sessions = results[1] && results[1].sessions || [];
       miniSuiteState.bookings = results[2] && results[2].bookings || [];
@@ -62874,11 +64634,13 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
       connectMiniSuiteSocket();
       return miniSuiteState.data;
     }).catch(function(err){
+      if(err && err.code === 'mini_suite_context_stale') return null;
+      if(!miniSuiteContextCurrent(context)) return null;
       miniSuiteRoot().innerHTML = '<div class="ob-mini-suite-shell"><div class="ob-mini-suite-error">' + esc(err.message || 'Mini suite could not load.') + '</div></div>';
       return null;
     });
   }
-  function miniSuiteSocketReady(ws){return !!ws&&ws===miniSuiteState.ws&&ws.readyState===1&&miniSuiteState.wsAuthenticated;}
+  function miniSuiteSocketReady(ws){return !!ws&&ws===miniSuiteState.ws&&ws.readyState===1&&miniSuiteState.wsAuthenticated&&ws._obMiniSuiteGeneration===miniSuiteState.tokenGeneration&&ws._obMiniSuitePrincipal===miniSuiteState.principalKey;}
   function resolveMiniSuiteSocketWaiters(ws){
     if(!miniSuiteSocketReady(ws))return;
     var waiters=miniSuiteState.wsWaiters.splice(0,miniSuiteState.wsWaiters.length);
@@ -62898,27 +64660,32 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     });
   }
   function connectMiniSuiteSocket(){
-    if(miniSuiteState.ws || !miniSuiteToken()) return miniSuiteState.ws;
+    var ownedToken = miniSuiteToken();
+    if(miniSuiteState.ws || !ownedToken) return miniSuiteState.ws;
+    var context = miniSuiteContext();
     try {
       var wsUrl = API_ROOT.replace(/\/api$/,'').replace(/^http/i,'ws') + '/ws';
       var ws = new WebSocket(wsUrl);
       ws._obMiniSuiteSignalOwner = true;
+      ws._obMiniSuiteGeneration = context.generation;
+      ws._obMiniSuitePrincipal = context.principalKey;
       miniSuiteState.ws = ws;
       miniSuiteState.wsAuthenticated = false;
       ws.onopen = function(){
-        ws.send(JSON.stringify({type:'auth', token:miniSuiteToken()}));
-        setTimeout(miniSuiteJoinOpenSession, 150);
+        if(ws!==miniSuiteState.ws||!miniSuiteContextCurrent(context))return;
+        ws.send(JSON.stringify({type:'auth', token:ownedToken}));
+        setTimeout(function(){ if(ws===miniSuiteState.ws&&miniSuiteContextCurrent(context)) miniSuiteJoinOpenSession(); }, 150);
       };
       ws.onmessage = function(event){
+        if(ws!==miniSuiteState.ws||!miniSuiteContextCurrent(context))return;
         var data = {};
         try { data = JSON.parse(event.data || '{}'); } catch(e) {}
         if(data.type && data.type.indexOf('rtc_') === 0){
-          if(ws!==miniSuiteState.ws||!miniSuiteState.wsAuthenticated)return;
+          if(!miniSuiteState.wsAuthenticated)return;
           if(typeof window._handleRTCMessage==='function')window._handleRTCMessage(data);
           return;
         }
         if(data.type === 'authed' || data.type === 'authenticated'){
-          if(ws!==miniSuiteState.ws)return;
           miniSuiteState.wsAuthenticated=true;window._expertWs=ws;
           resolveMiniSuiteSocketWaiters(ws);miniSuiteJoinOpenSession();
         }
@@ -62931,25 +64698,29 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
           }
           loadMiniSuite();
         }
-        if(data.type === 'message' && miniSuiteState.openSession && (data.session_id || data.sessionId) === miniSuiteState.openSession.id) {
+        if(data.type === 'message' && miniSuiteState.openSession && String(data.session_id || data.sessionId || '') === String(miniSuiteState.openSession.id || '')) {
           miniSuiteState.messages.push(data);
           renderMiniSuite();
         }
-        if(data.type === 'joined' && data.history && miniSuiteState.openSession && (data.session_id || data.sessionId) === miniSuiteState.openSession.id) {
+        if(data.type === 'joined' && data.history && miniSuiteState.openSession && String(data.session_id || data.sessionId || '') === String(miniSuiteState.openSession.id || '')) {
           miniSuiteState.messages = data.history || [];
           renderMiniSuite();
         }
       };
       ws.onclose = function(){
         if(window._expertWs===ws)window._expertWs=null;
-        if(miniSuiteState.ws===ws){miniSuiteState.ws=null;miniSuiteState.wsAuthenticated=false;setTimeout(connectMiniSuiteSocket,3000);}
+        if(miniSuiteState.ws===ws&&miniSuiteContextCurrent(context)){
+          miniSuiteState.ws=null;miniSuiteState.wsAuthenticated=false;
+          if(miniSuiteState.wsReconnectTimer)clearTimeout(miniSuiteState.wsReconnectTimer);
+          miniSuiteState.wsReconnectTimer=setTimeout(function(){miniSuiteState.wsReconnectTimer=null;if(miniSuiteContextCurrent(context))connectMiniSuiteSocket();},3000);
+        }
       };
       return ws;
     } catch(e) {return null;}
   }
   function miniSuiteJoinOpenSession(){
     var sess = miniSuiteState.openSession || {};
-    if(!sess.id || !miniSuiteState.ws || miniSuiteState.ws.readyState !== 1) return false;
+    if(!sess.id || !miniSuiteSocketReady(miniSuiteState.ws)) return false;
     try {
       miniSuiteState.ws.send(JSON.stringify({type:'join', session_id:sess.id}));
       return true;
@@ -62957,6 +64728,17 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
       return false;
     }
   }
+  window._obMiniSuiteResumeRealtime = function(sessionId, reason){
+    sessionId=String(sessionId||'');
+    if(!miniSuiteState.openSession || String(miniSuiteState.openSession.id||'')!==sessionId) return Promise.resolve(false);
+    var context=miniSuiteContext();
+    return waitForMiniSuiteMediaSocket().then(function(ws){
+      if(!miniSuiteContextCurrent(context) || !miniSuiteSocketReady(ws)) return false;
+      miniSuiteJoinOpenSession();
+      try { ws.send(JSON.stringify({type:'session_resume',session_id:sessionId,sessionId:sessionId,reason:reason||'page_resume'})); } catch(e) { return false; }
+      return true;
+    }).catch(function(){ return false; });
+  };
   window.obMiniSuiteSetTab = function(tab){
     if(miniSuiteState.mediaSessionId&&tab!=='live'){
       notify('End the live media session before leaving this tab.','err');
@@ -62991,13 +64773,15 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
       notify('End the current media session before opening another session.','err');
       return Promise.resolve(false);
     }
+    var context=miniSuiteContext();
     return miniApi('/sessions/' + encodeURIComponent(id)).then(function(data){
+      if(!miniSuiteContextCurrent(context))return false;
       miniSuiteState.tab = 'live';
       miniSuiteState.openSession = data.session || data || {};
       miniSuiteState.messages = data.messages || [];
       renderMiniSuite();
       connectMiniSuiteSocket();
-      [150,500,1200].forEach(function(ms){ setTimeout(miniSuiteJoinOpenSession, ms); });
+      [150,500,1200].forEach(function(ms){ setTimeout(function(){if(miniSuiteContextCurrent(context)&&miniSuiteState.openSession&&String(miniSuiteState.openSession.id||'')===id)miniSuiteJoinOpenSession();}, ms); });
     }).catch(function(err){ notify(err.message || 'Session could not open.', 'err'); });
   };
   window.obMiniSuiteSendMessage = function(){
@@ -63007,7 +64791,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     if(!sess.id || !content) return;
     if(input) input.value = '';
     var sent = false;
-    if(miniSuiteState.ws && miniSuiteState.ws.readyState === 1) {
+    if(miniSuiteSocketReady(miniSuiteState.ws)) {
       try {
         miniSuiteState.ws.send(JSON.stringify({type:'message', session_id:sess.id, content:content}));
         sent = true;
@@ -63020,6 +64804,10 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     }
   };
   window.obMiniSuiteStartMedia = function(){
+    if(!miniSuiteToken()){
+      notify('Mini suite access is unavailable. Reload this page and try again.','err');
+      return Promise.resolve(false);
+    }
     var sess = miniSuiteState.openSession || {};
     if(!sess.id) return Promise.resolve(false);
     var ch = String(sess.channel || 'chat').toLowerCase();
@@ -63034,21 +64822,40 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
       notify('Media is not available in this browser.','err');
       return Promise.resolve(false);
     }
+    var context=miniSuiteContext();
+    var mediaStartGeneration=miniSuiteState.mediaStartGeneration+1;
+    miniSuiteState.mediaStartGeneration=mediaStartGeneration;
+    function mediaStartCurrent(){
+      return miniSuiteContextCurrent(context)&&miniSuiteState.mediaStartGeneration===mediaStartGeneration&&miniSuiteState.mediaSessionId===String(sess.id)&&!!miniSuiteState.openSession&&String(miniSuiteState.openSession.id)===String(sess.id);
+    }
+    function stopStaleMediaStart(){
+      if(miniSuiteState.mediaStartGeneration!==mediaStartGeneration&&miniSuiteState.mediaSessionId)return;
+      if(!window.OB_RTC||typeof window.OB_RTC.cleanup!=='function')return;
+      var rtcSid=typeof window.OB_RTC.getSid==='function'?String(window.OB_RTC.getSid()||''):'';
+      var rtcRole=typeof window.OB_RTC.getRole==='function'?String(window.OB_RTC.getRole()||''):'';
+      if(rtcSid===String(sess.id)&&(!rtcRole||rtcRole==='expert'))window.OB_RTC.cleanup();
+    }
     miniSuiteState.mediaSessionId=String(sess.id);miniSuiteState.mediaChannel=ch;miniSuiteState.mediaStarting=true;
     if(!mountMiniRtcSurface(ch)){
       releaseMiniRtcSurface(false);notify('Media controls could not be opened. Refresh this page and try again.','err');
       return Promise.resolve(false);
     }
     return waitForMiniSuiteMediaSocket().then(function(ws){
-      if(miniSuiteState.mediaSessionId!==String(sess.id)||!miniSuiteState.openSession||String(miniSuiteState.openSession.id)!==String(sess.id))return false;
+      if(!mediaStartCurrent())return false;
       window._expertWs=ws;miniSuiteJoinOpenSession();
       window._obActiveSessId=sess.id;window._sid=sess.id;
-      return window.OB_RTC.start(sess.id,ch,'expert');
+      if(typeof window.OB_RTC._obSetNextStartGuard==='function')window.OB_RTC._obSetNextStartGuard(mediaStartCurrent);
+      return Promise.resolve(window.OB_RTC.start(sess.id,ch,'expert')).then(function(started){
+        if(!mediaStartCurrent()){stopStaleMediaStart();return false;}
+        return started;
+      });
     }).then(function(started){
+      if(!mediaStartCurrent())return false;
       miniSuiteState.mediaStarting=false;
       if(started===false){releaseMiniRtcSurface(true);notify('Media permission was not enabled. Try again when your devices are ready.','err');return false;}
       return true;
     }).catch(function(){
+      if(!mediaStartCurrent()){stopStaleMediaStart();return false;}
       releaseMiniRtcSurface(true);notify('Media could not start.','err');return false;
     });
   };
@@ -63077,6 +64884,10 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     if(!miniSuiteState.poll) miniSuiteState.poll = setInterval(function(){ loadMiniSuite(); }, 15000);
     return true;
   }
+  if(window.__OB_TEST_HOOKS__){
+    window.__OB_TEST_HOOKS__.miniSuite = {state:miniSuiteState,token:miniSuiteToken,setToken:setMiniSuiteToken,principalForToken:miniTokenPrincipal,contextCurrent:miniSuiteContextCurrent,connect:connectMiniSuiteSocket,teardown:teardownMiniSuiteTransport};
+  }
+  window.addEventListener('pagehide',function(){ if(isMiniSuiteRoute()) teardownMiniSuiteTransport('Mini suite page closed.',true); });
 
   function adminContent(){
     var panel = document.getElementById('admin-panel-experts');
@@ -65437,10 +67248,12 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
       .then(function(data){
         if(!data||!owns())return;
         if(!data.session)throw new Error(data.error||'No session returned');
-        window._sid=data.session.id;window._obActiveSessId=data.session.id;
-        window._obPendingChannel=String(data.session.channel||'chat').toLowerCase();window.currentBookChannel=window._obPendingChannel;
+        if(window._obExpertRealtime)window._obExpertRealtime.ingest({type:'booking_session_started',session_id:data.session.id,session:data.session});
         if(typeof window.toast==='function')window.toast('Session started','ok');
-        if(typeof window.openExpertLivePanel==='function')window.openExpertLivePanel(data.session.id);
+        if(typeof window.openExpertLivePanel==='function'){
+          var opened=window.openExpertLivePanel(data.session.id);
+          if(opened!==false){window._obPendingChannel=String(data.session.channel||'chat').toLowerCase();window.currentBookChannel=window._obPendingChannel;}
+        }
         if(typeof window.loadExpertBookings==='function')window.loadExpertBookings();
       }).catch(function(err){
         if(!owns())return;
@@ -65450,9 +67263,9 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
       });
   };
 
-  var expertEndController={nextRequestId:0,current:null};
+  var expertEndController={nextRequestId:0,current:null,bySessionId:Object.create(null)};
   function activeExpertSessionIdForEnd(){
-    return String(window._obActiveSessId||window._sid||window._sessId||'');
+    return String((window._obExpertRealtime&&window._obExpertRealtime.focusedRoomId)||window._obActiveSessId||window._sid||window._sessId||'');
   }
   function setExpertEndControlsBusy(busy){
     document.querySelectorAll('[onclick*="expertEndSession"]').forEach(function(button){
@@ -65466,14 +67279,16 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     });
   }
   function expertEndControllerOwns(request){
-    return expertEndController.current===request;
+    return !!(request&&expertEndController.bySessionId[request.sessionId]===request);
   }
   function expertEndResponseOwns(request){
-    return expertEndControllerOwns(request)&&clientContext.isCurrent(request.context)&&activeExpertSessionIdForEnd()===request.sessionId;
+    return expertEndControllerOwns(request)&&clientContext.isCurrent(request.context);
   }
   function applySuccessfulExpertEnd(data,sessionId){
     data=data||{};var session=Object.assign({},data,data.session||{});delete session.session;
     if(!session.id)session.id=sessionId;
+    if(window._obExpertRealtime) window._obExpertRealtime.ingest({type:'session_ended',session_id:sessionId,session:session});
+    if(activeExpertSessionIdForEnd()!==sessionId)return;
     if(typeof window.obApplyAuthoritativeExpertEnded==='function'){
       window.obApplyAuthoritativeExpertEnded({type:'session_ended',session_id:sessionId,session:session},'expert');
       return;
@@ -65488,11 +67303,12 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
   function requestExpertSessionEnd(){
     var sessionId=activeExpertSessionIdForEnd();
     if(!sessionId){if(typeof window.toast==='function')window.toast('Could not find the active session. Refresh and try again.','err');return Promise.resolve(false);}
-    if(expertEndController.current&&expertEndController.current.sessionId===sessionId&&clientContext.isCurrent(expertEndController.current.context))return expertEndController.current.promise;
+    var existingRequest=expertEndController.bySessionId[sessionId];
+    if(existingRequest&&clientContext.isCurrent(existingRequest.context))return existingRequest.promise;
     var context=clientContext.capture('expert-session-end',{sessionId:sessionId});
     if(!context.token||['expert','admin','support'].indexOf(context.role)<0){if(typeof window.toast==='function')window.toast('Please sign in to end this session.','err');return Promise.resolve(false);}
     var request={id:++expertEndController.nextRequestId,sessionId:sessionId,context:context,promise:null};
-    expertEndController.current=request;setExpertEndControlsBusy(true);
+    expertEndController.current=request;expertEndController.bySessionId[sessionId]=request;setExpertEndControlsBusy(true);
     request.promise=(async function(){
       try{
         var response=await fetch(BASE+'/api/sessions/'+encodeURIComponent(sessionId)+'/end',{
@@ -65508,10 +67324,8 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
         if(typeof window.toast==='function')window.toast(message,'err');else console.error('[expertEndSession]',message);
         return false;
       }finally{
-        if(expertEndControllerOwns(request)){
-          expertEndController.current=null;
-          setExpertEndControlsBusy(false);
-        }
+        if(expertEndController.bySessionId[sessionId]===request)delete expertEndController.bySessionId[sessionId];
+        if(expertEndController.current===request){expertEndController.current=null;setExpertEndControlsBusy(false);}
       }
     })();
     return request.promise;

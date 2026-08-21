@@ -2,6 +2,159 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<script id="ownlybiz-phase7-loopback-runtime-guard-20260821">
+(function(){
+  var CONFIRM_KEY='ownlybiz_phase7_loopback';
+  var CONFIRM_VALUE='RUN_LOCAL_BROWSER_RTC';
+  var TURN_KEY='ownlybiz_phase7_turn';
+  var TURN_VALUE='REQUIRE_LOOPBACK_TURN';
+  var TURN_PORT_KEY='ownlybiz_phase7_turn_port';
+  var params;
+  try{params=new URLSearchParams(window.location.search||'');}catch(e){return;}
+  var confirmations=params.getAll(CONFIRM_KEY);
+  if(!confirmations.length)return;
+
+  var host=String(window.location.hostname||'').toLowerCase();
+  var pageLoopback=host==='127.0.0.1'||host==='[::1]';
+  var validConfirmation=confirmations.length===1&&confirmations[0]===CONFIRM_VALUE;
+  var validProtocol=window.location.protocol==='http:'||window.location.protocol==='https:';
+  var turnValues=params.getAll(TURN_KEY);
+  var turnPortValues=params.getAll(TURN_PORT_KEY);
+  var requireTurn=turnValues.length===1&&turnValues[0]===TURN_VALUE;
+  var turnPort=requireTurn&&turnPortValues.length===1?Number(turnPortValues[0]):0;
+  var validTurn=!turnValues.length&&!turnPortValues.length||(
+    requireTurn&&turnPortValues.length===1&&Number.isInteger(turnPort)&&turnPort>=1024&&turnPort<=65535
+  );
+
+  function installPolicy(value){
+    var meta=document.createElement('meta');
+    meta.httpEquiv='Content-Security-Policy';
+    meta.content=value;
+    (document.head||document.documentElement).appendChild(meta);
+  }
+  if(!pageLoopback||!validConfirmation||!validProtocol||!validTurn){
+    installPolicy("default-src 'none'; style-src 'unsafe-inline'");
+    window.__OB_PHASE7_LOOPBACK__=Object.freeze({active:false,reason:'activation_rejected'});
+    return;
+  }
+
+  var origin=window.location.origin.replace(/\/+$/,'');
+  var wsOrigin=(window.location.protocol==='https:'?'wss://':'ws://')+window.location.host;
+  var blockedCount=0;
+  var blockedKinds={};
+  var peerConnections=[];
+  function noteBlocked(kind){
+    kind=String(kind||'network');
+    blockedCount+=1;
+    blockedKinds[kind]=(blockedKinds[kind]||0)+1;
+  }
+  function blocked(kind){
+    noteBlocked(kind);
+    return new TypeError('OWNLYBIZ_PHASE7_LOOPBACK_BLOCKED');
+  }
+  function safeUrl(value,kind,protocols){
+    var raw=value&&typeof value==='object'&&typeof value.url==='string'?value.url:value;
+    var parsed;
+    try{parsed=new URL(String(raw||''),window.location.href);}catch(e){throw blocked(kind);}
+    if((parsed.protocol==='data:'||parsed.protocol==='blob:')&&kind==='fetch')return parsed.href;
+    if(protocols.indexOf(parsed.protocol)<0||parsed.username||parsed.password||
+       String(parsed.hostname||'').toLowerCase()!==host||String(parsed.port||'')!==String(window.location.port||'')){
+      throw blocked(kind);
+    }
+    return parsed.href;
+  }
+  function safeIceUrl(value){
+    var normalized=String(value||'').toLowerCase();
+    if(!requireTurn)return false;
+    return normalized==='turn:127.0.0.1:'+turnPort+'?transport=udp';
+  }
+  function sanitizeIce(configuration){
+    var next={};
+    Object.keys(configuration||{}).forEach(function(key){next[key]=configuration[key];});
+    var safeServers=[];
+    (configuration&&Array.isArray(configuration.iceServers)?configuration.iceServers:[]).forEach(function(server){
+      if(!server||!server.urls)return;
+      var urls=Array.isArray(server.urls)?server.urls:[server.urls];
+      var safe=urls.filter(safeIceUrl);
+      if(safe.length!==urls.length)noteBlocked('ice_server');
+      if(!safe.length)return;
+      var copy={urls:Array.isArray(server.urls)?safe:safe[0]};
+      if(server.username)copy.username=String(server.username);
+      if(server.credential)copy.credential=String(server.credential);
+      safeServers.push(copy);
+    });
+    next.iceServers=safeServers;
+    next.iceTransportPolicy=requireTurn?'relay':'all';
+    return next;
+  }
+  function pinEndpoint(name,value){
+    try{
+      Object.defineProperty(window,name,{configurable:false,enumerable:true,get:function(){return value;},set:function(next){
+        if(String(next||'').replace(/\/+$/,'')!==value)noteBlocked('endpoint_override');
+      }});
+    }catch(e){window[name]=value;}
+  }
+
+  installPolicy("default-src 'self' blob: data:; base-uri 'self'; object-src 'none'; frame-src 'none'; form-action 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self' "+wsOrigin);
+  ['OWNLYBIZ_API_URL','OWNLY_API','_OB_BACKEND','API_BASE','OWNLYBIZ_PROD_BACKEND'].forEach(function(name){pinEndpoint(name,origin);});
+  pinEndpoint('OWNLYBIZ_WS_URL',wsOrigin);
+  window._obApplyRuntimeBackend=function(){return origin;};
+
+  if(typeof window.fetch==='function'){
+    var nativeFetch=window.fetch.bind(window);
+    window.fetch=function(input){
+      try{safeUrl(input,'fetch',['http:','https:']);}catch(error){return Promise.reject(error);}
+      return nativeFetch.apply(window,arguments);
+    };
+  }
+  if(window.XMLHttpRequest&&window.XMLHttpRequest.prototype){
+    var nativeOpen=window.XMLHttpRequest.prototype.open;
+    window.XMLHttpRequest.prototype.open=function(method,url){safeUrl(url,'xhr',['http:','https:']);return nativeOpen.apply(this,arguments);};
+  }
+  if(typeof window.WebSocket==='function'){
+    var NativeWebSocket=window.WebSocket;
+    var GuardedWebSocket=function(url,protocols){
+      safeUrl(url,'websocket',['ws:','wss:']);
+      return protocols===undefined?new NativeWebSocket(url):new NativeWebSocket(url,protocols);
+    };
+    GuardedWebSocket.prototype=NativeWebSocket.prototype;
+    try{Object.setPrototypeOf(GuardedWebSocket,NativeWebSocket);}catch(e){}
+    ['CONNECTING','OPEN','CLOSING','CLOSED'].forEach(function(name){GuardedWebSocket[name]=NativeWebSocket[name];});
+    window.WebSocket=GuardedWebSocket;
+  }
+  if(typeof window.EventSource==='function'){
+    var NativeEventSource=window.EventSource;
+    var GuardedEventSource=function(url,options){safeUrl(url,'eventsource',['http:','https:']);return new NativeEventSource(url,options);};
+    GuardedEventSource.prototype=NativeEventSource.prototype;
+    window.EventSource=GuardedEventSource;
+  }
+  if(window.navigator&&typeof window.navigator.sendBeacon==='function'){
+    var nativeBeacon=window.navigator.sendBeacon.bind(window.navigator);
+    window.navigator.sendBeacon=function(url){safeUrl(url,'beacon',['http:','https:']);return nativeBeacon.apply(window.navigator,arguments);};
+  }
+  if(typeof window.RTCPeerConnection==='function'){
+    var NativePeerConnection=window.RTCPeerConnection;
+    var GuardedPeerConnection=function(configuration,constraints){
+      var peer=new NativePeerConnection(sanitizeIce(configuration||{}),constraints);
+      peerConnections.push(peer);
+      return peer;
+    };
+    GuardedPeerConnection.prototype=NativePeerConnection.prototype;
+    try{Object.setPrototypeOf(GuardedPeerConnection,NativePeerConnection);}catch(e){}
+    window.RTCPeerConnection=GuardedPeerConnection;
+    if(window.webkitRTCPeerConnection)window.webkitRTCPeerConnection=GuardedPeerConnection;
+  }
+
+  window.__OB_PHASE7_LOOPBACK__=Object.freeze({
+    active:true,
+    mode:requireTurn?'turn_relay':'host_only',
+    origin:origin,
+    assertLoopbackUrl:function(value,kind){return safeUrl(value,kind||'probe',['http:','https:','ws:','wss:']);},
+    peerConnections:function(){return peerConnections.slice();},
+    snapshot:function(){return {active:true,mode:requireTurn?'turn_relay':'host_only',blocked_count:blockedCount,blocked_kinds:Object.assign({},blockedKinds),peer_count:peerConnections.length};}
+  });
+})();
+</script>
   <script src="https://js.stripe.com/v3/"></script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <meta name="theme-color" content="#0B0908">

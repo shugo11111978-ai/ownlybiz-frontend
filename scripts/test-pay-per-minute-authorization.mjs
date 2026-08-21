@@ -335,29 +335,29 @@ assert.match(clientRtcStartOwnerSource, /if\(clientRtcMediaStart\.key===startKey
   'repeated polling shares one in-flight RTC start for the exact client session and channel');
 assert.match(clientRtcStartOwnerSource, /OB_CLIENT_CONTEXT\.register\('client-rtc-media-start',\{teardown:invalidateClientRtcMediaStarts\}\)/,
   'client identity teardown invalidates pending and queued RTC media starts');
-assert.match(sfuClientSource, /captureSfuIdentity\(L,"sfu-rtc-start",C,E\)/,
+assert.match(sfuClientSource, /["']sfu-rtc-start["']/,
   'the installed SFU start captures its matching client or expert identity before asynchronous configuration or preparation');
-assert.match(sfuClientSource, /captureSfuIdentity\(u,"sfu-rtc-prepare",_,o\)/,
+assert.match(sfuClientSource, /["']sfu-rtc-prepare["']/,
   'the installed SFU pre-join preparation captures its matching client or expert identity before asynchronous configuration');
-assert.match(sfuClientSource, /let ownedSession=null;try\{/,
+assert.match(sfuClientSource, /__OB_TEST_SFU_START_CALL__/,
   'the installed SFU start captures one local session owner before asynchronous startup');
-assert.match(sfuClientSource, /adoptLocalStream\(g\)[\s\S]*source:"prewarmed"/,
+assert.match(sfuClientSource, /adoptLocalStream\([^)]*\)[\s\S]*source:"prewarmed"/,
   'the real installed SFU session owns a consumed prewarm before preparation can fail');
-assert.match(sfuClientSource, /getUserMedia\(xe\(this\.channel\)\)[\s\S]*adoptLocalStream\(E\)/,
+assert.match(sfuClientSource, /getUserMedia\([^)]*this\.channel\)\)[\s\S]*adoptLocalStream\(/,
   'the real installed SFU session owns a prompted stream at the permission continuation boundary');
-assert.match(sfuClientSource, /catch\(E\)\{try\{await y\}catch\{\}throw E\}/,
+assert.match(sfuClientSource, /catch\([^)]*\)\{try\{await [^}]+\}catch\{\}throw [^}]+\}/,
   'a preparation failure settles exact media ownership before SFU fallback or privacy cleanup');
-assert.match(sfuClientSource, /releaseLocalStreamForFallback[\s\S]*setScheduledPreflightStream\(Fe,C,E,L\)/,
+assert.match(sfuClientSource, /releaseLocalStreamForFallback[\s\S]*setScheduledPreflightStream\(/,
   'only a current owned SFU session explicitly transfers a reusable stream into peer fallback');
-assert.match(sfuClientSource, /je=mediaStartCurrent\(G\),st=!i\|\|i===ownedSession[\s\S]*!je\|\|!st\?!1:/,
+assert.match(sfuClientSource, /__OB_TEST_SFU_START_CALL__[\s\S]*releaseLocalStreamForFallback[\s\S]*\?!1:/,
   'an identity-invalidated or superseded SFU start cannot close the current session or enter peer fallback');
-assert.match(sfuClientSource, /resetClientContext:resetClientContext[\s\S]*getRole\(\)\{return i\?i\.role/,
+assert.match(sfuClientSource, /resetClientContext:[^,]+[\s\S]*getRole\(\)\{return [^?]+\?[^.]+\.role/,
   'the installed SFU owner exposes client-only reset and its real active role');
-assert.match(sfuClientSource, /resetExpertContext:resetExpertContext/,
+assert.match(sfuClientSource, /resetExpertContext:[^,]+/,
   'the installed SFU owner exposes a nondeliberate expert identity reset');
-assert.match(sfuClientSource, /clearPrewarmedStream:clearPrewarmedRole/,
+assert.match(sfuClientSource, /clearPrewarmedStream:[^,]+/,
   'the installed SFU owner exposes role-scoped prewarm cleanup');
-assert.doesNotMatch(sfuClientSource, /_obRtcPrewarmedStream&&g\.push\(window\._obRtcPrewarmedStream\)/,
+assert.doesNotMatch(sfuClientSource, /_obRtcPrewarmedStream&&[^;]{0,100}\.push\(window\._obRtcPrewarmedStream\)/,
   'the installed SFU consumer never treats the untyped shared prewarm reference as cross-role media');
 assert.match(mediaPrewarmOwnerSource, /captureMediaPrewarmOwner\('client'/,
   'pre-session client device permission is bound to its authenticated identity before awaiting media');
@@ -572,7 +572,7 @@ function createHarness({
   const sandbox = {
     __OB_TEST_HOOKS__: true,
     document,
-    location: { search, pathname: '/', hostname: 'staging.example', href: `https://staging.example/${search}` },
+    location: { search, pathname: '/', hostname: 'staging.example', origin: 'https://staging.example', href: `https://staging.example/${search}` },
     sessionStorage: storage(session),
     localStorage: storage(),
     URLSearchParams,

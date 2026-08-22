@@ -97,6 +97,13 @@ function rtcRuntimeSource(html) {
   return html.slice(body, close);
 }
 
+function assertGuardPrecedesExternalScripts(source, guardEnd) {
+  const firstExternalScript = source.search(/<script\b[^>]*\bsrc\s*=/i);
+  assert(firstExternalScript === -1 || guardEnd < firstExternalScript,
+    'guard must precede external scripts when the shell has any');
+  return firstExternalScript;
+}
+
 function fakeGuardContext(search) {
   const policies = [];
   const peerConfigs = [];
@@ -157,12 +164,19 @@ function runContract() {
   const guardStart = html.indexOf(`<script id="${GUARD_ID}">`);
   const guardEnd = html.indexOf('</script>', guardStart);
   const firstHostedConstant = html.indexOf('https://victorious-wisdom-production-a6b0.up.railway.app');
-  const firstExternalScript = html.indexOf('<script src="https://', guardEnd);
   const firstRuntimeSocket = html.indexOf('new WebSocket(', guardEnd);
   assert(guardStart >= 0 && guardEnd > guardStart, 'guard framing invalid');
   assert(guardEnd < firstHostedConstant, 'guard must precede hosted constants');
-  assert(guardEnd < firstExternalScript, 'guard must precede external scripts');
+  assertGuardPrecedesExternalScripts(html, guardEnd);
   assert(guardEnd < firstRuntimeSocket, 'guard must precede runtime sockets');
+  const mutation = `<script src="https://phase7-order.invalid/before-guard.js"></script>${html}`;
+  const mutatedGuardStart = mutation.indexOf(`<script id="${GUARD_ID}">`);
+  const mutatedGuardEnd = mutation.indexOf('</script>', mutatedGuardStart);
+  assert.throws(
+    () => assertGuardPrecedesExternalScripts(mutation, mutatedGuardEnd),
+    /guard must precede external scripts/,
+    'a full-document scan must reject an external script inserted before the guard',
+  );
 
   verificationStage = 'contract_default_inactive';
   const inactive = fakeGuardContext('?ordinary=1');

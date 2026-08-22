@@ -155,7 +155,44 @@
   });
 })();
 </script>
-  <script src="https://js.stripe.com/v3/"></script>
+  <script id="ownlybiz-stripe-lazy-loader-20260822">
+  (function(){
+    var stripeLoadPromise = null;
+    window.obEnsureStripe = function(){
+      if(typeof window.Stripe === 'function') return Promise.resolve(window.Stripe);
+      if(stripeLoadPromise) return stripeLoadPromise;
+      stripeLoadPromise = new Promise(function(resolve,reject){
+        var script = document.getElementById('ob-stripe-js');
+        function ready(){
+          if(typeof window.Stripe === 'function') resolve(window.Stripe);
+          else {
+            if(script.parentNode) script.parentNode.removeChild(script);
+            stripeLoadPromise = null;
+            reject(new Error('Secure payment form failed to load. Please try again.'));
+          }
+        }
+        function failed(){
+          if(script.parentNode) script.parentNode.removeChild(script);
+          stripeLoadPromise = null;
+          reject(new Error('Secure payment form failed to load. Please check your connection and try again.'));
+        }
+        if(script){
+          script.addEventListener('load',ready,{once:true});
+          script.addEventListener('error',failed,{once:true});
+          return;
+        }
+        script = document.createElement('script');
+        script.id = 'ob-stripe-js';
+        script.src = 'https://js.stripe.com/v3/';
+        script.async = true;
+        script.addEventListener('load',ready,{once:true});
+        script.addEventListener('error',failed,{once:true});
+        document.head.appendChild(script);
+      });
+      return stripeLoadPromise;
+    };
+  })();
+  </script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <meta name="theme-color" content="#0B0908">
 <title>Ownlybiz — Own your expertise. Own your income.</title>
@@ -2082,7 +2119,9 @@
     },paymentContext,{retryUnauthorized:true,current:function(){return creditPaymentContextCurrent(paymentContext,seq);}});
     if(!creditPaymentContextCurrent(paymentContext,seq)) return;
     state.intent = d;
-    state.stripe = Stripe(d.publishable_key);
+    if(typeof window.Stripe !== 'function') await window.obEnsureStripe();
+    if(!creditPaymentContextCurrent(paymentContext,seq)) return;
+    state.stripe = window.Stripe(d.publishable_key);
     state.elements = state.stripe.elements();
     var mount = document.getElementById('ob-credit-payment-element');
     if(!mount) throw new Error('Payment form is not available.');
@@ -11950,6 +11989,62 @@ function obRefreshClientBookingAuthState(){
 }
 window.__obProdLoggedOutCtaAuthGate20260516 = true;
 
+// ===== LEGACY BOOKING CARD OWNERSHIP BOUNDARY =====
+function obLegacyBookingExpertId(){
+  return String((window._currentExpert && (window._currentExpert.user_id || window._currentExpert.id)) || window._currentExpertId || '');
+}
+function obCaptureLegacyBookingCardOwner(expertId,channel){
+  var overlay=document.getElementById('booking-overlay');
+  var generation=(Number(window.__obLegacyBookingOverlayGeneration)||0)+1;
+  window.__obLegacyBookingOverlayGeneration=generation;
+  if(!overlay||!window.OB_CLIENT_CONTEXT||typeof window.OB_CLIENT_CONTEXT.capture!=='function')return null;
+  return window.OB_CLIENT_CONTEXT.capture('legacy-booking-card',{
+    expertId:String(expertId||''),
+    channel:String(channel||'').toLowerCase(),
+    overlay:overlay,
+    overlayGeneration:generation
+  });
+}
+function obLegacyBookingCardOwnerCurrent(owner){
+  var context=window.OB_CLIENT_CONTEXT;
+  var activeOverlay=document.getElementById('booking-overlay');
+  var activeChannel=String((window.selectedChannel&&window.selectedChannel.id)||'').toLowerCase();
+  return !!owner&&!!owner.token&&owner.role==='client'&&!!owner.expertId&&!!owner.channel&&
+    !!context&&typeof context.isCurrent==='function'&&context.isCurrent(owner,{exactCredential:true})&&
+    obLegacyBookingExpertId()===owner.expertId&&activeChannel===owner.channel&&
+    window.__obLegacyBookingOverlayGeneration===owner.overlayGeneration&&
+    activeOverlay===owner.overlay&&owner.overlay.style.display==='flex';
+}
+async function obMountLegacyBookingCard(owner,publishableKey){
+  if(!publishableKey||!obLegacyBookingCardOwnerCurrent(owner))return null;
+  if(typeof window.Stripe!=='function')await window.obEnsureStripe();
+  if(!obLegacyBookingCardOwnerCurrent(owner))return null;
+  var stripe=window.Stripe(publishableKey);
+  if(!obLegacyBookingCardOwnerCurrent(owner))return null;
+  var elements=stripe.elements();
+  if(!obLegacyBookingCardOwnerCurrent(owner))return null;
+  var card=elements.create('card',{
+    style:{base:{fontSize:'18px',lineHeight:'44px',color:'#3b1f0e','::placeholder':{color:'#9ca3af'}}},
+    hidePostalCode:true
+  });
+  if(!obLegacyBookingCardOwnerCurrent(owner))return null;
+  var mount=document.getElementById('bov-card-element');
+  if(!mount||!obLegacyBookingCardOwnerCurrent(owner))return null;
+  mount.innerHTML='';
+  if(!obLegacyBookingCardOwnerCurrent(owner))return null;
+  card.mount('#bov-card-element');
+  if(!obLegacyBookingCardOwnerCurrent(owner)){
+    try{if(typeof card.unmount==='function')card.unmount();}catch(e){}
+    return null;
+  }
+  mount._stripeCard=true;
+  window._bovCardElement=card;
+  window._bovStripe=stripe;
+  if(window._obMountBovWallet&&obLegacyBookingCardOwnerCurrent(owner))window._obMountBovWallet(stripe);
+  return card;
+}
+// ===== END LEGACY BOOKING CARD OWNERSHIP BOUNDARY =====
+
 // ===== BOOKING OVERLAY (expert website) =====
 function openBookingOverlay(channelId) {
   // Clear stale session state from previous sessions
@@ -11989,6 +12084,7 @@ function openBookingOverlay(channelId) {
     video: { id:'video', icon:'🎥', name:'Video', price:'$'+rateMap.video.toFixed(2)+'/min', hasFree: availableFreeMap.video > 0 }
   };
   selectedChannel = chMap[channelId] || chMap.chat;
+  var _bookingCardOwner=obCaptureLegacyBookingCardOwner(_eidForFree,selectedChannel.id);
 
   // Update overlay header
   var fm = availableFreeMap[channelId] || 0;
@@ -12039,28 +12135,13 @@ function openBookingOverlay(channelId) {
       // Mount Stripe card element when step 2 is shown
       setTimeout(function() {
         var BASE2 = 'https://victorious-wisdom-production-a6b0.up.railway.app';
-        var t2 = sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || '';
-        if (!t2) return;
-        var _payExpertId = (window._currentExpert && (window._currentExpert.user_id || window._currentExpert.id)) || window._currentExpertId || '';
+        if(!obLegacyBookingCardOwnerCurrent(_bookingCardOwner))return;
+        var _payExpertId = _bookingCardOwner.expertId;
         fetch(BASE2 + '/api/payments/config' + (_payExpertId ? '?expert_id=' + encodeURIComponent(_payExpertId) : ''))
           .then(function(r){ return r.json(); })
-          .then(function(cfg){
-            if (!cfg.publishable_key) return;
-            var stripe = Stripe(cfg.publishable_key);
-            var elements = stripe.elements();
-            var card = elements.create('card', {
-              style: { base: { fontSize: '18px', lineHeight: '44px', color: '#3b1f0e', '::placeholder': { color: '#9ca3af' } } },
-              hidePostalCode: true
-            });
-            var mount = document.getElementById('bov-card-element');
-            if (mount) {
-              mount.innerHTML = '';
-              mount._stripeCard = true;
-              card.mount('#bov-card-element');
-              window._bovCardElement = card;
-              window._bovStripe = stripe;
-              if (window._obMountBovWallet) window._obMountBovWallet(stripe);
-            }
+          .then(async function(cfg){
+            if(!cfg.publishable_key||!obLegacyBookingCardOwnerCurrent(_bookingCardOwner))return;
+            await obMountLegacyBookingCard(_bookingCardOwner,cfg.publishable_key);
           }).catch(function(){});
       }, 500);
       }
@@ -12173,10 +12254,11 @@ async function bovAuthorize() {
   var _payExpertId = (window._currentExpert && (window._currentExpert.user_id || window._currentExpert.id)) || window._currentExpertId || '';
   fetch(BASE + '/api/payments/config' + (_payExpertId ? '?expert_id=' + encodeURIComponent(_payExpertId) : ''))
     .then(function(r){ return r.json(); })
-    .then(function(cfg){
+    .then(async function(cfg){
       if (!cfg.publishable_key) { showErr('Payment not configured — contact support.'); return; }
 
-      var stripe = Stripe(cfg.publishable_key);
+      if(typeof window.Stripe !== 'function') await window.obEnsureStripe();
+      var stripe = window.Stripe(cfg.publishable_key);
 
       // Get or create card element
       var cardEl = window._bovCardElement;
@@ -12185,7 +12267,7 @@ async function bovAuthorize() {
         var mountEl = document.getElementById('bov-card-element');
         if (!mountEl) { showErr('Payment form not available. Please refresh.'); return; }
         // Remount fresh card element
-        var stripeInst = Stripe(cfg.publishable_key);
+        var stripeInst = window.Stripe(cfg.publishable_key);
         var elems = stripeInst.elements();
         cardEl = elems.create('card', { style: { base: { fontSize:'15px', color:'#3b1f0e' } }, hidePostalCode: true });
         mountEl._stripeCard = false;
@@ -17031,13 +17113,15 @@ async function savePaymentConfig() {
             if(!window.obAuthAttemptCurrent(authAttempt,committedContext))return;
             var _BASE='https://victorious-wisdom-production-a6b0.up.railway.app';
             var _tok=committedContext.token;
-            if(!_tok||typeof Stripe==='undefined') return;
+            if(!_tok) return;
             var _payExpertId=(window._currentExpert&&(window._currentExpert.user_id||window._currentExpert.id))||window._currentExpertId||'';
             if(String(_payExpertId||'')!==String(authExpertId||''))return;
             var _cfg=await fetch(_BASE+'/api/payments/config'+(_payExpertId?'?expert_id='+encodeURIComponent(_payExpertId):''),{signal:authAttempt.signal}).then(function(r){return r.json();});
             if(!window.obAuthAttemptCurrent(authAttempt,committedContext)||String(((window._currentExpert&&(window._currentExpert.user_id||window._currentExpert.id))||window._currentExpertId||''))!==String(authExpertId||''))return;
             if(!_cfg||!_cfg.publishable_key) return;
-            var _stripe=Stripe(_cfg.publishable_key);
+            if(typeof window.Stripe !== 'function') await window.obEnsureStripe();
+            if(!window.obAuthAttemptCurrent(authAttempt,committedContext)||String(((window._currentExpert&&(window._currentExpert.user_id||window._currentExpert.id))||window._currentExpertId||''))!==String(authExpertId||''))return;
+            var _stripe=window.Stripe(_cfg.publishable_key);
             var _elements=_stripe.elements();
             var _card=_elements.create('card',{
               style:{base:{fontSize:'18px',lineHeight:'44px',color:'#3b1f0e','::placeholder':{color:'#9ca3af'}}},
@@ -23304,9 +23388,11 @@ function mountBflCardElement() {
   if (!owner.token || !owner.principal || !owner.expertId) return;
   window._bflCardOwnerContext = owner;
 
-  function installCard(publishableKey) {
+  async function installCard(publishableKey) {
     if (!publishableKey || !bflCardOwnerCurrent(owner)) return null;
-    var stripe = Stripe(publishableKey);
+    if(typeof window.Stripe !== 'function') await window.obEnsureStripe();
+    if(!bflCardOwnerCurrent(owner)) return null;
+    var stripe = window.Stripe(publishableKey);
     var elements = stripe.elements();
     var card = elements.create('card', {
       style: { base: { fontSize: '14px', fontFamily: 'var(--font-body), sans-serif', color: '#5a3a1a', '::placeholder': { color: '#b0a08e' } } },
@@ -66514,7 +66600,12 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
       state.requestId = responseRequestId;
       var status = String(data.status || '').toLowerCase();
       if(status !== 'requires_capture'){
-        var stripe = opts.stripe || (data.publishable_key && window.Stripe ? window.Stripe(data.publishable_key) : null);
+        var stripe = opts.stripe || null;
+        if(!stripe && data.publishable_key){
+          if(typeof window.Stripe !== 'function') await window.obEnsureStripe();
+          if(!clientContextCurrent(flowContext,false)||currentAccountKey()!==flowAccountKey)throw accountChangedError();
+          stripe=window.Stripe(data.publishable_key);
+        }
         if(!stripe || !state.clientSecret) throw new Error('Secure card confirmation is unavailable. Please refresh and try again.');
         var result = await stripe.confirmCardPayment(state.clientSecret);
         if(!clientContextCurrent(flowContext,false)||currentAccountKey()!==flowAccountKey){
@@ -66871,7 +66962,9 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
       if(!configResponse.ok || !config.publishable_key) throw new Error(config.error || 'Payment is temporarily unavailable. Please try again shortly.');
       var validatedPolicy=await ensureDisclosedPolicy(expertId,disclosedPolicy,config,true);
       assertClientContext(flowContext,false);
-      var stripe = window._bovStripe || (window.Stripe && window.Stripe(config.publishable_key));
+      if(!window._bovStripe && typeof window.Stripe !== 'function') await window.obEnsureStripe();
+      assertClientContext(flowContext,false);
+      var stripe = window._bovStripe || window.Stripe(config.publishable_key);
       var card = window._bovCardElement;
       if(!stripe || (!savedPayment.useSaved&&!card)) throw new Error('The secure card form is still loading. Wait a moment and try again.');
 
@@ -67609,6 +67702,8 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
         await ensureCurrentPolicy(expertId,config);
         if(!bookingControllerOwns(context)||bookingController.cardMountPromise!==mountPromise)throw accountChangedError();
         if(bookingController.card){if(typeof bookingController.card.focus==='function')bookingController.card.focus();return bookingController.card;}
+        if(typeof window.Stripe !== 'function')await window.obEnsureStripe();
+        if(!bookingControllerOwns(context)||bookingController.cardMountPromise!==mountPromise)throw accountChangedError();
         bookingController.stripe=window.Stripe(config.publishable_key);var elements=bookingController.stripe.elements();
         mountedCard=elements.create('card',{hidePostalCode:true,style:{base:{fontSize:'16px',color:'#3b1f0e','::placeholder':{color:'#9ca3af'}}}});
         if(!bookingControllerOwns(context)||bookingController.cardMountPromise!==mountPromise)throw accountChangedError();

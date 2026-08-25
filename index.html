@@ -15844,8 +15844,21 @@ async function savePaymentConfig() {
   }
 
   /* ── WebSocket ────────────────────────────────────── */
+  function legacyWsContextCurrent(context) {
+    return !!context && !!window.OB_CLIENT_CONTEXT
+      && window.OB_CLIENT_CONTEXT.isCurrent(context, {exactCredential:true});
+  }
   const WS = {
-    ws:null, _ping:null, _retry:null,
+    ws:null, _ping:null, _retry:null, _context:null,
+    disconnect() {
+      clearTimeout(this._retry); this._retry=null;
+      clearInterval(this._ping); this._ping=null;
+      const socket=this.ws;
+      this.ws=null; this._context=null;
+      if(!socket) return;
+      try { socket.onopen=null;socket.onmessage=null;socket.onerror=null;socket.onclose=null; } catch {}
+      try { if(socket.readyState<=1) socket.close(); } catch {}
+    },
     connect() {
       if (Auth.isExpert) {
         if (window.obIsMiniSuiteRoute && window.obIsMiniSuiteRoute()) return;
@@ -15856,18 +15869,40 @@ async function savePaymentConfig() {
         }
         return;
       }
-      if (this.ws?.readyState===1) return;
+      const socketContext=window.OB_CLIENT_CONTEXT
+        && window.OB_CLIENT_CONTEXT.capture('legacy-ownly-ws');
+      if(!socketContext?.token) return;
+      if(this.ws?.readyState<=1) {
+        if(legacyWsContextCurrent(this._context)) return;
+        this.disconnect();
+      }
       clearTimeout(this._retry);
       try {
-        this.ws = new WebSocket(WSS);
-        this.ws.onopen = ()=>{
-          if (Auth.tok) this.send({type:'auth',token:Auth.tok});
+        const socket = new WebSocket(WSS);
+        this.ws=socket; this._context=socketContext;
+        socket.onopen = ()=>{
+          if(this.ws!==socket || !legacyWsContextCurrent(socketContext)) {
+            try { socket.close(); } catch {}
+            return;
+          }
+          socket.send(JSON.stringify({type:'auth',token:socketContext.token}));
           this._ping = setInterval(()=>this.send({type:'ping'}),25000);
           if (window._sid) this.send({type:'join',session_id:window._sid});
         };
-        this.ws.onmessage = e=>{ try{ _wsMsg(JSON.parse(e.data)); }catch{} };
-        this.ws.onclose   = ()=>{ clearInterval(this._ping); this._retry=setTimeout(()=>this.connect(),4000); };
-        this.ws.onerror   = ()=>{};
+        socket.onmessage = e=>{
+          if(this.ws!==socket || !legacyWsContextCurrent(socketContext)) return;
+          try{ _wsMsg(JSON.parse(e.data), socketContext); }catch{}
+        };
+        socket.onclose = ()=>{
+          if(this.ws!==socket) return;
+          clearInterval(this._ping);this._ping=null;this.ws=null;this._context=null;
+          if(legacyWsContextCurrent(socketContext)) {
+            this._retry=setTimeout(()=>{
+              if(legacyWsContextCurrent(socketContext)) this.connect();
+            },4000);
+          }
+        };
+        socket.onerror = ()=>{};
       } catch {}
     },
     send(d){
@@ -15876,11 +15911,46 @@ async function savePaymentConfig() {
         else if(d && d.type!=='auth') window._obExpertRealtime.send(d);
         return;
       }
-      if(this.ws?.readyState===1) this.ws.send(JSON.stringify(d));
+      if(this.ws?.readyState===1 && legacyWsContextCurrent(this._context)) {
+        this.ws.send(JSON.stringify(d));
+      }
     }
   };
+  if(window.OB_CLIENT_CONTEXT && typeof window.OB_CLIENT_CONTEXT.register==='function') {
+    window.OB_CLIENT_CONTEXT.register('legacy-ownly-ws', {
+      teardown:()=>WS.disconnect(),
+      credentialRotated:(current)=>{
+        WS.disconnect();
+        if(current?.token && current.role==='client') WS.connect();
+      },
+      changed:(current)=>{
+        if(current?.token && current.role==='client') WS.connect();
+      },
+    });
+  }
 
-  function _wsMsg(d) {
+  function showClientReceiptRecoveryState(d){
+    var sess=d&&d.session||{};
+    var channel=String(sess.channel||window._obPendingChannel||window.currentBookChannel||'session');
+    var expertName=typeof window.obClientSessionExpertName==='function'
+      ? window.obClientSessionExpertName(sess)
+      : (window._currentExpert&&window._currentExpert.name)||'Expert';
+    try{if(typeof window.obReleaseLocalSessionAuthorization==='function')window.obReleaseLocalSessionAuthorization();}catch(e){}
+    try{if(window.OB_RTC&&typeof window.OB_RTC.cleanup==='function')window.OB_RTC.cleanup();}catch(e){}
+    try{if(typeof window.obResetClientSessionTransport==='function')window.obResetClientSessionTransport();}catch(e){}
+    set('receipt-session-type',channel.charAt(0).toUpperCase()+channel.slice(1)+' with '+expertName);
+    set('receipt-duration','—');set('receipt-rate','—');set('receipt-total','Refresh required');
+    var screen=$('screen-A5');
+    var title=screen&&screen.querySelector('.receipt-title');
+    var sub=screen&&screen.querySelector('.receipt-sub');
+    if(title)title.textContent='Session ended';
+    if(sub)sub.textContent='Refresh this page to load the final receipt.';
+    if(typeof phoneGo==='function')phoneGo('A5');
+    toast('Session ended. Refresh to load the final receipt.','err');
+  }
+
+  function _wsMsg(d, socketContext) {
+    if(!legacyWsContextCurrent(socketContext)) return;
     if(Auth.isExpert && typeof window._obRouteWsMessage === 'function'){
       window._obRouteWsMessage(d, 'expert');
       return;
@@ -15934,6 +16004,11 @@ async function savePaymentConfig() {
         var _endedSid = d.session_id || d.sessionId || (d.session && d.session.id);
         var _activeEndedSid = window._obActiveSessId || window._sid || window._sessId || window._obPendingSessId || window._pendingSid || '';
         if(_activeEndedSid && (!_endedSid || _endedSid !== _activeEndedSid)) break;
+        if(!Auth.isExpert){
+          if(typeof window.obApplyAuthoritativeClientEnded==='function')window.obApplyAuthoritativeClientEnded(d);
+          else showClientReceiptRecoveryState(d);
+          break;
+        }
         if(typeof window.obReleaseLocalSessionAuthorization==='function') window.obReleaseLocalSessionAuthorization();
         window._sid=null; window._expertSessActive=false;
         window._obActiveSessId=null;window._obPendingSessId=null;window._pendingSid=null;window._obIncomingSessId=null;
@@ -15979,7 +16054,6 @@ async function savePaymentConfig() {
           // Set cooldown to prevent stale pending sessions from triggering popup
           window._sessionEndCooldown=Date.now();
         }
-        else { try{if(window._obClientWs&&window._obClientWs.readyState<=1)window._obClientWs.close();}catch(e){}try{if(window._obWs&&window._obWs.readyState<=1)window._obWs.close();}catch(e){}window._obClientWs=null;window._obWs=null;window._obWsHooked=false;window._obWsConnecting=false;var _s=d.session||{};['credit_applied','card_charged','promo_discount','promo_applied','promo_skipped_reason','session_promo_code','session_promo_id','session_promo_percent_off','payment_status','payout_status','credit_mode','payment_mode'].forEach(function(_k){if(d[_k]!=null&&_s[_k]==null)_s[_k]=d[_k];});if(d.charged!=null&&(!(_s.total_charged>0)||Number(d.charged)>Number(_s.total_charged||0)))_s.total_charged=d.charged;var _fm=_s.free_minutes||0;var _rt=parseFloat(_s.rate_per_min||0);var _bm=obBillableWholeMinutes(_s.duration_secs||0,_fm);var _tm=(_s.duration_secs||0)>0?Math.max(1,Math.ceil((_s.duration_secs||0)/60)):0;var _total=(typeof _s.total_charged==='number'&&!isNaN(_s.total_charged))?_s.total_charged:(_bm*_rt);var _re=document.getElementById('receipt-total');if(_re)_re.textContent=fmt$(_total);var _rd=document.getElementById('receipt-duration');if(_rd)_rd.textContent=_tm+' min'+(_fm>0?' ('+_fm+' free + '+_bm.toFixed(2)+' billed)':'');var _rr=document.getElementById('receipt-rate');if(_rr)_rr.textContent=_rt.toFixed(2)+'/min';try{if(typeof window.obCreditEnhanceReceipt==='function')window.obCreditEnhanceReceipt(_s);}catch(e){}if(typeof phoneGo==='function') phoneGo('A5');}
         break; }
       case 'message':    if(Auth.isExpert&&!(window._obMarkMessageSeen&&window._obMarkMessageSeen(d))) _appendMsg(d); break;
       case 'typing':     _showTyping(d); break;
@@ -22302,7 +22376,7 @@ body.expert-page #mob-cta-bar{display:none!important;}
   window.obCancelWait=function(){
     stopStatusPoll();var ov=document.getElementById('ob-waiting-overlay');if(ov)ov.classList.remove('show');window._obPendingSessId=null;
   };
-  window.obResetClientSessionTransportForAccountChange=function(){
+  function resetClientSessionTransport(){
     stopStatusPoll();_sessId=null;
     var sockets=[window._obClientWs,window._obWs];
     for(var i=0;i<sockets.length;i++){
@@ -22311,7 +22385,9 @@ body.expert-page #mob-cta-bar{display:none!important;}
       try{if(socket.readyState<=1&&typeof socket.close==='function')socket.close();}catch(e2){}
     }
     window._obClientWs=null;window._obWs=null;window._obWsHooked=false;window._obWsConnecting=false;
-  };
+  }
+  window.obResetClientSessionTransport=resetClientSessionTransport;
+  window.obResetClientSessionTransportForAccountChange=resetClientSessionTransport;
 function obClientSessionCleanText(v){ return String(v == null ? '' : v).replace(/\s+/g,' ').trim(); }
 function obClientSessionMarketplaceId(sess){
   sess = sess || {};
@@ -26458,29 +26534,6 @@ window._handleRTCMessage=function(d){
       box.appendChild(row); box.scrollTop = box.scrollHeight;
     }
   }
-  function applyClientReceipt(sess){
-    sess = sess || {};
-    var free = int(sess.free_minutes,0), rate = num(sess.rate_per_min,0), dur = int(sess.duration_secs,0);
-    var billed = billableMinutes(dur, free), chargedN = parseFloat(sess.charged), storedN = parseFloat(sess.total_charged);
-    var total = isFinite(chargedN) && chargedN > 0 && (!isFinite(storedN) || storedN <= 0) ? chargedN : (isFinite(storedN) ? storedN : billed * rate);
-    var el;
-    el=document.getElementById('receipt-total'); if(el) el.textContent = money(total);
-    el=document.getElementById('receipt-duration'); if(el) el.textContent = (dur > 0 ? Math.max(1, Math.ceil(dur/60)) : 0) + ' min' + (free > 0 ? ' (' + free + ' free + ' + billed.toFixed(2) + ' billed)' : '');
-    el=document.getElementById('receipt-rate'); if(el) el.textContent = money(rate) + '/min';
-    el=document.getElementById('receipt-session-type'); if(el) {
-      var receiptExpertName = typeof window.obClientSessionExpertName === 'function'
-        ? window.obClientSessionExpertName(sess)
-        : ((sess.marketplace_expert_name || sess.marketplaceExpertName || sess.expert_name || (window._currentExpert && window._currentExpert.name)) || 'Expert');
-      el.textContent = (sess.channel || 'chat').charAt(0).toUpperCase() + (sess.channel || 'chat').slice(1) + ' with ' + receiptExpertName;
-    }
-    try { if(typeof window.obCreditEnhanceReceipt === 'function') window.obCreditEnhanceReceipt(sess); } catch(e) {}
-    window._obClientEndingSid = null;
-    window._obClientEndingAt = 0;
-    window._obClientEndingPromise = null;
-    window._obClientEndingSnapshot = null;
-    if(typeof window._obSetClientEndControlsEnding === 'function') window._obSetClientEndControlsEnding(false);
-    if(typeof phoneGo === 'function') phoneGo('A5');
-  }
   function ensureExpertWsJoined(sid, done){
     if(window.obIsMiniSuiteRoute && window.obIsMiniSuiteRoute()){ if(done) done(); return; }
     if(window._obExpertRealtime){
@@ -28144,12 +28197,52 @@ window._handleRTCMessage=function(d){
       badge.style.cssText = 'font-size:12px;color:var(--gray-400);font-weight:700;';
     }
   }
-  function applyClientReceipt(sess){
+  function closeClientTerminalRuntime(){
+    try { if(typeof window.obReleaseLocalSessionAuthorization === 'function') window.obReleaseLocalSessionAuthorization(); } catch(e) {}
+    try { if(window.OB_RTC && typeof window.OB_RTC.cleanup === 'function') window.OB_RTC.cleanup(); } catch(e) {}
+    try { if(typeof window.obResetClientSessionTransport === 'function') window.obResetClientSessionTransport(); } catch(e) {}
+    try { localStorage.removeItem('ob_hpm'); } catch(e) {}
+  }
+  function clientReceiptSessionId(value){
+    value = value || {};
+    return String(value.id || value.session_id || value.sessionId
+      || (value.session && (value.session.id || value.session.session_id || value.session.sessionId)) || '');
+  }
+  function clientReceiptAuthorityScore(sess){
+    sess = sess || {};
+    var score = 0;
+    if(clientReceiptSessionId(sess)) score += 2;
+    if(sess.channel) score += 1;
+    if(sess.duration_secs != null) score += 2;
+    if(sess.rate_per_min != null) score += 1;
+    if(['total_charged','charged','card_charged'].some(function(key){
+      return sess[key] != null && sess[key] !== '' && Number.isFinite(Number(sess[key]));
+    })) score += 4;
+    if(sess.payment_status) score += 2;
+    if(sess.payout_status) score += 1;
+    if(window.obIsTerminalSessionStatus && window.obIsTerminalSessionStatus(sess.status)) score += 1;
+    if(sess.settlement_ended_at != null) score += 2;
+    return score;
+  }
+  function clientReceiptAuthorityVersion(sess){
+    sess = sess || {};
+    return ['settlement_ended_at','ended_at','updated_at'].reduce(function(latest,key){
+      var raw=sess[key];
+      var numeric=Number(raw);
+      if(!Number.isFinite(numeric) && raw) numeric=Date.parse(String(raw));
+      return Number.isFinite(numeric) ? Math.max(latest,numeric) : latest;
+    },0);
+  }
+  function applyClientReceipt(sess, options){
+    var ownsTerminalLifecycle = !options || options.ownsTerminalLifecycle !== false;
     sess = normalizeClientReceiptSession(sess);
     var terminalSid = sess.id || sess.session_id || sess.sessionId || window._obClientEndingSid || window._obActiveSessId || window._sessId;
-    markClientLocallyEnded(terminalSid);
-    rememberTerminalSession(terminalSid);
-    clearRtcRecoveryStatus('Session ended');
+    if(ownsTerminalLifecycle){
+      markClientLocallyEnded(terminalSid);
+      rememberTerminalSession(terminalSid);
+      clearRtcRecoveryStatus('Session ended');
+      closeClientTerminalRuntime();
+    }
     var free = int(sess.free_minutes,0), rate = num(sess.rate_per_min,0), dur = int(sess.duration_secs,0);
     var chargedN = parseFloat(sess.charged), storedN = parseFloat(sess.total_charged);
     var total = isFinite(chargedN) && chargedN > 0 && (!isFinite(storedN) || storedN <= 0) ? chargedN : (isFinite(storedN) ? storedN : billableMinutes(dur, free) * rate);
@@ -28165,16 +28258,52 @@ window._handleRTCMessage=function(d){
     try {
       if(typeof window.obCreditEnhanceReceipt === 'function') window.obCreditEnhanceReceipt(sess);
     } catch(e) {}
-    if(window._obClientSessionPoller){ clearInterval(window._obClientSessionPoller); window._obClientSessionPoller = null; }
-    window._obActiveSessId = null;
-    window._sessId = null;
-    window._obClientLiveSessionToken = null;
-    window._obPendingSessId = null;
-    if(typeof window.obCreditClearSessionPromo === 'function') window.obCreditClearSessionPromo();
-    clearClientEndingState();
-    pauseClientTimers(sess);
-    if(typeof phoneGo === 'function') phoneGo('A5');
+    if(ownsTerminalLifecycle){
+      if(window._obClientSessionPoller){ clearInterval(window._obClientSessionPoller); window._obClientSessionPoller = null; }
+      window._obActiveSessId = null;
+      window._sessId = null;
+      window._sid = null;
+      window._obClientLiveSessionToken = null;
+      window._obPendingSessId = null;
+      window._pendingSid = null;
+      if(typeof window.obCreditClearSessionPromo === 'function') window.obCreditClearSessionPromo();
+      clearClientEndingState();
+      pauseClientTimers(sess);
+      if(typeof phoneGo === 'function') phoneGo('A5');
+    }
+    return sess;
   }
+  window.obApplyAuthoritativeClientEnded = function(payload){
+    var candidate = payload && payload.session
+      ? mergeSessionEndedPayload(payload)
+      : Object.assign({}, payload || {});
+    var sid = clientReceiptSessionId(candidate) || clientReceiptSessionId(payload);
+    var activeSid = String(window._obActiveSessId || window._sessId || window._sid
+      || window._obClientEndingSid || window._obPendingSessId || window._pendingSid || '');
+    var prior = window._obClientReceiptAuthorityState || null;
+    if(!sid) return null;
+    if(activeSid && sid !== activeSid) return null;
+    if(!activeSid && prior && prior.sid !== sid) return prior.snapshot;
+    if(!candidate.id) candidate.id = sid;
+    candidate = normalizeClientReceiptSession(candidate);
+    if(prior && prior.sid === sid){
+      var candidateVersion = clientReceiptAuthorityVersion(candidate);
+      if(prior.version > 0 && candidateVersion > 0 && candidateVersion < prior.version) return prior.snapshot;
+      candidate = normalizeClientReceiptSession(Object.assign({}, prior.snapshot, candidate));
+      var nextScore = clientReceiptAuthorityScore(candidate);
+      var nextVersion = Math.max(prior.version, candidateVersion, clientReceiptAuthorityVersion(candidate));
+      if(nextScore < prior.score || (nextScore === prior.score && nextVersion <= prior.version)) return prior.snapshot;
+    }
+    var firstReceiptForSession = !(prior && prior.sid === sid);
+    var rendered = applyClientReceipt(candidate, {ownsTerminalLifecycle:firstReceiptForSession});
+    window._obClientReceiptAuthorityState = {
+      sid: sid,
+      score: clientReceiptAuthorityScore(rendered),
+      version: clientReceiptAuthorityVersion(rendered),
+      snapshot: Object.assign({}, rendered),
+    };
+    return rendered;
+  };
   function showClientReceiptPending(sess){
     sess = normalizeClientReceiptSession(sess);
     var free = int(sess.free_minutes,0), rate = num(sess.rate_per_min,0), dur = int(sess.duration_secs,0);
@@ -28762,7 +28891,7 @@ window._handleRTCMessage=function(d){
 	        if(typeof window.obApplyAuthoritativeExpertEnded === 'function') window.obApplyAuthoritativeExpertEnded(d, 'client');
 	        else applyExpertEnded(sess, 'client');
 	      }
-	      else applyClientReceipt(sess);
+	      else window.obApplyAuthoritativeClientEnded(d);
 	      handled = true;
 	    }
     return handled;
@@ -28929,8 +29058,12 @@ window._handleRTCMessage=function(d){
     if(clientRecentlyEndedLocal(sessId)) return;
     var status = (sess.status || '').toLowerCase();
     if(status === 'ended'){
-      applyClientReceipt(sess);
+      window.obApplyAuthoritativeClientEnded({session_id:sessId,session:sess});
       return;
+    }
+    if(sessId && window._obClientReceiptAuthorityState
+      && window._obClientReceiptAuthorityState.sid !== String(sessId)){
+      window._obClientReceiptAuthorityState = null;
     }
     if(window._obClientEndingSid && sessId && sessId === window._obClientEndingSid){
       window._obClientEndingSnapshot = normalizeClientReceiptSession(sess);
@@ -28982,7 +29115,7 @@ window._handleRTCMessage=function(d){
       var responseSid=String(sess.id||sess.session_id||sess.sessionId||'');
       if(responseSid&&responseSid!==requestSid)return null;
       if((sess.status || '').toLowerCase() === 'ended'){
-        applyClientReceipt(sess);
+        window.obApplyAuthoritativeClientEnded({session_id:responseSid||requestSid,session:sess});
         return sess;
       }
       applyClientSessionUi(sess);
@@ -29074,7 +29207,9 @@ window._handleRTCMessage=function(d){
       if(window.OB_RTC && window.OB_RTC.isActive && window.OB_RTC.isActive()){
         try { window.OB_RTC.end(); } catch(e) {}
       }
-      applyClientReceipt(mergeSessionEndedPayload(Object.assign({}, d || {}, {session: (d && d.session) || window._obClientEndingSnapshot || {id:sid}})));
+      window.obApplyAuthoritativeClientEnded(Object.assign({}, d || {}, {
+        session: (d && d.session) || window._obClientEndingSnapshot || {id:sid},
+      }));
       return d;
     }).catch(function(e){
       if(!clientTokenCurrent(endingToken))return;
@@ -29086,7 +29221,7 @@ window._handleRTCMessage=function(d){
           if(window.OB_RTC && window.OB_RTC.isActive && window.OB_RTC.isActive()){
             try { window.OB_RTC.end(); } catch(_e) {}
           }
-          applyClientReceipt(mergeSessionEndedPayload({session:sess}));
+          window.obApplyAuthoritativeClientEnded({session_id:sid,session:sess});
           return detail;
         }
         clearClientEndingState();
@@ -66760,6 +66895,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     if(typeof localCancelWait==='function')localCancelWait();
     window._obActiveSessId=null;window._obPendingSessId=null;window._pendingSid=null;window._sessId=null;window._sid=null;
     window._obClientSessionSnapshot=null;window._obPendingExpertName='';window._obClientChatOpened=null;
+    window._obClientReceiptAuthorityState=null;
     window._obClientEndingSid=null;window._obClientEndingSnapshot=null;window._obClientEndingPromise=null;
     return true;
   }

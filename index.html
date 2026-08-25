@@ -48860,10 +48860,19 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     }
   };
 
+  var platformPaymentsRenderGeneration = 0;
+  function platformPaymentsRenderResult(generation, applied, extra){
+    return Object.assign({
+      panel:'platform-payments', generation:generation, applied:applied, stale:false
+    }, extra || {});
+  }
   async function renderPlatformPayments(){
+    var generation = ++platformPaymentsRenderGeneration;
+    var renderError = null;
     loading('platform-payments');
     try {
       var fees = await api('/admin/fees');
+      if(generation !== platformPaymentsRenderGeneration) return platformPaymentsRenderResult(generation, false, {stale:true});
       var f = fees.fees || {};
       setContent('platform-payments',
         note('Production payment model: client payments are destination charges through Stripe Connect. The expert receives their share and Ownlybiz receives the configured plan/platform fee.') +
@@ -48874,9 +48883,34 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
           card('Legacy fixed fee', num(f.platform_fee_fixed || 0) + '%', 'Shown for audit only') +
         '</div>' +
         platformPaymentServiceConfigHtml());
-      setTimeout(hydratePlatformPaymentServiceSettings, 80);
-    } catch(err) { setContent('platform-payments', errorBox(err)); }
-    if(typeof window.obAdminLoadRefundQueue === 'function') return window.obAdminLoadRefundQueue();
+      setTimeout(function(){
+        if(generation === platformPaymentsRenderGeneration) hydratePlatformPaymentServiceSettings();
+      }, 80);
+    } catch(err) {
+      if(generation !== platformPaymentsRenderGeneration) return platformPaymentsRenderResult(generation, false, {stale:true});
+      renderError = String(err && err.message || err || 'Platform Payments failed to load');
+      setContent('platform-payments', errorBox(err));
+    }
+    if(generation !== platformPaymentsRenderGeneration) return platformPaymentsRenderResult(generation, false, {stale:true});
+    var queueResult = null;
+    try {
+      queueResult = typeof window.obAdminLoadRefundQueue === 'function'
+        ? await window.obAdminLoadRefundQueue()
+        : null;
+    } catch(queueError) {
+      if(generation !== platformPaymentsRenderGeneration) return platformPaymentsRenderResult(generation, false, {stale:true});
+      return platformPaymentsRenderResult(generation, false, {
+        content_applied:true,
+        error:String(queueError && queueError.message || queueError || 'Refund queue failed to load')
+      });
+    }
+    if(generation !== platformPaymentsRenderGeneration) return platformPaymentsRenderResult(generation, false, {stale:true, queue:queueResult});
+    return platformPaymentsRenderResult(generation, queueResult ? !!queueResult.applied : true, {
+      stale:!!(queueResult && queueResult.stale),
+      content_applied:true,
+      queue:queueResult,
+      error:renderError
+    });
   }
 
   function renderConnectors(){
@@ -48945,20 +48979,30 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   }
   function renderLivePanel(panel, force){
     var fn = liveRenderers[panel];
-    if(!fn) return;
+    if(!fn) return Promise.resolve({panel:panel, applied:false, stale:false, skipped:true, reason:'renderer_unavailable'});
     var now = Date.now();
     var state = liveRenderState[panel] || {};
-    if(!force && state.running) return;
-    if(!force && state.last && now - state.last < 8000) return;
+    if(!force && state.running && state.promise) return state.promise;
+    if(!force && state.last && now - state.last < 8000) return Promise.resolve({panel:panel, applied:false, stale:false, skipped:true, reason:'recently_rendered'});
     state.running = true;
     state.last = now;
     liveRenderState[panel] = state;
-    setTimeout(function(){
-      Promise.resolve()
-        .then(fn)
-        .catch(function(){})
-        .then(function(){ state.running = false; liveRenderState[panel] = state; });
-    }, 120);
+    var promise = new Promise(function(resolve){
+      setTimeout(function(){
+        Promise.resolve()
+          .then(fn)
+          .catch(function(err){
+            return {panel:panel, applied:false, stale:false, error:String(err && err.message || err || 'Panel render failed')};
+          })
+          .then(function(result){
+            if(state.promise === promise) state.running = false;
+            liveRenderState[panel] = state;
+            resolve(result || {panel:panel, applied:true, stale:false});
+          });
+      }, 120);
+    });
+    state.promise = promise;
+    return promise;
   }
 
   function currentAdminPanel(){
@@ -48970,7 +49014,8 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   }
   function afterAdminNav(panel){
     setAdminContext(panel);
-    if(!baseNavLoadedPanels[panel]) renderLivePanel(panel, true);
+    if(!baseNavLoadedPanels[panel]) return renderLivePanel(panel, true);
+    return Promise.resolve({panel:panel, applied:true, stale:false, skipped:true, reason:'base_navigation_renderer'});
   }
   function enforceLiveAdminPanel(){
     var panel = currentAdminPanel();
@@ -48984,13 +49029,39 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   }
 
   var previousAdminNav = window.adminNav;
+  var adminNavigationRenderGeneration = 0;
   if(typeof previousAdminNav === 'function') {
     window.adminNav = function(el, panel){
       allowAdminScrollReset();
-      var out = previousAdminNav.apply(this, arguments);
-      setTimeout(function(){ afterAdminNav(panel); }, 80);
+      previousAdminNav.apply(this, arguments);
+      var generation = ++adminNavigationRenderGeneration;
+      var navigationPromise = new Promise(function(resolve){
+        setTimeout(function(){
+          Promise.resolve()
+            .then(function(){ return afterAdminNav(panel); })
+            .then(resolve, function(err){
+              resolve({panel:panel, applied:false, stale:false, error:String(err && err.message || err || 'Navigation render failed')});
+            });
+        }, 80);
+      }).then(function(renderResult){
+        var superseded = generation !== adminNavigationRenderGeneration;
+        return {
+          panel:panel,
+          generation:generation,
+          applied:!!(renderResult && renderResult.applied),
+          stale:superseded || !!(renderResult && renderResult.stale),
+          superseded:superseded,
+          render:renderResult || null
+        };
+      });
+      window.obAdminNavigationRender = {panel:panel, generation:generation, promise:navigationPromise};
+      window.obAdminNavigationRenderPromise = navigationPromise;
       setTimeout(function(){ resetAdminScroll(); }, 260);
-      return out;
+      return navigationPromise;
+    };
+    window.obAdminGetNavigationRenderPromise = function(panel){
+      var current = window.obAdminNavigationRender;
+      return current && (!panel || current.panel === panel) ? current.promise : null;
     };
   }
   var previousAdminTabSwitch = window.adminTabSwitch;
@@ -54203,7 +54274,17 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       var requests = Array.isArray(d.requests) ? d.requests : [];
       var html = refundQueueHtml(requests);
       if(!renderOwnedRefundQueue(panel, generation, html)) return refundQueueLoadResult(generation, false, {stale:true, reason:'panel_replaced'});
-      return refundQueueLoadResult(generation, true, {request_count:requests.length});
+      return refundQueueLoadResult(generation, true, {
+        request_count:requests.length,
+        request_states:requests.map(function(request){
+          return {
+            id:String(request.id || ''),
+            status:String(request.status || 'pending').toLowerCase(),
+            request_type:String(request.request_type || '').toLowerCase(),
+            session_id:String(request.session_id || '')
+          };
+        })
+      });
     }).catch(function(err){
       if(generation !== refundQueueLoadGeneration) return refundQueueLoadResult(generation, false, {stale:true});
       refundQueuePendingGeneration = 0;
@@ -54213,25 +54294,134 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       return refundQueueLoadResult(generation, false, {error:errorMessage});
     });
   };
+  var refundDecisionRefreshes = Object.create(null);
+  function refundDecisionKey(id, action){ return String(action || '') + ':' + String(id || ''); }
+  function storeRefundDecisionRefresh(id, action, promise){
+    var key = refundDecisionKey(id, action);
+    var entry = {request_id:String(id || ''), action:String(action || ''), promise:promise, pending:true, result:null};
+    refundDecisionRefreshes[key] = entry;
+    window.obAdminRefundDecisionRefresh = entry;
+    window.obAdminRefundDecisionRefreshPromise = promise;
+    promise.then(function(result){ entry.pending = false; entry.result = result; });
+    return promise;
+  }
+  function runRefundDecision(id, action, body){
+    id = String(id || '');
+    var key = refundDecisionKey(id, action);
+    var existing = refundDecisionRefreshes[key];
+    if(existing && existing.pending) return existing.promise;
+    var path = '/admin/refund-requests/' + encodeURIComponent(id) + '/' + action;
+    var postSucceeded = false;
+    var decisionPayload = null;
+    var promise = api(path, {method:'POST', body:body}).then(function(decision){
+      postSucceeded = true;
+      decisionPayload = decision;
+      notify(action === 'approve' ? 'Refund approved and sent to Stripe.' : 'Refund request declined.', 'ok');
+      return Promise.resolve().then(function(){ return window.obAdminLoadRefundQueue(); }).then(function(queueResult){
+        var requestState = (queueResult && queueResult.request_states || []).find(function(request){ return request.id === id; }) || null;
+        return {
+          request_id:id,
+          action:action,
+          success:true,
+          refresh_success:!!(queueResult && queueResult.applied && !queueResult.stale),
+          decision:decision,
+          queue:queueResult,
+          request_state:requestState
+        };
+      }, function(refreshError){
+        return {
+          request_id:id,
+          action:action,
+          success:true,
+          refresh_success:false,
+          decision:decision,
+          queue:null,
+          request_state:null,
+          refresh_error:String(refreshError && refreshError.message || refreshError || 'Refund queue refresh failed')
+        };
+      });
+    }, function(err){
+      var errorMessage = String(err && err.message || err || 'Refund decision failed');
+      notify(errorMessage, 'err');
+      return {request_id:id, action:action, success:false, refresh_success:false, error:errorMessage, queue:null, request_state:null};
+    }).catch(function(err){
+      var errorMessage = String(err && err.message || err || 'Refund decision refresh failed');
+      notify(errorMessage, 'err');
+      return {
+        request_id:id,
+        action:action,
+        success:postSucceeded,
+        refresh_success:false,
+        decision:decisionPayload,
+        queue:null,
+        request_state:null,
+        refresh_error:postSucceeded ? errorMessage : null,
+        error:postSucceeded ? null : errorMessage
+      };
+    });
+    return storeRefundDecisionRefresh(id, action, promise);
+  }
+  window.obAdminGetRefundDecisionRefreshPromise = function(id, action){
+    var entry = refundDecisionRefreshes[refundDecisionKey(id, action)];
+    return entry ? entry.promise : null;
+  };
   window.obAdminApproveRefund = function(id){
     var note = prompt('Admin note for this approval (optional):') || '';
-    api('/admin/refund-requests/' + encodeURIComponent(id) + '/approve', {method:'POST', body:{note:note}}).then(function(){ notify('Refund approved and sent to Stripe.', 'ok'); window.obAdminLoadRefundQueue(); }).catch(function(err){ notify(err.message, 'err'); window.obAdminLoadRefundQueue(); });
+    return runRefundDecision(id, 'approve', {note:note});
   };
   window.obAdminDeclineRefund = function(id){
     var reason = prompt('Reason for declining this refund request:') || '';
-    if(!reason.trim()) return;
-    api('/admin/refund-requests/' + encodeURIComponent(id) + '/decline', {method:'POST', body:{reason:reason}}).then(function(){ notify('Refund request declined.', 'ok'); window.obAdminLoadRefundQueue(); }).catch(function(err){ notify(err.message, 'err'); });
+    if(!reason.trim()) return Promise.resolve({request_id:String(id || ''), action:'decline', success:false, canceled:true});
+    return runRefundDecision(id, 'decline', {reason:reason});
   };
+  var refundQueueNavigationGeneration = 0;
+  function refreshRefundQueueAfterNavigation(navigationPromise){
+    var generation = ++refundQueueNavigationGeneration;
+    return Promise.resolve(navigationPromise).then(function(navigationResult){
+      var navigationInvalid = !navigationResult || navigationResult.applied !== true ||
+        navigationResult.stale || navigationResult.superseded ||
+        navigationResult.render && navigationResult.render.error;
+      if(generation !== refundQueueNavigationGeneration || navigationInvalid) {
+        return {
+          generation:generation,
+          applied:false,
+          stale:generation !== refundQueueNavigationGeneration || !!(navigationResult && navigationResult.stale),
+          error:navigationResult && navigationResult.render && navigationResult.render.error || null,
+          navigation:navigationResult || null,
+          queue:null
+        };
+      }
+      return Promise.resolve(window.obAdminLoadRefundQueue()).then(function(queueResult){
+        return {
+          generation:generation,
+          applied:!!(queueResult && queueResult.applied),
+          stale:generation !== refundQueueNavigationGeneration || !!(queueResult && queueResult.stale),
+          navigation:navigationResult || null,
+          queue:queueResult || null
+        };
+      });
+    }).catch(function(err){
+      return {
+        generation:generation,
+        applied:false,
+        stale:generation !== refundQueueNavigationGeneration,
+        error:String(err && err.message || err || 'Navigation render failed'),
+        navigation:null,
+        queue:null
+      };
+    });
+  }
+  window.obAdminRefreshRefundQueueAfterNavigation = refreshRefundQueueAfterNavigation;
   var previousAdminNav = window.adminNav;
   if(previousAdminNav && !previousAdminNav.__obRefundWrapped){
     window.adminNav = function(el, panel){
-      var out = previousAdminNav.apply(this, arguments);
+      var navigationPromise = previousAdminNav.apply(this, arguments);
       if(panel === 'platform-payments') {
-        window.obAdminRefundQueueNavigationRefresh = new Promise(function(resolve){
-          setTimeout(function(){ resolve(window.obAdminLoadRefundQueue()); }, 600);
-        });
+        var refreshPromise = refreshRefundQueueAfterNavigation(navigationPromise);
+        window.obAdminRefundQueueNavigationRefresh = refreshPromise;
+        return refreshPromise;
       }
-      return out;
+      return navigationPromise;
     };
     window.adminNav.__obRefundWrapped = true;
   }

@@ -36,6 +36,16 @@ const genericWireWsStart = html.indexOf('function wireWs(ws, roleName){');
 const genericWireWsEnd = html.indexOf('\n  window._obRouteWsMessage = routeWsMessage;', genericWireWsStart);
 assert(genericWireWsStart >= 0 && genericWireWsEnd > genericWireWsStart, 'generic WebSocket wiring owner is installed');
 const genericWireWsSource = html.slice(genericWireWsStart, genericWireWsEnd);
+const legacySessionEndedStart = html.indexOf("case 'session_ended': {");
+const legacySessionEndedEnd = html.indexOf("case 'message':", legacySessionEndedStart);
+assert(legacySessionEndedStart >= 0 && legacySessionEndedEnd > legacySessionEndedStart,
+  'legacy session-ended route is present');
+const legacySessionEndedSource = html.slice(legacySessionEndedStart, legacySessionEndedEnd);
+const canonicalClientReceiptStart = html.lastIndexOf('function applyClientReceipt(sess, options){');
+const canonicalClientReceiptEnd = html.indexOf('\n  function showClientReceiptPending(sess){', canonicalClientReceiptStart);
+assert(canonicalClientReceiptStart >= 0 && canonicalClientReceiptEnd > canonicalClientReceiptStart,
+  'canonical client receipt renderer is installed');
+const canonicalClientReceiptSource = html.slice(canonicalClientReceiptStart, canonicalClientReceiptEnd);
 const clientRtcStartOwnerStart = html.indexOf('function settleClientScheduledPreflight(sessionId,transferred){');
 const clientRtcStartOwnerEnd = html.indexOf('\n  function applyClientSessionUi(sess){', clientRtcStartOwnerStart);
 assert(clientRtcStartOwnerStart >= 0 && clientRtcStartOwnerEnd > clientRtcStartOwnerStart,
@@ -395,6 +405,16 @@ assert.match(html, /var pollToken=tok\(\)[\s\S]*clientTokenCurrent\(pollToken\)/
   'pending live-session polling cannot continue across a true identity change');
 assert.match(html, /_obStagingV2ClientToken&&!clientTokenCurrent\(ws\._obStagingV2ClientToken\)/,
   'queued client WebSocket events are bound to the stable client identity');
+assert.match(legacySessionEndedSource, /window\.obApplyAuthoritativeClientEnded\(d\)/,
+  'the legacy peer-ended route delegates receipt rendering to the canonical client owner');
+assert.doesNotMatch(legacySessionEndedSource, /receipt-(?:total|duration|rate)/,
+  'the legacy peer-ended route cannot directly overwrite canonical receipt values');
+assert.match(canonicalClientReceiptSource, /Math\.floor\(dur\/60\)/,
+  'the canonical receipt reports completed whole minutes consistently');
+assert.match(canonicalClientReceiptSource, /setText\('receipt-rate', money\(rate\) \+ '\/min'\)/,
+  'the canonical receipt formats the per-minute rate as currency');
+assert.match(canonicalClientReceiptSource, /window\.obApplyAuthoritativeClientEnded = function\(payload\)/,
+  'all remote session-ended transports can call the canonical client receipt owner');
 
 assert.match(controllerSource, /Session ended - payment failed/,
   'client receipt exposes failed settlement');
@@ -2573,9 +2593,14 @@ async function assertDuplicateStartDuringSfuFailureUsesScheduledHandoff(channel)
     `${channel} duplicate poll keeps every preflight track live during slow SFU preparation`);
 
   sfuSockets[0].fail();
+  await settleAsync();
+  assert.equal(sfuSockets.length, 2, `${channel} performs its one bounded safe SFU connection retry`);
+  assert.equal(underlyingRtcStarts, 1, `${channel} SFU retry remains inside the original RTC start`);
+  assert.equal(mediaRequests, 1, `${channel} SFU retry reuses the exact preflight media`);
+  sfuSockets[1].fail();
   assert.equal(await firstClientStart, true, `${channel} delayed SFU preparation failure reaches peer fallback`);
   assert.equal(await duplicateClientStart, true, `${channel} duplicate poll shares the successful peer fallback result`);
-  assert.equal(sfuSockets.length, 1, `${channel} has one failed SFU preparation attempt`);
+  assert.equal(sfuSockets.length, 2, `${channel} exhausts the initial SFU attempt and its one safe retry`);
   assert.equal(mediaRequests, 1, `${channel} has one total device permission request including preflight`);
   assert.equal(addedStreams.length, tracks.length, `${channel} peer fallback installs every required preflight track`);
   assert(addedStreams.every((entry) => entry.stream === scheduledStream),

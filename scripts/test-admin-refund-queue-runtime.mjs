@@ -20,6 +20,18 @@ const sessionStabilizerSource = html.slice(sessionStabilizerStart, sessionStabil
 assert.doesNotMatch(sessionStabilizerSource, /adminNav\s*:/,
   'session stabilizer timers cannot restore a pre-refund admin navigation snapshot');
 
+const securityNavStart = html.indexOf('  function wireAdmin(){\n    ensureAdminSecurityPanel();');
+const securityNavEnd = html.indexOf('\n\n  function verifyEmailRoute(){', securityNavStart);
+assert(securityNavStart >= 0 && securityNavEnd > securityNavStart,
+  'production security navigation wrapper is present');
+const securityNavSource = html.slice(securityNavStart, securityNavEnd);
+assert.match(securityNavSource, /var result=oldNav&&oldNav\.apply\(this,arguments\);/,
+  'security admin navigation preserves the downstream causal promise');
+assert.match(securityNavSource, /var result=oldTab&&oldTab\.apply\(this,arguments\);/,
+  'security admin tab navigation preserves the downstream return value');
+assert.equal((securityNavSource.match(/return result;/g) || []).length, 2,
+  'both security navigation wrappers return the downstream result');
+
 const apiStart = html.indexOf('  function api(path, opts){', html.indexOf("var API_ROOT = (window.OWNLYBIZ_API_URL"));
 const apiEnd = html.indexOf('\n  function statusLabel', apiStart);
 assert(apiStart >= 0 && apiEnd > apiStart, 'admin refund API helper is present');

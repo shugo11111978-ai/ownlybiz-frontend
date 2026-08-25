@@ -12,6 +12,14 @@ const criticalReinstallerSource = html.slice(criticalReinstallerStart, criticalR
 assert.doesNotMatch(criticalReinstallerSource, /window\.adminNav\s*=/,
   'legacy wrapper timers cannot replace the final admin navigation/refund chain');
 
+const sessionStabilizerStart = html.indexOf('  var installed = {\n    phoneGo: guardedPhoneGo');
+const sessionStabilizerEnd = html.indexOf('\n  function reinstall(){', sessionStabilizerStart);
+assert(sessionStabilizerStart >= 0 && sessionStabilizerEnd > sessionStabilizerStart,
+  'session runtime stabilizer ownership map is present');
+const sessionStabilizerSource = html.slice(sessionStabilizerStart, sessionStabilizerEnd);
+assert.doesNotMatch(sessionStabilizerSource, /adminNav\s*:/,
+  'session stabilizer timers cannot restore a pre-refund admin navigation snapshot');
+
 const apiStart = html.indexOf('  function api(path, opts){', html.indexOf("var API_ROOT = (window.OWNLYBIZ_API_URL"));
 const apiEnd = html.indexOf('\n  function statusLabel', apiStart);
 assert(apiStart >= 0 && apiEnd > apiStart, 'admin refund API helper is present');

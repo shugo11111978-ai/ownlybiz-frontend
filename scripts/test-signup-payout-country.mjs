@@ -21,6 +21,21 @@ assert.match(html, /payout_country:payoutCountry/, 'signup sends payout country 
 assert.match(html, /Choose Starter to submit your account for manual review/, 'the later plan step explains Starter review');
 assert.match(html, /paidBlocked = p\.id !== 'starter'/, 'only paid signup plans are country-gated');
 assert.match(html, /btn\.disabled = paidBlocked/, 'unsupported paid checkout button is disabled');
+assert.match(
+  html,
+  /function requestHeaders\(json, requestOptions\)[\s\S]*?Object\.prototype\.hasOwnProperty\.call\(requestOptions,'token'\)/,
+  'billing requests resolve token overrides from their explicit request-options argument',
+);
+assert.match(
+  html,
+  /requestHeaders\(body !== undefined, opts\)/,
+  'the billing JSON client passes its local request options into header construction',
+);
+assert.doesNotMatch(
+  html,
+  /function headers\(json\)[\s\S]{0,300}?hasOwnProperty\.call\(opts,'token'\)/,
+  'billing header construction cannot capture an out-of-scope opts binding',
+);
 assert.match(html, /\['Payout country', payoutCountry\]/, 'Admin Expert Info shows payout country');
 assert.match(html, /\['Paid plan eligibility', payoutStatus\]/, 'Admin Expert Info shows country eligibility');
 

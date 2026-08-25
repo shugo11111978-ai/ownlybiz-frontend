@@ -4,6 +4,14 @@ import vm from 'node:vm';
 
 const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 
+const criticalReinstallerStart = html.indexOf('function reinstallCriticalWrappers(){');
+const criticalReinstallerEnd = html.indexOf('\n\t  [300,900,1800,3200,5200]', criticalReinstallerStart);
+assert(criticalReinstallerStart >= 0 && criticalReinstallerEnd > criticalReinstallerStart,
+  'legacy critical-wrapper reinstaller is present');
+const criticalReinstallerSource = html.slice(criticalReinstallerStart, criticalReinstallerEnd);
+assert.doesNotMatch(criticalReinstallerSource, /window\.adminNav\s*=/,
+  'legacy wrapper timers cannot replace the final admin navigation/refund chain');
+
 const apiStart = html.indexOf('  function api(path, opts){', html.indexOf("var API_ROOT = (window.OWNLYBIZ_API_URL"));
 const apiEnd = html.indexOf('\n  function statusLabel', apiStart);
 assert(apiStart >= 0 && apiEnd > apiStart, 'admin refund API helper is present');
@@ -26,6 +34,17 @@ const paymentsRendererStateStart = html.indexOf('  var platformPaymentsRenderGen
 assert(paymentsRendererStateStart >= 0 && paymentsRendererStateStart < paymentsRendererStart,
   'Platform Payments render ownership state is present');
 const paymentsRendererRuntimeSource = html.slice(paymentsRendererStateStart, paymentsRendererEnd);
+
+const livePanelEnforcerStart = html.indexOf('  function enforceLiveAdminPanel(){', paymentsRendererEnd);
+const livePanelEnforcerEnd = html.indexOf('\n\n  var previousAdminNav = window.adminNav;', livePanelEnforcerStart);
+assert(livePanelEnforcerStart >= 0 && livePanelEnforcerEnd > livePanelEnforcerStart,
+  'live admin panel enforcer is present');
+const livePanelEnforcerSource = html.slice(livePanelEnforcerStart, livePanelEnforcerEnd);
+assert.match(livePanelEnforcerSource, /if\(needsLiveRender\) renderLivePanel\(panel, false\);/,
+  'legacy-content repair shares the navigation renderer single-flight lifecycle');
+assert.doesNotMatch(livePanelEnforcerSource,
+  /renderPlatformPayments\(\)|renderConnectors\(\)|renderDomains\(\)|renderPayouts\(\)/,
+  'the repair interval cannot directly supersede an in-flight live renderer');
 
 const feeRequests = [];
 const rendererQueueRefreshes = [];

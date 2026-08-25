@@ -26742,8 +26742,6 @@ window._handleRTCMessage=function(d){
 	  var criticalSaveSettingsBlock = window.saveSettingsBlock;
 	  var criticalOpenExpertLivePanel = window.openExpertLivePanel;
 	  var criticalSendExpertMsg = window.sendExpertMsg;
-	  var criticalShowSessionRequest = window.showSessionRequest;
-	  var criticalAdminNav = window.adminNav;
 		  function reinstallCriticalWrappers(){
 		    if(window.saveExpertPricing !== saveRatesFromPricing) window.saveExpertPricing = saveRatesFromPricing;
 		    // Later plan/settings routers own saveSettingsBlock. Reinstalling this
@@ -26753,12 +26751,9 @@ window._handleRTCMessage=function(d){
 	      window.openExpertLivePanel = criticalOpenExpertLivePanel;
 	    }
 	    if(window.sendExpertMsg !== criticalSendExpertMsg && !(window.sendExpertMsg && window.sendExpertMsg.__obOutboxGuarded)) window.sendExpertMsg = criticalSendExpertMsg;
-	    // The final live-flow stabilizer owns showSessionRequest. Reinstalling
-	    // this older wrapper after it loads creates a recursive wrapper loop.
-	    if(window.adminNav !== criticalAdminNav){
-	      _origAdminNavCritical = window.adminNav;
-	      window.adminNav = criticalAdminNav;
-	    }
+	    // Later live-session and admin route runtimes own showSessionRequest and
+	    // adminNav. Reinstalling their legacy wrappers here can sever the final
+	    // navigation/refund chain or create a recursive wrapper loop.
 	    bindExpertChatControls();
 	  }
 	  [300,900,1800,3200,5200].forEach(function(ms){ setTimeout(reinstallCriticalWrappers, ms); });
@@ -49022,10 +49017,15 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     if(!panel) return;
     var node = panelNode(panel);
     var text = node && node.innerText || '';
-    if(panel === 'connectors-admin' && /Zoom connection error|24\s*Total Installed|OAuth token expired/i.test(text)) renderConnectors();
-    if(panel === 'platform-payments' && /You get 20%|Payment Configuration|Per-Session Fee Rates/i.test(text)) renderPlatformPayments();
-    if(panel === 'domain-registry' && /OpenSRS|847\s*Total Domains|Annual Revenue/i.test(text)) renderDomains();
-    if(panel === 'payouts' && /Approve All/i.test(text)) renderPayouts();
+    var needsLiveRender =
+      (panel === 'connectors-admin' && /Zoom connection error|24\s*Total Installed|OAuth token expired/i.test(text)) ||
+      (panel === 'platform-payments' && /You get 20%|Payment Configuration|Per-Session Fee Rates/i.test(text)) ||
+      (panel === 'domain-registry' && /OpenSRS|847\s*Total Domains|Annual Revenue/i.test(text)) ||
+      (panel === 'payouts' && /Approve All/i.test(text));
+    // Repairs and navigation must share one renderer lifecycle. Calling a live
+    // renderer directly here can supersede the exact navigation render while it
+    // is still awaiting its API/queue work.
+    if(needsLiveRender) renderLivePanel(panel, false);
   }
 
   var previousAdminNav = window.adminNav;

@@ -350,4 +350,55 @@ assert.equal(elements.get('receipt-total').textContent, '$1.08');
 assert.equal(rtcCleanups, 3, 'a new active session owns a new terminal cleanup');
 assert.equal(transportResets, 3);
 
+sandbox._obActiveSessId = 'settling-chat-session';
+sandbox._sessId = 'settling-chat-session';
+sandbox._sid = 'settling-chat-session';
+sandbox._obClientSessionSnapshot = {
+  id: 'settling-chat-session', channel: 'chat', started_at: 100,
+  rate_per_min: 0.5, free_minutes: 0,
+};
+const pendingReceipt = sandbox.obApplyAuthoritativeClientEnded({
+  type: 'session_settling',
+  session_id: 'settling-chat-session',
+  settlement_pending: true,
+  billing_stopped: true,
+  session: {
+    id: 'settling-chat-session', status: 'settling', channel: 'chat',
+    rate_per_min: 0.5, free_minutes: 0,
+    settlement_ended_at: 158, settlement_duration_secs: 58,
+    payment_status: 'pending',
+  },
+});
+assert.equal(pendingReceipt.status, 'settling');
+assert.equal(elements.get('receipt-total').textContent, 'Finalizing...');
+assert.equal(elements.get('receipt-duration').textContent, '< 1 min',
+  'the pending receipt uses the immutable settlement duration');
+assert.equal(sandbox._obActiveSessId, 'settling-chat-session',
+  'the pending receipt retains one session id for authoritative final-status polling');
+assert.equal(sandbox._obClientReceiptAuthorityState.settlementPending, true);
+assert.equal(rtcCleanups, 4, 'settlement-pending closes live media immediately');
+assert.equal(transportResets, 4, 'settlement-pending closes live transport immediately');
+assert.equal(authorizationReleases, 4, 'settlement-pending releases local authorization ownership immediately');
+
+sandbox.obApplyAuthoritativeClientEnded({
+  type: 'session_ended',
+  session_id: 'settling-chat-session',
+  session: {
+    id: 'settling-chat-session', status: 'ended', channel: 'chat',
+    rate_per_min: 0.5, free_minutes: 0,
+    total_charged: 0, card_charged: 0,
+    payment_status: 'paid', payout_status: 'below_minimum_waived',
+    settlement_ended_at: 158, settlement_duration_secs: 58,
+  },
+});
+assert.equal(elements.get('receipt-total').textContent, '$0.00');
+assert.equal(elements.get('receipt-duration').textContent, '< 1 min');
+assert.equal(sandbox._obActiveSessId, null, 'final settlement retires the polling session id');
+assert.equal(sandbox._sessId, null);
+assert.equal(sandbox._sid, null);
+assert.equal(sandbox._obClientReceiptAuthorityState.settlementPending, false);
+assert.equal(rtcCleanups, 4, 'the final receipt does not repeat media cleanup');
+assert.equal(transportResets, 4, 'the final receipt does not repeat transport cleanup');
+assert.equal(authorizationReleases, 4, 'the final receipt does not repeat local authorization release');
+
 console.log('client receipt authority smoke: ok');

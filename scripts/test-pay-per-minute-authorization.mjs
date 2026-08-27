@@ -330,6 +330,20 @@ assert.match(controllerSource, /if\(applyBookingLifecycle\(data,\{focus:true\}\)
   'a fresh non-waiting booking lifecycle cannot fall through into payment authorization');
 assert.match(controllerSource, /if\(!response\.ok\)[\s\S]*Could not end this session/,
   'expert End treats non-2xx responses as failures before applying terminal UI state');
+assert.match(controllerSource, /data\.settlement_pending===true[\s\S]*obApplyExpertSettlementPending/,
+  'expert End treats an accepted settlement as billing-stopped finalization instead of a failure');
+assert.match(html, /function applyAuthoritativeClientTerminal\(payload\)[\s\S]*candidate\.status[\s\S]*applyClientSettlementPending/,
+  'client terminal delivery recognizes the server settling state before rendering a final receipt');
+assert.match(html, /function applyClientSettlementPending\(payload,\s*ownership\)[\s\S]*pauseClientTimers\(sess\)[\s\S]*showClientReceiptPending\(sess\)/,
+  'client settlement-pending UI freezes the timer and renders a truthful finalizing receipt');
+assert.match(html, /action === 'stop_one'[\s\S]*\/admin\/observability\/sessions\/' \+ encodeURIComponent\(sessionId\) \+ '\/stop'[\s\S]*required_confirm/,
+  'Ops exposes a target-bound emergency recovery flow for one exact session');
+assert.match(html, /SETTLE_AND_STOP_ACTIVE_SESSIONS[\s\S]*settles accrued usage, retries stuck finalizations/,
+  'bulk emergency stop uses the backend settlement confirmation contract and truthful billing copy');
+assert.match(html, /Server audit recorded:[\s\S]*audit_event_id/,
+  'Ops surfaces the durable server audit result for confirmed emergency actions');
+assert.doesNotMatch(html, /STOP_ACTIVE_SESSIONS_WITHOUT_BILLING|ends active sessions without billing unpaid time/,
+  'the former misleading emergency-stop contract and copy are removed');
 assert.equal((html.match(/window\.expertEndSession\s*=/g) || []).length, 1,
   'one expert End request owner remains');
 assert.equal((html.match(/function expertEndSession\s*\(/g) || []).length, 0,
@@ -430,13 +444,13 @@ const liveRequestHandlerEnd = html.indexOf('window.obCancelWait=function()', liv
 assert(liveRequestHandlerStart >= 0 && liveRequestHandlerEnd > liveRequestHandlerStart,
   'live session response handler is present');
 const liveRequestHandler = html.slice(liveRequestHandlerStart, liveRequestHandlerEnd);
-const liveSuccessGate = liveRequestHandler.indexOf('obClientSessionRequestContinuationAllowed(creditMode,continuationRequestId,t)');
+const liveSuccessGate = liveRequestHandler.indexOf('obClientSessionRequestContinuationAllowed(creditMode,continuationRequestId,t,authorizationRequired)');
 assert(liveSuccessGate >= 0 && liveSuccessGate < liveRequestHandler.indexOf('if(!d._httpOk)') && liveSuccessGate < liveRequestHandler.indexOf('_sessId=d.session.id'),
   'late live-session success and API error responses are rejected before any session or UI mutation');
 assert(liveRequestHandler.includes('discardDetachedClientSession(d,t);return;'),
   'a late successful session response is declined with the originating credential instead of becoming an orphan session');
 const liveCatchStart = liveRequestHandler.lastIndexOf('.catch(function()');
-assert(liveCatchStart >= 0 && liveRequestHandler.indexOf('obClientSessionRequestContinuationAllowed(creditMode,continuationRequestId,t)', liveCatchStart) < liveRequestHandler.indexOf("obCancelWait();alert('Network error", liveCatchStart),
+assert(liveCatchStart >= 0 && liveRequestHandler.indexOf('obClientSessionRequestContinuationAllowed(creditMode,continuationRequestId,t,authorizationRequired)', liveCatchStart) < liveRequestHandler.indexOf("obCancelWait();alert('Network error", liveCatchStart),
   'late live-session network errors are rejected before clearing the current account UI');
 assert.match(controllerSource, /clientContext\.isTokenCurrent\(requestToken\)/,
   'live continuation is bound to the stable authenticated principal that sent the request');
@@ -452,7 +466,7 @@ assert.match(canonicalClientReceiptSource, /Math\.floor\(dur\/60\)/,
   'the canonical receipt reports completed whole minutes consistently');
 assert.match(canonicalClientReceiptSource, /setText\('receipt-rate', money\(rate\) \+ '\/min'\)/,
   'the canonical receipt formats the per-minute rate as currency');
-assert.match(canonicalClientReceiptSource, /window\.obApplyAuthoritativeClientEnded = function\(payload\)/,
+assert.match(canonicalClientReceiptSource, /window\.obApplyAuthoritativeClientEnded=applyAuthoritativeClientTerminal/,
   'all remote session-ended transports can call the canonical client receipt owner');
 
 assert.match(controllerSource, /Session ended - payment failed/,
@@ -4803,6 +4817,47 @@ assert.equal(failedExpertEndButton.disabled, false, 'a failed expert End re-enab
 assert.equal(failedExpertEndButton.textContent, '\u2715 End Session', 'a failed expert End restores its persistent control label');
 assert.equal(failedExpertEndButton.dataset.obEndLabel, undefined, 'a failed expert End releases its control ownership marker');
 
+const pendingExpertEndPayloads = [];
+let pendingExpertEndAppliedAsFinal = 0;
+const pendingExpertEndHarness = createHarness({
+  session: { ob_t: expertToken },
+  fetchImpl: (url, init = {}) => {
+    assert(String(url).includes('/api/sessions/expert-session-settling/end'));
+    assert.equal(init.headers.Authorization, `Bearer ${expertToken}`);
+    return Promise.resolve({
+      ok: true,
+      status: 202,
+      json: async () => ({
+        accepted: true,
+        ended: false,
+        settlement_pending: true,
+        billing_stopped: true,
+        code: 'session_settlement_pending',
+        session: { id: 'expert-session-settling', status: 'settling', settlement_duration_secs: 58 },
+      }),
+    });
+  },
+});
+const pendingExpertEndButton = attachPersistentExpertEndButton(pendingExpertEndHarness);
+pendingExpertEndHarness.sandbox._sessId = 'expert-session-settling';
+pendingExpertEndHarness.sandbox._sid = 'expert-session-settling';
+pendingExpertEndHarness.sandbox._obActiveSessId = 'expert-session-settling';
+pendingExpertEndHarness.sandbox.obApplyAuthoritativeExpertEnded = () => { pendingExpertEndAppliedAsFinal += 1; };
+pendingExpertEndHarness.sandbox.obApplyExpertSettlementPending = (payload) => {
+  pendingExpertEndPayloads.push(payload);
+  pendingExpertEndHarness.sandbox._sessId = null;
+  pendingExpertEndHarness.sandbox._sid = null;
+  pendingExpertEndHarness.sandbox._obActiveSessId = null;
+};
+assert.equal(await pendingExpertEndHarness.sandbox.obPayPerMinuteAuthorizationTestHooks.endExpertSession(), true,
+  'a 202 expert End response is accepted because billing has already stopped');
+assert.equal(pendingExpertEndPayloads.length, 1, 'expert settlement-pending UI is applied exactly once');
+assert.equal(pendingExpertEndPayloads[0].session.id, 'expert-session-settling');
+assert.equal(pendingExpertEndPayloads[0].session.status, 'settling');
+assert.equal(pendingExpertEndAppliedAsFinal, 0, 'pending settlement is not misrepresented as a final payout');
+assert.equal(pendingExpertEndButton.disabled, false, 'accepted settlement releases the persistent End control');
+assert.equal(pendingExpertEndButton.textContent, 'End Session', 'accepted settlement restores the persistent control label');
+
 const successfulExpertEndPayloads = [];
 const successfulExpertEndRequests = [];
 const successfulExpertEndHarness = createHarness({
@@ -5217,7 +5272,7 @@ await assertAuthoritativeScheduledStateSkipsHold({
     authorization_available: true,
     booking: { id: 'booking-authorization-not-required', expert_id: 'expert-scheduled', channel: 'chat', payment_mode: 'minute', booking_type: 'permin' },
   },
-  expectedHeading: 'Payment is already covered',
+  expectedHeading: 'No payment authorization required',
   message: 'a fresh required=false response cannot create a hold from a stale payment button',
 });
 

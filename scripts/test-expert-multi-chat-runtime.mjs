@@ -12,6 +12,7 @@ function scriptById(id) {
 }
 
 const runtimeSource = scriptById('ownlybiz-expert-live-runtime-20260817');
+const settlementTrackerSource = scriptById('ownlybiz-expert-settlement-tracker-20260827');
 assert.equal((html.match(/id="ownlybiz-expert-live-runtime-20260817"/g) || []).length, 1,
   'the expert live runtime is installed exactly once');
 assert.match(runtimeSource, /type:'session_subscribe', session_id:sid/,
@@ -46,8 +47,8 @@ assert.match(html, /if\(k === 'sendExpertMsg' && window\[k\] && window\[k\]\.__o
   'late stabilizer passes preserve the idempotent expert outbox wrapper');
 assert.match(html, /function expertEndResponseOwns\(request\)\{\s*return expertEndControllerOwns\(request\)&&clientContext\.isCurrent\(request\.context\);/,
   'an authoritative End response remains owned after a same-account focus switch');
-assert.match(html, /window\._obExpertRealtime\.ingest\(\{type:'session_ended',session_id:sessionId,session:session\}\);\s*if\(activeExpertSessionIdForEnd\(\)!==sessionId\)return;/,
-  'a background End response updates only the keyed room');
+assert.match(html, /var settlementPending=[^;]+;\s*if\(window\._obExpertRealtime\) window\._obExpertRealtime\.ingest\(\{type:settlementPending\?'session_settling':'session_ended',session_id:sessionId,session:session\}\);\s*if\(settlementPending&&typeof window\.obTrackExpertSettlementFinalization==='function'\)window\.obTrackExpertSettlementFinalization\(session\);\s*if\(activeExpertSessionIdForEnd\(\)!==sessionId\)return;/,
+  'a background End response updates its keyed room and retains settlement finalization after focus changes');
 assert.match(runtimeSource, /BACKEND_TERMINAL_SESSION_STATUSES = \['cancelled','ended','completed','failed','expired','declined','no_show'\]/,
   'the shared terminal predicate exactly matches backend session statuses');
 assert.doesNotMatch(runtimeSource, /BACKEND_TERMINAL_SESSION_STATUSES[^\n]*'canceled'/,
@@ -82,6 +83,10 @@ assert.match(html, /status=active&limit=100&include_messages=0/,
   'room hydration requests metadata only');
 assert.match(html, /function syncExpertSession\(sid\)[\s\S]*?\?include_messages=0/,
   'expert polling does not repeatedly download full chat history');
+assert.match(html, /expert-settlement-finalization[\s\S]*?include_messages=0/,
+  'settlement finalization has its own message-free session detail request');
+assert.match(html, /function applyFinalizedExpertSettlement[\s\S]*?expertRealtime\.ingest\(\{type:'session_ended'[\s\S]*?ownsClearedFinalizingSurface[\s\S]*?obRenderExpertLiveWorkspace\('settlement_finalized'\)/,
+  'a final settlement updates its keyed room and refreshes payout state even when another room owns focus');
 assert.match(html, /function durablePanelMessageKey[\s\S]*?client_message_id[\s\S]*?event_id/,
   'DOM message identity uses durable protocol identifiers');
 assert.doesNotMatch(html.match(/function dedupePanelMessages[\s\S]*?function activeExpertSessionId/)[0], /textContent|msg\.content/,
@@ -191,6 +196,36 @@ class FakeClock {
     this.now = target;
   }
 }
+
+const settlementSandbox={window:null,console,Object,Array,String,Number,Promise,Error,setTimeout,clearTimeout};
+settlementSandbox.window=settlementSandbox;
+vm.createContext(settlementSandbox);
+new vm.Script(settlementTrackerSource,{filename:'expert-settlement-tracker.js'}).runInContext(settlementSandbox);
+const settlementResponses=[
+  {id:'settling-A',status:'settling',settlement_duration_secs:58,expert_earned:0},
+  {id:'settling-A',status:'ended',settlement_duration_secs:58,expert_earned:0.38,payout_status:'paid'},
+];
+const settlementPending=[];const settlementFinal=[];let settlementFocus='settling-A';let settlementReleases=0;
+const settlementTracker=settlementSandbox.OBExpertSettlementTrackerFactory.create({
+  initialDelayMs:60000,
+  capture:(sid)=>({sid,signal:null}),
+  current:()=>true,
+  release:()=>{settlementReleases+=1;},
+  request:async()=>settlementResponses.shift(),
+  isTerminal:(status)=>status==='ended',
+  onPending:(session)=>settlementPending.push({...session}),
+  onFinal:(session)=>settlementFinal.push({focus:settlementFocus,session:{...session}}),
+});
+assert.equal(settlementTracker.track({id:'settling-A',status:'settling',billing_stopped:true}),true);
+settlementFocus='';
+assert.equal(await settlementTracker.pollNow('settling-A'),false,'the first settlement-only read remains pending after live focus is cleared');
+assert.equal(settlementPending.length,1);assert.equal(settlementPending[0].settlement_duration_secs,58);
+assert(settlementTracker.entries['settling-A'],'pending settlement remains independently tracked without live-room ownership');
+assert.equal(await settlementTracker.pollNow('settling-A'),true,'the next authoritative terminal snapshot completes settlement tracking');
+assert.equal(settlementFinal.length,1);assert.equal(settlementFinal[0].focus,'','terminal payout applies after active focus and RTC ownership are gone');
+assert.equal(settlementFinal[0].session.expert_earned,0.38);assert.equal(settlementFinal[0].session.payout_status,'paid');
+assert.equal(settlementTracker.entries['settling-A'],undefined,'terminal settlement releases its tracker');
+assert.equal(settlementReleases,2,'each exact-identity settlement read releases its owner');
 
 function makeDate(clock) {
   const NativeDate = Date;
@@ -464,14 +499,20 @@ assert.equal(runtime.roomsById.C.lastError.client_message_id, 'conflict-id', 'me
 assert(runtime.subscribedRoomIds.has('C'), 'a message-id conflict does not discard the room subscription');
 
 const cleanupBeforeBackgroundEnd = rtc.cleanupCalls;
+socket.receive({type:'session_settling',session_id:'A',event_id:'settling-A',settlement_pending:true,billing_stopped:true,session:{id:'A',status:'settling'}});
+assert.equal(runtime.roomsById.A.terminal, true, 'an off-focus settling event immediately closes the live room');
+assert.equal(runtime.roomsById.A.status, 'settling', 'the room preserves the truthful financial finalization phase');
+assert.equal(runtime.focusedRoomId, 'B', 'an off-focus settling event preserves focus');
+assert.equal(rtc.cleanupCalls, cleanupBeforeBackgroundEnd, 'an off-focus settling event never cleans focused media');
 socket.receive({type:'session_ended',session_id:'A',event_id:'end-A',session:{id:'A',status:'ended'}});
 socket.receive({type:'session_ended',session_id:'A',event_id:'end-A',session:{id:'A',status:'ended'}});
 assert.equal(runtime.roomsById.A.terminal, true, 'an off-focus End marks only that room terminal');
+assert.equal(runtime.roomsById.A.status, 'ended', 'a distinct final event advances settling to ended');
 assert.equal(runtime.focusedRoomId, 'B', 'an off-focus End preserves focus');
 assert.equal(globals._sid, 'B', 'an off-focus End preserves legacy focus globals');
 assert.equal(rtc.cleanupCalls, cleanupBeforeBackgroundEnd, 'an off-focus End never cleans the focused RTC owner');
 assert.equal(sent(socket, 'session_unsubscribe').filter((item) => item.session_id === 'A').length, 1,
-  'a repeated terminal event unsubscribes the ended room once');
+  'settling and repeated final events unsubscribe the ended room once');
 
 socket.receive({type:'typing',session_id:'C',sender_id:'client-c',is_typing:true});
 assert.equal(elements.typing.textContent, '', 'background typing does not render in the focused room');

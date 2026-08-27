@@ -13,33 +13,39 @@ function section(start,end){const left=html.indexOf(start);assert(left>=0,`secti
 
 const source=scriptById('ownlybiz-expert-reply-knowledge-20260817');
 const markup=section('<section id="ob-reply-knowledge-manager"','<div id="ob-expert-ai-settings-host"');
+const legacyGate=section('  var REPLY_ASSISTANT_AUTOMATION_GATE_COPY','  function expertAiChatPanel(){');
 const legacyPanel=section('  function expertAiChatPanel(){','  function expertAiSettingsTab(){');
 const legacyAi=section('  function expertAiPreferenceCard(){','  window.obExpertAiSettingsTab = function(tab){');
 const style=section('<style id="ownlybiz-expert-reply-knowledge-20260817-style">','<script id="ownlybiz-expert-reply-knowledge-20260817">');
 
 assert.match(markup,/id="ob-reply-knowledge-manager"[^>]+hidden/,'private manager starts hidden');
-assert.match(markup,/Phase 5 · Human review only/,'Phase 5 is explicitly human-review only');
-assert.match(markup,/never sends messages automatically[\s\S]*?human expert reviews and sends/,'the private manager makes draft-only behavior explicit');
+assert.match(markup,/Governed · Fail-closed/,'the manager identifies the governed fail-closed release state');
+assert.match(markup,/Automated sending is fail-closed[\s\S]*?every governed gate passes[\s\S]*?human expert reviews and sends/,'the manager explains active automation and its human fallback truthfully');
 for(const id of ['ob-ra-gate-entitlement','ob-ra-gate-expert','ob-ra-gate-training','ob-ra-gate-training-consent','ob-ra-gate-auto-send'])assert.match(markup,new RegExp(`id="${id}"`),`${id} is a separate visible state`);
 assert.match(markup,/id="ob-ra-training-consent"[^>]+disabled[\s\S]*?document <b id="ob-ra-training-version"/,'training consent is explicit and version-labelled');
-assert.match(markup,/id="ob-ra-auto-send-consent"[^>]+disabled[\s\S]*?Store future auto-send consent \(inactive in Phase 5\)[\s\S]*?id="ob-ra-auto-send-version"[\s\S]*?Effective auto-send remains false in Phase 5/,'auto-send consent is stored separately but cannot become effective in Phase 5');
+assert.match(markup,/id="ob-ra-auto-send-consent"[^>]+disabled[\s\S]*?Allow governed auto-send when every gate passes[\s\S]*?id="ob-ra-auto-send-version"[\s\S]*?Consent is necessary but not sufficient[\s\S]*?Any failed gate returns replies to human review/,'auto-send consent is separate and explicitly fail-closed');
 assert.match(markup,/Revoking consent stops creation and retrieval immediately/,'revocation effect is explained');
 assert.match(markup,/id="ob-ra-manual-content"[^>]+maxlength="6000"/,'manual input matches the 6,000-code-point server bound');
 assert.match(markup,/role="alertdialog"[^>]+aria-modal="true"/,'delete-all uses an accessible confirmation dialog');
 assert.match(markup,/id="ob-ra-expert-guidance"[^>]+maxlength="8000"/,'existing expert-written guidance remains available');
 assert.match(markup,/stays separate from training consent and reviewed knowledge/,'expert-written guidance is not presented as learned knowledge');
 assert.doesNotMatch(legacyAi,/learned_guidance|Learned notes|clear_learned_guidance|obExpertAiClearLearnedGuidance/,'opaque legacy learning is not rendered or mutated');
-assert.match(legacyPanel,/autoReplyEffective = false[\s\S]*?Phase 5 human-review drafts only/,'legacy compact AI status cannot claim that Phase 5 sends replies');
-assert.match(legacyAi,/autoReplyEffective = false[\s\S]*?Fully AI selected · Phase 5 still requires human review and send/,'legacy Fully AI status remains draft-only in Phase 5');
-assert.match(legacyAi,/autoEffective \? 'New chat requests start automatically[\s\S]*?replyModeText/,'chat-request auto-accept copy remains separate from automated message sending');
+const automationReasons=['reply_assistant_provider_authority_unavailable','reply_assistant_capacity_rollout_not_enforced','reply_assistant_expert_inactive','reply_assistant_entitlement_required','reply_assistant_training_entitlement_required','reply_assistant_disabled','reply_assistant_training_consent_required','reply_assistant_auto_send_consent_required','reply_assistant_approved_source_required','reply_assistant_admin_ai_disabled','reply_assistant_expert_ai_disabled','reply_assistant_fully_ai_mode_required','reply_assistant_auto_accept_required','reply_assistant_ai_capacity_unavailable'];
+for(const reason of automationReasons)assert.match(legacyGate,new RegExp(reason),`${reason} has bounded expert-facing copy`);
+assert.match(legacyGate,/reply_assistant_auto_send_effective === true[\s\S]*?reply-assistant-automation-v1[\s\S]*?automation_gate_reason === null[\s\S]*?automation_lane === 'ai'/,'compact AI status requires the complete effective gate envelope');
+assert.match(legacyPanel,/autoReplyEffective = replyAssistantAutomationEffective\(d\)[\s\S]*?governed auto-replies active[\s\S]*?human review[\s\S]*?waiting:/,'compact AI status renders active and fail-closed waiting states from backend authority');
+assert.match(legacyAi,/autoReplyEffective = replyAssistantAutomationEffective\(d\)[\s\S]*?governed auto-replies active[\s\S]*?human review · waiting:/,'Fully AI preferences reflect the governed gate instead of a hardcoded release phase');
+assert.match(legacyPanel+legacyAi,/autoAvailable = d\.auto_accept_chat_available === true[\s\S]*?autoDisabled = autoAvailable \? '' : 'disabled'/,'auto-accept controls use the server-owned non-circular availability field');
+assert.match(legacyAi,/autoEffective[\s\S]*?new chat requests start automatically and governed replies may send[\s\S]*?Requested · waiting:/,'chat auto-accept distinguishes effective, requested, and waiting states');
+assert.doesNotMatch(markup+legacyPanel+legacyAi,/Phase 5|inactive in Phase 5|never sends messages automatically/,'the current UI contains no stale Phase 5 automation claims');
 assert.doesNotMatch(source,/\.innerHTML\s*=|insertAdjacentHTML|outerHTML/,'private sources are never projected through HTML parsing');
 assert.match(source,/content\.textContent=source\.content/,'allowlisted source content is rendered as text');
-assert.match(source,/API='\/api\/ai\/reply-assistant'/,'private routes share the frozen Phase 5 base');
+assert.match(source,/API='\/api\/ai\/reply-assistant'/,'private routes share one governed API base');
 assert.match(source,/expected_revision:state\.controls\.revision/,'controls use exact revision CAS');
 assert.match(source,/confirmation:'DELETE_REPLY_ASSISTANT_SOURCE'/,'single-source deletion uses the frozen confirmation');
 assert.match(source,/confirmation:'DELETE_ALL_REPLY_ASSISTANT_KNOWLEDGE'/,'delete-all uses the frozen confirmation');
 assert.match(source,/normalizeExport\(data\)/,'downloads serialize only the normalized export');
-assert.match(source,/automated_send_authorized[\s\S]*automated_send_gate_snapshot[\s\S]*automated_send_training_gate[\s\S]*automated_send_consent_gate[\s\S]*automated_send_source_gate/,'export allowlist accepts the Phase 5 gate snapshot reason and legacy reasons without adding payload fields');
+assert.match(source,/automated_send_authorized[\s\S]*automated_send_gate_snapshot[\s\S]*automated_send_training_gate[\s\S]*automated_send_consent_gate[\s\S]*automated_send_source_gate/,'export allowlist accepts the governed gate snapshot and legacy audit reasons without adding payload fields');
 assert.match(source,/source_limit_reached[\s\S]*?maximum 200 knowledge sources/,'the bounded source ceiling error is allowlisted without projecting backend details');
 assert.match(source,/mutation_rate_limited[\s\S]*?Too many Reply Assistant changes were made recently/,'429 mutation throttles use a bounded safe message');
 assert.match(source,/data\.sources\.length>400/,'manager source reads enforce the final 400-row boundary before mapping');
@@ -50,6 +56,15 @@ assert.doesNotMatch(source,/FileReader|FormData|input[^\n]+type=['"]file|dataTra
 assert.match(style,/\.ob-ra-button\{min-height:44px/,'buttons meet the touch-target floor');
 assert.match(style,/@media\(max-width:768px\)[\s\S]*?font-size:16px/,'mobile form controls avoid viewport zoom');
 assert.match(style,/:focus-visible/,'keyboard focus remains visible');
+
+const legacyGateSandbox={window:null,Object,String};legacyGateSandbox.window=legacyGateSandbox;
+vm.createContext(legacyGateSandbox);
+new vm.Script(`${legacyGate}\nwindow.__gateEffective=replyAssistantAutomationEffective;`,{filename:'expert-ai-governed-status.js'}).runInContext(legacyGateSandbox);
+const readyStatus={reply_assistant_auto_send_effective:true,reply_assistant_automation_gate_version:'reply-assistant-automation-v1',reply_assistant_automation_gate_reason:null,reply_assistant_automation_lane:'ai'};
+assert.equal(legacyGateSandbox.__gateEffective(readyStatus),true,'the exact all-ready expert status activates governed replies');
+assert.equal(legacyGateSandbox.__gateEffective({...readyStatus,reply_assistant_automation_lane:'human'}),false,'a contradictory lane fails closed');
+assert.equal(legacyGateSandbox.__gateEffective({...readyStatus,reply_assistant_automation_gate_version:'future-version'}),false,'an unknown gate contract fails closed');
+assert.equal(legacyGateSandbox.obReplyAssistantAutomationGateText('RAW_PROVIDER_DETAIL'),'Governed auto-replies are waiting for all safety checks.','raw or unknown status reasons never reach the compact UI');
 
 class FakeElement{
   constructor(tagName,ownerDocument){this.tagName=String(tagName||'div').toUpperCase();this.ownerDocument=ownerDocument;this.children=[];this.parentNode=null;this.attributes=new Map();this.listeners=new Map();this.style={};this.dataset={};this.hidden=false;this.disabled=false;this.checked=false;this.value='';this._text='';this.id='';this.className='';this.clicked=false;}
@@ -91,7 +106,7 @@ class FakeBlob{constructor(parts,options){this.parts=parts;this.type=options&&op
 
 function deferred(){let resolve,reject;const promise=new Promise((res,rej)=>{resolve=res;reject=rej;});return {promise,resolve,reject};}
 function response(body,status=200){return {ok:status>=200&&status<300,status,json:async()=>body};}
-function controls(overrides={}){return {success:true,controls:{reply_assistant_enabled:false,training_consent:false,training_consent_version:null,current_training_consent_version:'training-v1',training_consented_at:null,training_revoked_at:null,auto_send_consent:false,auto_send_consent_version:null,current_auto_send_consent_version:'auto-v1',auto_send_consented_at:null,auto_send_revoked_at:null,retention_days:30,revision:1,...overrides.controls},entitlements:{reply_assistant_enabled:true,training_enabled:true,revision:1,...overrides.entitlements},effective:{draft_available:false,training_available:false,auto_send_available:false,...overrides.effective}};}
+function controls(overrides={}){return {success:true,controls:{reply_assistant_enabled:false,training_consent:false,training_consent_version:null,current_training_consent_version:'training-v1',training_consented_at:null,training_revoked_at:null,auto_send_consent:false,auto_send_consent_version:null,current_auto_send_consent_version:'auto-v1',auto_send_consented_at:null,auto_send_revoked_at:null,retention_days:30,revision:1,...overrides.controls},entitlements:{reply_assistant_enabled:true,training_enabled:true,revision:1,...overrides.entitlements},effective:{draft_available:false,training_available:false,auto_send_available:false,automation_gate_version:'reply-assistant-automation-v1',automation_gate_reason:'reply_assistant_disabled',automation_lane:'human',...overrides.effective}};}
 function opaqueToken(label='snapshot'){return `${String(label).replace(/[^A-Za-z0-9_-]/g,'_').padEnd(20,'x')}.${'a'.repeat(64)}`;}
 function exportEnvelope({exportedAt=1700000500,token=opaqueToken(),sources=[],audit=[],sourceMore=false,sourceAt=null,sourceId=null,auditMore=false,auditAt=null,auditId=null,reason}={}){
   const rows=reason&&audit.length===0?[{id:'audit-gate',actor_role:'system',target_type:'controls',target_id:null,action:'automated_send_authorized',reason_code:reason,previous_revision:null,new_revision:1,previous_status:null,new_status:null,consent_document_version:null,source_kind:null,content_changed:false,created_at:1700000400}]:audit;
@@ -142,8 +157,15 @@ for(const call of primary.calls){assert.equal(call.options.headers.Authorization
 assert.equal(primary.manager.hidden,false);assert.equal(primary.manager.getAttribute('aria-busy'),'false');assert.equal(primary.hooks.state.loaded,true);assert.equal(primary.hooks.state.loading,false);
 assert.equal(primary.document.getElementById('ob-ra-enabled').checked,false);assert.equal(primary.document.getElementById('ob-ra-training-consent').checked,false);assert.equal(primary.document.getElementById('ob-ra-auto-send-consent').checked,false);
 assert.equal(primary.document.getElementById('ob-ra-training-version').textContent,'training-v1');assert.equal(primary.document.getElementById('ob-ra-auto-send-version').textContent,'auto-v1');
-assert.match(primary.document.getElementById('ob-ra-auto-send-status').textContent,/inactive in Phase 5/);
-assert.throws(()=>primary.hooks.parseControls(controls({effective:{auto_send_available:true}})),(error)=>error&&error.code==='reply_assistant_invalid_response','Phase 5 rejects any server envelope that claims auto-send is effective');
+assert.match(primary.document.getElementById('ob-ra-auto-send-status').textContent,/waiting: Enable Reply Assistant/);
+for(const reason of automationReasons){const message=primary.hooks.automationGateText(reason);assert(message&&message!==reason,`${reason} maps to bounded copy`);assert(!message.includes('reply_assistant_'),`${reason} is never exposed verbatim`);}
+assert.equal(primary.hooks.automationGateText('RAW_UNKNOWN_SERVER_REASON'),'Governed auto-replies are waiting for all safety checks.','unknown backend reasons use bounded generic copy');
+const allReady=primary.hooks.parseControls(controls({controls:{reply_assistant_enabled:true,training_consent:true,training_consent_version:'training-v1',training_consented_at:1700001000,auto_send_consent:true,auto_send_consent_version:'auto-v1',auto_send_consented_at:1700001001},effective:{draft_available:true,training_available:true,auto_send_available:true,automation_gate_reason:null,automation_lane:'ai'}}));
+assert.equal(allReady.effective.autoSendAvailable,true);assert.equal(allReady.effective.automationLane,'ai');
+primary.hooks.renderControls(allReady);assert.match(primary.document.getElementById('ob-ra-auto-send-status').textContent,/^Active · auto-v1$/,'all-ready envelope renders active auto-send');
+assert.throws(()=>primary.hooks.parseControls(controls({effective:{auto_send_available:true,automation_gate_reason:'reply_assistant_disabled',automation_lane:'human'}})),(error)=>error&&error.code==='reply_assistant_invalid_response','inconsistent effective envelope fails closed');
+assert.throws(()=>primary.hooks.parseControls(controls({effective:{automation_gate_reason:'RAW_UNKNOWN_SERVER_REASON'}})),(error)=>error&&error.code==='reply_assistant_invalid_response','unknown gate reasons cannot reach private UI');
+primary.hooks.renderControls(primary.hooks.parseControls(controls()));
 for(const label of ['Pending review','Approved for drafts','Rejected','Quarantined','Expired','Deleted'])assert.match(primary.sourceList.textContent,new RegExp(label));
 assert.match(primary.sourceList.textContent,/Literal <b>guidance<\/b>/,'markup-like source text remains literal text');
 assert.doesNotMatch(primary.sourceList.textContent,/RAW_QUARANTINE_CONTENT|RAW_EXPIRED_CONTENT|RAW_DELETED_CONTENT/,'inactive unsafe or deleted content never reaches the DOM');

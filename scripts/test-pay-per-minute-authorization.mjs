@@ -21,6 +21,41 @@ const authContextStart = html.indexOf('window.obAuthPrincipalFingerprint =');
 const authContextEnd = html.indexOf('window.obPublicLoaderCanFetchProfile =', authContextStart);
 assert(authContextStart >= 0 && authContextEnd > authContextStart, 'central client identity context is installed');
 const authContextSource = html.slice(authContextStart, authContextEnd);
+const publicExpertCacheStart = html.indexOf('(function(){\n  if(window.__obPublicExpertFetchCoalescer');
+const publicExpertCacheEndMarker = '\n})();';
+const publicExpertCacheEnd = html.indexOf(publicExpertCacheEndMarker, publicExpertCacheStart);
+assert(publicExpertCacheStart >= 0 && publicExpertCacheEnd > publicExpertCacheStart,
+  'principal-scoped public-expert fetch cache is installed');
+const publicExpertCacheSource = html.slice(
+  publicExpertCacheStart,
+  publicExpertCacheEnd + publicExpertCacheEndMarker.length,
+);
+const publicExpertLoaderEnd = html.indexOf('\n// --- Start live poll on expert public pages ---', publicExpertCacheEnd);
+const publicExpertLoaderStart = html.lastIndexOf('window.loadExpertWebsite = function(slug)', publicExpertLoaderEnd);
+assert(publicExpertLoaderStart >= 0 && publicExpertLoaderEnd > publicExpertLoaderStart,
+  'principal-scoped public-expert loader is installed');
+const publicExpertHelpersStart = html.indexOf('function obPublicPreloadedExpert(slug)', publicExpertCacheEnd);
+assert(publicExpertHelpersStart >= 0 && publicExpertHelpersStart < publicExpertLoaderStart,
+  'public-expert loader helpers are installed');
+const publicExpertHelpersSource = html.slice(publicExpertHelpersStart, publicExpertLoaderStart);
+const publicExpertLoaderSource = html.slice(publicExpertLoaderStart, publicExpertLoaderEnd);
+const storedPublicExpertCacheStart = html.indexOf('function publicExpertPayloadOwner()');
+const storedPublicExpertCacheEnd = html.indexOf('function wrapPublicRenderers()', storedPublicExpertCacheStart);
+assert(storedPublicExpertCacheStart >= 0 && storedPublicExpertCacheEnd > storedPublicExpertCacheStart,
+  'principal-owned stored public-expert cache is installed');
+const storedPublicExpertCacheSource = html.slice(storedPublicExpertCacheStart, storedPublicExpertCacheEnd);
+assert(html.includes('if(publicExpertPayloadOwner() !== renderOwner) return;'),
+  'delayed public-expert render callbacks are fenced to their originating principal');
+const stagingAuthKeyStart = html.indexOf('function authKey(input, init)');
+const stagingAuthKeyEnd = html.indexOf('function readUrl(input)', stagingAuthKeyStart);
+assert(stagingAuthKeyStart >= 0 && stagingAuthKeyEnd > stagingAuthKeyStart,
+  'staging hot-GET cache reads authorization from Request and init headers');
+const stagingAuthKeySource = html.slice(stagingAuthKeyStart, stagingAuthKeyEnd);
+const publicGateCacheStart = html.indexOf('var publicGate = { pending:{}, allowed:{}, blocked:{}, inFlight:{}, payload:{} };');
+const publicGateCacheEnd = html.indexOf('\n  function apiBase(){', publicGateCacheStart);
+assert(publicGateCacheStart >= 0 && publicGateCacheEnd > publicGateCacheStart,
+  'expert-funnel public-gate payload cache has a principal owner');
+const publicGateCacheSource = html.slice(publicGateCacheStart, publicGateCacheEnd);
 const clientAuthUiStart = html.indexOf('var _clientUser = null;');
 const clientAuthUiEnd = html.indexOf('\nfunction toggleClientMenu()', clientAuthUiStart);
 assert(clientAuthUiStart >= 0 && clientAuthUiEnd > clientAuthUiStart, 'client profile identity owner is installed');
@@ -597,6 +632,9 @@ function createHarness({
     localStorage: storage(),
     URLSearchParams,
     URL,
+    Headers,
+    Request,
+    Response,
     atob,
     Uint8Array,
     crypto: { getRandomValues(array) { for (let i = 0; i < array.length; i += 1) array[i] = (i * 29 + 7) & 255; return array; } },
@@ -2018,6 +2056,207 @@ crossTabHarness.dispatchStorage('ob_t', null);
 await settleAsync();
 assert.equal(crossTabSocketCloses, 2, 'repeated logged-out storage events are idempotent');
 assert.equal(crossTabHarness.sandbox.OB_CLIENT_CONTEXT.token(), '', 'cross-tab logout leaves the central context empty');
+
+// Personalized public-expert responses are cached per stable principal. A cross-tab
+// A -> B switch and logout invalidate both authenticated cache representations, while
+// a same-principal credential rotation may retain the already isolated response.
+const publicCacheNativeRequests = [];
+const publicCacheHarness = createHarness({ session: { ob_t: clientAToken }, fetchImpl: async (url, init = {}) => {
+  const requestUrl = String(url);
+  if(!requestUrl.includes('/api/experts/public-cache-expert')) {
+    return new Response(JSON.stringify({}), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  }
+  const authorization = String(init.headers?.Authorization || '');
+  publicCacheNativeRequests.push({ url: requestUrl, authorization });
+  const personalizedFor = authorization === `Bearer ${clientAToken}` ? 'client-a'
+    : authorization === `Bearer ${clientBToken}` || authorization === `Bearer ${clientBRotatedToken}` ? 'client-b'
+      : 'public';
+  return new Response(JSON.stringify({ expert: {
+    id: 'expert-public-cache', name: 'Public Cache Expert', slug: 'public-cache-expert', personalized_for: personalizedFor,
+    chat_free_min_available: personalizedFor === 'client-a' ? 11 : personalizedFor === 'client-b' ? 22 : 15,
+  } }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+} });
+publicCacheHarness.sandbox.obPublicSlugBackoff = { blocked: () => null, mark: () => {}, clear: () => {} };
+new vm.Script(publicExpertCacheSource, { filename: 'public-expert-principal-cache.js' }).runInContext(publicCacheHarness.sandbox);
+const publicExpertEndpoint = 'https://staging.example/api/experts/public-cache-expert';
+const publicCacheA = await publicCacheHarness.sandbox.fetch(publicExpertEndpoint, {
+  headers: { Authorization: `Bearer ${clientAToken}` },
+}).then((response) => response.json());
+assert.equal(publicCacheA.expert.personalized_for, 'client-a');
+await changeAuth(publicCacheHarness, clientBToken);
+const publicCacheB = await publicCacheHarness.sandbox.fetch(publicExpertEndpoint, {
+  headers: { Authorization: `Bearer ${clientBToken}` },
+}).then((response) => response.json());
+assert.equal(publicCacheB.expert.personalized_for, 'client-b', 'client B cannot receive client A cached personalization');
+assert.equal(publicCacheNativeRequests.length, 2, 'A -> B identity change requires a new upstream public-expert request');
+const publicCacheBeforeRotation = publicCacheHarness.sandbox.OB_CLIENT_CONTEXT.capture('public-cache-before-rotation');
+await changeAuth(publicCacheHarness, clientBRotatedToken);
+const publicCacheAfterRotation = publicCacheHarness.sandbox.OB_CLIENT_CONTEXT.capture('public-cache-after-rotation');
+assert.equal(publicCacheAfterRotation.principal, publicCacheBeforeRotation.principal,
+  'credential rotation retains the same public-expert principal key');
+assert.equal(publicCacheAfterRotation.identityGeneration, publicCacheBeforeRotation.identityGeneration,
+  'credential rotation retains the public-expert identity generation');
+const publicCacheBRotated = await publicCacheHarness.sandbox.fetch(publicExpertEndpoint, {
+  headers: { Authorization: `Bearer ${clientBRotatedToken}` },
+}).then((response) => response.json());
+assert.equal(publicCacheBRotated.expert.personalized_for, 'client-b');
+assert.equal(publicCacheNativeRequests.length, 2,
+  `same-principal credential rotation preserves the isolated cache entry: ${JSON.stringify(publicCacheNativeRequests)}`);
+await changeAuth(publicCacheHarness, null);
+const publicCacheAnonymous = await publicCacheHarness.sandbox.fetch(publicExpertEndpoint).then((response) => response.json());
+assert.equal(publicCacheAnonymous.expert.personalized_for, 'public');
+assert.equal(publicCacheNativeRequests.length, 3, 'logout cannot reuse the authenticated principal response');
+
+// Request init headers replace Request headers. An explicit empty replacement must
+// not inherit the original Request bearer or join its personalized cache entry.
+const publicOverrideNativeRequests = [];
+const publicOverrideHarness = createHarness({ session: { ob_t: clientAToken }, fetchImpl: async (input, init = {}) => {
+  const requestUrl = typeof input === 'string' ? input : String(input?.url || '');
+  const effectiveHeaders = init.headers !== undefined ? init.headers : input?.headers;
+  const authorization = new Headers(effectiveHeaders || {}).get('Authorization') || '';
+  publicOverrideNativeRequests.push({ url: requestUrl, authorization });
+  const personalizedFor = authorization === `Bearer ${clientAToken}` ? 'client-a' : 'public';
+  return new Response(JSON.stringify({ expert: {
+    id: 'expert-public-cache', name: 'Public Cache Expert', slug: 'public-cache-expert', personalized_for: personalizedFor,
+    chat_free_min_available: personalizedFor === 'client-a' ? 11 : 15,
+  } }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+} });
+publicOverrideHarness.sandbox.obPublicSlugBackoff = { blocked: () => null, mark: () => {}, clear: () => {} };
+new vm.Script(publicExpertCacheSource, { filename: 'public-expert-request-header-override.js' })
+  .runInContext(publicOverrideHarness.sandbox);
+await publicOverrideHarness.sandbox.fetch(publicExpertEndpoint, {
+  headers: { Authorization: `Bearer ${clientAToken}` },
+});
+const requestWithClientAHeader = new Request(publicExpertEndpoint, {
+  headers: { Authorization: `Bearer ${clientAToken}` },
+});
+const explicitlyAnonymousResponse = await publicOverrideHarness.sandbox.fetch(requestWithClientAHeader, { headers: {} })
+  .then((response) => response.json());
+assert.equal(explicitlyAnonymousResponse.expert.personalized_for, 'public',
+  'explicit init headers replace Request authorization instead of inheriting client A');
+assert.deepEqual(publicOverrideNativeRequests.map((request) => request.authorization), [`Bearer ${clientAToken}`, ''],
+  'the explicit anonymous override cannot join client A cached personalization');
+
+// The delayed sessionStorage fallback is principal-owned too. Identity changes clear
+// it, and even a manually reintroduced stale record cannot be applied under client B.
+const storedPayloadHarness = createHarness({ session: { ob_t: clientAToken } });
+storedPayloadHarness.sandbox.obPublicSlugBackoff = { blocked: () => null, mark: () => {}, clear: () => {} };
+new vm.Script(publicExpertCacheSource, { filename: 'stored-public-expert-cache-identity.js' }).runInContext(storedPayloadHarness.sandbox);
+storedPayloadHarness.sandbox.isPublicExpertRoute = () => true;
+storedPayloadHarness.sandbox.currentPublicSlug = () => 'public-cache-expert';
+storedPayloadHarness.sandbox.sanitizePlaceholders = () => {};
+storedPayloadHarness.sandbox.applyAvailability = () => {};
+const storedPayloadApplications = [];
+storedPayloadHarness.sandbox._applyExpertWebsite = (expert) => { storedPayloadApplications.push(expert.personalized_for); };
+new vm.Script(storedPublicExpertCacheSource, { filename: 'stored-public-expert-principal-owner.js' }).runInContext(storedPayloadHarness.sandbox);
+storedPayloadHarness.sandbox.storeExpertPayload({
+  id: 'expert-public-cache', name: 'Public Cache Expert', slug: 'public-cache-expert',
+  personalized_for: 'client-a', chat_free_min_available: 11,
+});
+const storedClientARecord = storedPayloadHarness.sandbox.sessionStorage.getItem('ob_last_expert_payload');
+assert(storedClientARecord, 'client A stored fallback is written with explicit ownership');
+await changeAuth(storedPayloadHarness, clientBToken);
+assert.equal(storedPayloadHarness.sandbox.sessionStorage.getItem('ob_last_expert_payload'), null,
+  'A -> B identity change clears the stored public-expert fallback');
+storedPayloadHarness.sandbox.sessionStorage.setItem('ob_last_expert_payload', storedClientARecord);
+storedPayloadHarness.sandbox.applyCachedExpert();
+assert.deepEqual(storedPayloadApplications, [], 'client B rejects a stale client A stored fallback');
+
+// The later expert-funnel gate has its own payload cache. It must retain data
+// across a credential refresh for the same client, but never across A -> B or logout.
+const publicGatePayloadHarness = createHarness({ session: { ob_t: clientAToken } });
+new vm.Script(publicGateCacheSource, { filename: 'public-gate-principal-payload.js' })
+  .runInContext(publicGatePayloadHarness.sandbox);
+const gateClientAExpert = {
+  id: 'expert-public-cache', name: 'Public Cache Expert', slug: 'public-cache-expert',
+  personalized_for: 'client-a', chat_free_min_available: 11,
+};
+publicGatePayloadHarness.sandbox.setPublicGatePayload('public-cache-expert', gateClientAExpert);
+assert.equal(publicGatePayloadHarness.sandbox.getPublicGatePayload('public-cache-expert').personalized_for, 'client-a');
+await changeAuth(publicGatePayloadHarness, clientARotatedToken);
+assert.equal(publicGatePayloadHarness.sandbox.getPublicGatePayload('public-cache-expert').personalized_for, 'client-a',
+  'same-principal credential rotation preserves the public-gate payload');
+await changeAuth(publicGatePayloadHarness, clientBToken);
+assert.equal(publicGatePayloadHarness.sandbox.getPublicGatePayload('public-cache-expert'), null,
+  'client B cannot receive client A public-gate personalization');
+publicGatePayloadHarness.sandbox.setPublicGatePayload('public-cache-expert', {
+  ...gateClientAExpert, personalized_for: 'client-b', chat_free_min_available: 22,
+});
+await changeAuth(publicGatePayloadHarness, null);
+assert.equal(publicGatePayloadHarness.sandbox.getPublicGatePayload('public-cache-expert'), null,
+  'logout cannot receive the authenticated public-gate payload');
+
+const stagingAuthKeySandbox = { Headers, Request };
+vm.createContext(stagingAuthKeySandbox);
+new vm.Script(stagingAuthKeySource, { filename: 'staging-request-auth-key.js' }).runInContext(stagingAuthKeySandbox);
+const stagedRequest = new Request(publicExpertEndpoint, { headers: { Authorization: 'Bearer request-object-token' } });
+assert.equal(stagingAuthKeySandbox.authKey(stagedRequest), 'Bearer request-object-token',
+  'staging cache isolates Request-object authorization instead of treating it as public');
+assert.equal(stagingAuthKeySandbox.authKey(stagedRequest, { headers: {} }), '',
+  'staging cache treats explicit init headers as a replacement for Request headers');
+assert.equal(stagingAuthKeySandbox.authKey(stagedRequest, { headers: null }), null,
+  'invalid explicit init headers bypass the staging cache and reach native fetch validation');
+assert.match(html, /var key = cacheKey\(url, input, init\);\s*if\(key === null\) return sourceFetch\(input, init\);/,
+  'the staging hot-GET owner cannot satisfy an invalid headers override from cache');
+
+// A response already in flight when the account changes is ignored before it can be
+// inserted or applied. The lifecycle owner immediately starts a current-principal reload.
+const pendingPublicExpertResponses = new Map();
+const publicLoaderNativeRequests = [];
+const publicLoaderHarness = createHarness({ session: { ob_t: clientAToken }, fetchImpl: (url, init = {}) => {
+  const requestUrl = String(url);
+  if(!requestUrl.includes('/api/experts/public-cache-expert')) {
+    return Promise.resolve(new Response(JSON.stringify({}), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+  }
+  const authorization = String(init.headers?.Authorization || '');
+  publicLoaderNativeRequests.push({ url: requestUrl, authorization });
+  return new Promise((resolve) => { pendingPublicExpertResponses.set(authorization, resolve); });
+} });
+publicLoaderHarness.sandbox.obPublicSlugBackoff = { blocked: () => null, mark: () => {}, clear: () => {} };
+publicLoaderHarness.sandbox.__obPublicExpertLoadState = { inFlight: {}, recent: {} };
+new vm.Script(publicExpertCacheSource, { filename: 'public-expert-principal-cache-loader-harness.js' }).runInContext(publicLoaderHarness.sandbox);
+new vm.Script(publicExpertHelpersSource, { filename: 'public-expert-loader-helpers.js' }).runInContext(publicLoaderHarness.sandbox);
+publicLoaderHarness.sandbox._browseExpert = 'public-cache-expert';
+publicLoaderHarness.sandbox._markRouteLoading = () => {};
+publicLoaderHarness.sandbox._markRouteReady = () => {};
+const appliedPublicExpertPrincipals = [];
+publicLoaderHarness.sandbox.obApplyPublicExpertPayload = (expert, slug) => {
+  appliedPublicExpertPrincipals.push(expert.personalized_for || 'public');
+  publicLoaderHarness.sandbox._currentExpert = expert;
+  publicLoaderHarness.sandbox._currentExpertSlug = slug;
+  return expert;
+};
+new vm.Script(publicExpertLoaderSource, { filename: 'public-expert-principal-loader.js' }).runInContext(publicLoaderHarness.sandbox);
+const staleClientALoad = publicLoaderHarness.sandbox.loadExpertWebsite('public-cache-expert');
+await settleAsync();
+assert(pendingPublicExpertResponses.has(`Bearer ${clientAToken}`), 'client A public-expert request is in flight');
+await changeAuth(publicLoaderHarness, clientBToken);
+assert(pendingPublicExpertResponses.has(`Bearer ${clientBToken}`), 'identity change starts a fresh client B request');
+pendingPublicExpertResponses.get(`Bearer ${clientAToken}`)(new Response(JSON.stringify({ expert: {
+  id: 'expert-public-cache', name: 'Public Cache Expert', slug: 'public-cache-expert',
+  personalized_for: 'client-a', chat_free_min_available: 11,
+} }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+await staleClientALoad;
+assert.deepEqual(appliedPublicExpertPrincipals, [], 'stale in-flight client A payload is ignored after the switch');
+pendingPublicExpertResponses.get(`Bearer ${clientBToken}`)(new Response(JSON.stringify({ expert: {
+  id: 'expert-public-cache', name: 'Public Cache Expert', slug: 'public-cache-expert',
+  personalized_for: 'client-b', chat_free_min_available: 22,
+} }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+await settleAsync(32);
+assert.deepEqual(appliedPublicExpertPrincipals, ['client-b'], 'only the current client B personalization is applied');
+await changeAuth(publicLoaderHarness, clientBRotatedToken);
+await publicLoaderHarness.sandbox.loadExpertWebsite('public-cache-expert');
+assert.equal(publicLoaderNativeRequests.length, 2, 'loader cache survives a same-principal credential rotation');
+await changeAuth(publicLoaderHarness, null);
+assert.equal(publicLoaderHarness.sandbox._currentExpert.chat_free_min_available, 0,
+  'logout neutralizes the prior client personalized availability before the anonymous reload');
+assert(pendingPublicExpertResponses.has(''), 'logout starts an anonymous public-expert reload');
+pendingPublicExpertResponses.get('')(new Response(JSON.stringify({ expert: {
+  id: 'expert-public-cache', name: 'Public Cache Expert', slug: 'public-cache-expert',
+  personalized_for: 'public', chat_free_min_available: 15,
+} }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+await settleAsync(32);
+assert.deepEqual(appliedPublicExpertPrincipals, ['client-b', 'public'], 'anonymous public state replaces client B personalization after logout');
 
 // A credential refresh for the same principal updates transports/readiness without ending the paid session or releasing its hold.
 const rotationRequests = [];

@@ -354,8 +354,12 @@ assert.match(controllerSource, /refreshSavedPaymentStatus\(false,expertId\)/,
   'main authorization checks saved-payment readiness for its selected expert');
 assert.match(controllerSource, /if\(!expertId\)\{savedPayment\.available=false/,
   'saved-payment readiness is never queried without expert scope');
-assert.match(controllerSource, /methods\/status'[\s\S]*\{cache:'no-store',headers:\{Authorization:'Bearer '\+tok\}\}/,
+assert.match(controllerSource, /methods\/status'[\s\S]*\{cache:'no-store',headers:\{Authorization:'Bearer '\+tok\},signal:controller\.signal\}/,
   'authenticated saved-payment readiness bypasses the HTTP cache');
+assert.match(controllerSource, /var SAVED_PAYMENT_READINESS_TIMEOUT_MS=8000/,
+  'saved-payment readiness has one bounded request lifetime');
+assert.match(controllerSource, /function abortSavedPaymentReadiness\(\)[\s\S]*controller\.abort\(\)/,
+  'the saved-payment owner aborts stale readiness requests');
 assert.match(controllerSource, /enhanceBookingJoinOverlay\(\{force:true,focus:true\}\)/,
   'scheduled booking payment readiness is re-rendered after an auth identity change');
 assert.match(controllerSource, /\/join',\{cache:'no-store',headers:\{Authorization:'Bearer '\+context\.token\}\}/,
@@ -1842,6 +1846,38 @@ assert.equal(statusHooks.savedPayment.mode, 'test');
 await statusHooks.refreshSavedPaymentStatus(false, 'expert-live');
 assert(statusRequests[1].url.endsWith('/api/payments/methods/status?expert_id=expert-live'), 'expert change bypasses the prior readiness cache');
 assert.equal(statusHooks.savedPayment.mode, 'live', 'mode follows the scoped backend response');
+
+// A readiness response that never settles is aborted by its owner. The live payment
+// flow then uses the already-entered card instead of leaving the Pay button disabled.
+let stalledReadinessSignal;
+const stalledReadinessHarness = createHarness({
+  session: { ob_t: clientAToken },
+  fetchImpl: (url, init = {}) => {
+    if (!String(url).includes('/api/payments/methods/status')) throw new Error(`unexpected stalled readiness request: ${url}`);
+    stalledReadinessSignal = init.signal;
+    return new Promise((resolve, reject) => {
+      init.signal.addEventListener('abort', () => {
+        const error = new Error('saved payment readiness timed out');
+        error.name = 'AbortError';
+        reject(error);
+      }, { once: true });
+    });
+  },
+});
+const stalledReadinessHooks = stalledReadinessHarness.sandbox.obPayPerMinuteAuthorizationTestHooks;
+const stalledReadiness = stalledReadinessHooks.refreshSavedPaymentStatus(true, 'expert-stalled-readiness');
+await settleAsync();
+assert(stalledReadinessSignal && !stalledReadinessSignal.aborted,
+  'the current readiness request owns a live abort signal before its deadline');
+stalledReadinessHarness.runTimers();
+assert.equal(await stalledReadiness, false,
+  'a timed-out readiness request safely falls back to entering a payment method');
+assert.equal(stalledReadinessSignal.aborted, true, 'the deadline aborts the stalled network owner');
+assert.equal(stalledReadinessHooks.savedPayment.loading, null, 'the timed-out request releases the in-flight lock');
+assert.equal(stalledReadinessHooks.savedPayment.controller, null, 'the timed-out request releases its abort controller');
+assert.equal(stalledReadinessHooks.savedPayment.loaded, true, 'the optional readiness check settles to a usable fallback state');
+assert.equal(stalledReadinessHooks.savedPayment.available, false, 'timeout never invents a saved payment method');
+assert.equal(stalledReadinessHooks.savedPayment.useSaved, false, 'timeout keeps the entered-card flow active');
 
 // Executable account-isolation regression: A has a saved card, logs out, then B signs up.
 const identityRequests = [];

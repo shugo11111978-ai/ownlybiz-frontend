@@ -67208,9 +67208,18 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
   }
   window.obAuthorizeSessionHold = createOrConfirmAuthorization;
 
-  var savedPayment={loaded:false,loading:null,available:false,useSaved:false,expertId:'',mode:'',accountKey:'',requestSeq:0};
+  var SAVED_PAYMENT_READINESS_TIMEOUT_MS=8000;
+  var savedPayment={loaded:false,loading:null,controller:null,available:false,useSaved:false,expertId:'',mode:'',accountKey:'',requestSeq:0};
+  function abortSavedPaymentReadiness(){
+    var controller=savedPayment.controller;
+    savedPayment.controller=null;
+    if(controller&&typeof controller.abort==='function'){
+      try{controller.abort();}catch(e){}
+    }
+  }
   function resetSavedPaymentState(accountKey){
     savedPayment.requestSeq+=1;
+    abortSavedPaymentReadiness();
     savedPayment.loaded=false;savedPayment.loading=null;savedPayment.available=false;savedPayment.useSaved=false;
     savedPayment.expertId='';savedPayment.mode='';savedPayment.accountKey=String(accountKey||'');
     setUseSavedPayment(false);
@@ -67349,7 +67358,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
   }
   function refreshSavedPaymentReadiness(context){
     var token=context&&context.token||authToken();
-    savedPayment.requestSeq+=1;savedPayment.loading=null;savedPayment.loaded=false;
+    savedPayment.requestSeq+=1;abortSavedPaymentReadiness();savedPayment.loading=null;savedPayment.loaded=false;
     var expertId=String(currentExpertId()||'');
     return token&&expertId?refreshSavedPaymentStatus(true,expertId):Promise.resolve(false);
   }
@@ -67401,12 +67410,16 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
       resetSavedPaymentState(accountKey);
     }
     if(savedPayment.expertId!==expertId){
+      abortSavedPaymentReadiness();
       savedPayment.loaded=false;savedPayment.loading=null;savedPayment.available=false;savedPayment.useSaved=false;savedPayment.mode='';savedPayment.expertId=expertId;
     }
     if(savedPayment.loading) return savedPayment.loading;
     if(savedPayment.loaded&&!force) return savedPayment.available;
     var requestSeq=++savedPayment.requestSeq;
-    savedPayment.loading=fetch(BASE+'/api/payments/methods/status'+(expertId?'?expert_id='+encodeURIComponent(expertId):''),{cache:'no-store',headers:{Authorization:'Bearer '+tok}})
+    var controller=new AbortController();
+    var timeoutId=setTimeout(function(){controller.abort();},SAVED_PAYMENT_READINESS_TIMEOUT_MS);
+    savedPayment.controller=controller;
+    var readiness=fetch(BASE+'/api/payments/methods/status'+(expertId?'?expert_id='+encodeURIComponent(expertId):''),{cache:'no-store',headers:{Authorization:'Bearer '+tok},signal:controller.signal})
       .then(async function(response){
         var data=await responseJson(response);
         if(!clientContextCurrent(requestContext,true)||savedPayment.expertId!==expertId||savedPayment.accountKey!==accountKey||savedPayment.requestSeq!==requestSeq||currentAccountKey()!==accountKey)return false;
@@ -67415,9 +67428,15 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
         savedPayment.available=!!(response.ok&&data.has_saved_payment_method===true);
         setUseSavedPayment(savedPayment.available);
         return savedPayment.available;
-      }).catch(function(){if(clientContextCurrent(requestContext,true)&&savedPayment.expertId===expertId&&savedPayment.accountKey===accountKey&&savedPayment.requestSeq===requestSeq&&currentAccountKey()===accountKey){savedPayment.loaded=true;savedPayment.available=false;setUseSavedPayment(false);}return false;})
-      .finally(function(){if(savedPayment.requestSeq===requestSeq)savedPayment.loading=null;});
-    return savedPayment.loading;
+      }).catch(function(){if(clientContextCurrent(requestContext,true)&&savedPayment.expertId===expertId&&savedPayment.accountKey===accountKey&&savedPayment.requestSeq===requestSeq&&currentAccountKey()===accountKey){savedPayment.loaded=true;savedPayment.available=false;setUseSavedPayment(false);}return false;});
+    var tracked=readiness.finally(function(){
+      clearTimeout(timeoutId);
+      if(savedPayment.requestSeq!==requestSeq)return;
+      if(savedPayment.controller===controller)savedPayment.controller=null;
+      if(savedPayment.loading===tracked)savedPayment.loading=null;
+    });
+    savedPayment.loading=tracked;
+    return tracked;
   }
   window.obUseDifferentSessionCard=function(){setUseSavedPayment(false,true);};
 

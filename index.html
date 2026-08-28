@@ -37375,14 +37375,89 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
   }
   var clientContext=window.OB_CLIENT_CONTEXT;
   var walletMounts={};
+  var walletOperationSequence=0;
+  var walletStageTraces=[];
+  function walletTraceId(){
+    walletOperationSequence+=1;
+    return 'wallet-'+Date.now().toString(36)+'-'+walletOperationSequence.toString(36);
+  }
+  function walletPaymentType(value){
+    value=String(value||'').trim().toLowerCase();
+    return ['apple_pay','google_pay'].indexOf(value)>=0?value:'wallet';
+  }
+  function safeWalletErrorCode(value){
+    value=String(value||'').trim().toLowerCase();
+    return /^[a-z0-9_:-]{1,80}$/.test(value)?value:'';
+  }
+  function walletStage(operation,mountContext,stage,details){
+    details=details||{};
+    var record=Object.freeze({
+      correlationId:String(operation&&operation.correlationId||''),
+      paymentType:walletPaymentType(operation&&operation.paymentType),
+      buttonId:String(mountContext&&mountContext.buttonId||''),
+      stage:String(stage||''),
+      errorKind:String(details.errorKind||''),
+      errorCode:safeWalletErrorCode(details.errorCode),
+      at:Date.now()
+    });
+    walletStageTraces.push(record);if(walletStageTraces.length>24)walletStageTraces.shift();
+    var entry=mountContext&&walletMounts[mountContext.buttonId];
+    if(entry&&entry.context===mountContext&&entry.mount){
+      entry.mount.dataset.obWalletStage=record.stage;
+      entry.mount.dataset.obWalletCorrelation=record.correlationId;
+    }
+    try{window.dispatchEvent(new CustomEvent('ob:wallet-stage',{detail:record}));}catch(e){}
+    if(!window.__OB_TEST_HOOKS__&&window.console&&typeof window.console.info==='function'){
+      window.console.info('[Ownlybiz wallet]',record.stage,record.correlationId,record.paymentType,record.errorKind||'');
+    }
+    return record;
+  }
+  function walletErrorDescriptor(error,stage){
+    error=error||{};stage=String(stage||'wallet');
+    var code=safeWalletErrorCode(error.code);
+    var declineCode=safeWalletErrorCode(error.decline_code||error.declineCode);
+    var type=safeWalletErrorCode(error.type);
+    if(code==='wallet_context_changed'){
+      return {kind:'context_changed',code:code,paymentReason:'invalid_payment_data',message:'Your account or expert changed. Close the wallet and try again.'};
+    }
+    var flattenedIssuerCodes=['card_declined','do_not_honor','insufficient_funds','lost_card','stolen_card'];
+    var paymentMethodCodes=['expired_card','incorrect_cvc','authentication_required'];
+    if(declineCode||flattenedIssuerCodes.indexOf(code)>=0){
+      return {kind:'issuer_decline',code:declineCode||code,paymentReason:'fail',message:'Your bank did not approve this wallet payment method. Try another payment method or contact your bank.'};
+    }
+    if(type==='card_error'||paymentMethodCodes.indexOf(code)>=0){
+      return {kind:'payment_method_error',code:code||type,paymentReason:'fail',message:'This wallet payment method was not accepted. Check it in your wallet or try another payment method.'};
+    }
+    if(type==='api_connection_error'||/network|fetch|offline|timed?\s*out|connection/i.test(String(error.message||''))){
+      return {kind:'network_error',code:code||type,paymentReason:'invalid_payment_data',message:'We could not reach the secure payment service. Check your connection and try again.'};
+    }
+    if(stage==='setup_intent'){
+      return {kind:'service_error',code:code||type,paymentReason:'invalid_payment_data',message:'We could not initialize the secure wallet setup. Please try again.'};
+    }
+    return {kind:'integration_error',code:code||type,paymentReason:'invalid_payment_data',message:'Wallet setup could not be completed. Please refresh and try again.'};
+  }
+  function walletFlowError(error,stage){
+    var descriptor=walletErrorDescriptor(error,stage);
+    var wrapped=new Error(descriptor.message);
+    wrapped.walletDescriptor=descriptor;wrapped.walletStage=stage;
+    return wrapped;
+  }
+  function walletContextChangedError(stage){
+    var error=new Error('wallet_context_changed');error.code='wallet_context_changed';
+    return walletFlowError(error,stage);
+  }
   function walletMountIsCurrent(context){
     var entry=context&&walletMounts[context.buttonId];
     return !!entry&&entry.context===context&&clientContext.isCurrent(context)&&String(currentExpertId()||'')===context.expertId;
   }
-  function walletOperation(){
+  function walletOperation(event,pendingClick){
+    pendingClick=pendingClick||{};
     return clientContext.capture('wallet-operation',{
       expertId:String(currentExpertId()||''),
-      channel:String((window.selectedChannel&&window.selectedChannel.id)||window._obPendingChannel||window.currentBookChannel||'chat')
+      channel:String((window.selectedChannel&&window.selectedChannel.id)||window._obPendingChannel||window.currentBookChannel||'chat'),
+      correlationId:String(pendingClick.correlationId||walletTraceId()),
+      paymentType:walletPaymentType((event&&event.expressPaymentType)||pendingClick.paymentType),
+      disclosedAuthorizationPolicy:pendingClick.disclosedAuthorizationPolicy||null
     });
   }
   function walletOperationIsCurrent(operation,mountContext){
@@ -37425,7 +37500,7 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
     if(opts.buttonId==='bfl-wallet-button'&&window._bflWalletPaymentSavedExpertId!==mountContext.expertId){
       window._bflWalletPaymentSaved=false;window._bflWalletPaymentSavedToken='';window._bflWalletPaymentSavedExpertId='';
     }
-    var entry={context:mountContext,section:section,mount:mount,elements:null,express:null};
+    var entry={context:mountContext,section:section,mount:mount,elements:null,express:null,pendingClick:null};
     walletMounts[opts.buttonId]=entry;
     clientPaymentConfig().then(function(cfg){
       if(!walletMountIsCurrent(mountContext))return;
@@ -37440,7 +37515,7 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
         elements = stripe.elements({
           mode:'setup',
           currency:'usd',
-          paymentMethodTypes:['card'],
+          setupFutureUsage:'off_session',
           appearance:{variables:{borderRadius:'10px'}}
         });
         express = elements.create('expressCheckout', {
@@ -37466,8 +37541,13 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
           if(ev&&typeof ev.reject==='function')ev.reject();
           return;
         }
-        entry.disclosedAuthorizationPolicy=opts.policyDisclosureId&&window.OB_SESSION_AUTHORIZATION_POLICY
-          ? window.OB_SESSION_AUTHORIZATION_POLICY.disclosedSnapshot(document.getElementById(opts.policyDisclosureId)):null;
+        entry.pendingClick={
+          correlationId:walletTraceId(),
+          paymentType:walletPaymentType(ev&&ev.expressPaymentType),
+          disclosedAuthorizationPolicy:opts.policyDisclosureId&&window.OB_SESSION_AUTHORIZATION_POLICY
+            ? window.OB_SESSION_AUTHORIZATION_POLICY.disclosedSnapshot(document.getElementById(opts.policyDisclosureId)):null
+        };
+        walletStage(entry.pendingClick,mountContext,'click_resolved');
         if(ev&&typeof ev.resolve==='function')ev.resolve();
       });
       express.on('ready', function(ev){
@@ -37487,40 +37567,74 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
         section.style.display = 'none';
         section.style.visibility = 'hidden';
       });
+      express.on('cancel',function(){
+        if(entry.pendingClick)walletStage(entry.pendingClick,mountContext,'cancelled');
+        entry.pendingClick=null;
+      });
       express.on('confirm', function(ev){
         (async function(){
-          var operation=walletOperation();
-          operation.disclosedAuthorizationPolicy=entry.disclosedAuthorizationPolicy||null;entry.disclosedAuthorizationPolicy=null;
-          if(operation.expertId!==mountContext.expertId||!walletOperationIsCurrent(operation,mountContext))return;
+          var pendingClick=entry.pendingClick;entry.pendingClick=null;
+          var operation=walletOperation(ev,pendingClick);
+          var failureReported=false;
+          function reportFailure(error,failedStage){
+            if(failureReported)return false;
+            failureReported=true;
+            var descriptor=error&&error.walletDescriptor||walletErrorDescriptor(error,failedStage);
+            walletStage(operation,mountContext,'failed',{errorKind:descriptor.kind,errorCode:descriptor.code});
+            try{if(ev&&typeof ev.paymentFailed==='function')ev.paymentFailed({reason:descriptor.paymentReason,message:descriptor.message});}catch(e){}
+            if(walletOperationIsCurrent(operation,mountContext)){
+              var errEl=opts.errorId&&document.getElementById(opts.errorId);
+              if(errEl){
+                errEl.textContent=descriptor.message;errEl.style.display='block';
+                errEl.dataset.obWalletErrorKind=descriptor.kind;errEl.dataset.obWalletErrorCode=descriptor.code||'';
+              }
+              toastLocal(descriptor.message,'err');
+            }
+            return false;
+          }
+          function operationCurrent(stage){
+            if(operation.expertId===mountContext.expertId&&walletOperationIsCurrent(operation,mountContext))return true;
+            return reportFailure(walletContextChangedError(stage),stage);
+          }
+          if(!operationCurrent('confirm_received'))return;
+          walletStage(operation,mountContext,'confirm_received');
+          var stage='elements_submit';
           try {
             var submit = await elements.submit();
-            if(!walletOperationIsCurrent(operation,mountContext))return;
-            if(submit && submit.error) throw new Error(submit.error.message || 'Wallet authorization failed');
+            if(!operationCurrent(stage))return;
+            if(submit&&submit.error)throw walletFlowError(submit.error,stage);
+            walletStage(operation,mountContext,'elements_submitted');
+            stage='setup_intent';
             var setupIntent = await createSetupIntent(operation.token,operation.expertId);
-            if(!walletOperationIsCurrent(operation,mountContext))return;
+            if(!operationCurrent(stage))return;
+            walletStage(operation,mountContext,'setup_intent_created');
+            stage='stripe_confirm';
+            walletStage(operation,mountContext,'stripe_confirm_started');
             var result = await stripe.confirmSetup({
               elements:elements,
               clientSecret:setupIntent.client_secret,
               confirmParams:{return_url:window.location.href},
               redirect:'if_required'
             });
-            if(!walletOperationIsCurrent(operation,mountContext))return;
-            if(result.error) {
-              if(ev && typeof ev.paymentFailed === 'function') ev.paymentFailed({reason:'fail'});
-              throw new Error(result.error.message);
-            }
+            if(!operationCurrent(stage))return;
+            if(result&&result.error)throw walletFlowError(result.error,stage);
             var pm = result.setupIntent && result.setupIntent.payment_method;
             if(pm && typeof pm === 'object') pm = pm.id;
-            if(!pm) throw new Error('Wallet did not return a payment method');
+            if(!pm)throw walletFlowError({code:'wallet_payment_method_missing'},stage);
+            walletStage(operation,mountContext,'stripe_confirm_succeeded');
+            stage='default_method';
             await window._obSaveDefaultPaymentMethod(pm,operation.token,{expert_id:operation.expertId,stripe_mode:setupIntent.mode});
-            if(!walletOperationIsCurrent(operation,mountContext))return;
+            if(!operationCurrent(stage))return;
+            walletStage(operation,mountContext,'default_method_saved');
+            stage='success_continuation';
             if(typeof opts.onSuccess === 'function')await opts.onSuccess(pm,operation,mountContext);
+            if(!operationCurrent(stage))return;
+            walletStage(operation,mountContext,'completed');
           } catch(err) {
-            if(!walletOperationIsCurrent(operation,mountContext))return;
-            try { if(ev && typeof ev.paymentFailed === 'function') ev.paymentFailed({reason:'fail'}); } catch(e) {}
-            var errEl = opts.errorId && document.getElementById(opts.errorId);
-            if(errEl){ errEl.textContent = err.message || 'Wallet authorization failed'; errEl.style.display = 'block'; }
-            toastLocal(err.message || 'Wallet authorization failed', 'err');
+            if(!walletOperationIsCurrent(operation,mountContext)){
+              reportFailure(walletContextChangedError(stage),stage);return;
+            }
+            reportFailure(err&&err.walletDescriptor?err:walletFlowError(err,stage),stage);
           }
         })();
       });
@@ -37566,9 +37680,8 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
           if(typeof window.obCompleteSessionAuthorizationUi === 'function') window.obCompleteSessionAuthorizationUi();
         } catch(err) {
           if(!walletOperationIsCurrent(operation,mountContext))return;
-          if(errEl){ errEl.textContent = (err && err.message) || 'We could not approve the temporary authorization. Try another card or wallet.'; errEl.style.display = 'block'; }
           if(btn){ btn.disabled = false; btn.textContent = 'Verify payment & Continue \u2192'; }
-          toastLocal((err && err.message) || 'Authorization failed', 'err');
+          throw err;
         }
       }
     });
@@ -37592,7 +37705,11 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
     teardown:resetWalletMounts,
     credentialRotated:function(){/* Existing buttons remain mounted; new confirms capture the new exact credential. */}
   });
-  if(window.__OB_TEST_HOOKS__)window.obWalletTestHooks={mountWallet:mountWallet,resetWalletMounts:resetWalletMounts,walletMounts:walletMounts,walletMountIsCurrent:walletMountIsCurrent,walletOperationIsCurrent:walletOperationIsCurrent};
+  if(window.__OB_TEST_HOOKS__)window.obWalletTestHooks={
+    mountWallet:mountWallet,resetWalletMounts:resetWalletMounts,walletMounts:walletMounts,
+    walletMountIsCurrent:walletMountIsCurrent,walletOperationIsCurrent:walletOperationIsCurrent,
+    walletErrorDescriptor:walletErrorDescriptor,walletStageTraces:walletStageTraces
+  };
 
   function providerTarget(){
     var booking=document.getElementById('booking-overlay'),bfl=document.getElementById('bfl-overlay');
@@ -67748,7 +67865,9 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
         }
         if(result && result.error) {
           var stripeError = new Error(result.error.message || 'Authorization was not approved.');
-          stripeError.code = result.error.code || result.error.decline_code || '';
+          stripeError.type = result.error.type || '';
+          stripeError.code = result.error.code || '';
+          stripeError.decline_code = result.error.decline_code || '';
           throw stripeError;
         }
         var intent = result && result.paymentIntent;
@@ -67792,7 +67911,9 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
         }else resetState();
       }
       var finalError=new Error(friendlyError(err));
+      finalError.type=err&&err.type||'';
       finalError.code=err&&err.code||'';
+      finalError.decline_code=err&&err.decline_code||'';
       throw finalError;
     }finally{
       if(state.inFlight===flowPromise)state.inFlight = null;

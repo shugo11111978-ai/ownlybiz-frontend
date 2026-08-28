@@ -194,6 +194,12 @@ assert.match(controllerSource, /async function authorizeScheduledBooking\(useRep
   'Book Later captures its rendered policy before any click continuation awaits');
 assert.match(html, /express\.on\('click',[\s\S]*?disclosedAuthorizationPolicy[\s\S]*?express\.on\('confirm'/,
   'Express Checkout snapshots disclosure on wallet click rather than after wallet confirmation');
+assert.match(walletCoreSource, /mode:'setup',[\s\S]*?setupFutureUsage:'off_session'/,
+  'deferred Express Checkout declares the same off-session setup contract as the server SetupIntent');
+assert.doesNotMatch(walletCoreSource, /paymentMethodTypes\s*:/,
+  'deferred Express Checkout does not override the server automatic payment-method configuration');
+assert.match(walletCoreSource, /walletStage\(operation,mountContext,'stripe_confirm_started'\)[\s\S]*?stripe\.confirmSetup/,
+  'wallet diagnostics prove the flow reaches Stripe confirmation before invoking confirmSetup');
 assert.match(controllerSource, /status !== 'requires_capture'/,
   'frontend waits for a real manual-capture authorization');
 assert.match(controllerSource, /stripe\.confirmCardPayment\(state\.clientSecret\)/,
@@ -2464,9 +2470,11 @@ for (const [sectionId, buttonId] of [['bov-wallet-section', 'bov-wallet-button']
 for (const id of ['bov-card-error', 'bfl-card-error', 'bfl-card-saved']) { const element = new FakeElement('div'); element.id = id; walletHarness.body.appendChild(element); }
 const walletPayButton = new FakeElement('button'); walletPayButton.id = 'bov-pay-btn'; walletHarness.body.appendChild(walletPayButton);
 const walletExpressElements = [];
+const walletElementsOptions = [];
 const walletConfirmSetupCalls = [];
 const walletStripe = {
-  elements() {
+  elements(options) {
+    walletElementsOptions.push(options);
     const elements = {
       async submit() { return {}; },
       create(type) {
@@ -2498,17 +2506,27 @@ walletHarness.sandbox._obMountBovWallet(walletStripe);
 walletHarness.sandbox._obMountBflWallet(walletStripe);
 await settleAsync(24);
 assert.equal(walletExpressElements.length, 2, 'BOV and BFL each mount one account-owned Express Checkout element');
+assert.equal(walletElementsOptions.length, 2, 'BOV and BFL each create one deferred Elements owner');
+for (const options of walletElementsOptions) {
+  assert.equal(options.mode, 'setup', 'wallet Elements uses setup mode');
+  assert.equal(options.currency, 'usd', 'wallet Elements uses the SetupIntent currency contract');
+  assert.equal(options.setupFutureUsage, 'off_session', 'wallet Elements matches the server off-session SetupIntent usage');
+  assert.equal(Object.hasOwn(options, 'paymentMethodTypes'), false,
+    'wallet Elements leaves dynamic payment-method selection to the server SetupIntent');
+}
 const currentWalletClicks = walletExpressElements.map((express) => ({ express, resolved: 0, rejected: 0 }));
-for (const click of currentWalletClicks) {
+const currentWalletTypes = ['apple_pay', 'google_pay'];
+for (const [index, click] of currentWalletClicks.entries()) {
   click.express.handlers.click({
+    expressPaymentType: currentWalletTypes[index],
     resolve() { click.resolved += 1; },
     reject() { click.rejected += 1; },
   });
   assert.equal(click.resolved, 1, 'a current Express Checkout click is resolved synchronously so the wallet sheet can open');
   assert.equal(click.rejected, 0, 'a current Express Checkout click is not rejected');
 }
-walletExpressElements[0].handlers.confirm({ paymentFailed() {} });
-walletExpressElements[1].handlers.confirm({ paymentFailed() {} });
+walletExpressElements[0].handlers.confirm({ expressPaymentType: 'apple_pay', paymentFailed() {} });
+walletExpressElements[1].handlers.confirm({ expressPaymentType: 'google_pay', paymentFailed() {} });
 for (let turn = 0; turn < 30 && walletASetupResolvers.length < 2; turn += 1) await Promise.resolve();
 assert.equal(walletASetupResolvers.length, 2, 'both client A wallet confirms are paused at their captured SetupIntent request');
 await changeAuth(walletHarness, null);
@@ -2539,8 +2557,14 @@ assert.equal(clientBWallets.length, 2, 'client B receives fresh BOV and BFL wall
 await changeAuth(walletHarness, clientBRotatedToken);
 assert(clientBWallets.every((express) => express.unmounts === 0 && express.destroys === 0),
   'same-principal credential rotation preserves mounted wallet elements');
-clientBWallets[0].handlers.confirm({ paymentFailed() {} });
-clientBWallets[1].handlers.confirm({ paymentFailed() {} });
+for (const [index, express] of clientBWallets.entries()) {
+  express.handlers.click({
+    expressPaymentType: currentWalletTypes[index],
+    resolve() {},
+    reject() { throw new Error('a current client B wallet click must not be rejected'); },
+  });
+  express.handlers.confirm({ expressPaymentType: currentWalletTypes[index], paymentFailed() {} });
+}
 await settleAsync(50);
 const rotatedDefaultRequests = walletRequests.filter((request) => request.url.endsWith('/api/payments/methods/default'));
 assert.equal(rotatedDefaultRequests.length, 2, 'the current BOV and BFL wallet confirms each save their returned payment method');
@@ -2550,10 +2574,128 @@ assert.equal(walletHoldCalls.length, 1, 'only the current BOV wallet creates a l
 assert.equal(walletHoldCalls[0].token, clientBRotatedToken, 'the BOV hold uses the exact credential captured for the current wallet operation');
 assert.equal(walletUiCompletions, 1, 'only the current BOV wallet advances the payment UI');
 assert.equal(walletHarness.sandbox._bflWalletPaymentSavedToken, clientBRotatedToken, 'BFL saved-wallet readiness is bound to the current credential');
+const successfulConfirmStages = walletHarness.sandbox.obWalletTestHooks.walletStageTraces
+  .filter((trace) => trace.stage === 'stripe_confirm_started' || trace.stage === 'completed');
+for (const paymentType of currentWalletTypes) {
+  assert(successfulConfirmStages.some((trace) => trace.stage === 'stripe_confirm_started' && trace.paymentType === paymentType),
+    `${paymentType}: shared wallet path records that Stripe confirmation was reached`);
+  assert(successfulConfirmStages.some((trace) => trace.stage === 'completed' && trace.paymentType === paymentType),
+    `${paymentType}: shared wallet path records successful completion`);
+}
+const issuerDescriptor = walletHarness.sandbox.obWalletTestHooks.walletErrorDescriptor(
+  { type: 'card_error', code: 'card_declined', decline_code: 'do_not_honor' }, 'stripe_confirm');
+assert.deepEqual(JSON.parse(JSON.stringify(issuerDescriptor)), {
+  kind: 'issuer_decline', code: 'do_not_honor', paymentReason: 'fail',
+  message: 'Your bank did not approve this wallet payment method. Try another payment method or contact your bank.',
+}, 'only a real Stripe decline is presented as an issuer decline');
+const integrationDescriptor = walletHarness.sandbox.obWalletTestHooks.walletErrorDescriptor(
+  { type: 'invalid_request_error', code: 'parameter_invalid_empty' }, 'stripe_confirm');
+assert.deepEqual(JSON.parse(JSON.stringify(integrationDescriptor)), {
+  kind: 'integration_error', code: 'parameter_invalid_empty', paymentReason: 'invalid_payment_data',
+  message: 'Wallet setup could not be completed. Please refresh and try again.',
+}, 'a local deferred-Elements contract failure is not mislabeled as a bank decline');
+const networkDescriptor = walletHarness.sandbox.obWalletTestHooks.walletErrorDescriptor(
+  { type: 'api_connection_error', message: 'network unavailable' }, 'stripe_confirm');
+assert.deepEqual(JSON.parse(JSON.stringify(networkDescriptor)), {
+  kind: 'network_error', code: 'api_connection_error', paymentReason: 'invalid_payment_data',
+  message: 'We could not reach the secure payment service. Check your connection and try again.',
+}, 'network failures remain distinct from issuer and integration failures');
+for (const code of ['card_declined', 'do_not_honor', 'insufficient_funds', 'lost_card', 'stolen_card']) {
+  assert.equal(walletHarness.sandbox.obWalletTestHooks.walletErrorDescriptor({ code }, 'success_continuation').kind, 'issuer_decline',
+    `${code}: a finite flattened issuer code remains an issuer decline`);
+}
+for (const code of ['expired_card', 'incorrect_cvc', 'authentication_required']) {
+  assert.equal(walletHarness.sandbox.obWalletTestHooks.walletErrorDescriptor({ code }, 'success_continuation').kind, 'payment_method_error',
+    `${code}: card validation and authentication errors are not mislabeled as issuer declines`);
+}
+assert.notEqual(
+  walletHarness.sandbox.obWalletTestHooks.walletErrorDescriptor({ code: 'processing_error' }, 'success_continuation').kind,
+  'issuer_decline',
+  'processing_error is never inferred to be an issuer decline',
+);
 await changeAuth(walletHarness, clientAToken);
 assert(clientBWallets.every((express) => express.unmounts === 1 && express.destroys === 1),
   'a later true identity change destroys client B wallet elements');
 assert.equal(Object.keys(walletHarness.sandbox.obWalletTestHooks.walletMounts).length, 0, 'wallet owner registry is empty after identity teardown');
+
+// A real decline from the post-wallet temporary authorization keeps Stripe's
+// structured fields through the authorization owner and reaches ECE as an issuer decline.
+const walletHoldDeclineRequests = [];
+const walletHoldDeclineHarness = createHarness({
+  session: { ob_t: clientAToken },
+  fetchImpl: async (url, init = {}) => {
+    const request = { url: String(url), body: init.body ? JSON.parse(init.body) : null };
+    walletHoldDeclineRequests.push(request);
+    if (request.url.endsWith('/api/config')) return { ok: true, status: 200, json: async () => ({ client_payments: { apple_pay_enabled: true, google_pay_enabled: true } }) };
+    if (request.url.includes('/api/payments/config')) return { ok: true, status: 200, json: async () => ({
+      publishable_key: 'pk_test_wallet_hold_decline', session_authorization_amount_cents: 500,
+      session_authorization_currency: 'usd', session_authorization_policy_revision: 'policy-default-500-v1',
+    }) };
+    if (request.url.endsWith('/api/payments/methods/setup')) return { ok: true, status: 200, json: async () => ({ client_secret: 'seti_wallet_hold_decline_secret', mode: 'test' }) };
+    if (request.url.endsWith('/api/payments/authorize')) return { ok: true, status: 200, json: async () => ({
+      payment_intent_id: 'pi_wallet_hold_decline', authorization_request_id: request.body.authorization_request_id,
+      client_secret: 'pi_wallet_hold_decline_secret', status: 'requires_action',
+      amount_authorized_cents: 500, currency: 'usd',
+    }) };
+    if (request.url.endsWith('/api/payments/authorize/cancel')) return { ok: true, status: 200, json: async () => ({ released: true }) };
+    if (request.url.includes('/api/payments/methods/status')) return { ok: true, status: 200, json: async () => ({ has_saved_payment_method: false, mode: 'test' }) };
+    return { ok: true, status: 200, json: async () => ({}) };
+  },
+});
+walletHoldDeclineHarness.sandbox._currentExpertId = 'expert-wallet-hold-decline';
+for (const [tag, id] of [['section', 'bov-wallet-section'], ['div', 'bov-wallet-button'], ['div', 'bov-card-error'], ['button', 'bov-pay-btn']]) {
+  const element = new FakeElement(tag); element.id = id; walletHoldDeclineHarness.body.appendChild(element);
+}
+attachPolicyDisclosure(walletHoldDeclineHarness, 'bov-pay-explainer');
+const walletHoldDeclineExpress = [];
+const walletHoldDeclineStripe = {
+  elements(options) {
+    assert.equal(options.setupFutureUsage, 'off_session');
+    return {
+      async submit() { return {}; },
+      create() {
+        const express = { handlers: {}, on(name, handler) { this.handlers[name] = handler; }, mount() {}, unmount() {}, destroy() {} };
+        walletHoldDeclineExpress.push(express); return express;
+      },
+    };
+  },
+  async confirmSetup() { return { setupIntent: { payment_method: 'pm_wallet_hold_decline' } }; },
+  async confirmCardPayment() {
+    return { error: {
+      type: 'card_error', code: 'card_declined', decline_code: 'insufficient_funds',
+      message: 'The issuer declined the temporary authorization.',
+    } };
+  },
+};
+new vm.Script(walletCoreSource, { filename: 'wallet-hold-decline.js' }).runInContext(walletHoldDeclineHarness.sandbox);
+walletHoldDeclineHarness.sandbox._obSaveDefaultPaymentMethod = async () => {};
+const realWalletHold = walletHoldDeclineHarness.sandbox.obAuthorizeSessionHold;
+let wrappedWalletHoldError = null;
+walletHoldDeclineHarness.sandbox.obAuthorizeSessionHold = async (options) => {
+  try { return await realWalletHold(options); }
+  catch (error) { wrappedWalletHoldError = error; throw error; }
+};
+walletHoldDeclineHarness.sandbox._obMountBovWallet(walletHoldDeclineStripe);
+await settleAsync(24);
+assert.equal(walletHoldDeclineExpress.length, 1, 'decline regression mounts one BOV Express Checkout owner');
+const walletHoldPaymentFailures = [];
+walletHoldDeclineExpress[0].handlers.click({ expressPaymentType: 'apple_pay', resolve() {}, reject() {} });
+walletHoldDeclineExpress[0].handlers.confirm({
+  expressPaymentType: 'apple_pay',
+  paymentFailed(payload) { walletHoldPaymentFailures.push(payload); },
+});
+await settleAsync(80);
+assert(wrappedWalletHoldError, 'the authorization wrapper returns the Stripe decline to the wallet owner');
+assert.equal(wrappedWalletHoldError.type, 'card_error', 'authorization wrapper preserves Stripe error type');
+assert.equal(wrappedWalletHoldError.code, 'card_declined', 'authorization wrapper preserves Stripe error code');
+assert.equal(wrappedWalletHoldError.decline_code, 'insufficient_funds', 'authorization wrapper preserves Stripe decline_code separately');
+assert.equal(walletHoldPaymentFailures.length, 1, 'the failed temporary authorization reports one ECE failure');
+assert.equal(walletHoldPaymentFailures[0].reason, 'fail', 'a real issuer decline uses the ECE issuer-failure reason');
+const walletHoldErrorElement = walletHoldDeclineHarness.document.getElementById('bov-card-error');
+assert.equal(walletHoldErrorElement.dataset.obWalletErrorKind, 'issuer_decline', 'the wallet UI identifies the hold failure as an issuer decline');
+assert.equal(walletHoldErrorElement.dataset.obWalletErrorCode, 'insufficient_funds', 'the wallet UI retains the safe Stripe decline code');
+assert.equal(walletHoldDeclineRequests.filter((request) => request.url.endsWith('/api/payments/authorize/cancel')).length, 1,
+  'the declined temporary authorization is explicitly released once');
 
 // Credential rotation at every wallet await boundary keeps the one stable-principal
 // operation alive with its immutable originating credential and never duplicates a hold.
@@ -2609,7 +2751,7 @@ for (const pauseStage of ['submit','setup','confirm','save']) {
   stageHarness.sandbox._obMountBovWallet(stageStripe);
   await settleAsync(24);
   assert.equal(stageExpress.length, 1, `${pauseStage}: one BOV wallet is mounted`);
-  stageExpress[0].handlers.confirm({ paymentFailed() { throw new Error(`${pauseStage}: current same-principal flow must not fail silently`); } });
+  stageExpress[0].handlers.confirm({ expressPaymentType: 'apple_pay', paymentFailed() { throw new Error(`${pauseStage}: current same-principal flow must not fail silently`); } });
   for (let turn = 0; turn < 60 && !stageReached; turn += 1) await Promise.resolve();
   assert(stageReached && releaseStage, `${pauseStage}: wallet reaches the selected await boundary`);
   await changeAuth(stageHarness, clientARotatedToken);

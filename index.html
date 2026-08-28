@@ -37431,6 +37431,13 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
     if(type==='api_connection_error'||/network|fetch|offline|timed?\s*out|connection/i.test(String(error.message||''))){
       return {kind:'network_error',code:code||type,paymentReason:'invalid_payment_data',message:'We could not reach the secure payment service. Check your connection and try again.'};
     }
+    if(stage==='success_continuation'&&[
+      'session_authorization_open_exists',
+      'session_authorization_transition_conflict',
+      'session_authorization_release_pending'
+    ].indexOf(code)>=0){
+      return {kind:'authorization_pending',code:code,paymentReason:'invalid_payment_data',message:'A previous temporary authorization is still being released. Confirm its release before trying again.'};
+    }
     if(stage==='setup_intent'){
       return {kind:'service_error',code:code||type,paymentReason:'invalid_payment_data',message:'We could not initialize the secure wallet setup. Please try again.'};
     }
@@ -37515,6 +37522,7 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
         elements = stripe.elements({
           mode:'setup',
           currency:'usd',
+          paymentMethodTypes:['card'],
           setupFutureUsage:'off_session',
           appearance:{variables:{borderRadius:'10px'}}
         });
@@ -67648,6 +67656,11 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
   async function responseJson(response){
     return response.json().catch(function(){ return {}; });
   }
+  function authorizationReleasePendingError(message){
+    var error=new Error(message||'Release the previous temporary authorization before continuing.');
+    error.code='session_authorization_release_pending';
+    return error;
+  }
   function cancelDetachedAuthorization(paymentIntentId,requestId,token,reason){
     if(!paymentIntentId||!requestId||!token)return Promise.resolve(false);
     return fetch(BASE+'/api/payments/authorize/cancel',{
@@ -67692,6 +67705,11 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
       });
       var data=await responseJson(response);
       if(!response.ok) throw new Error(data.error||data.message||'Release confirmation was not received.');
+      if(data.canceled!==true&&data.already_final!==true){
+        var pendingRelease=new Error('The previous temporary authorization is still being released.');
+        pendingRelease.code='session_authorization_release_pending';
+        throw pendingRelease;
+      }
       if(!clientContextCurrent(cancelContext,false)||currentAccountKey()!==cancelAccountKey||state.paymentIntentId!==payload.payment_intent_id||state.requestId!==payload.authorization_request_id){
         return {confirmed:true,data:data,detached:true};
       }
@@ -67780,12 +67798,12 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     if(state.accountKey&&state.accountKey!==flowAccountKey)resetState();
     var nextContext = contextKey(opts);
     if(isReadyFor(opts)) return snapshot();
-    if(state.phase==='cancel_retry') throw new Error('Release the previous temporary authorization before starting another payment confirmation.');
+    if(state.phase==='cancel_retry') throw authorizationReleasePendingError('Release the previous temporary authorization before starting another payment confirmation.');
     if(state.phase === 'bound') throw new Error('A payment authorization is already linked to a pending or active session. Finish or cancel that session first.');
     if(state.inFlight && state.context === nextContext && state.accountKey===flowAccountKey) return state.inFlight;
     if(state.paymentIntentId && state.context && state.context !== nextContext){
       var released=await cancelAuthorization('replaced_before_session');
-      if(!released||!released.confirmed) throw new Error('Release the previous temporary authorization before continuing.');
+      if(!released||!released.confirmed) throw authorizationReleasePendingError('Release the previous temporary authorization before continuing.');
       assertClientContext(flowContext,false);
     }
 

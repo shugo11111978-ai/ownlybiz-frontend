@@ -196,8 +196,8 @@ assert.match(html, /express\.on\('click',[\s\S]*?disclosedAuthorizationPolicy[\s
   'Express Checkout snapshots disclosure on wallet click rather than after wallet confirmation');
 assert.match(walletCoreSource, /mode:'setup',[\s\S]*?setupFutureUsage:'off_session'/,
   'deferred Express Checkout declares the same off-session setup contract as the server SetupIntent');
-assert.doesNotMatch(walletCoreSource, /paymentMethodTypes\s*:/,
-  'deferred Express Checkout does not override the server automatic payment-method configuration');
+assert.match(walletCoreSource, /mode:'setup',[\s\S]*?paymentMethodTypes:\['card'\],[\s\S]*?setupFutureUsage:'off_session'/,
+  'deferred Express Checkout declares card for Apple Pay and Google Pay while matching the server off-session SetupIntent');
 assert.match(walletCoreSource, /walletStage\(operation,mountContext,'stripe_confirm_started'\)[\s\S]*?stripe\.confirmSetup/,
   'wallet diagnostics prove the flow reaches Stripe confirmation before invoking confirmSetup');
 assert.match(controllerSource, /status !== 'requires_capture'/,
@@ -1602,7 +1602,7 @@ const postRaceHarness = createHarness({
     }
     if (requestUrl.includes('/api/payments/authorize/cancel')) {
       postRaceCancelCalls += 1;
-      return { ok: true, status: 200, json: async () => ({ released: true }) };
+      return { ok: true, status: 200, json: async () => ({ canceled: true, already_final: false, pending: false }) };
     }
     throw new Error(`unexpected post-race request: ${url}`);
   },
@@ -1673,7 +1673,7 @@ const mismatchHarness = createHarness({
     }
     if (requestUrl.includes('/api/payments/authorize/cancel')) {
       mismatchCancelCalls += 1; mismatchHoldOpen = false;
-      return { ok: true, status: 200, json: async () => ({ released: true }) };
+      return { ok: true, status: 200, json: async () => ({ canceled: true, already_final: false, pending: false }) };
     }
     throw new Error(`unexpected snapshot-mismatch request: ${url}`);
   },
@@ -1798,6 +1798,123 @@ const cancelResult = await baseHarness.sandbox.obCancelSessionAuthorization('tes
 assert.equal(cancelResult.confirmed, false);
 assert.equal(hooks.state.phase, 'cancel_retry');
 assert(baseHarness.sandbox.sessionStorage.getItem('ob_live_authorization'), 'unconfirmed release state is preserved');
+
+let pendingReleaseCalls = 0;
+let prematureAuthorizeCalls = 0;
+const pendingReleaseHarness = createHarness({
+  session: { ob_t: clientAToken },
+  fetchImpl: async (url) => {
+    const requestUrl = String(url);
+    if (requestUrl.endsWith('/api/config')) {
+      return { ok: true, status: 200, json: async () => ({ client_payments: { apple_pay_enabled: true, google_pay_enabled: false } }) };
+    }
+    if (requestUrl.includes('/api/payments/config')) {
+      return { ok: true, status: 200, json: async () => ({
+        publishable_key: 'pk_test_pending_release',
+        session_authorization_amount_cents: 500,
+        session_authorization_currency: 'usd',
+        session_authorization_policy_revision: 'policy-default-500-v1',
+      }) };
+    }
+    if (requestUrl.endsWith('/api/payments/authorize/cancel')) {
+      pendingReleaseCalls += 1;
+      return pendingReleaseCalls === 1
+        ? { ok: true, status: 200, json: async () => ({ canceled: false, already_final: false, pending: true }) }
+        : { ok: true, status: 200, json: async () => ({ canceled: false, already_final: true, pending: false }) };
+    }
+    if (requestUrl.endsWith('/api/payments/authorize')) {
+      prematureAuthorizeCalls += 1;
+      throw new Error('a new authorization must not start while release is pending');
+    }
+    if (requestUrl.endsWith('/api/payments/methods/setup')) {
+      return { ok: true, status: 200, json: async () => ({ client_secret: 'seti_pending_release_secret', mode: 'test' }) };
+    }
+    if (requestUrl.endsWith('/api/payments/methods/default')) {
+      return { ok: true, status: 200, json: async () => ({ saved: true }) };
+    }
+    if (requestUrl.includes('/api/payments/methods/status')) {
+      return { ok: true, status: 200, json: async () => ({ has_saved_payment_method: false, mode: 'test' }) };
+    }
+    throw new Error(`unexpected pending-release request: ${requestUrl}`);
+  },
+});
+const pendingReleaseHooks = pendingReleaseHarness.sandbox.obPayPerMinuteAuthorizationTestHooks;
+Object.assign(pendingReleaseHooks.state, {
+  phase: 'ready',
+  paymentIntentId: 'pi_pending_release',
+  requestId: 'authorization-pending-release',
+  context: 'live:expert-pending-release:owner:chat',
+  expertId: 'expert-pending-release',
+  channel: 'chat',
+  accountKey: clientAKey,
+  amountCents: 500,
+  currency: 'usd',
+  hasAmountSnapshot: true,
+});
+const pendingRelease = await pendingReleaseHarness.sandbox.obCancelSessionAuthorization('client_cancelled');
+assert.equal(pendingRelease.confirmed, false,
+  'HTTP 200 with pending=true is not treated as terminal release confirmation');
+assert.equal(pendingReleaseHooks.state.phase, 'cancel_retry',
+  'a durable pending release remains recoverable in the browser');
+await assert.rejects(
+  pendingReleaseHarness.sandbox.obAuthorizeSessionHold({
+    expertId: 'expert-pending-release',
+    channel: 'chat',
+    token: clientAToken,
+    disclosedPolicy: pendingReleaseHarness.sandbox.OB_SESSION_AUTHORIZATION_POLICY.consentSnapshot(),
+  }),
+  (error) => error
+    && error.code === 'session_authorization_release_pending'
+    && /Release the previous temporary authorization/i.test(error.message),
+  'a retry cannot collide with a still-open authorization'
+);
+assert.equal(prematureAuthorizeCalls, 0,
+  'no new authorization request reaches the server while release is pending');
+
+pendingReleaseHarness.sandbox._currentExpertId = 'expert-pending-release';
+for (const [tag, elementId] of [['section', 'bov-wallet-section'], ['div', 'bov-wallet-button'], ['div', 'bov-card-error'], ['button', 'bov-pay-btn']]) {
+  const element = new FakeElement(tag); element.id = elementId; pendingReleaseHarness.body.appendChild(element);
+}
+attachPolicyDisclosure(pendingReleaseHarness, 'bov-pay-explainer');
+const pendingReleaseExpress = [];
+const pendingReleaseStripe = {
+  elements() {
+    return {
+      async submit() { return {}; },
+      create() {
+        const express = { handlers: {}, on(name, handler) { this.handlers[name] = handler; }, mount() {}, unmount() {}, destroy() {} };
+        pendingReleaseExpress.push(express); return express;
+      },
+    };
+  },
+  async confirmSetup() { return { setupIntent: { payment_method: 'pm_pending_release' } }; },
+};
+new vm.Script(walletCoreSource, { filename: 'wallet-pending-release.js' }).runInContext(pendingReleaseHarness.sandbox);
+pendingReleaseHarness.sandbox._obMountBovWallet(pendingReleaseStripe);
+await settleAsync(24);
+assert.equal(pendingReleaseExpress.length, 1, 'pending-release regression mounts one Apple Pay owner');
+const pendingReleaseWalletFailures = [];
+pendingReleaseExpress[0].handlers.click({ expressPaymentType: 'apple_pay', resolve() {}, reject() {} });
+pendingReleaseExpress[0].handlers.confirm({
+  expressPaymentType: 'apple_pay',
+  paymentFailed(payload) { pendingReleaseWalletFailures.push(payload); },
+});
+await settleAsync(60);
+assert.equal(prematureAuthorizeCalls, 0,
+  'Apple Pay cannot create a second hold while the first release remains pending');
+assert.equal(pendingReleaseWalletFailures.length, 1,
+  'Apple Pay reports exactly one actionable pending-release failure');
+const pendingReleaseWalletError = pendingReleaseHarness.document.getElementById('bov-card-error');
+assert.equal(pendingReleaseWalletError.dataset.obWalletErrorKind, 'authorization_pending');
+assert.equal(pendingReleaseWalletError.dataset.obWalletErrorCode, 'session_authorization_release_pending');
+assert.match(pendingReleaseWalletError.textContent, /still being released/i,
+  'Apple Pay no longer mislabels a cancellation race as wallet setup failure');
+const completedRelease = await pendingReleaseHarness.sandbox.obRetrySessionAuthorizationCancellation();
+assert.equal(completedRelease.confirmed, true,
+  'already_final=true is accepted as terminal release proof on retry');
+assert.equal(pendingReleaseHooks.state.phase, 'idle');
+assert.equal(pendingReleaseCalls, 2);
+
 const savedAt = Date.now();
 const boundHarness = createHarness({ session: { ob_t: clientAToken, ob_live_authorization: JSON.stringify({
   context: 'live:expert:chat', requestId: id, paymentIntentId: 'pi_bound', amount: 5,
@@ -1904,7 +2021,7 @@ const identityRequests = [];
 const identityHarness = createHarness({ session: { ob_t: clientAToken }, fetchImpl: async (url, init = {}) => {
   const request = { url: String(url), authorization: init.headers?.Authorization || '' };
   identityRequests.push(request);
-  if (request.url.includes('/api/payments/authorize/cancel')) return { ok: true, json: async () => ({ released: true }) };
+  if (request.url.includes('/api/payments/authorize/cancel')) return { ok: true, json: async () => ({ canceled: true, already_final: false, pending: false }) };
   const isClientA = request.authorization === `Bearer ${clientAToken}`;
   return { ok: true, json: async () => ({ has_saved_payment_method: isClientA, mode: 'test' }) };
 } });
@@ -2384,7 +2501,7 @@ const rotatingAuthorizationHarness = createHarness({
     return Promise.resolve({ ok: true, json: async () => ({ has_saved_payment_method: false, mode: 'test' }) });
   }
   if (request.url.includes('/api/payments/authorize/cancel')) {
-    return Promise.resolve({ ok: true, json: async () => ({ released: true }) });
+    return Promise.resolve({ ok: true, json: async () => ({ canceled: true, already_final: false, pending: false }) });
   }
   throw new Error(`unexpected rotating-authorization request: ${request.url}`);
 } });
@@ -2510,9 +2627,9 @@ assert.equal(walletElementsOptions.length, 2, 'BOV and BFL each create one defer
 for (const options of walletElementsOptions) {
   assert.equal(options.mode, 'setup', 'wallet Elements uses setup mode');
   assert.equal(options.currency, 'usd', 'wallet Elements uses the SetupIntent currency contract');
+  assert.deepEqual(Array.from(options.paymentMethodTypes || []), ['card'],
+    'wallet Elements declares card before the deferred SetupIntent exists');
   assert.equal(options.setupFutureUsage, 'off_session', 'wallet Elements matches the server off-session SetupIntent usage');
-  assert.equal(Object.hasOwn(options, 'paymentMethodTypes'), false,
-    'wallet Elements leaves dynamic payment-method selection to the server SetupIntent');
 }
 const currentWalletClicks = walletExpressElements.map((express) => ({ express, resolved: 0, rejected: 0 }));
 const currentWalletTypes = ['apple_pay', 'google_pay'];
@@ -2566,6 +2683,14 @@ for (const [index, express] of clientBWallets.entries()) {
   express.handlers.confirm({ expressPaymentType: currentWalletTypes[index], paymentFailed() {} });
 }
 await settleAsync(50);
+const rotatedSetupRequests = walletRequests.filter((request) => (
+  request.url.endsWith('/api/payments/methods/setup')
+  && request.authorization === `Bearer ${clientBRotatedToken}`
+));
+assert.equal(rotatedSetupRequests.length, 2,
+  'current Apple Pay and Google Pay confirms each create exactly one SetupIntent');
+assert.equal(walletConfirmSetupCalls.length, 2,
+  'current Apple Pay and Google Pay confirms each reach Stripe confirmSetup exactly once');
 const rotatedDefaultRequests = walletRequests.filter((request) => request.url.endsWith('/api/payments/methods/default'));
 assert.equal(rotatedDefaultRequests.length, 2, 'the current BOV and BFL wallet confirms each save their returned payment method');
 assert(rotatedDefaultRequests.every((request) => request.authorization === `Bearer ${clientBRotatedToken}`),
@@ -2594,6 +2719,12 @@ assert.deepEqual(JSON.parse(JSON.stringify(integrationDescriptor)), {
   kind: 'integration_error', code: 'parameter_invalid_empty', paymentReason: 'invalid_payment_data',
   message: 'Wallet setup could not be completed. Please refresh and try again.',
 }, 'a local deferred-Elements contract failure is not mislabeled as a bank decline');
+const pendingAuthorizationDescriptor = walletHarness.sandbox.obWalletTestHooks.walletErrorDescriptor(
+  { code: 'session_authorization_open_exists' }, 'success_continuation');
+assert.deepEqual(JSON.parse(JSON.stringify(pendingAuthorizationDescriptor)), {
+  kind: 'authorization_pending', code: 'session_authorization_open_exists', paymentReason: 'invalid_payment_data',
+  message: 'A previous temporary authorization is still being released. Confirm its release before trying again.',
+}, 'a later authorization collision is not mislabeled as a wallet setup failure');
 const networkDescriptor = walletHarness.sandbox.obWalletTestHooks.walletErrorDescriptor(
   { type: 'api_connection_error', message: 'network unavailable' }, 'stripe_confirm');
 assert.deepEqual(JSON.parse(JSON.stringify(networkDescriptor)), {
@@ -2637,7 +2768,7 @@ const walletHoldDeclineHarness = createHarness({
       client_secret: 'pi_wallet_hold_decline_secret', status: 'requires_action',
       amount_authorized_cents: 500, currency: 'usd',
     }) };
-    if (request.url.endsWith('/api/payments/authorize/cancel')) return { ok: true, status: 200, json: async () => ({ released: true }) };
+    if (request.url.endsWith('/api/payments/authorize/cancel')) return { ok: true, status: 200, json: async () => ({ canceled: true, already_final: false, pending: false }) };
     if (request.url.includes('/api/payments/methods/status')) return { ok: true, status: 200, json: async () => ({ has_saved_payment_method: false, mode: 'test' }) };
     return { ok: true, status: 200, json: async () => ({}) };
   },
@@ -2650,6 +2781,7 @@ attachPolicyDisclosure(walletHoldDeclineHarness, 'bov-pay-explainer');
 const walletHoldDeclineExpress = [];
 const walletHoldDeclineStripe = {
   elements(options) {
+    assert.deepEqual(Array.from(options.paymentMethodTypes || []), ['card']);
     assert.equal(options.setupFutureUsage, 'off_session');
     return {
       async submit() { return {}; },
@@ -4890,7 +5022,7 @@ const scheduledJoinHarness = createHarness({
     if (request.url.includes('/api/bookings/booking-account-isolation/join') && request.authorization === `Bearer ${clientBToken}`) {
       return Promise.resolve({ ok: true, json: async () => scheduledData('client-b', true) });
     }
-    if (request.url.includes('/api/payments/authorize/cancel')) return Promise.resolve({ ok: true, json: async () => ({ released: true }) });
+    if (request.url.includes('/api/payments/authorize/cancel')) return Promise.resolve({ ok: true, json: async () => ({ canceled: true, already_final: false, pending: false }) });
     return Promise.resolve({ ok: false, json: async () => ({ error: 'unexpected request' }) });
   },
 });
@@ -5173,7 +5305,7 @@ const scheduledBindHarness = createHarness({
         session_authorization_policy_revision: 'policy-default-500-v1',
       }) });
     }
-    if (request.url.includes('/api/payments/authorize/cancel')) return Promise.resolve({ ok: true, json: async () => ({ released: true }) });
+    if (request.url.includes('/api/payments/authorize/cancel')) return Promise.resolve({ ok: true, json: async () => ({ canceled: true, already_final: false, pending: false }) });
     if (request.url.endsWith('/api/payments/authorize')) {
       return Promise.resolve({ ok: true, json: async () => ({
         payment_intent_id: 'pi-client-a', authorization_request_id: 'authorization-client-a', status: 'requires_capture',
@@ -5245,7 +5377,7 @@ const rotatedScheduledHarness = createHarness({
       return Promise.resolve({ ok: true, json: async () => ({ has_saved_payment_method: false, mode: 'test' }) });
     }
     if (request.url.includes('/api/payments/authorize/cancel')) {
-      return Promise.resolve({ ok: true, json: async () => ({ released: true }) });
+      return Promise.resolve({ ok: true, json: async () => ({ canceled: true, already_final: false, pending: false }) });
     }
     if (request.url.endsWith('/api/payments/authorize')) {
       if (request.body?.booking_id === 'booking-rotation-bind') {

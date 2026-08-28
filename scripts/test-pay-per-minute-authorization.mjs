@@ -196,8 +196,8 @@ assert.match(html, /express\.on\('click',[\s\S]*?disclosedAuthorizationPolicy[\s
   'Express Checkout snapshots disclosure on wallet click rather than after wallet confirmation');
 assert.match(walletCoreSource, /mode:'setup',[\s\S]*?setupFutureUsage:'off_session'/,
   'deferred Express Checkout declares the same off-session setup contract as the server SetupIntent');
-assert.match(walletCoreSource, /mode:'setup',[\s\S]*?paymentMethodTypes:\['card'\],[\s\S]*?setupFutureUsage:'off_session'/,
-  'deferred Express Checkout declares card for Apple Pay and Google Pay while matching the server off-session SetupIntent');
+assert.doesNotMatch(walletCoreSource, /paymentMethodTypes\s*:/,
+  'deferred Express Checkout leaves payment-method selection to the server automatic SetupIntent contract');
 assert.match(walletCoreSource, /walletStage\(operation,mountContext,'stripe_confirm_started'\)[\s\S]*?stripe\.confirmSetup/,
   'wallet diagnostics prove the flow reaches Stripe confirmation before invoking confirmSetup');
 assert.match(controllerSource, /status !== 'requires_capture'/,
@@ -2627,8 +2627,8 @@ assert.equal(walletElementsOptions.length, 2, 'BOV and BFL each create one defer
 for (const options of walletElementsOptions) {
   assert.equal(options.mode, 'setup', 'wallet Elements uses setup mode');
   assert.equal(options.currency, 'usd', 'wallet Elements uses the SetupIntent currency contract');
-  assert.deepEqual(Array.from(options.paymentMethodTypes || []), ['card'],
-    'wallet Elements declares card before the deferred SetupIntent exists');
+  assert.equal(Object.hasOwn(options, 'paymentMethodTypes'), false,
+    'wallet Elements leaves dynamic payment-method selection to the server SetupIntent');
   assert.equal(options.setupFutureUsage, 'off_session', 'wallet Elements matches the server off-session SetupIntent usage');
 }
 const currentWalletClicks = walletExpressElements.map((express) => ({ express, resolved: 0, rejected: 0 }));
@@ -2781,7 +2781,7 @@ attachPolicyDisclosure(walletHoldDeclineHarness, 'bov-pay-explainer');
 const walletHoldDeclineExpress = [];
 const walletHoldDeclineStripe = {
   elements(options) {
-    assert.deepEqual(Array.from(options.paymentMethodTypes || []), ['card']);
+    assert.equal(Object.hasOwn(options, 'paymentMethodTypes'), false);
     assert.equal(options.setupFutureUsage, 'off_session');
     return {
       async submit() { return {}; },

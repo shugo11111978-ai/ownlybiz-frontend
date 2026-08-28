@@ -2498,12 +2498,29 @@ walletHarness.sandbox._obMountBovWallet(walletStripe);
 walletHarness.sandbox._obMountBflWallet(walletStripe);
 await settleAsync(24);
 assert.equal(walletExpressElements.length, 2, 'BOV and BFL each mount one account-owned Express Checkout element');
+const currentWalletClicks = walletExpressElements.map((express) => ({ express, resolved: 0, rejected: 0 }));
+for (const click of currentWalletClicks) {
+  click.express.handlers.click({
+    resolve() { click.resolved += 1; },
+    reject() { click.rejected += 1; },
+  });
+  assert.equal(click.resolved, 1, 'a current Express Checkout click is resolved synchronously so the wallet sheet can open');
+  assert.equal(click.rejected, 0, 'a current Express Checkout click is not rejected');
+}
 walletExpressElements[0].handlers.confirm({ paymentFailed() {} });
 walletExpressElements[1].handlers.confirm({ paymentFailed() {} });
 for (let turn = 0; turn < 30 && walletASetupResolvers.length < 2; turn += 1) await Promise.resolve();
 assert.equal(walletASetupResolvers.length, 2, 'both client A wallet confirms are paused at their captured SetupIntent request');
 await changeAuth(walletHarness, null);
 await changeAuth(walletHarness, clientBToken);
+for (const click of currentWalletClicks) {
+  click.express.handlers.click({
+    resolve() { click.resolved += 1; },
+    reject() { click.rejected += 1; },
+  });
+  assert.equal(click.resolved, 1, 'a stale Express Checkout click cannot reopen the wallet sheet after account change');
+  assert.equal(click.rejected, 1, 'a stale Express Checkout click is rejected when Stripe exposes the rejection callback');
+}
 for (const resolve of walletASetupResolvers) resolve({ ok: true, json: async () => ({ client_secret: 'seti_client_a_secret', mode: 'test' }) });
 await settleAsync(40);
 assert.equal(walletConfirmSetupCalls.length, 0, 'late client A SetupIntent responses cannot confirm through client B wallet state');

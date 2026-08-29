@@ -30,7 +30,7 @@ function runtimeSection(start, end) {
   return runtime.slice(left, right);
 }
 
-for (const feature of ['help', 'human_reply_assistant', 'ai_chat', 'website_editor', 'website_copy', 'email_center', 'email_center_media', 'website_media']) {
+for (const feature of ['help', 'human_reply_assistant', 'ai_chat', 'on_demand', 'website_editor', 'website_copy', 'email_center', 'email_center_media', 'website_media']) {
   assert(runtime.includes(`featureRouteControls('${feature}'`), `${feature} must expose provider and model controls`);
 }
 
@@ -55,9 +55,20 @@ assert(!runtime.includes("getElementById('ai-chat-model')"), 'legacy free-text A
 assert(runtime.includes("featureCard('Dashboard Help Assistant'"), 'owner UI must name the dashboard-only Help Assistant');
 assert(runtime.includes("featureCard('Human Reply Assistant'"), 'owner UI must identify the human-reviewed drafting feature');
 assert(runtime.includes("featureCard('Automatic AI Chat'"), 'owner UI must name automatic paid-session chat separately');
+assert(runtime.includes("featureCard('On-Demand Autopilot'"), 'owner UI must expose the separate paid written-reading route');
+assert.match(runtime, /on_demand:'master_text'/, 'On-Demand Autopilot must default to the Master text route');
+assert.match(runtime, /feature === 'on_demand'[\s\S]*?temperature:0\.3,max_tokens:2200/, 'On-Demand Autopilot must use its dedicated default tuning budget');
+assert.match(runtime, /\['On-Demand Autopilot','on_demand'\]/, 'owner overview must map the On-Demand route');
+assert.match(runtime, /<option value="on_demand">On-Demand Autopilot<\/option>/, 'route test dropdown must include On-Demand Autopilot');
 assert(runtime.includes('id="ob-ai-save-help-assistant"'), 'Help Assistant must have its own save action');
 assert(runtime.includes('id="ob-ai-save-human-reply-assistant"'), 'Human Reply Assistant must have its own save action');
 assert(runtime.includes('id="ob-ai-save-automatic-chat"'), 'Automatic AI Chat must have its own save action');
+assert(runtime.includes('id="ob-ai-save-on-demand"'), 'On-Demand Autopilot must have a local save action inside its feature card');
+assert(runtime.includes('id="ob-ai-save-on-demand-status"'), 'On-Demand Autopilot must expose local truthful save status');
+assert.match(runtime, /window\.saveAdminOnDemandConfig = function\(\)[\s\S]*?collectOnDemandAutopilotPayload\(\)[\s\S]*?request\('\/api\/ai\/admin\/config',\{method:'POST',body:payload\}\)[\s\S]*?Other AI features and shared provider settings were not changed\./, 'the local On-Demand action must use its scoped payload and report its isolation truthfully');
+assert.match(runtime, /if\(payload\.editor\.provider_upsert\)clearScopedProviderUpsert\('on_demand',payload\.editor\.provider_upsert\.id\)/, 'On-Demand save confirmation clears only its own pending dedicated-provider secret');
+assert.doesNotMatch(runtimeSection('window.saveAdminOnDemandConfig = function(){', 'window.saveAdminAiConfig = function(options){'), /saveAdminAiConfig\(/, 'the local On-Demand save must never delegate to the broad shared-provider save');
+assert.match(runtime, /window\.saveAdminAiConfig = function\(options\)[\s\S]*?activeTab=String\(options\.preserveTab[\s\S]*?obAiAdminShowTab\(activeTab\)/, 'the shared save must preserve the active AI Control Center tab across its authoritative rerender');
 assert(runtime.includes('Save Help Assistant stores only its enabled state and guidelines.'), 'Help Assistant must explain that provider and model changes use the shared save action');
 
 const helpPayload = runtimeSection('function collectHelpAssistantPayload(){', 'function collectAutomaticAiChatPayload(){');
@@ -148,7 +159,7 @@ assert.deepEqual(automaticDedicatedPayloadResult.editor.provider_upsert, {
   id: 'dedicated-ai-chat', kind: 'chat', model: 'dedicated-model', api_key: 'dedicated-secret'
 }, 'Automatic AI Chat dedicated creation must send one narrow provider upsert');
 
-const humanReplyPayload = runtimeSection('function collectHumanReplyAssistantPayload(){', 'function rememberAdminAiConfig(');
+const humanReplyPayload = runtimeSection('function collectHumanReplyAssistantPayload(){', 'function collectOnDemandAutopilotPayload(){');
 assert.match(humanReplyPayload, /feature_scope: 'human_reply_assistant'/, 'Human Reply Assistant payload must declare its backend scope');
 assert.match(humanReplyPayload, /human_reply_assistant_system_instructions:/, 'Human Reply Assistant payload must carry its own guidance');
 assert.match(humanReplyPayload, /scopedProviderUpsert\('human_reply_assistant',routes\.human_reply_assistant\)/, 'Human Reply Assistant must include only its newly created dedicated provider');
@@ -195,6 +206,67 @@ assert.equal('providers' in humanReplyPayloadResult.editor, false, 'Human Reply 
 assert.equal('provider_upsert' in humanReplyPayloadResult.editor, false, 'ordinary Human Reply Assistant saves must not rewrite a provider');
 assert.equal('ai_chat_system_instructions' in humanReplyPayloadResult.editor, false, 'Human Reply Assistant execution must omit Automatic AI Chat guidance');
 
+const onDemandPayload = runtimeSection('function collectOnDemandAutopilotPayload(){', 'function rememberAdminAiConfig(');
+assert.match(onDemandPayload, /feature_scope: 'on_demand'/, 'On-Demand Autopilot payload must declare its backend scope');
+assert.match(onDemandPayload, /scopedProviderUpsert\('on_demand',routes\.on_demand\)/, 'On-Demand Autopilot may include only its newly created dedicated provider');
+assert.doesNotMatch(onDemandPayload, /providers: collectProviders\(\)|ai_assistant_enabled|ai_chat_system_instructions|human_reply_assistant_system_instructions/, 'On-Demand Autopilot must omit shared provider replacement and every unrelated feature setting');
+const onDemandPayloadResult = new Function(
+  'document', 'clean', 'savedEditorConfig', 'scopedProviderUpsert',
+  `${onDemandPayload}; return collectOnDemandAutopilotPayload();`
+)(
+  {
+    getElementById(id) { return { value: id === 'aiw-route-on-demand' ? 'written-readings' : '' }; },
+    querySelector(selector) {
+      const values = {
+        '[data-ai-feature-model="on_demand"]': 'written-model',
+        '[data-ai-feature-temperature="on_demand"]': '0.3',
+        '[data-ai-feature-tokens="on_demand"]': '2200'
+      };
+      return { value: values[selector] || '' };
+    }
+  },
+  value => String(value || '').trim(),
+  () => ({
+    feature_routes: { ai_chat: 'automatic-route', human_reply_assistant: 'human-route' },
+    feature_models: { ai_chat: 'automatic-model', human_reply_assistant: 'human-model' },
+    feature_tuning: { ai_chat: { temperature: '0.2', max_tokens: '900' } }
+  }),
+  () => null
+);
+assert.equal(onDemandPayloadResult.editor.feature_scope, 'on_demand');
+assert.deepEqual(Object.keys(onDemandPayloadResult.editor.feature_routes), ['on_demand'], 'On-Demand Autopilot must submit only its route');
+assert.deepEqual(Object.keys(onDemandPayloadResult.editor.feature_models), ['on_demand'], 'On-Demand Autopilot must submit only its model');
+assert.deepEqual(Object.keys(onDemandPayloadResult.editor.feature_tuning), ['on_demand'], 'On-Demand Autopilot must submit only its tuning');
+assert.equal(onDemandPayloadResult.editor.feature_routes.on_demand, 'written-readings');
+assert.equal(onDemandPayloadResult.editor.feature_models.on_demand, 'written-model');
+assert.deepEqual(onDemandPayloadResult.editor.feature_tuning.on_demand, { temperature: '0.3', max_tokens: '2200' });
+assert.equal('provider_upsert' in onDemandPayloadResult.editor, false, 'ordinary On-Demand saves must not rewrite a provider');
+
+const onDemandDedicatedPayloadResult = new Function(
+  'document', 'clean', 'savedEditorConfig', 'scopedProviderUpsert',
+  `${onDemandPayload}; return collectOnDemandAutopilotPayload();`
+)(
+  {
+    getElementById: () => ({ value: 'dedicated-on-demand' }),
+    querySelector(selector) {
+      const values = {
+        '[data-ai-feature-model="on_demand"]': 'dedicated-written-model',
+        '[data-ai-feature-temperature="on_demand"]': '0.4',
+        '[data-ai-feature-tokens="on_demand"]': '2400'
+      };
+      return { value: values[selector] || '' };
+    }
+  },
+  value => String(value || '').trim(),
+  () => ({}),
+  (feature, routeId) => feature === 'on_demand' && routeId === 'dedicated-on-demand'
+    ? { id: 'dedicated-on-demand', kind: 'chat', model: 'dedicated-written-model', api_key: 'on-demand-secret' }
+    : null
+);
+assert.deepEqual(onDemandDedicatedPayloadResult.editor.provider_upsert, {
+  id: 'dedicated-on-demand', kind: 'chat', model: 'dedicated-written-model', api_key: 'on-demand-secret'
+}, 'On-Demand dedicated creation must send one narrow provider upsert');
+
 const providerScopeHelpers = runtimeSection('function providerFromCard(card){', 'function providerFromUi(providerId){');
 function providerCardFixture(feature, values) {
   const fields = Object.entries(values).map(([name, value]) => ({
@@ -226,11 +298,14 @@ const staleAutomaticCard = providerCardFixture('ai_chat', {
 const humanCard = providerCardFixture('human_reply_assistant', {
   id: 'human-dedicated', kind: 'chat', model: 'human-model', api_key: 'human-secret'
 });
+const onDemandCard = providerCardFixture('on_demand', {
+  id: 'on-demand-dedicated', kind: 'chat', model: 'written-model', api_key: 'written-secret'
+});
 const providerScopeRuntime = new Function(
   'document', 'clean',
   `${providerScopeHelpers}; return { scopedProviderUpsert, clearScopedProviderUpsert };`
 )(
-  { querySelectorAll: () => [staleAutomaticCard, automaticCard, humanCard] },
+  { querySelectorAll: () => [staleAutomaticCard, automaticCard, humanCard, onDemandCard] },
   value => String(value || '').trim()
 );
 assert.equal(providerScopeRuntime.scopedProviderUpsert('ai_chat', 'auto-dedicated').id, 'auto-dedicated');
@@ -240,16 +315,30 @@ assert.equal(automaticCard.fields.find(field => field.getAttribute('data-ai-fiel
 assert.equal(staleAutomaticCard.fields.find(field => field.getAttribute('data-ai-field') === 'api_key').value, 'unsaved-auto-secret', 'an unselected pending provider must survive the scoped save');
 assert.equal(humanCard.fields.find(field => field.getAttribute('data-ai-field') === 'api_key').value, 'human-secret', 'a scoped save must preserve unrelated pending provider secrets');
 assert.equal(humanCard.getAttribute('data-ai-scoped-provider-feature'), 'human_reply_assistant', 'a scoped save must preserve another feature pending state');
+providerScopeRuntime.clearScopedProviderUpsert('on_demand', 'on-demand-dedicated');
+assert.equal(onDemandCard.fields.find(field => field.getAttribute('data-ai-field') === 'api_key').value, '', 'the saved On-Demand scoped key is cleared after confirmation');
+assert.equal(humanCard.fields.find(field => field.getAttribute('data-ai-field') === 'api_key').value, 'human-secret', 'the On-Demand scoped save preserves the Human pending provider secret');
 
 const sharedPayload = runtimeSection('function collectProviderAndOtherFeaturePayload(){', 'function collectHelpAssistantPayload(){');
-assert.match(sharedPayload, /mergeSavedChatFeatureFields\(collectFeatureRoutes\(\), previousEditor\.feature_routes\)/, 'shared feature save must retain saved Human Reply Assistant and Automatic AI Chat routes');
-assert.match(runtime, /\['human_reply_assistant','ai_chat'\]\.forEach/, 'shared feature save must protect both independent chat feature configurations');
+assert.match(sharedPayload, /mergeSavedScopedFeatureFields\(collectFeatureRoutes\(\), previousEditor\.feature_routes\)/, 'shared feature save must retain every independently saved AI feature route');
+assert.match(runtime, /\['human_reply_assistant','ai_chat','on_demand'\]\.forEach/, 'shared feature save must protect Human, Automatic Chat, and On-Demand scoped configurations');
+assert.match(runtimeSection('function collectFeatureRoutes(){', 'function savedEditorConfig(){'), /on_demand:[\s\S]*?aiw-route-on-demand[\s\S]*?master_text/, 'shared feature collection must include the current On-Demand route');
+const mergeSavedSection = runtimeSection('function mergeSavedScopedFeatureFields(currentValues, savedValues){', 'function collectProviderAndOtherFeaturePayload(){');
+const mergeSavedScopedFeatureFields = new Function(`${mergeSavedSection}; return mergeSavedScopedFeatureFields;`)();
+assert.deepEqual(mergeSavedScopedFeatureFields(
+  {human_reply_assistant:'unsaved-human',ai_chat:'unsaved-auto',on_demand:'current-written-route'},
+  {human_reply_assistant:'saved-human',ai_chat:'saved-auto',on_demand:'stale-written-route'}
+), {
+  human_reply_assistant:'saved-human',
+  ai_chat:'saved-auto',
+  on_demand:'stale-written-route'
+}, 'shared save must preserve saved Human, Automatic Chat, and On-Demand routes instead of capturing unsaved scoped edits');
 assert.doesNotMatch(sharedPayload, /ai_assistant_enabled/, 'shared provider save must not overwrite Help Assistant enabled state');
 assert.doesNotMatch(sharedPayload, /ai_chat_system_instructions:/, 'shared provider save must not overwrite Automatic AI Chat guidance');
 assert.doesNotMatch(sharedPayload, /human_reply_assistant_system_instructions:/, 'shared provider save must not overwrite Human Reply Assistant guidance');
 
 assert(html.includes('<h3 id="ob-ra-title">Human Reply Assistant</h3>'), 'expert settings must name the human-reviewed Reply Assistant');
-assert(html.includes('Human Reply Assistant is the separate expert-reviewed drafting feature above.'), 'expert settings must explain the human-review boundary');
+assert(html.includes('Automatic AI Chat and Human Reply Assistant are separate features with separate authority, instructions, and learning.'), 'expert settings must explain the two-way feature boundary');
 const humanReplyMarkup = html.slice(html.indexOf('<section id="ob-reply-knowledge-manager"'), html.indexOf('<div id="ob-expert-ai-settings-host"'));
 assert.doesNotMatch(humanReplyMarkup, /ob-ra-(?:gate-auto-send|auto-send-consent|auto-send-version|auto-send-status)/, 'Human Reply Assistant must not display Automatic AI Chat consent controls');
 assert(html.includes('id="ob-expert-ai-auto-send-consent"'), 'Automatic AI Chat must own the visible automatic-reply consent checkbox');

@@ -16,12 +16,20 @@ const markup=section('<section id="ob-reply-knowledge-manager"','<div id="ob-exp
 const legacyGate=section('  var REPLY_ASSISTANT_AUTOMATION_GATE_COPY','  function expertAiChatPanel(){');
 const legacyPanel=section('  function expertAiChatPanel(){','  function expertAiSettingsTab(){');
 const legacyAi=section('  function expertAiPreferenceCard(){','  window.obExpertAiSettingsTab = function(tab){');
+const featureAuthority=section('  var expertAiFeatureAuthority =','  function automaticTrainingTime(value){');
+const expertAiTabs=section('  function expertAiSettingsTab(){','\twindow.obAutomaticAiChatTrainingDirty = function(field){');
+const automaticTraining=section('  function automaticTrainingTime(value){','\t  function expertAiPreferenceCard(){');
+const automaticTrainingMutation=section('\twindow.obAutomaticAiChatTrainingDirty = function(field){','\t  window.obExpertAiToggle = function(enabled){');
 const automaticConsentParser=section('  function automaticChatConsentState(data){','  window.obReplyAssistantAutomationGateText = replyAssistantAutomationGateText;');
 const automaticConsentMutation=section('  window.obExpertAiConsentToggle = function(accepted){','  window.obExpertAiAutoAcceptToggle = function(enabled){');
 const humanControlMutation=source.slice(source.indexOf('  function controlDraft(){'),source.indexOf('  function renderGate(',source.indexOf('  function controlDraft(){')));
 const style=section('<style id="ownlybiz-expert-reply-knowledge-20260817-style">','<script id="ownlybiz-expert-reply-knowledge-20260817">');
 
-assert.match(markup,/id="ob-reply-knowledge-manager"[^>]+hidden/,'private manager starts hidden');
+assert.doesNotMatch(markup,/id="ob-reply-knowledge-manager"[^>]+hidden/,'the Human Reply Assistant shell remains visible while its private authority loads');
+assert.match(markup,/id="ob-reply-knowledge-manager"[^>]+aria-busy="true"/,'the initially visible Human Reply Assistant shell announces its loading state');
+assert.match(html,/id="ob-expert-ai-human-tab"[^>]+hidden[\s\S]*?id="ob-reply-knowledge-manager"[\s\S]*?id="ob-expert-ai-automatic-tab"[^>]+hidden[\s\S]*?id="ob-expert-ai-settings-host"/,'Automatic AI Chat and Human Reply Assistant are peer tab panels');
+assert.match(html,/id="ob-expert-ai-human-tab" role="tabpanel" aria-labelledby="ob-expert-ai-tab-human"[\s\S]*?id="ob-expert-ai-automatic-tab" role="tabpanel" aria-labelledby="ob-expert-ai-tab-automatic"/,'each expert AI peer panel is labelled by its own tab');
+assert.match(html,/id="ob-settings-ai-nav"/,'the AI settings navigation entry has an entitlement-owned visibility target');
 assert.match(markup,/<h3 id="ob-ra-title">Human Reply Assistant<\/h3>/,'the manager identifies the human-reviewed drafting feature');
 assert.match(markup,/Prepare drafts for the expert to review and send across client chats[\s\S]*?Automatic AI Chat and its separate quality learning are configured independently/,'the manager distinguishes human drafting from automatic chat');
 for(const id of ['ob-ra-gate-entitlement','ob-ra-gate-expert','ob-ra-gate-training','ob-ra-gate-training-consent'])assert.match(markup,new RegExp(`id="${id}"`),`${id} is a separate visible Human Reply Assistant state`);
@@ -37,16 +45,63 @@ assert.doesNotMatch(legacyAi,/learned_guidance|Learned notes|clear_learned_guida
 const automationReasons=['reply_assistant_provider_authority_unavailable','reply_assistant_capacity_rollout_not_enforced','reply_assistant_expert_inactive','reply_assistant_entitlement_required','reply_assistant_training_entitlement_required','reply_assistant_disabled','reply_assistant_training_consent_required','reply_assistant_auto_send_consent_required','reply_assistant_approved_source_required','reply_assistant_admin_ai_disabled','reply_assistant_expert_ai_disabled','reply_assistant_fully_ai_mode_required','reply_assistant_auto_accept_required','reply_assistant_ai_capacity_unavailable'];
 for(const reason of automationReasons)assert.match(legacyGate,new RegExp(reason),`${reason} has bounded expert-facing copy`);
 assert.match(legacyGate,/reply_assistant_auto_send_effective === true[\s\S]*?reply-assistant-automation-v1[\s\S]*?automation_gate_reason === null[\s\S]*?automation_lane === 'ai'/,'compact AI status requires the complete effective gate envelope');
-assert.match(legacyPanel,/autoReplyEffective = replyAssistantAutomationEffective\(d\)[\s\S]*?governed auto-replies active[\s\S]*?human review[\s\S]*?waiting:/,'compact AI status renders active and fail-closed waiting states from backend authority');
-assert.match(legacyPanel,/humanDraftAvailable = d\.reply_assistant_draft_available === true[\s\S]*?!d\.eligible && !d\.admin_enabled && !humanDraftAvailable/,'the human drafting surface remains visible independently when Automatic AI Chat is disabled');
+assert.match(legacyPanel,/loadExpertAiFeatureAuthority\(false\)[\s\S]*?automaticAllowed=expertAiFeatureAllowed\('automatic'\)[\s\S]*?humanDraftAvailable=expertAiFeatureAllowed\('human'\)&&d\.reply_assistant_draft_available===true/,'the compact toolbar resolves independent manifest authority before rendering either feature');
+assert.match(legacyPanel,/if\(!automaticAllowed\)[\s\S]*?data-ob-ai-toolbar="human"[\s\S]*?Human Reply Assistant[\s\S]*?never sends it automatically/,'a Human-only expert gets a Human drafting toolbar with no Automatic controls');
+assert.match(legacyPanel,/if\(!automaticAllowed\)[\s\S]*?autoReplyEffective = replyAssistantAutomationEffective\(d\)[\s\S]*?governed auto-replies active[\s\S]*?human review[\s\S]*?waiting:[\s\S]*?data-ob-ai-toolbar="automatic"/,'the Automatic toolbar renders active and fail-closed waiting states only after its own authority path');
 assert.match(legacyPanel,/humanDraftAvailable \? '<button[^']+Human AI draft/,'the human draft button depends only on Human Reply Assistant availability');
 assert.doesNotMatch(legacyPanel,/active && !fullyAi \? '<button[^']+(?:Suggest reply|Human AI draft)/,'Automatic AI Chat enablement and mode never gate the Human Reply Assistant button');
-assert.match(legacyAi,/autoReplyEffective = replyAssistantAutomationEffective\(d\)[\s\S]*?governed auto-replies active[\s\S]*?human review · waiting:/,'Fully AI preferences reflect the governed gate instead of a hardcoded release phase');
+assert.match(legacyAi,/autoReplyEffective = replyAssistantAutomationEffective\(d\)[\s\S]*?Governed automatic replies are active[\s\S]*?Automatic replies are waiting:/,'Automatic AI Chat preferences reflect the governed gate instead of a legacy mode label');
 assert.match(legacyPanel+legacyAi,/autoAvailable = d\.auto_accept_chat_available === true[\s\S]*?autoDisabled = autoAvailable \? '' : 'disabled'/,'auto-accept controls use the server-owned non-circular availability field');
 assert.match(legacyAi,/autoEffective[\s\S]*?new chat requests start automatically and governed replies may send[\s\S]*?Requested · waiting:/,'chat auto-accept distinguishes effective, requested, and waiting states');
-assert.match(legacyAi,/Promise\.all\(\[api\('\/ai\/expert-chat\/status'\),api\('\/ai\/expert-chat\/consent'\)\]\)/,'Automatic AI Chat loads its independent status and consent authorities');
+assert.match(legacyAi,/Promise\.all\(\[api\('\/ai\/expert-chat\/status'\),api\('\/ai\/expert-chat\/consent'\),api\('\/ai\/expert-chat\/training'\)\]\)/,'Automatic AI Chat loads its independent status, consent, and training authorities');
 assert.match(legacyAi,/id="ob-expert-ai-auto-send-consent"[\s\S]*?obExpertAiConsentToggle/,'Automatic AI Chat owns the visible automatic-reply consent checkbox');
 assert.match(legacyAi,/Human Reply Assistant choices do not change it/,'Automatic AI Chat explains its consent boundary from human drafting');
+assert.match(featureAuthority,/automatic_ai_chat[\s\S]*?human_reply_assistant[\s\S]*?typeof automatic\.visible!=='boolean'[\s\S]*?typeof human\.visible!=='boolean'[\s\S]*?automatic:automatic\.visible,human:human\.visible/,'the feature manifest strictly parses both visible booleans');
+assert.match(featureAuthority,/api\('\/ai\/features'\)[\s\S]*?parseExpertAiFeatureManifest/,'one feature manifest request owns both expert AI visibility gates');
+assert.doesNotMatch(featureAuthority,/api\('\/ai\/(?:expert-chat\/status|reply-assistant\/controls)'\)/,'feature visibility must not be inferred from feature settings endpoints');
+assert.match(featureAuthority,/nav\.hidden = resolved && !automatic && !human[\s\S]*?nav\.style\.display = resolved && !automatic && !human/,'the AI navigation entry hides only after both authorities resolve false');
+assert.match(featureAuthority,/automatic \? expertAiTabButton\('automatic','Automatic AI Chat'\)[\s\S]*?human \? expertAiTabButton\('human','Human Reply Assistant'\)/,'each peer feature tab is rendered only by its own entitlement');
+assert.match(expertAiTabs,/id="ob-expert-ai-tab-' \+ id[\s\S]*?role="tab"[\s\S]*?aria-selected="[\s\S]*?aria-controls="ob-expert-ai-' \+ id \+ '-tab"[\s\S]*?tabindex="[\s\S]*?data-ob-expert-ai-tab=[\s\S]*?obExpertAiTabKeydown\(event\)/,'expert AI tabs expose stable ids, panel ownership, roving tabindex, and keyboard handling');
+assert.match(expertAiTabs,/automaticPanel\.hidden = !\(automatic && selected === 'automatic'\)[\s\S]*?humanPanel\.hidden = !\(human && selected === 'human'\)/,'one selected expert AI state synchronizes both panel hidden states');
+assert.match(expertAiTabs,/window\.obExpertAiTabKeydown = function\(event\)[\s\S]*?ArrowLeft[\s\S]*?ArrowRight[\s\S]*?Home[\s\S]*?End[\s\S]*?obExpertAiSettingsTab\(id\)[\s\S]*?target\.focus\(\)/,'expert AI tabs support Arrow, Home, and End navigation with focus restored to the rerendered selected tab');
+assert.match(legacyAi,/loadExpertAiFeatureAuthority\(false\)[\s\S]*?!expertAiFeatureAllowed\('automatic'\)[\s\S]*?api\('\/ai\/expert-chat\/training'\)/,'Automatic Chat training is requested only after its manifest visibility gate passes');
+assert.match(legacyAi,/Number\(error&&error\.status\|\|0\)===403\|\|Number\(error&&error\.status\|\|0\)===404[\s\S]*?obExpertAiFeatureAuthority\('automatic',false\)/,'a removed Automatic entitlement clears its stale tab after a 403 or 404');
+
+async function featureManifestCase(automatic,human,override){
+  const nodes={
+    'ob-settings-ai-nav':{hidden:false,style:{display:''}},
+    'ob-expert-ai-feature-tabs':{innerHTML:''},
+    'ob-expert-ai-automatic-tab':{hidden:true},
+    'ob-expert-ai-human-tab':{hidden:true},
+    'ob-expert-ai-unavailable':{style:{display:'none'}}
+  };
+  const calls=[];
+  const root={window:null,Promise,console,hasExpertAuth:()=>true,safe:value=>String(value||''),document:{getElementById:id=>nodes[id]||null},api:path=>{calls.push(path);return Promise.resolve(override||{success:true,features:{automatic_ai_chat:{visible:automatic},human_reply_assistant:{visible:human}}});}};
+  root.window=root;vm.createContext(root);new vm.Script(featureAuthority,{filename:'expert-ai-feature-manifest.js'}).runInContext(root);
+  const result=await root.obExpertAiLoadFeatureAuthority(true);
+  return {root,nodes,calls,result};
+}
+const neither=await featureManifestCase(false,false);
+assert.equal(neither.nodes['ob-settings-ai-nav'].hidden,true,'AI navigation hides when neither feature is visible');
+assert.equal(neither.nodes['ob-expert-ai-unavailable'].style.display,'block');
+assert.equal(neither.nodes['ob-expert-ai-automatic-tab'].hidden,true);assert.equal(neither.nodes['ob-expert-ai-human-tab'].hidden,true);
+const onlyAutomatic=await featureManifestCase(true,false);
+assert.equal(onlyAutomatic.nodes['ob-settings-ai-nav'].hidden,false);assert.match(onlyAutomatic.nodes['ob-expert-ai-feature-tabs'].innerHTML,/Automatic AI Chat/);assert.doesNotMatch(onlyAutomatic.nodes['ob-expert-ai-feature-tabs'].innerHTML,/Human Reply Assistant/);assert.equal(onlyAutomatic.nodes['ob-expert-ai-automatic-tab'].hidden,false);assert.equal(onlyAutomatic.nodes['ob-expert-ai-human-tab'].hidden,true);
+const onlyHuman=await featureManifestCase(false,true);
+assert.equal(onlyHuman.nodes['ob-settings-ai-nav'].hidden,false);assert.doesNotMatch(onlyHuman.nodes['ob-expert-ai-feature-tabs'].innerHTML,/Automatic AI Chat/);assert.match(onlyHuman.nodes['ob-expert-ai-feature-tabs'].innerHTML,/Human Reply Assistant/);assert.equal(onlyHuman.nodes['ob-expert-ai-automatic-tab'].hidden,true);assert.equal(onlyHuman.nodes['ob-expert-ai-human-tab'].hidden,false);
+const both=await featureManifestCase(true,true);
+assert.match(both.nodes['ob-expert-ai-feature-tabs'].innerHTML,/Automatic AI Chat[\s\S]*Human Reply Assistant/);assert.equal(both.nodes['ob-expert-ai-automatic-tab'].hidden,false);assert.equal(both.nodes['ob-expert-ai-human-tab'].hidden,true);assert.deepEqual(both.calls,['/ai/features']);
+assert.match(both.nodes['ob-expert-ai-feature-tabs'].innerHTML,/id="ob-expert-ai-tab-automatic"[\s\S]*?aria-selected="true"[\s\S]*?aria-controls="ob-expert-ai-automatic-tab"[\s\S]*?tabindex="0"/,'the selected Automatic tab owns its panel and the active keyboard stop');
+assert.match(both.nodes['ob-expert-ai-feature-tabs'].innerHTML,/id="ob-expert-ai-tab-human"[\s\S]*?aria-selected="false"[\s\S]*?aria-controls="ob-expert-ai-human-tab"[\s\S]*?tabindex="-1"/,'the unselected Human tab remains programmatically owned but leaves the keyboard tab order');
+await both.root.obExpertAiLoadFeatureAuthority(false);assert.deepEqual(both.calls,['/ai/features'],'a resolved manifest is reused until the scheduled forced refresh');
+const malformed=await featureManifestCase(true,true,{success:true,features:{automatic_ai_chat:{visible:'yes'},human_reply_assistant:{visible:false}}});
+assert.equal(malformed.result,false,'non-boolean feature visibility fails closed');assert.equal(malformed.nodes['ob-settings-ai-nav'].hidden,true,'a malformed manifest cannot leave stale AI navigation visible');
+assert.match(automaticTraining,/data\.success !== true[\s\S]*?data\.admin_guidance[\s\S]*?data\.expert_instructions[\s\S]*?learning\.principles[\s\S]*?learning\.recent_events/,'Automatic AI Chat training parses only the explicit success contract');
+assert.match(automaticTraining,/Admin guidance · read only[\s\S]*?id="ob-automatic-ai-expert-instructions"[\s\S]*?Learned principles[\s\S]*?Recent learning provenance/,'Automatic AI Chat has a separate transparent training center');
+assert.match(automaticTraining,/Raw transcripts are never shown here[\s\S]*?never transcript content/,'Automatic Chat learning provenance explicitly excludes raw transcripts');
+assert.doesNotMatch(automaticTraining,/reply-assistant|ob-ra-/,'Automatic AI Chat training does not reuse Human Reply Assistant state or endpoints');
+assert.match(automaticTrainingMutation,/api\('\/ai\/expert-chat\/training',\{method:'PUT',body:\{expected_revision:current\.revision,expert_instructions:instructions\}\}\)/,'Automatic Chat instructions save through the exact isolated CAS contract');
+assert.doesNotMatch(automaticTrainingMutation,/reply-assistant|reply_assistant_enabled|training_consent|retention_days/,'Automatic Chat training never mutates Human Reply Assistant controls');
 assert.match(automaticConsentMutation,/api\('\/ai\/expert-chat\/consent',\{method:'PUT',body:body\}\)/,'Automatic AI Chat consent writes through its dedicated endpoint');
 assert.match(automaticConsentMutation,/expected_revision:current\.revision[\s\S]*?accepted:!!accepted[\s\S]*?document_version=current\.currentDocumentVersion/,'Automatic AI Chat consent uses exact revision CAS and the current document when accepting');
 assert.doesNotMatch(automaticConsentMutation,/reply-assistant\/controls|reply_assistant_enabled|training_consent|retention_days/,'Automatic AI Chat consent never mutates Human Reply Assistant settings');
@@ -69,6 +124,7 @@ assert.match(source,/snapshot_token=[\s\S]*?sources_done=1[\s\S]*?audit_done=1/,
 assert.match(source,/if\(state\.loading&&!options\.force\)return state\.loadPromise/,'duplicate manager loads coalesce before allocating an aborting operation');
 assert.doesNotMatch(source,/FileReader|FormData|input[^\n]+type=['"]file|dataTransfer\.files/,'Phase 4 remains text-only with no file ingestion');
 assert.match(style,/\.ob-ra-button\{min-height:44px/,'buttons meet the touch-target floor');
+assert.match(style,/\.ob-ra-gates\{display:grid;grid-template-columns:repeat\(auto-fit,minmax\(150px,1fr\)\)/,'the four Human authority gates auto-fit without a phantom fifth desktop column');
 assert.match(style,/@media\(max-width:768px\)[\s\S]*?font-size:16px/,'mobile form controls avoid viewport zoom');
 assert.match(style,/:focus-visible/,'keyboard focus remains visible');
 
@@ -162,7 +218,7 @@ function createIdentity(role='expert'){
 
 function createHarness({role='expert',support=false,mini=false,fetchImpl=null,visible=true}={}){
   FakeMutationObserver.instances=[];FakeBlob.instances=[];
-  const document=new FakeDocument();const panel=document.add('div','sblock-ai');panel.style.display=visible?'':'none';const manager=document.add('section','ob-reply-knowledge-manager',panel);manager.hidden=true;
+  const document=new FakeDocument();const panel=document.add('div','sblock-ai');panel.style.display=visible?'':'none';const manager=document.add('section','ob-reply-knowledge-manager',panel);manager.hidden=false;manager.setAttribute('aria-busy','true');
   const ids=['ob-ra-manager-status','ob-ra-entitlement-status','ob-ra-expert-status','ob-ra-training-entitlement-status','ob-ra-training-consent-status','ob-ra-training-version','ob-ra-guidance-count','ob-ra-guidance-status','ob-ra-manual-count','ob-ra-manual-status','ob-ra-summary-status','ob-ra-sources-status'];
   for(const id of ids)document.add('div',id,manager);
   const sourcesTitle=document.add('h4','ob-ra-sources-title',manager);sourcesTitle.setAttribute('tabindex','-1');
@@ -208,14 +264,35 @@ assert.equal(primary.sourceList.querySelector('[data-ob-ra-source="quarantine-on
 assert.equal(primary.guidance.value,'Calm expert guidance','expert-written guidance is loaded through the exact private credential');
 assert.doesNotMatch(primary.manager.textContent,/LEGACY_LEARNED_SENTINEL|RAW_PROVIDER_STATUS_SENTINEL/,'legacy learned content and provider status details are never projected');
 
+const notEntitled=createHarness();
+notEntitled.setHandler((url,options)=>{
+  assert(url.endsWith('/api/ai/reply-assistant/controls'));assert.equal(options.method,'GET');
+  return response(controls({entitlements:{reply_assistant_enabled:false,training_enabled:false}}));
+});
+assert.equal(await notEntitled.start(),false,'a Human Reply Assistant without its admin entitlement stays unavailable');
+assert.equal(notEntitled.calls.length,1,'an unentitled Human Reply Assistant reads only its authority and never requests private sources or guidance');
+assert.equal(notEntitled.manager.hidden,false,'an unentitled Human Reply Assistant keeps its explanatory shell and retry path visible');
+assert.match(notEntitled.document.getElementById('ob-ra-manager-status').textContent,/Admin has not granted Human Reply Assistant access/);
+assert.equal(notEntitled.document.getElementById('ob-ra-reload').disabled,false,'the visible shell keeps Reload available after entitlement resolution');
+
+const loadFailure=createHarness({fetchImpl:()=>Promise.reject(new Error('RAW_NETWORK_DETAIL'))});
+assert.equal(await loadFailure.start(),false,'a non-authority load failure fails closed');
+assert.equal(loadFailure.manager.hidden,false,'a non-authority load failure cannot blank the selected Human Reply Assistant tab');
+assert.equal(loadFailure.manager.getAttribute('aria-busy'),'false');
+assert.match(loadFailure.document.getElementById('ob-ra-manager-status').textContent,/could not be loaded[\s\S]*Use Reload to try again/i,'the visible shell exposes a bounded error and retry instruction');
+assert.doesNotMatch(loadFailure.document.getElementById('ob-ra-manager-status').textContent,/RAW_NETWORK_DETAIL/,'raw transport details never reach the Human Reply Assistant shell');
+assert.equal(loadFailure.document.getElementById('ob-ra-reload').disabled,false,'Reload remains usable after a non-authority load failure');
+
 const loadParts={controls:deferred(),sources:deferred(),guidance:deferred()};
 const coalesced=createHarness({fetchImpl:(url)=>url.endsWith('/controls')?loadParts.controls.promise:url.endsWith('/sources')?loadParts.sources.promise:loadParts.guidance.promise});
 const coalescedPending=coalesced.start({wait:false});
-assert.equal(coalesced.calls.length,3);
+assert.equal(coalesced.calls.length,1,'private sources wait for the Human Reply Assistant entitlement read');
 coalesced.root.settingsNav(null,'sblock-ai');
 assert.equal(FakeMutationObserver.instances.length,1);FakeMutationObserver.instances[0].trigger();
-assert.equal(coalesced.calls.length,3,'settings navigation plus panel observation coalesce onto the active load without aborting it');
-loadParts.controls.resolve(response(controls()));loadParts.sources.resolve(response({success:true,sources:[]}));loadParts.guidance.resolve(response({success:true,available:true,guidance:'',revision:0}));
+assert.equal(coalesced.calls.length,1,'settings navigation plus panel observation coalesce onto the active authority read without aborting it');
+loadParts.controls.resolve(response(controls()));for(let step=0;step<12&&coalesced.calls.length<3;step++)await Promise.resolve();
+assert.equal(coalesced.calls.length,3,'private sources and guidance load only after the Human entitlement resolves true');
+loadParts.sources.resolve(response({success:true,sources:[]}));loadParts.guidance.resolve(response({success:true,available:true,guidance:'',revision:0}));
 assert.equal(await coalescedPending,true);assert.equal(coalesced.hooks.state.loaded,true);assert.equal(coalesced.hooks.state.loading,false);assert.equal(coalesced.manager.getAttribute('aria-busy'),'false');
 
 assert.equal(primary.hooks.parseSources({sources:Array.from({length:400},(_,index)=>sourceRow(`manager-${index}`))}).length,400,'the manager accepts the exact 400-row retained-plus-terminal boundary');

@@ -55045,11 +55045,13 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   function api(path, opts){
     opts = opts || {};
     var headers = {'Content-Type':'application/json'};
-    if(token()) headers.Authorization = 'Bearer ' + token();
+    var requestToken = Object.prototype.hasOwnProperty.call(opts,'token') ? String(opts.token || '') : token();
+    if(requestToken) headers.Authorization = 'Bearer ' + requestToken;
     var requestOptions = {
       method: opts.method || 'GET',
       headers: headers,
-      body: opts.body ? JSON.stringify(opts.body) : undefined
+      body: opts.body ? JSON.stringify(opts.body) : undefined,
+      signal: opts.signal
     };
     if(opts.cache) requestOptions.cache = opts.cache;
     return fetch(API_ROOT + path, requestOptions).then(function(r){ return r.json().catch(function(){ return {}; }).then(function(d){ if(!r.ok) throw new Error(d.error || d.message || ('Request failed: ' + r.status)); return d; }); });
@@ -55589,7 +55591,8 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   }
   window.obReplyAssistantAutomationGateText = replyAssistantAutomationGateText;
 	  function expertAiChatPanel(){
-	    if(!hasExpertAuth()){
+	    var owner=bindExpertAiFeatureOwner('expert-ai-toolbar');
+	    if(!owner){
 	      var stale = document.getElementById('ob-expert-ai-chat-panel');
 	      if(stale) stale.remove();
 	      return Promise.resolve(false);
@@ -55597,9 +55600,10 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
 	    var area = document.getElementById('expert-chat-area');
 	    if(!area) return Promise.resolve(false);
 	    return loadExpertAiFeatureAuthority(false).then(function(loaded){
-	      if(!loaded)return null;
-	      return api('/ai/expert-chat/status');
+	      if(!loaded||!expertAiFeatureOwnerCurrent(owner))return null;
+	      return api('/ai/expert-chat/status',{token:owner.token,signal:owner.signal});
 	    }).then(function(d){
+	      if(!expertAiFeatureOwnerCurrent(owner))return false;
 	      var existing = document.getElementById('ob-expert-ai-chat-panel');
 	      if(!d){if(existing)existing.remove();return false;}
 	      var automaticAllowed=expertAiFeatureAllowed('automatic');
@@ -55636,7 +55640,23 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
 	      return true;
 	    }).catch(function(){return false;});
 	  }
-  var expertAiFeatureAuthority = {automatic:null,human:null,loadPromise:null};
+  var expertAiFeatureAuthority = {automatic:null,human:null,loadPromise:null,owner:null,loadGeneration:0};
+  function captureExpertAiFeatureOwner(scope){
+    if(!hasExpertAuth()||!window.OB_CLIENT_CONTEXT||typeof window.OB_CLIENT_CONTEXT.capture!=='function')return null;
+    var owner=null;
+    try{owner=window.OB_CLIENT_CONTEXT.capture(scope||'expert-ai-feature-authority');}catch(e){return null;}
+    try{
+      return owner&&owner.token&&owner.principal&&owner.role==='expert'&&window.OB_CLIENT_CONTEXT.isCurrent(owner,{exactCredential:true})?owner:null;
+    }catch(e2){return null;}
+  }
+  function expertAiFeatureSameOwner(left,right){
+    return !!left&&!!right&&String(left.principal||'')===String(right.principal||'')&&String(left.token||'')===String(right.token||'')&&
+      Number(left.identityGeneration||0)===Number(right.identityGeneration||0)&&Number(left.credentialGeneration||0)===Number(right.credentialGeneration||0);
+  }
+  function expertAiFeatureOwnerCurrent(owner){
+    if(!expertAiFeatureSameOwner(owner,expertAiFeatureAuthority.owner)||!window.OB_CLIENT_CONTEXT)return false;
+    try{return window.OB_CLIENT_CONTEXT.isCurrent(owner,{exactCredential:true});}catch(e){return false;}
+  }
   function expertAiFeatureAllowed(feature){
     return expertAiFeatureAuthority[feature] === true;
   }
@@ -55656,6 +55676,26 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       window.__obAutomaticAiChatConsent=null;window.__obAutomaticAiChatTraining=null;
     }
     if(feature==='human'&&typeof window.obReplyKnowledgeScrubPrivate==='function')window.obReplyKnowledgeScrubPrivate();
+  }
+  function scrubExpertAiFeatureAuthority(){
+    expertAiFeatureAuthority.loadGeneration+=1;
+    expertAiFeatureAuthority.loadPromise=null;
+    expertAiFeatureAuthority.owner=null;
+    expertAiFeatureAuthority.automatic=null;
+    expertAiFeatureAuthority.human=null;
+    clearExpertAiFeatureView('automatic');
+    clearExpertAiFeatureView('human');
+    var toolbar=document.getElementById('ob-expert-ai-chat-panel');if(toolbar)toolbar.remove();
+    renderExpertAiFeatureShell();
+  }
+  function bindExpertAiFeatureOwner(scope){
+    var captured=captureExpertAiFeatureOwner(scope);
+    if(!captured){if(expertAiFeatureAuthority.owner)scrubExpertAiFeatureAuthority();return null;}
+    if(!expertAiFeatureSameOwner(captured,expertAiFeatureAuthority.owner)){
+      scrubExpertAiFeatureAuthority();
+      expertAiFeatureAuthority.owner=captured;
+    }
+    return expertAiFeatureAuthority.owner;
   }
   function expertAiSettingsTab(){
     var requested = window.__obExpertAiSettingsTab === 'human' ? 'human' : 'automatic';
@@ -55686,6 +55726,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   }
   window.obExpertAiFeatureAuthority = function(feature, enabled){
     if(feature !== 'automatic' && feature !== 'human') return;
+    if(!bindExpertAiFeatureOwner('expert-ai-feature-local-authority'))return;
     expertAiFeatureAuthority[feature] = typeof enabled === 'boolean' ? enabled : null;
     if(enabled===false)clearExpertAiFeatureView(feature);
     renderExpertAiFeatureShell();
@@ -55693,10 +55734,13 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   window.obExpertAiFeatureVisible = expertAiFeatureAllowed;
   window.obExpertAiFeatureAuthorityResolved = expertAiFeatureAuthorityResolved;
   function loadExpertAiFeatureAuthority(force){
-    if(!hasExpertAuth()) return Promise.resolve(false);
+    var owner=bindExpertAiFeatureOwner('expert-ai-feature-manifest');
+    if(!owner)return Promise.resolve(false);
     if(expertAiFeatureAuthority.loadPromise && !force) return expertAiFeatureAuthority.loadPromise;
     if(!force&&expertAiFeatureAuthorityResolved())return Promise.resolve(true);
-    var promise = api('/ai/features').then(function(data){
+    var generation=++expertAiFeatureAuthority.loadGeneration;
+    var promise = api('/ai/features',{token:owner.token,signal:owner.signal}).then(function(data){
+      if(!expertAiFeatureOwnerCurrent(owner)||generation!==expertAiFeatureAuthority.loadGeneration)return false;
       var manifest=parseExpertAiFeatureManifest(data);
       if(!manifest)throw new Error('AI feature visibility manifest is unavailable.');
       var humanWasVisible=expertAiFeatureAllowed('human');
@@ -55709,6 +55753,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       if(manifest.human&&expertAiSettingsTab()==='human'&&(!humanWasVisible||!humanWasSelected)&&typeof window.obReplyKnowledgeLoad==='function')setTimeout(function(){window.obReplyKnowledgeLoad();},0);
       return true;
     }).catch(function(){
+      if(!expertAiFeatureOwnerCurrent(owner)||generation!==expertAiFeatureAuthority.loadGeneration)return false;
       expertAiFeatureAuthority.automatic=false;
       expertAiFeatureAuthority.human=false;
       clearExpertAiFeatureView('automatic');clearExpertAiFeatureView('human');renderExpertAiFeatureShell();
@@ -55718,6 +55763,17 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     return promise;
   }
   window.obExpertAiLoadFeatureAuthority = loadExpertAiFeatureAuthority;
+  if(window.OB_CLIENT_CONTEXT&&typeof window.OB_CLIENT_CONTEXT.register==='function')window.OB_CLIENT_CONTEXT.register('expert-ai-feature-authority',{
+    teardown:function(){scrubExpertAiFeatureAuthority();},
+    changed:function(current){
+      scrubExpertAiFeatureAuthority();
+      if(current&&current.role==='expert')setTimeout(function(){loadExpertAiFeatureAuthority(true);},0);
+    },
+    credentialRotated:function(current){
+      scrubExpertAiFeatureAuthority();
+      if(current&&current.role==='expert')setTimeout(function(){loadExpertAiFeatureAuthority(true);},0);
+    }
+  });
 
   function automaticTrainingTime(value){
     if(value === null || value === undefined || value === '') return 'Not yet';
@@ -55785,19 +55841,21 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       + '</section>';
   }
 	  function expertAiPreferenceCard(){
-	    if(!hasExpertAuth()){
+	    var owner=bindExpertAiFeatureOwner('expert-ai-preferences');
+	    if(!owner){
 	      var stale = document.getElementById('ob-expert-ai-pref-card');
 	      if(stale) stale.remove();
-	      window.obExpertAiFeatureAuthority('automatic',null);
 	      return Promise.resolve(false);
 	    }
 		    var host = document.getElementById('ob-expert-ai-settings-host');
 		    if(!host) return Promise.resolve(false);
 		    return loadExpertAiFeatureAuthority(false).then(function(){
+		      if(!expertAiFeatureOwnerCurrent(owner))return null;
 		      if(!expertAiFeatureAllowed('automatic')){clearExpertAiFeatureView('automatic');return null;}
-		      return Promise.all([api('/ai/expert-chat/status'),api('/ai/expert-chat/consent'),api('/ai/expert-chat/training')]);
+		      var requestOptions={token:owner.token,signal:owner.signal};
+		      return Promise.all([api('/ai/expert-chat/status',requestOptions),api('/ai/expert-chat/consent',requestOptions),api('/ai/expert-chat/training',requestOptions)]);
 		    }).then(function(results){
-		      if(!results)return false;
+		      if(!results||!expertAiFeatureOwnerCurrent(owner))return false;
 		      var d=results[0],automaticConsent=automaticChatConsentState(results[1]),training=parseAutomaticChatTraining(results[2]);
 		      if(!automaticConsent)throw new Error('Automatic AI Chat consent state is unavailable.');
 		      if(!training)throw new Error('Automatic AI Chat training state is unavailable.');
@@ -55842,6 +55900,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
 		      renderExpertAiFeatureShell();
 		      return true;
 		    }).catch(function(error){
+		      if(!expertAiFeatureOwnerCurrent(owner))return false;
 		      clearExpertAiFeatureView('automatic');
 		      if(Number(error&&error.status||0)===403||Number(error&&error.status||0)===404)window.obExpertAiFeatureAuthority('automatic',false);
 		      else if(expertAiFeatureAllowed('automatic'))host.innerHTML='<div id="ob-expert-ai-pref-card" class="db-card" style="padding:16px;color:#dc2626;">Automatic AI Chat settings could not be loaded. Refresh and try again.</div>';
@@ -55863,6 +55922,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
 	  window.obExpertAiSettingsTab(id);var target=document.getElementById('ob-expert-ai-tab-'+id);if(target&&target.focus)target.focus();
 	};
 	window.obAutomaticAiChatTrainingDirty = function(field){
+	  if(!expertAiFeatureOwnerCurrent(expertAiFeatureAuthority.owner))return;
 	  var card=document.getElementById('ob-expert-ai-pref-card');
 	  if(card)card.setAttribute('data-dirty','1');
 	  var count=document.getElementById('ob-automatic-ai-training-count');
@@ -55871,7 +55931,8 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
 	  if(status)status.textContent='Unsaved Automatic Chat instructions.';
 	};
 	window.obAutomaticAiChatSaveTraining = function(){
-	  if(!hasExpertAuth()){notify('Please sign in to update Automatic AI Chat training.','err');return Promise.resolve(false);}
+	  var owner=bindExpertAiFeatureOwner('expert-ai-training-save');
+	  if(!owner){notify('Please sign in to update Automatic AI Chat training.','err');return Promise.resolve(false);}
 	  var current=window.__obAutomaticAiChatTraining;
 	  var field=document.getElementById('ob-automatic-ai-expert-instructions');
 	  var status=document.getElementById('ob-automatic-ai-training-status');
@@ -55880,33 +55941,39 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
 	  var instructions=String(field.value||'');
 	  if(Array.from(instructions).length>6000){if(status)status.textContent='Keep Automatic Chat instructions at 6,000 characters or fewer.';return Promise.resolve(false);}
 	  if(button)button.disabled=true;if(status)status.textContent='Saving Automatic Chat instructions...';
-	  return api('/ai/expert-chat/training',{method:'PUT',body:{expected_revision:current.revision,expert_instructions:instructions}}).then(function(data){
+	  return api('/ai/expert-chat/training',{method:'PUT',body:{expected_revision:current.revision,expert_instructions:instructions},token:owner.token,signal:owner.signal}).then(function(data){
+	    if(!expertAiFeatureOwnerCurrent(owner))return false;
 	    var next=parseAutomaticChatTraining(data);if(!next||!next.available)throw new Error('Automatic Chat training confirmation is unavailable.');
 	    window.__obAutomaticAiChatTraining=next;
 	    var center=document.getElementById('ob-automatic-ai-training-center');if(center)center.outerHTML=automaticTrainingHtml(next);
 	    var card=document.getElementById('ob-expert-ai-pref-card');if(card)card.setAttribute('data-dirty','0');
 	    var nextStatus=document.getElementById('ob-automatic-ai-training-status');if(nextStatus)nextStatus.textContent='Automatic Chat instructions saved.';
 	    notify('Automatic Chat instructions saved. Human Reply Assistant was not changed.','ok');return true;
-	  }).catch(function(err){if(status)status.textContent=err.message||'Could not save Automatic Chat instructions.';notify(err.message||'Could not save Automatic Chat instructions.','err');return false;}).then(function(result){var liveButton=document.getElementById('ob-automatic-ai-training-save');if(liveButton)liveButton.disabled=false;return result;});
+	  }).catch(function(err){if(!expertAiFeatureOwnerCurrent(owner))return false;if(status)status.textContent=err.message||'Could not save Automatic Chat instructions.';notify(err.message||'Could not save Automatic Chat instructions.','err');return false;}).then(function(result){if(!expertAiFeatureOwnerCurrent(owner))return false;var liveButton=document.getElementById('ob-automatic-ai-training-save');if(liveButton)liveButton.disabled=false;return result;});
 	};
 	  window.obExpertAiToggle = function(enabled){
-    if(!hasExpertAuth()){ notify('Please sign in to update AI chat.', 'err'); return; }
+    var owner=bindExpertAiFeatureOwner('expert-ai-status-save');
+    if(!owner){ notify('Please sign in to update AI chat.', 'err'); return Promise.resolve(false); }
     var body = {expert_enabled:!!enabled};
     if(!enabled) body.auto_accept_chat_requests = false;
-    api('/ai/expert-chat/status', {method:'PUT', body:body}).then(function(){
+    return api('/ai/expert-chat/status', {method:'PUT', body:body,token:owner.token,signal:owner.signal}).then(function(){
+      if(!expertAiFeatureOwnerCurrent(owner))return false;
       notify(enabled ? 'AI chat enabled.' : 'AI chat disabled.', 'ok');
       var panel = document.getElementById('ob-expert-ai-chat-panel'); if(panel) panel.remove();
       var card = document.getElementById('ob-expert-ai-pref-card'); if(card) card.remove();
       setTimeout(function(){ expertAiChatPanel(); expertAiPreferenceCard(); }, 250);
-    }).catch(function(err){ notify(err.message || 'Could not update AI chat.', 'err'); });
+      return true;
+    }).catch(function(err){ if(expertAiFeatureOwnerCurrent(owner))notify(err.message || 'Could not update AI chat.', 'err');return false; });
   };
   window.obExpertAiConsentToggle = function(accepted){
-    if(!hasExpertAuth()){ notify('Please sign in to update Automatic AI Chat consent.', 'err'); return; }
+    var owner=bindExpertAiFeatureOwner('expert-ai-consent-save');
+    if(!owner){ notify('Please sign in to update Automatic AI Chat consent.', 'err'); return Promise.resolve(false); }
     var current=window.__obAutomaticAiChatConsent;
-    if(!current){ notify('Reload Automatic AI Chat settings before changing consent.', 'err'); return; }
+    if(!current){ notify('Reload Automatic AI Chat settings before changing consent.', 'err'); return Promise.resolve(false); }
     var body={expected_revision:current.revision,accepted:!!accepted};
     if(accepted)body.document_version=current.currentDocumentVersion;
-    api('/ai/expert-chat/consent',{method:'PUT',body:body}).then(function(data){
+    return api('/ai/expert-chat/consent',{method:'PUT',body:body,token:owner.token,signal:owner.signal}).then(function(data){
+      if(!expertAiFeatureOwnerCurrent(owner))return false;
       var next=automaticChatConsentState(data);
       if(!next)throw new Error('Automatic AI Chat consent confirmation is unavailable.');
       window.__obAutomaticAiChatConsent=next;
@@ -55914,15 +55981,20 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       var panel=document.getElementById('ob-expert-ai-chat-panel');if(panel)panel.remove();
       var card=document.getElementById('ob-expert-ai-pref-card');if(card)card.remove();
       setTimeout(function(){expertAiChatPanel();expertAiPreferenceCard();},250);
+      return true;
     }).catch(function(err){
+      if(!expertAiFeatureOwnerCurrent(owner))return false;
       notify(err.message||'Could not update Automatic AI Chat consent.','err');
       var card=document.getElementById('ob-expert-ai-pref-card');if(card)card.remove();
       setTimeout(expertAiPreferenceCard,250);
+      return false;
     });
   };
   window.obExpertAiAutoAcceptToggle = function(enabled){
-    if(!hasExpertAuth()){ notify('Please sign in to update AI chat.', 'err'); return; }
-    api('/ai/expert-chat/status', {method:'PUT', body:{auto_accept_chat_requests:!!enabled}}).then(function(d){
+    var owner=bindExpertAiFeatureOwner('expert-ai-auto-accept-save');
+    if(!owner){ notify('Please sign in to update AI chat.', 'err'); return Promise.resolve(false); }
+    return api('/ai/expert-chat/status', {method:'PUT', body:{auto_accept_chat_requests:!!enabled},token:owner.token,signal:owner.signal}).then(function(d){
+      if(!expertAiFeatureOwnerCurrent(owner))return false;
       var effective = d.auto_accept_chat_effective === true && replyAssistantAutomationEffective(d);
       notify(!enabled
         ? 'Chat auto-accept disabled. Replies require a human.'
@@ -55932,7 +56004,8 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       var panel = document.getElementById('ob-expert-ai-chat-panel'); if(panel) panel.remove();
       var card = document.getElementById('ob-expert-ai-pref-card'); if(card) card.remove();
       setTimeout(function(){ expertAiChatPanel(); expertAiPreferenceCard(); }, 250);
-    }).catch(function(err){ notify(err.message || 'Could not update auto-accept.', 'err'); });
+      return true;
+    }).catch(function(err){ if(expertAiFeatureOwnerCurrent(owner))notify(err.message || 'Could not update auto-accept.', 'err');return false; });
   };
   window.obExpertAiSuggestReply = function(){
     if(!hasExpertAuth()){ notify('Please sign in to use AI chat.', 'err'); return; }
@@ -57736,6 +57809,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
 
   var API_ROOT = (window.OWNLYBIZ_API_URL || 'https://ownlybiz-backend-production.up.railway.app').replace(/\/+$/,'') + '/api';
   var activeExpertDetail = null;
+	  var activeExpertDetailRequest = 0;
 
   function token(){ return sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || ''; }
   function esc(v){ return String(v == null ? '' : v).replace(/[&<>"']/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
@@ -57745,11 +57819,13 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   function api(path, opts){
     opts = opts || {};
     var headers = {'Content-Type':'application/json'};
-    if(token()) headers.Authorization = 'Bearer ' + token();
+    var requestToken=Object.prototype.hasOwnProperty.call(opts,'token')?String(opts.token||''):token();
+    if(requestToken) headers.Authorization = 'Bearer ' + requestToken;
     return fetch(API_ROOT + path, {
       method: opts.method || 'GET',
       headers: headers,
-      body: opts.body ? JSON.stringify(opts.body) : undefined
+      body: opts.body ? JSON.stringify(opts.body) : undefined,
+	      signal: opts.signal
     }).then(function(r){
       return r.json().catch(function(){ return {}; }).then(function(d){
         if(!r.ok) throw new Error(d.error || d.message || ('Request failed: ' + r.status));
@@ -57773,6 +57849,22 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     }
     return content;
   }
+	  function captureAdminExpertDetailOwner(id,requestId){
+	    if(!window.OB_CLIENT_CONTEXT||typeof window.OB_CLIENT_CONTEXT.capture!=='function')return null;
+	    var owner=null;
+	    try{owner=window.OB_CLIENT_CONTEXT.capture('admin-expert-detail',{expertId:String(id||''),detailRequest:Number(requestId||0)});}catch(e){return null;}
+	    try{return owner&&owner.token&&owner.role==='admin'&&window.OB_CLIENT_CONTEXT.isCurrent(owner,{exactCredential:true})?owner:null;}catch(e2){return null;}
+	  }
+	  function adminExpertDetailCurrent(detail,content){
+	    if(!detail||activeExpertDetail!==detail||detail.requestId!==activeExpertDetailRequest||String(detail.id||'')!==String(detail.owner&&detail.owner.expertId||''))return false;
+	    if(content&&detail.content!==content)return false;
+	    try{return !!(window.OB_CLIENT_CONTEXT&&window.OB_CLIENT_CONTEXT.isCurrent(detail.owner,{exactCredential:true}));}catch(e){return false;}
+	  }
+	  function refreshActiveExpertDetail(id){
+	    var detail=activeExpertDetail;
+	    if(!adminExpertDetailCurrent(detail)||String(detail.id)!==String(id||''))return false;
+	    openExpertDetail(detail.id,detail.slug,detail.name);return true;
+	  }
   function when(v){
     if(!v) return '-';
     var n = Number(v);
@@ -58136,20 +58228,27 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   }
   function openExpertDetail(id, slug, name){
     if(!id){ notify('Expert id missing.', 'err'); return; }
-    activeExpertDetail = { id:id, slug:slug || '', name:name || '' };
+	    var requestId=++activeExpertDetailRequest;
+	    var owner=captureAdminExpertDetailOwner(id,requestId);
+	    if(!owner){notify('Your admin session changed. Reload experts and try again.','err');return;}
     var content = panelContent();
     if(!content) return;
+	    var detail={id:String(id),slug:slug||'',name:name||'',requestId:requestId,owner:owner,content:content};
+	    activeExpertDetail=detail;
     content.innerHTML = '<div class="admin-card" style="padding:28px;color:rgba(246,241,233,.65);">Loading expert details...</div>';
+	    var requestOptions={token:owner.token,signal:owner.signal};
 	    Promise.all([
-	      api('/admin/experts/' + encodeURIComponent(id) + '/profile'),
-	      api('/admin/experts/' + encodeURIComponent(id) + '/dashboard').catch(function(){ return {}; }),
-	      api('/admin/refund-requests?expert_id=' + encodeURIComponent(id) + '&limit=100').catch(function(){ return {requests:[]}; }),
-		      api('/admin/experts/' + encodeURIComponent(id) + '/marketplace').catch(function(err){ return {error:err.message || 'Marketplace settings unavailable'}; }),
-		      api('/admin/experts/' + encodeURIComponent(id) + '/live-capacity').catch(function(err){ return {error:err.message || 'Human Reply Assistant authority unavailable'}; })
+	      api('/admin/experts/' + encodeURIComponent(id) + '/profile',requestOptions),
+	      api('/admin/experts/' + encodeURIComponent(id) + '/dashboard',requestOptions).catch(function(){ return {}; }),
+	      api('/admin/refund-requests?expert_id=' + encodeURIComponent(id) + '&limit=100',requestOptions).catch(function(){ return {requests:[]}; }),
+		      api('/admin/experts/' + encodeURIComponent(id) + '/marketplace',requestOptions).catch(function(err){ return {error:err.message || 'Marketplace settings unavailable'}; }),
+		      api('/admin/experts/' + encodeURIComponent(id) + '/live-capacity',requestOptions).catch(function(err){ return {error:err.message || 'Human Reply Assistant authority unavailable'}; })
 		    ]).then(function(all){
+		      if(!adminExpertDetailCurrent(detail,content))return false;
 		      content.innerHTML = detailHtml(id, all[0] || {}, all[1] || {}, all[2] || {requests:[]}, all[3] || {}, all[4] || {});
 	      try { content.scrollIntoView({block:'start'}); } catch(e) {}
 	    }).catch(function(err){
+	      if(!adminExpertDetailCurrent(detail,content))return false;
       content.innerHTML = '<div class="admin-card" style="padding:28px;color:#fecaca;">Expert details failed: ' + esc(err.message || err) + '</div>';
     });
   }
@@ -58163,6 +58262,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     if(window.OwnlyAPI) window.OwnlyAPI.adminViewExpertDashboard = openExpertDetail;
   }
   window.obAdminExpertBackToList = function(){
+	  activeExpertDetailRequest+=1;
     activeExpertDetail = null;
     if(typeof window.loadAdminExperts === 'function') window.loadAdminExperts();
     else if(typeof window.obRenderAdminExpertsEnhanced === 'function') window.obRenderAdminExpertsEnhanced();
@@ -58171,13 +58271,13 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     var active = action === 'approve' || action === 'restore';
     api('/admin/experts/' + encodeURIComponent(id), {method:'PUT', body:{is_active:active, is_verified:active}}).then(function(){
       notify(action === 'suspend' ? 'Expert suspended.' : 'Expert approved/restored.', 'ok');
-      openExpertDetail(id, activeExpertDetail && activeExpertDetail.slug, activeExpertDetail && activeExpertDetail.name);
+      refreshActiveExpertDetail(id);
     }).catch(function(err){ notify(err.message || 'Expert action failed.', 'err'); });
   };
   window.obAdminExpertPauseAccess = function(id, allowed){
     api('/admin/experts/' + encodeURIComponent(id) + '/service-pause-access', {method:'PUT', body:{allowed:!!allowed}}).then(function(){
       notify(allowed ? 'Expert can operate during service pause.' : 'Expert now follows service pause.', 'ok');
-      openExpertDetail(id, activeExpertDetail && activeExpertDetail.slug, activeExpertDetail && activeExpertDetail.name);
+      refreshActiveExpertDetail(id);
     }).catch(function(err){ notify(err.message || 'Service pause access update failed.', 'err'); });
   };
 	  window.obAdminExpertStripeMode = function(id, useTest){
@@ -58273,7 +58373,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
 	    api('/admin/experts/' + encodeURIComponent(id) + '/marketplace', {method:'PUT', body:body}).then(function(){
 	      if(status) status.textContent = body.enabled ? 'Enabled' : 'Disabled';
 	      notify('Marketplace access saved.', 'ok');
-	      openExpertDetail(id, activeExpertDetail && activeExpertDetail.slug, activeExpertDetail && activeExpertDetail.name);
+	      refreshActiveExpertDetail(id);
 	    }).catch(function(err){
 	      if(status) status.textContent = err.message || 'Save failed.';
 	      notify(err.message || 'Marketplace save failed.', 'err');
@@ -58296,7 +58396,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     }).then(function(){
       if(status) status.textContent = 'Credits granted.';
       notify('AI credits granted.', 'ok');
-      openExpertDetail(id, activeExpertDetail && activeExpertDetail.slug, activeExpertDetail && activeExpertDetail.name);
+      refreshActiveExpertDetail(id);
     }).catch(function(err){
       if(status) status.textContent = err.message || 'Grant failed.';
       notify(err.message || 'AI credit grant failed.', 'err');
@@ -62600,9 +62700,12 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
 	    expertSettings:null,
 	    expertRequests:[],
 	    expertRequestBusy:Object.create(null),
+	    expertRequestOperationSequence:0,
 	    expertOpenRequests:Object.create(null),
 	    expertRequestFocus:null,
 	    expertSaveStatus:'',
+	    expertSaveOperation:null,
+	    expertSaveOperationSequence:0,
 	    confirmingCheckout:false,
 	    confirmedCheckout:''
 	  };
@@ -62762,10 +62865,15 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     return context.role==='expert'||context.role==='admin'||context.role==='support'?context:null;
   }
   function expertOwnerCurrent(owner){
-    if(!owner||!window.OB_CLIENT_CONTEXT||!window.OB_CLIENT_CONTEXT.isCurrent(owner))return false;
+    if(!owner||!window.OB_CLIENT_CONTEXT||!window.OB_CLIENT_CONTEXT.isCurrent(owner,{exactCredential:true}))return false;
     var target=dashboardTarget();
     return String(owner.expertId||'')===target.expertId&&String(owner.expertSlug||'')===target.slug;
   }
+	  function expertOwnerSameScope(left,right){
+	    return !!left&&!!right&&String(left.principal||'')===String(right.principal||'')&&String(left.token||'')===String(right.token||'')&&
+	      Number(left.identityGeneration||0)===Number(right.identityGeneration||0)&&Number(left.credentialGeneration||0)===Number(right.credentialGeneration||0)&&
+	      String(left.expertId||'')===String(right.expertId||'')&&String(left.expertSlug||'')===String(right.expertSlug||'');
+	  }
 	  function clearExpertOnDemandContext(){
 	    state.expertLoadRequest=(state.expertLoadRequest||0)+1;
 	    state.expertOwner=null;
@@ -62775,6 +62883,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
 	    state.expertOpenRequests=Object.create(null);
 	    state.expertRequestFocus=null;
 	    state.expertSaveStatus='';
+	    state.expertSaveOperation=null;
     var panel=document.getElementById('db-panel-on-demand');
     if(panel)panel.innerHTML='<div class="db-content"><div style="padding:28px;color:var(--gray-400);">Loading On Demand...</div></div>';
   }
@@ -63027,7 +63136,8 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
 	    else delete state.expertOpenRequests[id];
 	  };
 	  function obOdRequestBusy(id){
-	    return String(state.expertRequestBusy&&state.expertRequestBusy[String(id)]||'');
+	    var entry=state.expertRequestBusy&&state.expertRequestBusy[String(id)];
+	    return entry&&typeof entry==='object'?String(entry.operation||''):'';
 	  }
 	  function obOdSyncRequestBusy(id){
 	    var requestId=String(id||'');
@@ -63049,19 +63159,22 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
 	  }
 	  function obOdBeginRequestBusy(id, operation, focusAnswer){
 	    var requestId=String(id||'');
-	    if(!requestId||obOdRequestBusy(requestId))return false;
+	    if(!requestId||obOdRequestBusy(requestId))return null;
 	    obOdCaptureRequestView(requestId,focusAnswer===true);
-	    state.expertRequestBusy[requestId]=operation;
+	    var busy={requestId:requestId,operation:String(operation||''),sequence:++state.expertRequestOperationSequence};
+	    state.expertRequestBusy[requestId]=busy;
+	    obOdSyncRequestBusy(requestId);
+	    return busy;
+	  }
+	  function obOdEndRequestBusy(id,busy){
+	    var requestId=String(id||'');
+	    if(!state.expertRequestBusy||state.expertRequestBusy[requestId]!==busy)return false;
+	    delete state.expertRequestBusy[requestId];
 	    obOdSyncRequestBusy(requestId);
 	    return true;
 	  }
-	  function obOdEndRequestBusy(id){
-	    var requestId=String(id||'');
-	    if(state.expertRequestBusy)delete state.expertRequestBusy[requestId];
-	    obOdSyncRequestBusy(requestId);
-	  }
 	  function obOdLocalSaveHtml(label){
-	    return '<div class="ob-od-save-bar"><button type="button" class="ob-od-btn" data-ob-od-save-button onclick="obOdSaveSettings()">'+esc(label)+'</button><span class="ob-od-save-status" data-ob-od-save-status role="status" aria-live="polite" style="font-size:12px;color:var(--gray-400);">'+esc(state.expertSaveStatus||'')+'</span></div>';
+	    return '<div class="ob-od-save-bar"><button type="button" class="ob-od-btn" data-ob-od-save-button onclick="obOdSaveSettings()" '+(state.expertSaveOperation?'disabled':'')+'>'+esc(label)+'</button><span class="ob-od-save-status" data-ob-od-save-status role="status" aria-live="polite" style="font-size:12px;color:var(--gray-400);">'+esc(state.expertSaveStatus||'')+'</span></div>';
 	  }
 	  function obOdSetSaveState(message,busy){
 	    state.expertSaveStatus=String(message||'');
@@ -63215,6 +63328,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
 	    obOdCaptureRequestView(options.focusRequestId||'',options.focusAnswer===true);
     var owner=captureExpertOwner('on-demand-expert-load');
     if(!owner)return;
+	    if(state.expertOwner&&!expertOwnerSameScope(state.expertOwner,owner))clearExpertOnDemandContext();
     var requestId=(state.expertLoadRequest||0)+1;
     state.expertLoadRequest=requestId;
     state.expertOwner=owner;
@@ -63293,6 +63407,9 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
 	  window.obOdSaveSettings = function(){
 	    var owner=state.expertOwner;
 	    if(!expertOwnerCurrent(owner)){window.loadExpertOnDemand();return;}
+	    if(state.expertSaveOperation)return Promise.resolve(false);
+	    var operation={owner:owner,sequence:++state.expertSaveOperationSequence};
+	    state.expertSaveOperation=operation;
 	    obOdSetSaveState('Saving...',true);
 	    return api('/api/on-demand/expert/settings', {method:'PUT', body:{
       expert_enabled: !!((document.getElementById('ob-od-expert-enabled') || {}).checked),
@@ -63303,50 +63420,53 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
       intake_instructions: (document.getElementById('ob-od-instructions') || {}).value || '',
       safety_ack: !!((document.getElementById('ob-od-safety') || {}).checked),
       placement: readPlacement(),
-      form_fields: readFormFields(),
-      buckets: readBuckets()
+	      form_fields: readFormFields(),
+	      buckets: readBuckets()
 	    },token:owner.token,signal:owner.signal}).then(function(){
-	      if(!expertOwnerCurrent(owner)||state.expertOwner!==owner)return;
-	      obOdSetSaveState('Saved.',false);
+	      if(!expertOwnerCurrent(owner)||state.expertSaveOperation!==operation)return false;
+	      state.expertSaveStatus='Saved.';
 	      toastMsg('On Demand saved.', 'ok');
 	      return loadExpertOnDemand({preserveView:true});
-	    }).catch(function(err){ if(!expertOwnerCurrent(owner)||state.expertOwner!==owner)return false; obOdSetSaveState(err.message || 'Save failed.',false); toastMsg(err.message || 'Save failed.', 'err'); return false; });
+	    }).catch(function(err){if(!expertOwnerCurrent(owner)||state.expertSaveOperation!==operation)return false;state.expertSaveStatus=err.message||'Save failed.';toastMsg(err.message||'Save failed.','err');return false;}).finally(function(){
+	      if(state.expertSaveOperation!==operation)return;
+	      state.expertSaveOperation=null;
+	      if(expertOwnerCurrent(owner))obOdSetSaveState(state.expertSaveStatus,false);
+	    });
 	  };
 	  window.obOdAccept = function(id){
 	    var owner=state.expertOwner;if(!expertOwnerCurrent(owner))return;
-	    if(!obOdBeginRequestBusy(id,'accept',false))return;
+	    var busy=obOdBeginRequestBusy(id,'accept',false);if(!busy)return;
 	    return api('/api/on-demand/expert/requests/' + encodeURIComponent(id) + '/accept', {method:'POST', body:{},token:owner.token,signal:owner.signal}).then(function(){
-	      if(!expertOwnerCurrent(owner)||state.expertOwner!==owner)return;
-	      obOdEndRequestBusy(id);toastMsg('Request started.', 'ok');return loadExpertOnDemand({preserveView:true,focusRequestId:id});
-	    }).catch(function(e){if(!expertOwnerCurrent(owner)||state.expertOwner!==owner)return false;obOdEndRequestBusy(id);obOdRestoreRequestView();toastMsg(e.message, 'err');return false;});
+	      if(!expertOwnerCurrent(owner))return false;
+	      toastMsg('Request started.', 'ok');return loadExpertOnDemand({preserveView:true,focusRequestId:id});
+	    }).catch(function(e){if(!expertOwnerCurrent(owner))return false;toastMsg(e.message,'err');return false;}).finally(function(){obOdEndRequestBusy(id,busy);if(expertOwnerCurrent(owner))obOdRestoreRequestView();});
 	  };
 	  window.obOdDraft = function(id){
 	    var owner=state.expertOwner;if(!expertOwnerCurrent(owner))return;
-	    if(!obOdBeginRequestBusy(id,'draft',true))return;
+	    var busy=obOdBeginRequestBusy(id,'draft',true);if(!busy)return;
 	    var el = document.getElementById('ob-od-answer-' + id);
 	    return api('/api/on-demand/expert/requests/' + encodeURIComponent(id) + '/ai-draft', {method:'POST', body:{},token:owner.token,signal:owner.signal}).then(function(d){
-	      if(!expertOwnerCurrent(owner)||state.expertOwner!==owner)return;
+	      if(!expertOwnerCurrent(owner))return false;
 	      if(el) el.value = d.draft || '';
-	      obOdEndRequestBusy(id);
 	      toastMsg('AI draft ready.', 'ok');
 	      return loadExpertOnDemand({preserveView:true,focusRequestId:id,focusAnswer:true});
-	    }).catch(function(e){ if(!expertOwnerCurrent(owner)||state.expertOwner!==owner)return false;obOdEndRequestBusy(id);obOdRestoreRequestView();toastMsg(e.message, 'err');return false; });
+	    }).catch(function(e){if(!expertOwnerCurrent(owner))return false;toastMsg(e.message,'err');return false;}).finally(function(){obOdEndRequestBusy(id,busy);if(expertOwnerCurrent(owner))obOdRestoreRequestView();});
 	  };
 	  window.obOdDeliver = function(id){
 	    var owner=state.expertOwner;if(!expertOwnerCurrent(owner))return;
 	    var answer = (document.getElementById('ob-od-answer-' + id) || {}).value || '';
-	    if(!obOdBeginRequestBusy(id,'deliver',true))return;
-	    return api('/api/on-demand/expert/requests/' + encodeURIComponent(id) + '/deliver', {method:'POST', body:{answer:answer},token:owner.token,signal:owner.signal}).then(function(){if(!expertOwnerCurrent(owner)||state.expertOwner!==owner)return;obOdEndRequestBusy(id);toastMsg('Answer delivered.', 'ok');return loadExpertOnDemand({preserveView:true,focusRequestId:id}); }).catch(function(e){if(!expertOwnerCurrent(owner)||state.expertOwner!==owner)return false;obOdEndRequestBusy(id);obOdRestoreRequestView();toastMsg(e.message, 'err');return false;});
+	    var busy=obOdBeginRequestBusy(id,'deliver',true);if(!busy)return;
+	    return api('/api/on-demand/expert/requests/' + encodeURIComponent(id) + '/deliver', {method:'POST', body:{answer:answer},token:owner.token,signal:owner.signal}).then(function(){if(!expertOwnerCurrent(owner))return false;toastMsg('Answer delivered.','ok');return loadExpertOnDemand({preserveView:true,focusRequestId:id});}).catch(function(e){if(!expertOwnerCurrent(owner))return false;toastMsg(e.message,'err');return false;}).finally(function(){obOdEndRequestBusy(id,busy);if(expertOwnerCurrent(owner))obOdRestoreRequestView();});
   };
 	  window.obOdDecline = function(id){
     var owner=state.expertOwner;if(!expertOwnerCurrent(owner))return;
     var reason = prompt('Reason for declining/refunding this request:') || '';
     if(!reason.trim()) return;
-	    if(!obOdBeginRequestBusy(id,'decline',false))return;
+	    var busy=obOdBeginRequestBusy(id,'decline',false);if(!busy)return;
 	    return api('/api/on-demand/expert/requests/' + encodeURIComponent(id) + '/decline', {method:'POST', body:{reason:reason},token:owner.token,signal:owner.signal}).then(function(){
-	      if(!expertOwnerCurrent(owner)||state.expertOwner!==owner)return;
-	      obOdEndRequestBusy(id);toastMsg('Request declined/refunded.', 'ok');return loadExpertOnDemand({preserveView:true,focusRequestId:id});
-	    }).catch(function(e){if(!expertOwnerCurrent(owner)||state.expertOwner!==owner)return false;obOdEndRequestBusy(id);obOdRestoreRequestView();toastMsg(e.message, 'err');return false;});
+	      if(!expertOwnerCurrent(owner))return false;
+	      toastMsg('Request declined/refunded.','ok');return loadExpertOnDemand({preserveView:true,focusRequestId:id});
+	    }).catch(function(e){if(!expertOwnerCurrent(owner))return false;toastMsg(e.message,'err');return false;}).finally(function(){obOdEndRequestBusy(id,busy);if(expertOwnerCurrent(owner))obOdRestoreRequestView();});
   };
   function obOdAutopilotErrorMessage(error, fallback){
     var body=error&&error.body&&typeof error.body==='object'?error.body:{};
@@ -63354,19 +63474,17 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     var code=String(body.code||body.error_code||'').trim();
     return code&&message.indexOf(code)<0?message+' ('+code+')':message;
   }
-	  function obOdResetAutopilotButton(id){
-	    obOdEndRequestBusy(id);
-	  }
 	  window.obOdAutopilotNow = function(id){
 	    var owner=state.expertOwner;
 	    if(!expertOwnerCurrent(owner))return Promise.resolve({confirmed:false,delivered:false,reason:'expert_authority_changed'});
-	    if(!obOdBeginRequestBusy(id,'autopilot',false))return Promise.resolve({confirmed:false,delivered:false,reason:'request_busy'});
+	    var busy=obOdBeginRequestBusy(id,'autopilot',false);
+	    if(!busy)return Promise.resolve({confirmed:false,delivered:false,reason:'request_busy'});
 	    var command=api('/api/on-demand/expert/requests/' + encodeURIComponent(id) + '/autopilot-now', {method:'POST', body:{},token:owner.token,signal:owner.signal})
       .then(function(result){return {result:result||{},error:null};},function(error){return {result:null,error:error};});
     return command.then(function(outcome){
-      if(!expertOwnerCurrent(owner)||state.expertOwner!==owner)return {confirmed:false,delivered:false,reason:'expert_authority_changed'};
+	      if(!expertOwnerCurrent(owner))return {confirmed:false,delivered:false,reason:'expert_authority_changed'};
       return api('/api/on-demand/expert/requests', {token:owner.token,signal:owner.signal}).then(function(data){
-        if(!expertOwnerCurrent(owner)||state.expertOwner!==owner)return {confirmed:false,delivered:false,reason:'expert_authority_changed'};
+	        if(!expertOwnerCurrent(owner))return {confirmed:false,delivered:false,reason:'expert_authority_changed'};
 	        var requests=Array.isArray(data&&data.requests)?data.requests:[];
 	        var request=requests.find(function(row){return row&&String(row.id)===String(id);})||null;
 	        var runResult=outcome.result||{};
@@ -63376,7 +63494,6 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
 	        var deliveredEvidence=!!request&&request.status==='delivered'&&request.ai_status==='delivered'&&
 	          !!String(request.answer||'').trim()&&Number(request.delivered_at||0)>0;
 	        state.expertRequests=requests;
-	        obOdResetAutopilotButton(id);
 	        renderExpertOnDemand();
 	        if(deliveredEvidence){
 	          if(commandEvidence){
@@ -63415,14 +63532,13 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
         toastMsg('Autopilot has not delivered this reading. The refreshed request remains open for review.', 'err');
         return {confirmed:true,delivered:false,reason:'not_delivered',run:runResult,request:request};
       },function(refreshError){
-        if(!expertOwnerCurrent(owner)||state.expertOwner!==owner)return {confirmed:false,delivered:false,reason:'expert_authority_changed'};
-        obOdResetAutopilotButton(id);
+	        if(!expertOwnerCurrent(owner))return {confirmed:false,delivered:false,reason:'expert_authority_changed'};
         var refreshMessage=obOdAutopilotErrorMessage(refreshError,'Could not refresh the request.');
         var commandMessage=outcome.error?' Command error: '+obOdAutopilotErrorMessage(outcome.error,'Autopilot command failed.') : '';
         toastMsg('Delivery could not be confirmed because the request refresh failed: '+refreshMessage+commandMessage, 'err');
         return {confirmed:false,delivered:false,reason:'refresh_failed',error:refreshMessage};
       });
-    });
+    }).finally(function(){obOdEndRequestBusy(id,busy);if(expertOwnerCurrent(owner))obOdRestoreRequestView();});
   };
 
   function publicCard(config){
@@ -64086,6 +64202,13 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
         if(document.getElementById('db-panel-on-demand'))setTimeout(function(){
           if(window.OB_CLIENT_CONTEXT.isCurrent(current))window.loadExpertOnDemand();
         },0);
+	      },
+	      credentialRotated:function(current){
+	        clearExpertOnDemandContext();
+	        if(!current||(current.role!=='expert'&&current.role!=='admin'&&current.role!=='support'))return;
+	        if(document.getElementById('db-panel-on-demand'))setTimeout(function(){
+	          if(window.OB_CLIENT_CONTEXT.isCurrent(current,{exactCredential:true}))window.loadExpertOnDemand();
+	        },0);
       }
     });
   }

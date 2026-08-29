@@ -342,7 +342,7 @@ assert(html.includes('Automatic AI Chat and Human Reply Assistant are separate f
 const humanReplyMarkup = html.slice(html.indexOf('<section id="ob-reply-knowledge-manager"'), html.indexOf('<div id="ob-expert-ai-settings-host"'));
 assert.doesNotMatch(humanReplyMarkup, /ob-ra-(?:gate-auto-send|auto-send-consent|auto-send-version|auto-send-status)/, 'Human Reply Assistant must not display Automatic AI Chat consent controls');
 assert(html.includes('id="ob-expert-ai-auto-send-consent"'), 'Automatic AI Chat must own the visible automatic-reply consent checkbox');
-assert(html.includes("api('/ai/expert-chat/consent',{method:'PUT',body:body})"), 'Automatic AI Chat consent must use its dedicated endpoint');
+assert(html.includes("api('/ai/expert-chat/consent',{method:'PUT',body:body,token:owner.token,signal:owner.signal})"), 'Automatic AI Chat consent must use its dedicated endpoint under the exact captured expert');
 assert(html.includes('Human Reply Assistant choices do not change it.'), 'Automatic AI Chat consent must explain that human drafting settings cannot change it');
 
 assert((html.match(/ownlybiz-backend-production\.up\.railway\.app/g) || []).length > 0, 'production frontend must retain the production backend host');

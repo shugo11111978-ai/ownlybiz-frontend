@@ -53,18 +53,19 @@ assert.doesNotMatch(legacyPanel,/active && !fullyAi \? '<button[^']+(?:Suggest r
 assert.match(legacyAi,/autoReplyEffective = replyAssistantAutomationEffective\(d\)[\s\S]*?Governed automatic replies are active[\s\S]*?Automatic replies are waiting:/,'Automatic AI Chat preferences reflect the governed gate instead of a legacy mode label');
 assert.match(legacyPanel+legacyAi,/autoAvailable = d\.auto_accept_chat_available === true[\s\S]*?autoDisabled = autoAvailable \? '' : 'disabled'/,'auto-accept controls use the server-owned non-circular availability field');
 assert.match(legacyAi,/autoEffective[\s\S]*?new chat requests start automatically and governed replies may send[\s\S]*?Requested · waiting:/,'chat auto-accept distinguishes effective, requested, and waiting states');
-assert.match(legacyAi,/Promise\.all\(\[api\('\/ai\/expert-chat\/status'\),api\('\/ai\/expert-chat\/consent'\),api\('\/ai\/expert-chat\/training'\)\]\)/,'Automatic AI Chat loads its independent status, consent, and training authorities');
+assert.match(legacyAi,/requestOptions=\{token:owner\.token,signal:owner\.signal\}[\s\S]*?Promise\.all\(\[api\('\/ai\/expert-chat\/status',requestOptions\),api\('\/ai\/expert-chat\/consent',requestOptions\),api\('\/ai\/expert-chat\/training',requestOptions\)\]\)/,'Automatic AI Chat loads all three independent authorities through one exact captured owner');
 assert.match(legacyAi,/id="ob-expert-ai-auto-send-consent"[\s\S]*?obExpertAiConsentToggle/,'Automatic AI Chat owns the visible automatic-reply consent checkbox');
 assert.match(legacyAi,/Human Reply Assistant choices do not change it/,'Automatic AI Chat explains its consent boundary from human drafting');
 assert.match(featureAuthority,/automatic_ai_chat[\s\S]*?human_reply_assistant[\s\S]*?typeof automatic\.visible!=='boolean'[\s\S]*?typeof human\.visible!=='boolean'[\s\S]*?automatic:automatic\.visible,human:human\.visible/,'the feature manifest strictly parses both visible booleans');
-assert.match(featureAuthority,/api\('\/ai\/features'\)[\s\S]*?parseExpertAiFeatureManifest/,'one feature manifest request owns both expert AI visibility gates');
+assert.match(featureAuthority,/captureExpertAiFeatureOwner[\s\S]*?isCurrent\(owner,\{exactCredential:true\}\)[\s\S]*?api\('\/ai\/features',\{token:owner\.token,signal:owner\.signal\}\)[\s\S]*?parseExpertAiFeatureManifest/,'one exact-credential feature manifest request owns both expert AI visibility gates');
+assert.match(featureAuthority,/loadGeneration[\s\S]*?generation!==expertAiFeatureAuthority\.loadGeneration[\s\S]*?teardown:function\(\)\{scrubExpertAiFeatureAuthority\(\);\}/,'late manifests are generation-fenced and identity teardown scrubs all expert AI authority');
 assert.doesNotMatch(featureAuthority,/api\('\/ai\/(?:expert-chat\/status|reply-assistant\/controls)'\)/,'feature visibility must not be inferred from feature settings endpoints');
 assert.match(featureAuthority,/nav\.hidden = resolved && !automatic && !human[\s\S]*?nav\.style\.display = resolved && !automatic && !human/,'the AI navigation entry hides only after both authorities resolve false');
 assert.match(featureAuthority,/automatic \? expertAiTabButton\('automatic','Automatic AI Chat'\)[\s\S]*?human \? expertAiTabButton\('human','Human Reply Assistant'\)/,'each peer feature tab is rendered only by its own entitlement');
 assert.match(expertAiTabs,/id="ob-expert-ai-tab-' \+ id[\s\S]*?role="tab"[\s\S]*?aria-selected="[\s\S]*?aria-controls="ob-expert-ai-' \+ id \+ '-tab"[\s\S]*?tabindex="[\s\S]*?data-ob-expert-ai-tab=[\s\S]*?obExpertAiTabKeydown\(event\)/,'expert AI tabs expose stable ids, panel ownership, roving tabindex, and keyboard handling');
 assert.match(expertAiTabs,/automaticPanel\.hidden = !\(automatic && selected === 'automatic'\)[\s\S]*?humanPanel\.hidden = !\(human && selected === 'human'\)/,'one selected expert AI state synchronizes both panel hidden states');
 assert.match(expertAiTabs,/window\.obExpertAiTabKeydown = function\(event\)[\s\S]*?ArrowLeft[\s\S]*?ArrowRight[\s\S]*?Home[\s\S]*?End[\s\S]*?obExpertAiSettingsTab\(id\)[\s\S]*?target\.focus\(\)/,'expert AI tabs support Arrow, Home, and End navigation with focus restored to the rerendered selected tab');
-assert.match(legacyAi,/loadExpertAiFeatureAuthority\(false\)[\s\S]*?!expertAiFeatureAllowed\('automatic'\)[\s\S]*?api\('\/ai\/expert-chat\/training'\)/,'Automatic Chat training is requested only after its manifest visibility gate passes');
+assert.match(legacyAi,/loadExpertAiFeatureAuthority\(false\)[\s\S]*?!expertAiFeatureAllowed\('automatic'\)[\s\S]*?api\('\/ai\/expert-chat\/training',requestOptions\)/,'Automatic Chat training is requested only after its manifest visibility gate passes');
 assert.match(legacyAi,/Number\(error&&error\.status\|\|0\)===403\|\|Number\(error&&error\.status\|\|0\)===404[\s\S]*?obExpertAiFeatureAuthority\('automatic',false\)/,'a removed Automatic entitlement clears its stale tab after a 403 or 404');
 
 async function featureManifestCase(automatic,human,override){
@@ -76,7 +77,8 @@ async function featureManifestCase(automatic,human,override){
     'ob-expert-ai-unavailable':{style:{display:'none'}}
   };
   const calls=[];
-  const root={window:null,Promise,console,hasExpertAuth:()=>true,safe:value=>String(value||''),document:{getElementById:id=>nodes[id]||null},api:path=>{calls.push(path);return Promise.resolve(override||{success:true,features:{automatic_ai_chat:{visible:automatic},human_reply_assistant:{visible:human}}});}};
+  const owner={token:'expert-token',principal:'expert:one',role:'expert',identityGeneration:1,credentialGeneration:1,signal:{aborted:false}};
+  const root={window:null,Promise,console,hasExpertAuth:()=>true,safe:value=>String(value||''),document:{getElementById:id=>nodes[id]||null},api:path=>{calls.push(path);return Promise.resolve(override||{success:true,features:{automatic_ai_chat:{visible:automatic},human_reply_assistant:{visible:human}}});},OB_CLIENT_CONTEXT:{capture:()=>({...owner}),isCurrent:value=>value&&value.token===owner.token&&value.principal===owner.principal,register(){}}};
   root.window=root;vm.createContext(root);new vm.Script(featureAuthority,{filename:'expert-ai-feature-manifest.js'}).runInContext(root);
   const result=await root.obExpertAiLoadFeatureAuthority(true);
   return {root,nodes,calls,result};
@@ -100,9 +102,9 @@ assert.match(automaticTraining,/data\.success !== true[\s\S]*?data\.admin_guidan
 assert.match(automaticTraining,/Admin guidance · read only[\s\S]*?id="ob-automatic-ai-expert-instructions"[\s\S]*?Learned principles[\s\S]*?Recent learning provenance/,'Automatic AI Chat has a separate transparent training center');
 assert.match(automaticTraining,/Raw transcripts are never shown here[\s\S]*?never transcript content/,'Automatic Chat learning provenance explicitly excludes raw transcripts');
 assert.doesNotMatch(automaticTraining,/reply-assistant|ob-ra-/,'Automatic AI Chat training does not reuse Human Reply Assistant state or endpoints');
-assert.match(automaticTrainingMutation,/api\('\/ai\/expert-chat\/training',\{method:'PUT',body:\{expected_revision:current\.revision,expert_instructions:instructions\}\}\)/,'Automatic Chat instructions save through the exact isolated CAS contract');
+assert.match(automaticTrainingMutation,/api\('\/ai\/expert-chat\/training',\{method:'PUT',body:\{expected_revision:current\.revision,expert_instructions:instructions\},token:owner\.token,signal:owner\.signal\}\)/,'Automatic Chat instructions save through the exact isolated CAS contract and captured owner');
 assert.doesNotMatch(automaticTrainingMutation,/reply-assistant|reply_assistant_enabled|training_consent|retention_days/,'Automatic Chat training never mutates Human Reply Assistant controls');
-assert.match(automaticConsentMutation,/api\('\/ai\/expert-chat\/consent',\{method:'PUT',body:body\}\)/,'Automatic AI Chat consent writes through its dedicated endpoint');
+assert.match(automaticConsentMutation,/api\('\/ai\/expert-chat\/consent',\{method:'PUT',body:body,token:owner\.token,signal:owner\.signal\}\)/,'Automatic AI Chat consent writes through its dedicated endpoint and captured owner');
 assert.match(automaticConsentMutation,/expected_revision:current\.revision[\s\S]*?accepted:!!accepted[\s\S]*?document_version=current\.currentDocumentVersion/,'Automatic AI Chat consent uses exact revision CAS and the current document when accepting');
 assert.doesNotMatch(automaticConsentMutation,/reply-assistant\/controls|reply_assistant_enabled|training_consent|retention_days/,'Automatic AI Chat consent never mutates Human Reply Assistant settings');
 assert.doesNotMatch(markup+legacyPanel+legacyAi,/Phase 5|inactive in Phase 5|never sends messages automatically/,'the current UI contains no stale Phase 5 automation claims');
@@ -145,16 +147,16 @@ assert.equal(currentAutomaticConsent.accepted,true);assert.equal(currentAutomati
 assert.equal(automaticConsentSandbox.__parseAutomaticConsent({consent:{accepted:true,revision:8,document_version:'auto-v1',current_document_version:'auto-v2'}}).accepted,false,'stale Automatic AI Chat consent never renders accepted');
 assert.equal(automaticConsentSandbox.__parseAutomaticConsent({consent:{accepted:true,revision:0,document_version:'auto-v2',current_document_version:'auto-v2'}}),null,'invalid Automatic AI Chat consent responses fail closed');
 
-const automaticConsentCalls=[];const automaticConsentNotices=[];
-const automaticMutationSandbox={window:null,Number,Promise,document:{getElementById(){return null;}},hasExpertAuth:()=>true,notify:(message,tone)=>automaticConsentNotices.push({message,tone}),api:(url,options)=>{automaticConsentCalls.push({url,options});const body=options.body;return Promise.resolve({consent:{accepted:body.accepted,revision:body.expected_revision+1,document_version:body.accepted?body.document_version:null,current_document_version:'auto-v2'}});},setTimeout(){return 1;},expertAiChatPanel(){},expertAiPreferenceCard(){}};
+const automaticConsentCalls=[];const automaticConsentNotices=[];const automaticMutationOwner={token:'expert-token',signal:{aborted:false}};
+const automaticMutationSandbox={window:null,Number,Promise,document:{getElementById(){return null;}},bindExpertAiFeatureOwner:()=>automaticMutationOwner,expertAiFeatureOwnerCurrent:value=>value===automaticMutationOwner,notify:(message,tone)=>automaticConsentNotices.push({message,tone}),api:(url,options)=>{automaticConsentCalls.push({url,options});const body=options.body;return Promise.resolve({consent:{accepted:body.accepted,revision:body.expected_revision+1,document_version:body.accepted?body.document_version:null,current_document_version:'auto-v2'}});},setTimeout(){return 1;},expertAiChatPanel(){},expertAiPreferenceCard(){}};
 automaticMutationSandbox.window=automaticMutationSandbox;
 vm.createContext(automaticMutationSandbox);
 new vm.Script(`${automaticConsentParser}\n${automaticConsentMutation}`,{filename:'automatic-ai-chat-consent-mutation.js'}).runInContext(automaticMutationSandbox);
 automaticMutationSandbox.__obAutomaticAiChatConsent={accepted:false,revision:7,documentVersion:null,currentDocumentVersion:'auto-v2'};
 automaticMutationSandbox.obExpertAiConsentToggle(true);await Promise.resolve();await Promise.resolve();
-assert.deepEqual(JSON.parse(JSON.stringify(automaticConsentCalls[0])),{url:'/ai/expert-chat/consent',options:{method:'PUT',body:{expected_revision:7,accepted:true,document_version:'auto-v2'}}},'accepting Automatic AI Chat consent sends only its dedicated CAS contract');
+assert.deepEqual(JSON.parse(JSON.stringify(automaticConsentCalls[0])),{url:'/ai/expert-chat/consent',options:{method:'PUT',body:{expected_revision:7,accepted:true,document_version:'auto-v2'},token:'expert-token',signal:{aborted:false}}},'accepting Automatic AI Chat consent sends only its dedicated CAS contract under the captured expert');
 automaticMutationSandbox.obExpertAiConsentToggle(false);await Promise.resolve();await Promise.resolve();
-assert.deepEqual(JSON.parse(JSON.stringify(automaticConsentCalls[1])),{url:'/ai/expert-chat/consent',options:{method:'PUT',body:{expected_revision:8,accepted:false}}},'revoking Automatic AI Chat consent omits the acceptance document and all Human Reply Assistant fields');
+assert.deepEqual(JSON.parse(JSON.stringify(automaticConsentCalls[1])),{url:'/ai/expert-chat/consent',options:{method:'PUT',body:{expected_revision:8,accepted:false},token:'expert-token',signal:{aborted:false}}},'revoking Automatic AI Chat consent omits the acceptance document and all Human Reply Assistant fields');
 assert.deepEqual(automaticConsentNotices.map((notice)=>notice.message),['Automatic AI Chat consent accepted.','Automatic AI Chat consent revoked.']);
 
 class FakeElement{

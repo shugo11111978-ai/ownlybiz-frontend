@@ -27,7 +27,9 @@ const canonicalDetail=slice(admin,'\t  function detailHtml(id, profileData, dash
 assert.match(humanCard,/id="ob-admin-human-reply-assistant-card"[^>]+data-ai-revision=/,'owner Expert Info carries the exact Human entitlement revision');
 assert.match(humanCard,/Grant Human Reply Assistant[\s\S]*?Grant private knowledge training/,'Human drafting and Human-only training access are explicit');
 assert.match(humanCard,/never sends client replies automatically[\s\S]*?never uses Automatic AI Chat training/,'the Human access card explains both feature boundaries');
-assert.match(adminOpen,/api\('\/admin\/experts\/' \+ encodeURIComponent\(id\) \+ '\/live-capacity'\)/,'owner Expert Info loads Human entitlements from live-capacity');
+assert.match(adminOpen,/requestOptions=\{token:owner\.token,signal:owner\.signal\}[\s\S]*?api\('\/admin\/experts\/' \+ encodeURIComponent\(id\) \+ '\/live-capacity',requestOptions\)/,'owner Expert Info loads Human entitlements through the captured admin identity');
+assert.match(admin,/activeExpertDetailRequest[\s\S]*?captureAdminExpertDetailOwner[\s\S]*?isCurrent\(detail\.owner,\{exactCredential:true\}\)/,'admin expert detail is principal- and generation-bound');
+assert.match(adminOpen,/if\(!adminExpertDetailCurrent\(detail,content\)\)return false;[\s\S]*?content\.innerHTML = detailHtml/,'only the latest selected expert may render into the admin detail screen');
 assert.match(humanSave,/reply_assistant_enabled:[\s\S]*?training_enabled:[\s\S]*?expected_ai_revision:revision[\s\S]*?reason:'admin_human_reply_assistant_access_update'/,'Human access save sends the isolated literal-boolean CAS fields');
 assert.match(humanSave,/api\('\/admin\/experts\/'\+encodeURIComponent\(id\)\+'\/live-capacity',\{method:'PUT',body:body\}\)/,'Human access writes only through live-capacity');
 assert.doesNotMatch(humanSave,/\/ai-chat|admin_context|mode:/,'Human access save cannot mutate Automatic AI Chat');
@@ -62,6 +64,7 @@ function autopilotHarness(postResult,requestResult,{postReject=null,requestRejec
     expertOwnerCurrent(value){return value===owner&&!owner.signal.aborted;},
     obOdBeginRequestBusy(){button.disabled=true;button.textContent='Checking delivery...';return true;},
     obOdEndRequestBusy(){button.disabled=false;button.textContent='Run autopilot now';},
+    obOdRestoreRequestView(){},
     api(path,options){calls.push({path,options});if(calls.length===1){if(postReject)return Promise.reject(postReject);return Promise.resolve(postResult);}if(requestReject)return Promise.reject(requestReject);return Promise.resolve(requestResult);},
     renderExpertOnDemand(){root.rendered=(root.rendered||0)+1;},toastMsg(message,tone){notices.push({message,tone});}};
   root.window=root;vm.createContext(root);new vm.Script(autopilot,{filename:'on-demand-autopilot-now.js'}).runInContext(root);
@@ -109,6 +112,10 @@ assert.match(renderExpertOnDemand,/var live = !gate && !!\(s\.expert_enabled && 
 assert.doesNotMatch(renderExpertOnDemand,/var live =[^;]*s\.safety_ack/,'legacy safety acknowledgement state must not falsely label a publicly purchasable offer as hidden');
 assert.doesNotMatch(onDemand,/el\.value\s*=\s*['"]Generating\.\.\.['"]/,'AI draft progress must never overwrite the expert answer textarea');
 assert.match(onDemand,/expertRequestBusy:Object\.create\(null\)[\s\S]*?function obOdBeginRequestBusy\(id, operation, focusAnswer\)[\s\S]*?data-ob-od-request-action="draft"[\s\S]*?data-ob-od-request-action="deliver"[\s\S]*?data-ob-od-request-action="autopilot"/,'Draft, Deliver, and Autopilot share request-scoped busy ownership');
+assert.match(onDemand,/var busy=\{requestId:requestId,operation:String\(operation\|\|''\),sequence:\+\+state\.expertRequestOperationSequence\}[\s\S]*?state\.expertRequestBusy\[requestId\]!==busy[\s\S]*?delete state\.expertRequestBusy\[requestId\]/,'each request action owns an unforgeable local busy token and can clear only itself');
+for(const action of ['Accept','Draft','Deliver','Decline'])assert.match(onDemand,new RegExp(`window\\.obOd${action} = function\\(id\\)\\{[\\s\\S]*?\\.finally\\(function\\(\\)\\{obOdEndRequestBusy\\(id,busy\\)`),`${action} always settles its own request lock`);
+assert.match(autopilot,/\.finally\(function\(\)\{obOdEndRequestBusy\(id,busy\)/,'Autopilot always settles its own request lock');
+assert.doesNotMatch(onDemand,/state\.expertOwner!==owner/,'same-principal Refresh cannot invalidate an in-flight expert action by object identity alone');
 assert.match(onDemand,/if\(operation\)\{row\.setAttribute\('data-ob-od-busy',operation\);row\.setAttribute\('aria-busy','true'\);row\.open=true;state\.expertOpenRequests\[requestId\]=true;\}[\s\S]*?editor\.readOnly=!!operation/,'a busy request is announced, kept open, and makes its answer editor read-only before a late AI draft can replace concurrent expert typing');
 assert.match(onDemand,/data-ob-od-request-action="accept"[\s\S]*?data-ob-od-request-action="decline"/,'Accept and Decline share the request lock and cannot race a pending Draft, Deliver, or Autopilot operation');
 assert.match(onDemand,/obOdCaptureRequestView\(requestId,focusAnswer===true\)/,'request actions capture the currently open row and focused answer');

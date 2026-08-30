@@ -63,7 +63,99 @@ assert.doesNotMatch(canonicalDetail,/\[250,\s*900,\s*1800,\s*3600,\s*7000\][\s\S
 assert.match(onDemand,/function installAdmin\(\)\{[\s\S]*?__obAdminExpertDetailCanonicalReady[\s\S]*?canonical-detail-owned/,'On Demand does not wrap the canonical detail opener');
 assert.match(onDemand,/adminCardRequest&&state\.adminCardRequest\.key===requestKey[\s\S]*?document\.getElementById\('ob-admin-on-demand-card'\)\)return Promise\.resolve\(true\)/,'On Demand deduplicates its one late authority card load and leaves an existing form mounted');
 assert.match(controlsHotfix,/function boot\(\)\{[\s\S]*?if\(window\.__obAdminExpertDetailCanonicalReady\)return;[\s\S]*?installObserver\(\)/,'legacy controls observer is disabled under canonical detail ownership');
+assert.match(controlsHotfix,/function ensureMarketplaceCard\(id\)\{\s*if\(window\.__obAdminExpertDetailCanonicalReady\) return Promise\.resolve\(null\);/,'legacy marketplace reads stop at the canonical ownership boundary');
+assert.match(controlsHotfix,/\/marketplace'\)\.then\(function\(data\)\{\s*if\(window\.__obAdminExpertDetailCanonicalReady\) return data;/,'an in-flight legacy marketplace read cannot render after canonical ownership transfers');
+assert.match(controlsHotfix,/function ensureGroupCard\(id\)\{\s*if\(window\.__obAdminExpertDetailCanonicalReady\) return Promise\.resolve\(null\);/,'legacy group-session reads stop at the canonical ownership boundary');
+assert.match(controlsHotfix,/\/group-sessions'\)\.then\(function\(data\)\{\s*if\(window\.__obAdminExpertDetailCanonicalReady\) return data;/,'an in-flight legacy group-session read cannot render after canonical ownership transfers');
+assert.match(controlsHotfix,/function ensure\(id\)\{\s*if\(window\.__obAdminExpertDetailCanonicalReady\) return;/,'legacy profile reads stop at the canonical ownership boundary');
+assert.match(controlsHotfix,/\/profile'\)\.then\(function\(data\)\{\s*if\(window\.__obAdminExpertDetailCanonicalReady\) return null;/,'an in-flight legacy profile read cannot render after canonical ownership transfers');
+assert.match(controlsHotfix,/function schedule\(id\)\{\s*if\(window\.__obAdminExpertDetailCanonicalReady\) return;/,'legacy delayed reinjection cannot start after canonical ownership');
+assert.match(controlsHotfix,/new MutationObserver\(function\(\)\{\s*if\(window\.__obAdminExpertDetailCanonicalReady\) return;/,'an observer installed before canonical boot becomes inert after ownership transfers');
 assert.match(marketplace,/function wrapAdminOpen\(\)\{[\s\S]*?if\(window\.__obAdminExpertDetailCanonicalReady\) return;/,'Marketplace does not schedule reinjection around the canonical detail opener');
+
+let legacyObserverCallback=null;
+let legacyFetchCount=0;
+const legacyContent={
+  textContent:'',
+  querySelector(){return null;},
+  querySelectorAll(){return [];},
+  insertAdjacentHTML(){throw new Error('canonical ownership must block legacy rendering');}
+};
+const legacyPanel={querySelector(selector){return selector==='.admin-content'?legacyContent:null;}};
+const legacyRoot={
+  window:null,Promise,Object,Array,String,Number,Error,encodeURIComponent,console,
+  location:{pathname:'/admin/experts'},
+  sessionStorage:{getItem(){return 'admin-token';}},localStorage:{getItem(){return ''; }},
+  document:{
+    readyState:'complete',
+    getElementById(id){return id==='admin-panel-experts'?legacyPanel:null;},
+    addEventListener(){}
+  },
+  MutationObserver:class {constructor(callback){legacyObserverCallback=callback;}observe(){}},
+  setTimeout(callback){callback();return 1;},clearTimeout(){},
+  fetch(){legacyFetchCount+=1;return Promise.reject(new Error('legacy request escaped canonical ownership'));},
+  __obAdminExpertDetailCanonicalReady:false
+};
+legacyRoot.window=legacyRoot;
+vm.createContext(legacyRoot);
+new vm.Script(controlsHotfix,{filename:'legacy-admin-controls-ownership.js'}).runInContext(legacyRoot);
+assert.equal(typeof legacyObserverCallback,'function','legacy observer can represent an older boot that started before canonical ownership');
+legacyRoot.__obAdminExpertDetailCanonicalReady=true;
+legacyObserverCallback();
+assert.equal(legacyFetchCount,0,'an already-installed legacy observer becomes inert when canonical detail takes ownership');
+
+let inflightDomReady=null;
+let inflightLegacyInsertions=0;
+const inflightLegacyRequests=[];
+const inflightLegacyTimers=[];
+const inflightDetailNode={getAttribute(){return "obAdminSaveExpertAiChat('expert-legacy')";}};
+const inflightLegacyContent={
+  textContent:'Total sessions',
+  querySelector(selector){return String(selector).includes('[onclick*=')?inflightDetailNode:null;},
+  querySelectorAll(){return [];},
+  insertAdjacentHTML(){inflightLegacyInsertions+=1;}
+};
+const inflightLegacyPanel={querySelector(selector){return selector==='.admin-content'?inflightLegacyContent:null;}};
+const inflightLegacyRoot={
+  window:null,Promise,Object,Array,String,Number,Error,encodeURIComponent,console,
+  location:{pathname:'/admin/experts'},
+  sessionStorage:{getItem(){return 'admin-token';}},localStorage:{getItem(){return ''; }},
+  document:{
+    readyState:'loading',
+    getElementById(id){return id==='admin-panel-experts'?inflightLegacyPanel:null;},
+    addEventListener(name,callback){if(name==='DOMContentLoaded')inflightDomReady=callback;}
+  },
+  MutationObserver:class {constructor(){}observe(){}},
+  setTimeout(callback,ms){inflightLegacyTimers.push({callback,ms});return inflightLegacyTimers.length;},clearTimeout(){},
+  fetch(url){const request=deferred();inflightLegacyRequests.push({url:String(url),request});return request.promise;},
+  __obAdminExpertDetailCanonicalReady:false
+};
+inflightLegacyRoot.window=inflightLegacyRoot;
+vm.createContext(inflightLegacyRoot);
+new vm.Script(controlsHotfix,{filename:'legacy-admin-controls-inflight-ownership.js'}).runInContext(inflightLegacyRoot);
+assert.equal(typeof inflightDomReady,'function');
+inflightDomReady();
+inflightLegacyTimers.find(timer=>timer.ms===150).callback();
+assert.equal(inflightLegacyRequests.length,1,'legacy profile request begins before canonical ownership');
+assert.match(inflightLegacyRequests[0].url,/\/profile$/);
+inflightLegacyRoot.__obAdminExpertDetailCanonicalReady=true;
+inflightLegacyRequests[0].request.resolve(response({ai_chat:{enabled:true}}));
+await new Promise(resolve=>setImmediate(resolve));
+assert.equal(inflightLegacyInsertions,0,'an in-flight profile response cannot replace the canonical detail');
+assert.equal(inflightLegacyRequests.length,1,'a stale profile response cannot fan out into legacy child reads');
+
+inflightLegacyRoot.__obAdminExpertDetailCanonicalReady=false;
+inflightLegacyTimers.find(timer=>timer.ms===650).callback();
+assert.equal(inflightLegacyRequests.length,2,'a second legacy profile request can model child reads already in flight');
+inflightLegacyRequests[1].request.resolve(response({ai_chat:{enabled:true}}));
+await new Promise(resolve=>setImmediate(resolve));
+assert.equal(inflightLegacyRequests.length,4,'legacy profile started group and marketplace reads before ownership transferred');
+assert.equal(inflightLegacyInsertions,1,'legacy AI controls rendered only while legacy code still owned the detail');
+inflightLegacyRoot.__obAdminExpertDetailCanonicalReady=true;
+inflightLegacyRequests[2].request.resolve(response({entitlement:{enabled:true}}));
+inflightLegacyRequests[3].request.resolve(response({enabled:true}));
+await new Promise(resolve=>setImmediate(resolve));
+assert.equal(inflightLegacyInsertions,1,'in-flight group and marketplace responses become inert after canonical ownership transfers');
 
 function makeContent(name){
   return {

@@ -4,6 +4,12 @@ import vm from 'node:vm';
 
 const html=fs.readFileSync(new URL('../index.html',import.meta.url),'utf8');
 
+assert.match(
+  html,
+  /var DASH_PANELS = \{[^}]*'on-demand':1[^}]*\}/,
+  'On-Demand is a first-class dashboard route and must not rewrite to Overview',
+);
+
 function scriptById(id){
   const escaped=id.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
   const match=html.match(new RegExp(`<script[^>]+id=["']${escaped}["'][^>]*>([\\s\\S]*?)<\\/script>`));

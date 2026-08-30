@@ -17571,6 +17571,13 @@ async function savePaymentConfig() {
   }
 
   async function loadAdminExperts() {
+    // The enhanced renderer is the single owner of the Experts panel. Keep this
+    // bridge because older admin navigation closures still reference this
+    // lexical function, but never let the legacy table renderer compete with
+    // the canonical list/detail controller once it is installed.
+    if (typeof window.obRenderAdminExpertsEnhanced === 'function') {
+      return window.obRenderAdminExpertsEnhanced();
+    }
     const panel=$('admin-panel-experts'); if(!panel) return;
     const tok = Auth.tok;
     if (!tok) return;
@@ -35121,8 +35128,11 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
     if(typeof window.adminNav === 'function' && !window.adminNav._obUrlRoutingWrapped){
       var oldAdminNav = window.adminNav;
       window.adminNav = function(el, panel){
-        var ret = oldAdminNav.apply(this, arguments);
+        // Clear a detail query before an explicit sidebar navigation reaches
+        // the Experts renderer. During applyRoute() `applyingRoute` stays true,
+        // so a refreshed/deep-linked expert keeps ownership of its URL.
         if(!applyingRoute) writeUrl(adminUrl(panel), false);
+        var ret = oldAdminNav.apply(this, arguments);
         return ret;
       };
       window.adminNav._obUrlRoutingWrapped = true;
@@ -37966,13 +37976,82 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
       if(cb) cb.checked = !enabled;
     }
   };
-  async function fetchApprovalEnabled(){
+  function adminExpertsController(){
+    if(window.__obAdminExpertsController) return window.__obAdminExpertsController;
+    var initialExpertId = '';
     try {
-      var t = sessionStorage.getItem('ob_t') || '';
-      var r = await fetch(apiBase() + '/api/admin/settings', {headers:{'Authorization':'Bearer ' + t}});
+      if(String(location.pathname || '').indexOf('/admin/experts') === 0){
+        var initialParams = new URLSearchParams(location.search || '');
+        initialExpertId = initialParams.get('expertId') || initialParams.get('expert_id') || initialParams.get('expert') || '';
+      }
+    } catch(e) {}
+    var state = {
+      mode:initialExpertId ? 'detail' : 'idle',
+      expertId:String(initialExpertId || ''),
+      generation:0,
+      listAbort:null,
+      listPromise:null,
+      begin:function(mode, expertId){
+        if(this.listAbort){ try { this.listAbort.abort(); } catch(e) {} }
+        this.listAbort = null;
+        this.listPromise = null;
+        this.mode = mode === 'detail' ? 'detail' : 'list';
+        this.expertId = this.mode === 'detail' ? String(expertId || '') : '';
+        this.generation += 1;
+        window._adminViewingExpertId = this.expertId || null;
+        return {mode:this.mode, expertId:this.expertId, generation:this.generation};
+      },
+      current:function(ticket){
+        return !!ticket && ticket.mode === this.mode && ticket.expertId === this.expertId && ticket.generation === this.generation;
+      },
+      content:function(){
+        var panel = document.getElementById('admin-panel-experts');
+        if(!panel) return null;
+        var direct = Array.prototype.slice.call(panel.children || []).filter(function(node){
+          return node && node.classList && node.classList.contains('admin-content');
+        });
+        var content = direct[0] || null;
+        direct.slice(1).forEach(function(node){ if(node.parentNode) node.parentNode.removeChild(node); });
+        if(!content){
+          content = document.createElement('div');
+          content.className = 'admin-content';
+          panel.appendChild(content);
+        }
+        return content;
+      }
+    };
+    if(initialExpertId) window._adminViewingExpertId = String(initialExpertId);
+    window.__obAdminExpertsController = state;
+    return state;
+  }
+  function adminExpertsRoute(mode, expertId, method){
+    try {
+      if(String(location.pathname || '').indexOf('/admin/experts') !== 0) return;
+      var url = new URL(location.href);
+      ['expertId','expert_id','expert','action'].forEach(function(key){ url.searchParams.delete(key); });
+      if(mode === 'detail' && expertId) url.searchParams.set('expertId', String(expertId));
+      var next = url.pathname + (url.searchParams.toString() ? '?' + url.searchParams.toString() : '') + url.hash;
+      if(next === location.pathname + location.search + location.hash) return;
+      history[method === 'push' ? 'pushState' : 'replaceState']({obAdminExpertsMode:mode,expertId:String(expertId || '')},'',next);
+    } catch(e) {}
+  }
+  window.obAdminExpertsBeginDetail = function(expertId){
+    var controller = adminExpertsController();
+    var previousMode = controller.mode;
+    var previousExpert = controller.expertId;
+    var ticket = controller.begin('detail', expertId);
+    adminExpertsRoute('detail', expertId, previousMode === 'list' || previousExpert !== String(expertId || '') ? 'push' : 'replace');
+    return ticket;
+  };
+  window.obAdminExpertsCurrent = function(ticket){ return adminExpertsController().current(ticket); };
+  window.obAdminExpertsPanelContent = function(){ return adminExpertsController().content(); };
+
+  async function fetchApprovalEnabled(requestToken, signal){
+    try {
+      var r = await fetch(apiBase() + '/api/admin/settings', {headers:{'Authorization':'Bearer ' + requestToken},signal:signal});
       var d = await r.json();
       return !!(d.settings && d.settings.ctrl_starter_manual_approval !== false && d.settings.ctrl_starter_manual_approval !== '0');
-    } catch(e) { return true; }
+    } catch(e) { if(e && e.name === 'AbortError') throw e; return true; }
   }
   function statusForExpert(e){
     var approval = String(e.approval_status || '').toLowerCase();
@@ -37985,11 +38064,28 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
     if(approved) return '<span style="color:#86efac;font-weight:800;">Approved</span>';
     return '<span style="color:#f59e0b;font-weight:800;">Waiting approval</span>';
   }
-  async function renderAdminExpertsEnhanced(){
-    var enabled = await fetchApprovalEnabled();
-    fetch(apiBase() + '/api/admin/experts?limit=100', {headers:{Authorization:'Bearer ' + (sessionStorage.getItem('ob_t') || '')}})
-      .then(function(r){ return r.json(); })
-      .then(function(d){
+  function renderAdminExpertsEnhanced(options){
+    options = options || {};
+    var controller = adminExpertsController();
+    if(controller.mode === 'detail' && options.forceList !== true) return Promise.resolve(false);
+    if(controller.mode === 'list' && controller.listPromise && options.forceList !== true) return controller.listPromise;
+    var ticket = controller.begin('list');
+    adminExpertsRoute('list', '', 'replace');
+    var content = controller.content();
+    if(!content) return Promise.resolve(false);
+    content.innerHTML = '<div id="ob-admin-experts-list" data-admin-experts-state="loading"><div class="admin-card" style="padding:28px;color:rgba(246,241,233,.65);">Loading experts...</div></div>';
+    var requestToken = sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || '';
+    var abort = typeof AbortController === 'function' ? new AbortController() : {signal:undefined,abort:function(){}};
+    controller.listAbort = abort;
+    var load = Promise.all([
+      fetchApprovalEnabled(requestToken, abort.signal),
+      fetch(apiBase() + '/api/admin/experts?limit=100', {headers:{Authorization:'Bearer ' + requestToken},signal:abort.signal}).then(function(r){
+        return r.json().catch(function(){ return {}; }).then(function(d){ if(!r.ok) throw new Error(d.error || d.message || 'Could not load experts'); return d; });
+      })
+    ]).then(function(all){
+        if(!controller.current(ticket)) return false;
+        var enabled = all[0];
+        var d = all[1] || {};
         var experts = d.experts || [];
         var rows = experts.map(function(e){
           var approval = String(e.approval_status || '').toLowerCase();
@@ -38002,17 +38098,24 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
             + '<td style="text-align:center;">' + esc(e.subscription_plan || 'starter') + '</td><td style="text-align:center;">' + statusForExpert(e) + '</td>'
             + '<td style="text-align:center;">' + approve + '<button class="admin-action-btn ob-admin-view-expert" data-id="' + esc(e.id || '') + '" data-slug="' + esc(e.slug || '') + '" data-name="' + esc(e.name || '') + '">View</button> ' + suspend + '</td></tr>';
         }).join('');
-        if(typeof window.setAdminPanelContent === 'function') {
-          window.setAdminPanelContent('experts', renderApprovalControl(enabled) + '<div class="admin-card"><table class="experts-table" style="width:100%;"><thead><tr><th>Expert</th><th>Email</th><th>Sessions</th><th>Revenue</th><th>Plan</th><th>Status</th><th>Actions</th></tr></thead><tbody>' + (rows || '<tr><td colspan="7" style="padding:32px;text-align:center;color:#888;">No experts yet</td></tr>') + '</tbody></table></div>');
-        } else {
-          var root = document.getElementById('admin-panel-experts');
-          if(root){
-            var c = root.querySelector('.admin-content') || root;
-            c.innerHTML = renderApprovalControl(enabled) + '<div class="admin-card"><table class="experts-table" style="width:100%;"><thead><tr><th>Expert</th><th>Email</th><th>Sessions</th><th>Revenue</th><th>Plan</th><th>Status</th><th>Actions</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
-          }
-        }
+        if(!controller.current(ticket)) return false;
+        content.innerHTML = '<div id="ob-admin-experts-list" data-admin-experts-state="ready">' + renderApprovalControl(enabled) + '<div class="admin-card"><div style="overflow:auto;"><table id="ob-admin-experts-table" class="experts-table" style="width:100%;"><thead><tr><th>Expert</th><th>Email</th><th>Sessions</th><th>Revenue</th><th>Plan</th><th>Status</th><th>Actions</th></tr></thead><tbody>' + (rows || '<tr><td colspan="7" style="padding:32px;text-align:center;color:#888;">No experts yet</td></tr>') + '</tbody></table></div></div></div>';
+        return true;
       })
-      .catch(function(err){ toastLocal(err.message || 'Could not load experts', 'err'); });
+      .catch(function(err){
+        if(err && err.name === 'AbortError') return false;
+        if(!controller.current(ticket)) return false;
+        content.innerHTML = '<div id="ob-admin-experts-list" data-admin-experts-state="error"><div class="admin-card" style="padding:28px;color:#fecaca;">Could not load experts. <button class="admin-action-btn" type="button" onclick="obRenderAdminExpertsEnhanced({forceList:true})">Retry</button></div></div>';
+        toastLocal(err.message || 'Could not load experts', 'err');
+        return false;
+      }).finally(function(){
+        if(controller.current(ticket)){
+          controller.listAbort = null;
+          controller.listPromise = null;
+        }
+      });
+    controller.listPromise = load;
+    return load;
   }
   var oldAdminNav = window.adminNav;
   window.adminNav = function(el, panel){
@@ -38024,7 +38127,29 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
       if(target) target.classList.add('active');
       var title = document.getElementById('admin-page-title');
       if(title) title.textContent = 'Expert Management';
-      renderAdminExpertsEnhanced();
+      var routedExpertId = '';
+      var routedAction = '';
+      try {
+        var routedParams = new URLSearchParams(location.search || '');
+        routedExpertId = routedParams.get('expertId') || routedParams.get('expert_id') || routedParams.get('expert') || '';
+        routedAction = routedParams.get('action') || '';
+      } catch(e) {}
+      if(routedExpertId && typeof window.obAdminOpenExpertDetail === 'function'){
+        // Router-owned detail navigation must win over background/list loaders.
+        // Mark the later compatibility bootstrap as satisfied so it cannot
+        // start a second request for the same expert.
+        window.obAdminOpenExpertDetail(routedExpertId);
+        // openExpertDetail consumes the one-shot action query synchronously;
+        // store the normalized marker that the later compatibility bootstrap
+        // will read from the URL.
+        window.__ownlybizAdminExpertQueryOpened = String(routedExpertId) + ':';
+        if(routedAction === 'approve') toastLocal('Review this Starter expert before approving.');
+        if(routedAction === 'decline') toastLocal('Review this Starter expert before declining or suspending.');
+      } else if(window.__obAdminExpertDetailCanonicalReady && typeof window.obAdminExpertBackToList === 'function'){
+        window.obAdminExpertBackToList();
+      } else {
+        renderAdminExpertsEnhanced({forceList:true});
+      }
       return;
     }
     if(oldAdminNav) return oldAdminNav.apply(this, arguments);
@@ -57839,6 +57964,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     else console.log(msg);
   }
   function panelContent(){
+    if(typeof window.obAdminExpertsPanelContent === 'function') return window.obAdminExpertsPanelContent();
     var panel = document.getElementById('admin-panel-experts');
     if(!panel) return null;
     var content = panel.querySelector('.admin-content');
@@ -57858,6 +57984,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
 	  function adminExpertDetailCurrent(detail,content){
 	    if(!detail||activeExpertDetail!==detail||detail.requestId!==activeExpertDetailRequest||String(detail.id||'')!==String(detail.owner&&detail.owner.expertId||''))return false;
 	    if(content&&detail.content!==content)return false;
+	    if(detail.navigationTicket&&typeof window.obAdminExpertsCurrent==='function'&&!window.obAdminExpertsCurrent(detail.navigationTicket))return false;
 	    try{return !!(window.OB_CLIENT_CONTEXT&&window.OB_CLIENT_CONTEXT.isCurrent(detail.owner,{exactCredential:true}));}catch(e){return false;}
 	  }
 	  function refreshActiveExpertDetail(id){
@@ -58158,7 +58285,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
 		      + automaticAiChatAccessCard(id,ai||{})
 		      + '</section>';
 		  }
-		  function detailHtml(id, profileData, dashboardData, refundData, marketplaceData, liveCapacityData){
+		  function detailHtml(id, profileData, dashboardData, refundData, marketplaceData, liveCapacityData, groupSessionsData){
     var user = profileData.user || dashboardData.user || {};
     var profile = Object.assign({}, dashboardData.profile || {}, profileData.profile || {});
     var rates = profileData.rates || {};
@@ -58178,7 +58305,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     var pauseNote = pauseAllowed
       ? 'This expert can keep using sessions and bookings while the platform service pause is on.'
       : 'This expert follows the platform service pause. Allowing access lets this expert keep operating while other experts remain paused.';
-    return ''
+	    return '<div id="ob-admin-expert-detail" data-expert-id="'+attr(id)+'">'
       + '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px;">'
       +   '<button class="admin-action-btn" type="button" onclick="obAdminExpertBackToList()">Back to expert list</button>'
       +   '<div style="display:flex;gap:8px;flex-wrap:wrap;">'
@@ -58211,7 +58338,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
 		      + '</div>'
 		      + aiFeatureAuthorityCards(id,ai,liveCapacityData||{})
 		      + stripeModeCard(id, stripeMode)
-		      + groupSessionsCard(id, profileData.group_sessions || {})
+		      + groupSessionsCard(id, groupSessionsData || profileData.group_sessions || {})
 		      + marketplaceCard(id, marketplaceData || profileData.marketplace || profileData.marketplace_public || {})
 		      + aiCreditsCard(id, name, user.email || '', profileData.ai_credits || {})
 		      + emailCenterCapCard(id, profileData.email_center || {})
@@ -58224,16 +58351,18 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       + '</div>'
 	      + refundsTable(id, refundData.requests || [])
 	      + sessionsTable(dashboard.recent_sessions || [])
-		      + packagesHtml(profileData.packages || []);
+		      + packagesHtml(profileData.packages || [])
+		      + '</div>';
   }
   function openExpertDetail(id, slug, name){
     if(!id){ notify('Expert id missing.', 'err'); return; }
+	    var navigationTicket=typeof window.obAdminExpertsBeginDetail==='function'?window.obAdminExpertsBeginDetail(id):null;
 	    var requestId=++activeExpertDetailRequest;
 	    var owner=captureAdminExpertDetailOwner(id,requestId);
 	    if(!owner){notify('Your admin session changed. Reload experts and try again.','err');return;}
     var content = panelContent();
     if(!content) return;
-	    var detail={id:String(id),slug:slug||'',name:name||'',requestId:requestId,owner:owner,content:content};
+	    var detail={id:String(id),slug:slug||'',name:name||'',requestId:requestId,owner:owner,content:content,navigationTicket:navigationTicket};
 	    activeExpertDetail=detail;
     content.innerHTML = '<div class="admin-card" style="padding:28px;color:rgba(246,241,233,.65);">Loading expert details...</div>';
 	    var requestOptions={token:owner.token,signal:owner.signal};
@@ -58242,10 +58371,12 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
 	      api('/admin/experts/' + encodeURIComponent(id) + '/dashboard',requestOptions).catch(function(){ return {}; }),
 	      api('/admin/refund-requests?expert_id=' + encodeURIComponent(id) + '&limit=100',requestOptions).catch(function(){ return {requests:[]}; }),
 		      api('/admin/experts/' + encodeURIComponent(id) + '/marketplace',requestOptions).catch(function(err){ return {error:err.message || 'Marketplace settings unavailable'}; }),
-		      api('/admin/experts/' + encodeURIComponent(id) + '/live-capacity',requestOptions).catch(function(err){ return {error:err.message || 'Human Reply Assistant authority unavailable'}; })
+		      api('/admin/experts/' + encodeURIComponent(id) + '/live-capacity',requestOptions).catch(function(err){ return {error:err.message || 'Human Reply Assistant authority unavailable'}; }),
+		      api('/admin/experts/' + encodeURIComponent(id) + '/group-sessions',requestOptions).catch(function(){ return null; })
 		    ]).then(function(all){
 		      if(!adminExpertDetailCurrent(detail,content))return false;
-		      content.innerHTML = detailHtml(id, all[0] || {}, all[1] || {}, all[2] || {requests:[]}, all[3] || {}, all[4] || {});
+		      content.innerHTML = detailHtml(id, all[0] || {}, all[1] || {}, all[2] || {requests:[]}, all[3] || {}, all[4] || {}, all[5] || null);
+	      if(typeof window.obAdminInjectOnDemand==='function')window.obAdminInjectOnDemand(id);
 	      try { content.scrollIntoView({block:'start'}); } catch(e) {}
 	    }).catch(function(err){
 	      if(!adminExpertDetailCurrent(detail,content))return false;
@@ -58264,8 +58395,9 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   window.obAdminExpertBackToList = function(){
 	  activeExpertDetailRequest+=1;
     activeExpertDetail = null;
-    if(typeof window.loadAdminExperts === 'function') window.loadAdminExperts();
-    else if(typeof window.obRenderAdminExpertsEnhanced === 'function') window.obRenderAdminExpertsEnhanced();
+	  window._adminViewingExpertId=null;
+	  if(typeof window.obRenderAdminExpertsEnhanced === 'function') window.obRenderAdminExpertsEnhanced({forceList:true});
+	  else if(typeof window.loadAdminExperts === 'function') window.loadAdminExperts({forceList:true});
   };
   window.obAdminExpertAction = function(id, action){
     var active = action === 'approve' || action === 'restore';
@@ -58430,7 +58562,19 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   }, true);
   install();
   if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', install);
-  [250, 900, 1800, 3600, 7000].forEach(function(ms){ setTimeout(install, ms); });
+	window.addEventListener('popstate',function(){
+	  if(String(location.pathname||'').indexOf('/admin/experts')!==0)return;
+	  var id='';
+	  try{id=new URL(location.href).searchParams.get('expertId')||'';}catch(e){}
+	  var controller=window.__obAdminExpertsController||null;
+	  if(id){
+	    if(activeExpertDetail&&String(activeExpertDetail.id||'')===String(id)&&controller&&controller.mode==='detail'&&String(controller.expertId||'')===String(id))return;
+	    openExpertDetail(id,'','');
+	  }else{
+	    if(controller&&controller.mode==='list'&&!activeExpertDetail)return;
+	    window.obAdminExpertBackToList();
+	  }
+	});
 })();
 </script>
 <script id="ownlybiz-service-pause-ui-20260526">
@@ -62707,7 +62851,8 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
 	    expertSaveOperation:null,
 	    expertSaveOperationSequence:0,
 	    confirmingCheckout:false,
-	    confirmedCheckout:''
+	    confirmedCheckout:'',
+	    adminCardRequest:null
 	  };
   var adminInstallTimer = null;
 
@@ -62933,6 +63078,8 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     id=String(id||'');
     var generation=arguments.length>1?arguments[1]:state.adminCardGeneration;
     if(!id||String(state.adminExpertId||'')!==id||generation!==state.adminCardGeneration)return;
+	  var requestKey=id+':'+generation;
+	  if(state.adminCardRequest&&state.adminCardRequest.key===requestKey)return state.adminCardRequest.promise;
     var owner=window.OB_CLIENT_CONTEXT&&window.OB_CLIENT_CONTEXT.capture('on-demand-admin-card',{expertId:id,adminCardGeneration:generation});
     function ownerCurrent(){
       return !!owner&&window.OB_CLIENT_CONTEXT.isCurrent(owner)&&owner.role==='admin'&&owner.adminCardGeneration===state.adminCardGeneration&&
@@ -62942,7 +63089,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     addStyle();
     var content = document.querySelector('#admin-panel-experts .admin-content') || document.querySelector('#admin-panel-experts');
     if(!content) return;
-    api('/api/on-demand/admin/experts/' + encodeURIComponent(id),{token:owner.token,signal:owner.signal}).then(function(data){
+	  var request=api('/api/on-demand/admin/experts/' + encodeURIComponent(id),{token:owner.token,signal:owner.signal}).then(function(data){
       if(!ownerCurrent())return;
       var existing = document.getElementById('ob-admin-on-demand-card');
       if(existing) existing.outerHTML = adminCardHtml(id, data);
@@ -62957,13 +63104,18 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     }).catch(function(err){
       if(!ownerCurrent())return;
       console.warn('[OnDemand/admin]', err && err.message ? err.message : err);
+	  }).finally(function(){
+	    if(state.adminCardRequest&&state.adminCardRequest.key===requestKey)state.adminCardRequest=null;
     });
+	  state.adminCardRequest={key:requestKey,promise:request};
+	  return request;
   }
   window.obAdminInjectOnDemand = function(id){
     id=String(id||'');
     if(!id)return;
     if(state.adminExpertId!==id){state.adminExpertId=id;state.adminCardGeneration=(state.adminCardGeneration||0)+1;}
-    injectAdminCard(id,state.adminCardGeneration);
+	  if(document.getElementById('ob-admin-on-demand-card'))return Promise.resolve(true);
+    return injectAdminCard(id,state.adminCardGeneration);
   };
   function scheduleAdminCard(id){
     id=String(id||'');
@@ -62980,6 +63132,10 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     return !!(fn && fn.__obOnDemandWrapped);
   }
   function installAdmin(){
+	  if(window.__obAdminExpertDetailCanonicalReady){
+	    window.__obOnDemandAdminWrapped='canonical-detail-owned';
+	    return true;
+	  }
     if(isAdminWrapped()) {
       window.__obOnDemandAdminWrapped = true;
       return true;
@@ -62999,6 +63155,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     return true;
   }
   function retryInstallAdmin(){
+	  if(window.__obAdminExpertDetailCanonicalReady)return;
     if(adminInstallTimer) return;
     var tries = 0;
     adminInstallTimer = setInterval(function(){
@@ -64216,6 +64373,9 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
   function boot(){
     installAdmin();
     retryInstallAdmin();
+	  var detail=document.getElementById('ob-admin-expert-detail');
+	  var detailId=detail&&detail.getAttribute('data-expert-id');
+	  if(detailId&&!document.getElementById('ob-admin-on-demand-card'))window.obAdminInjectOnDemand(detailId);
     installExpertNav();
     installPublic();
     if(String(location.pathname || '').indexOf('/dash/') === 0 && String(location.pathname || '').indexOf('/on-demand') >= 0) {
@@ -64655,6 +64815,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     return match ? match[1] : '';
   }
   function boot(){
+	  if(window.__obAdminExpertDetailCanonicalReady)return;
     wrapOpeners();
     installObserver();
     var id = idFromOpenDetail();
@@ -67527,6 +67688,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     });
   };
   function wrapAdminOpen(){
+	  if(window.__obAdminExpertDetailCanonicalReady) return;
     var current = window.obAdminOpenExpertDetail || window.adminViewExpertDashboard;
     if(!current || current.__obMarketplaceWrapped) return;
     var wrapped = function(id){

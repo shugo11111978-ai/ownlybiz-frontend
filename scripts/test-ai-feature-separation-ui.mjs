@@ -17,12 +17,13 @@ function slice(source,start,end){
 }
 
 const admin=scriptById('ownlybiz-admin-expert-detail-correct-flow-20260526');
-const humanCard=slice(admin,'\t  function humanReplyAssistantAccessCard(id, liveCapacityData){','\t  function detailHtml(id, profileData, dashboardData, refundData, marketplaceData, liveCapacityData){');
-const aiAuthorityCards=slice(admin,'\t\t  function automaticAiChatAccessCard(id, ai){','\t\t  function detailHtml(id, profileData, dashboardData, refundData, marketplaceData, liveCapacityData){');
+const detailStart='\t\t  function detailHtml(id, profileData, dashboardData, refundData, marketplaceData, liveCapacityData, groupSessionsData){';
+const humanCard=slice(admin,'\t  function humanReplyAssistantAccessCard(id, liveCapacityData){',detailStart);
+const aiAuthorityCards=slice(admin,'\t\t  function automaticAiChatAccessCard(id, ai){',detailStart);
 const adminOpen=slice(admin,'  function openExpertDetail(id, slug, name){','  function install(){');
 const humanSave=slice(admin,'\t\t  window.obAdminSaveHumanReplyAssistantAccess = function(id){','\t\t  window.obAdminSaveExpertAiChat = function(id){');
 const automaticSave=slice(admin,'\t\t  window.obAdminSaveExpertAiChat = function(id){','  window.obAdminExpertApproveRefund = function(id){');
-const canonicalDetail=slice(admin,'\t  function detailHtml(id, profileData, dashboardData, refundData, marketplaceData, liveCapacityData){','  function openExpertDetail(id, slug, name){');
+const canonicalDetail=slice(admin,detailStart,'  function openExpertDetail(id, slug, name){');
 
 assert.match(humanCard,/id="ob-admin-human-reply-assistant-card"[^>]+data-ai-revision=/,'owner Expert Info carries the exact Human entitlement revision');
 assert.match(humanCard,/Grant Human Reply Assistant[\s\S]*?Grant private knowledge training/,'Human drafting and Human-only training access are explicit');

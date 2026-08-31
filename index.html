@@ -55243,7 +55243,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       signal: opts.signal
     };
     if(opts.cache) requestOptions.cache = opts.cache;
-    return fetch(API_ROOT + path, requestOptions).then(function(r){ return r.json().catch(function(){ return {}; }).then(function(d){ if(!r.ok) throw new Error(d.error || d.message || ('Request failed: ' + r.status)); return d; }); });
+    return fetch(API_ROOT + path, requestOptions).then(function(r){ return r.json().catch(function(){ return {}; }).then(function(d){ if(!r.ok){var error=new Error(d.error || d.message || ('Request failed: ' + r.status));error.status=r.status;if(typeof d.code==='string')error.code=d.code;throw error;}return d; }); });
   }
   function statusLabel(user, profile){
     var active = Number(user && user.is_active) !== 0;
@@ -55861,6 +55861,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   }
   function clearExpertAiFeatureView(feature){
     if(feature==='automatic'){
+      clearAutomaticChatCoach();
       var card=document.getElementById('ob-expert-ai-pref-card');if(card)card.remove();
       window.__obAutomaticAiChatConsent=null;window.__obAutomaticAiChatTraining=null;
     }
@@ -55964,6 +55965,238 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     }
   });
 
+  var automaticChatCoachState = null;
+  function clearAutomaticChatCoach(){
+    var state=automaticChatCoachState;automaticChatCoachState=null;
+    if(!state)return;
+    if(state.pollTimer)clearTimeout(state.pollTimer);
+    state.operations.forEach(function(operation){operation.controller.abort();operation.detach();});
+  }
+  function automaticChatCoach(owner){
+    if(!owner||!expertAiFeatureOwnerCurrent(owner)||!expertAiFeatureAllowed('automatic'))return null;
+    if(automaticChatCoachState&&!expertAiFeatureSameOwner(automaticChatCoachState.owner,owner))clearAutomaticChatCoach();
+    if(!automaticChatCoachState)automaticChatCoachState={owner:owner,mode:'teach',conversations:[],conversation:null,draft:'',retry:null,approvals:{},operations:[],pending:null,loading:false,loaded:false,pollTimer:null,status:'',approvalStatus:'',renderedTurns:null,renderedOptions:null};
+    return automaticChatCoachState;
+  }
+  function automaticCoachCurrent(state){
+    return !!state&&automaticChatCoachState===state&&expertAiFeatureOwnerCurrent(state.owner)&&expertAiFeatureAllowed('automatic');
+  }
+  function automaticCoachOperation(state){
+    var controller=new AbortController(),signal=state.owner.signal;
+    var abort=function(){controller.abort();};
+    if(signal&&signal.aborted)abort();else if(signal&&signal.addEventListener)signal.addEventListener('abort',abort,{once:true});
+    var operation={controller:controller,detach:function(){if(signal&&signal.removeEventListener)signal.removeEventListener('abort',abort);}};
+    state.operations.push(operation);return operation;
+  }
+  function finishAutomaticCoachOperation(state,operation){
+    operation.detach();state.operations=state.operations.filter(function(entry){return entry!==operation;});
+    if(state.pending===operation)state.pending=null;
+  }
+  function automaticCoachText(value,max){
+    return typeof value==='string'&&Array.from(value).length<=max&&!/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(value)?value:null;
+  }
+  function parseAutomaticCoachSummary(data){
+    if(!data||typeof data.id!=='string'||!/^[A-Za-z0-9_-]{1,128}$/.test(data.id)||['teach','simulate'].indexOf(data.mode)<0||!Number.isSafeInteger(data.revision)||data.revision<1)return null;
+    return {id:data.id,mode:data.mode,revision:data.revision,created_at:data.created_at,updated_at:data.updated_at};
+  }
+  function parseAutomaticCoachConversation(data){
+    var summary=parseAutomaticCoachSummary(data);
+    if(!summary||!Array.isArray(data.turns)||data.turns.length>200)return null;
+    var ids={};
+    var turns=data.turns.map(function(turn){
+      if(!turn||typeof turn.id!=='string'||!/^[A-Za-z0-9_-]{1,128}$/.test(turn.id)||ids[turn.id]||['pending','complete','failed'].indexOf(turn.status)<0)return null;
+      ids[turn.id]=true;
+      var input=automaticCoachText(turn.input_text,4000),reply=automaticCoachText(turn.reply==null?'':turn.reply,20000);
+      var lessons=Array.isArray(turn.proposed_lessons)&&turn.proposed_lessons.length<=16?turn.proposed_lessons.map(function(rule){return automaticCoachText(rule,6000);}):null;
+      if(input===null||reply===null||!lessons||lessons.some(function(rule){return rule===null||!rule.trim();})||(summary.mode==='simulate'&&lessons.length))return null;
+      if(turn.status==='complete'&&(!reply.trim()||!Number.isSafeInteger(turn.training_revision)||turn.training_revision<1))return null;
+      return {id:turn.id,request_id:automaticCoachText(turn.request_id||'',128)||'',status:turn.status,input_text:input,reply:reply,proposed_lessons:lessons,training_revision:turn.training_revision,created_at:turn.created_at,approved:turn.approved===true,error:automaticCoachText(turn.error||'',500)||'',error_code:automaticCoachText(turn.error_code||'',128)||''};
+    });
+    if(turns.some(function(turn){return !turn;}))return null;
+    summary.turns=turns;return summary;
+  }
+  function automaticCoachResponse(data,id){
+    var conversation=data&&data.success===true&&parseAutomaticCoachConversation(data.conversation);
+    return conversation&&(!id||conversation.id===id)?conversation:null;
+  }
+  function automaticCoachBusy(state){
+    return !!state.pending||state.loading||!!(state.conversation&&state.conversation.turns.some(function(turn){return turn.status==='pending';}));
+  }
+  function automaticCoachSetConversation(state,conversation){
+    state.conversation=conversation;state.mode=conversation.mode;state.renderedTurns=null;state.approvals={};
+    var summary=parseAutomaticCoachSummary(conversation);
+    state.conversations=[summary].concat(state.conversations.filter(function(row){return row.id!==conversation.id;})).slice(0,200);
+  }
+  function automaticCoachDenied(state,error){
+    if(!automaticCoachCurrent(state))return true;
+    if(Number(error&&error.status)===403||(Number(error&&error.status)===404&&error.code==='automatic_ai_chat_not_available')){window.obExpertAiFeatureAuthority('automatic',false);return true;}
+    return false;
+  }
+  function automaticCoachError(error,fallback){
+    if(error&&error.code==='automatic_ai_chat_training_busy')return 'Your lesson is saved here. Apply it after this expert’s live sessions end.';
+    return String(error&&error.message||fallback);
+  }
+  function automaticCoachTurnsHtml(state){
+    var conversation=state.conversation,turns=conversation?conversation.turns:[];
+    if(!turns.length)return '<p style="margin:0;font-size:13px;line-height:1.65;color:var(--gray-500);">'+(state.mode==='teach'?'Tell your AI how you want it to respond. It can ask questions, offer example replies, and propose reusable lessons for you to approve.':'Try a fictional client conversation. Replies use the saved Automatic AI Chat instructions—not unsaved coaching or proposed lessons.')+'</p>';
+    return turns.map(function(turn){
+      var proposed=turn.proposed_lessons.length?'<section style="margin-top:12px;padding:12px;border:1px solid var(--sage);border-radius:10px;"><div style="font-size:12px;font-weight:800;color:var(--brown);">Proposed reusable lessons · not applied until saved</div><ul style="padding-left:20px;font-size:13px;line-height:1.6;color:var(--brown);">'+turn.proposed_lessons.map(function(rule){return '<li style="white-space:pre-wrap;overflow-wrap:anywhere;">'+safe(rule)+'</li>';}).join('')+'</ul>'+(turn.approved?'<div style="font-size:12px;color:var(--sage);font-weight:800;">These lessons are in the saved training.</div>':'<label style="display:flex;gap:8px;align-items:start;font-size:12px;color:var(--brown);line-height:1.5;"><input data-ob-coach-approval="'+safe(turn.id)+'" type="checkbox" onchange="obAutomaticAiCoachReview(&quot;'+safe(turn.id)+'&quot;,this.checked)">I approve these rules for this expert’s Automatic AI Chat.</label><button data-ob-coach-save="'+safe(turn.id)+'" type="button" class="ob-credit-btn primary" style="margin-top:10px;" onclick="obAutomaticAiCoachApprove(&quot;'+safe(turn.id)+'&quot;)">Save approved lessons</button>')+'</section>':'';
+      return '<article style="display:grid;gap:9px;"><div style="padding:12px;border:1px solid var(--gray-200);border-radius:10px;"><div style="font-size:11px;font-weight:800;color:var(--gray-500);">'+(state.mode==='teach'?'You · coaching':'You · fictional client')+'</div><div style="margin-top:5px;white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px;line-height:1.6;color:var(--brown);">'+safe(turn.input_text)+'</div></div><div style="padding:12px;background:var(--cream);border:1px solid var(--gray-200);border-radius:10px;"><div style="font-size:11px;font-weight:800;color:var(--gray-500);">'+(state.mode==='teach'?'Your AI training coach':'Automatic AI Chat')+(turn.status==='complete'?' · saved training revision '+turn.training_revision:'')+'</div><div style="margin-top:5px;white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px;line-height:1.6;color:var(--brown);">'+(turn.status==='pending'?'Preparing a reply…':turn.status==='failed'?safe(turn.error||'This reply could not be completed. Your message is saved here.'):safe(turn.reply))+'</div>'+proposed+'</div></article>';
+    }).join('');
+  }
+  function automaticCoachHtml(){
+    var state=automaticChatCoach(expertAiFeatureAuthority.owner);if(!state)return '';
+    return '<section id="ob-automatic-ai-coach" style="border:1px solid var(--gray-200);border-radius:12px;padding:16px;display:grid;gap:13px;">'
+      + '<div><h4 style="margin:0;color:var(--brown);font-size:16px;">Teach &amp; try Automatic AI Chat</h4><p style="margin:6px 0 0;font-size:12px;line-height:1.6;color:var(--gray-500);">Coach this expert’s automatic replies, approve specific lessons, then test the saved behavior as a client. No live session, charge, or client message is created here.</p></div>'
+      + '<div role="tablist" aria-label="Automatic AI Chat training mode" style="display:flex;gap:8px;flex-wrap:wrap;"><button id="ob-automatic-ai-coach-teach-tab" type="button" role="tab" class="ob-credit-btn secondary" aria-controls="ob-automatic-ai-coach-panel" onclick="obAutomaticAiCoachMode(&quot;teach&quot;)">Teach your AI</button><button id="ob-automatic-ai-coach-simulate-tab" type="button" role="tab" class="ob-credit-btn secondary" aria-controls="ob-automatic-ai-coach-panel" onclick="obAutomaticAiCoachMode(&quot;simulate&quot;)">Try as a client</button></div>'
+      + '<div id="ob-automatic-ai-coach-panel" role="tabpanel" style="display:grid;gap:13px;"><p id="ob-automatic-ai-coach-explanation" style="margin:0;font-size:12px;line-height:1.6;color:var(--gray-500);"></p>'
+      + '<div style="display:flex;gap:10px;align-items:end;flex-wrap:wrap;"><label style="font-size:12px;font-weight:800;color:var(--brown);flex:1;min-width:180px;">Saved conversations<select id="ob-automatic-ai-coach-history" onchange="obAutomaticAiCoachSelect(this.value)" style="width:100%;box-sizing:border-box;margin-top:6px;min-height:40px;padding:8px;border:1px solid var(--gray-200);border-radius:8px;color:var(--brown);background:var(--cream);"></select></label><button id="ob-automatic-ai-coach-new" type="button" class="ob-credit-btn secondary" onclick="obAutomaticAiCoachNew()">New conversation</button><button id="ob-automatic-ai-coach-refresh" type="button" class="ob-credit-btn secondary" onclick="obAutomaticAiCoachRefresh()">Refresh history</button></div>'
+      + '<div id="ob-automatic-ai-coach-turns" role="log" aria-label="AI training conversation" aria-live="polite" style="display:grid;gap:15px;max-height:520px;overflow:auto;">'+automaticCoachTurnsHtml(state)+'</div>'
+      + '<label id="ob-automatic-ai-coach-input-label" style="font-size:12px;font-weight:800;color:var(--brown);">Your message<textarea id="ob-automatic-ai-coach-input" rows="3" maxlength="8000" oninput="obAutomaticAiCoachInput(this)" style="width:100%;box-sizing:border-box;border:1px solid var(--gray-200);border-radius:9px;padding:10px;margin-top:7px;font:inherit;font-size:13px;font-weight:400;line-height:1.5;resize:vertical;color:var(--brown);background:var(--cream);">'+safe(state.draft)+'</textarea></label>'
+      + '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;"><span id="ob-automatic-ai-coach-count" style="font-size:11px;color:var(--gray-500);"></span><button id="ob-automatic-ai-coach-send" type="button" class="ob-credit-btn primary" onclick="obAutomaticAiCoachSend()">Send message</button></div>'
+      + '<div id="ob-automatic-ai-coach-status" role="status" style="font-size:12px;line-height:1.5;min-height:18px;color:var(--gray-500);"></div><div id="ob-automatic-ai-coach-approval-status" role="status" style="font-size:12px;line-height:1.5;color:var(--gray-500);"></div>'
+      + '<p style="font-size:11px;line-height:1.5;color:var(--gray-500);margin:0;">Training conversations are saved privately for this expert, separately from live sessions and Human Reply Assistant. Use fictional examples. Only the exact lessons you approve are added to Automatic AI Chat instructions. Unsent text stays in this page’s memory only.</p></div></section>';
+  }
+  function renderAutomaticCoach(){
+    var state=automaticChatCoachState;if(!automaticCoachCurrent(state))return;
+    function node(id){return document.getElementById('ob-automatic-ai-coach-'+id);}
+    function text(id,value){var element=node(id);if(element)element.textContent=value;}
+    var busy=automaticCoachBusy(state),conversation=state.conversation;
+    ['teach','simulate'].forEach(function(mode){var tab=node(mode+'-tab');if(tab){tab.setAttribute('aria-selected',String(state.mode===mode));tab.className='ob-credit-btn '+(state.mode===mode?'primary':'secondary');tab.disabled=!!state.pending||state.loading;}});
+    var panel=node('panel');if(panel)panel.setAttribute('aria-labelledby','ob-automatic-ai-coach-'+state.mode+'-tab');
+    text('explanation',state.mode==='teach'?'Describe the voice, approach, or response you want. The coach can clarify, demonstrate examples, and propose exact lessons. Saying “yes” here does not save training; review the proposal and use Save approved lessons.':'Role-play a fictional client. This mode uses only currently saved Automatic AI Chat guidance and keeps this conversation’s context. To change future behavior, return to Teach your AI and explicitly approve a lesson.');
+    var options='<option value="">New conversation · no messages yet</option>'+state.conversations.filter(function(row){return row.mode===state.mode;}).map(function(row){return '<option value="'+safe(row.id)+'">'+safe(automaticTrainingTime(row.updated_at||row.created_at))+' · '+safe(row.id.slice(0,8))+'</option>';}).join('');
+    var history=node('history');if(history){if(history.__obCoachOptions!==options){history.innerHTML=options;history.__obCoachOptions=options;}history.value=conversation?conversation.id:'';history.disabled=!!state.pending||state.loading;}
+    var turns=node('turns'),turnsHtml=automaticCoachTurnsHtml(state);if(turns&&turns.__obCoachTurns!==turnsHtml){turns.innerHTML=turnsHtml;turns.__obCoachTurns=turnsHtml;turns.scrollTop=turns.scrollHeight;}
+    var input=node('input');if(input){input.readOnly=!!state.pending;if(input.value!==state.draft)input.value=state.draft;input.placeholder=state.mode==='teach'?'For example: Be warmer and more spiritual. Remember a birth date once it is shared. Show me how you would answer.':'Write as a fictional client to test the saved training…';}
+    text('count',Array.from(state.draft).length+' / 4,000 characters');text('status',state.status);text('approval-status',state.approvalStatus);
+    var send=node('send');if(send){send.disabled=busy||!state.loaded;send.textContent=state.pending?'Working…':state.mode==='teach'?'Send to training coach':'Send as a client';}
+    ['new','refresh'].forEach(function(id){var button=node(id);if(button)button.disabled=!!state.pending||state.loading;});
+    if(turns&&turns.querySelectorAll){turns.querySelectorAll('[data-ob-coach-approval]').forEach(function(field){var review=state.approvals[field.getAttribute('data-ob-coach-approval')];field.checked=!!review;field.disabled=busy;});turns.querySelectorAll('[data-ob-coach-save]').forEach(function(button){button.disabled=busy||!state.approvals[button.getAttribute('data-ob-coach-save')];});}
+  }
+  function automaticCoachMayNavigate(state){
+    if(state.pending||state.loading)return false;
+    if(state.draft.trim()){state.status='Your unsent message is still here. Send it or clear it before changing conversations.';renderAutomaticCoach();return false;}
+    return true;
+  }
+  function scheduleAutomaticCoachRefresh(state){
+    if(state.pollTimer)clearTimeout(state.pollTimer);state.pollTimer=null;
+    if(!automaticCoachCurrent(state)||!state.conversation||!state.conversation.turns.some(function(turn){return turn.status==='pending';}))return;
+    var id=state.conversation.id;
+    state.pollTimer=setTimeout(function(){state.pollTimer=null;if(automaticCoachCurrent(state)&&!state.pending&&!state.loading&&state.conversation&&state.conversation.id===id)loadAutomaticCoachConversation(state,id,true);},3000);
+  }
+  function loadAutomaticCoachConversation(state,id,quiet){
+    if(!automaticCoachCurrent(state)||state.pending||state.loading)return Promise.resolve(false);
+    var operation=automaticCoachOperation(state);state.loading=true;if(!quiet)state.status='Loading saved conversation…';renderAutomaticCoach();
+    return api('/ai/expert-chat/coach/'+encodeURIComponent(id),{token:state.owner.token,signal:operation.controller.signal}).then(function(data){
+      if(!automaticCoachCurrent(state)||operation.controller.signal.aborted)return false;
+      var conversation=automaticCoachResponse(data,id);if(!conversation)throw new Error('Saved conversation could not be verified.');
+      automaticCoachSetConversation(state,conversation);if(!quiet)state.status='Saved conversation loaded.';return true;
+    }).catch(function(error){if(!automaticCoachDenied(state,error)&&!operation.controller.signal.aborted)state.status=automaticCoachError(error,'Saved conversation could not be loaded. Your unsent message was kept.');return false;}).then(function(result){finishAutomaticCoachOperation(state,operation);if(automaticCoachCurrent(state)){state.loading=false;renderAutomaticCoach();scheduleAutomaticCoachRefresh(state);}return result;});
+  }
+  function loadAutomaticCoachHistory(){
+    var owner=bindExpertAiFeatureOwner('automatic-chat-coach-history'),state=automaticChatCoach(owner);
+    if(!state||state.pending||state.loading)return Promise.resolve(false);
+    var operation=automaticCoachOperation(state);state.loading=true;state.status='Loading saved training conversations…';renderAutomaticCoach();
+    return api('/ai/expert-chat/coach',{token:owner.token,signal:operation.controller.signal}).then(function(data){
+      if(!automaticCoachCurrent(state)||operation.controller.signal.aborted)return false;
+      var list=data&&data.success===true&&Array.isArray(data.conversations)&&data.conversations.length<=200?data.conversations.map(parseAutomaticCoachSummary):null;
+      if(!list||list.some(function(row){return !row;}))throw new Error('Saved training history could not be verified.');
+      state.conversations=list;state.loaded=true;state.status=list.length?'Saved training history loaded.':'Start by telling your AI how you want it to respond.';return true;
+    }).catch(function(error){if(!automaticCoachDenied(state,error)&&!operation.controller.signal.aborted)state.status=automaticCoachError(error,'Training history is unavailable. Try refreshing it.');return false;}).then(function(result){
+      finishAutomaticCoachOperation(state,operation);if(!automaticCoachCurrent(state))return false;state.loading=false;renderAutomaticCoach();
+      var selected=state.conversation&&state.conversation.id,latest=state.conversations.find(function(row){return row.mode===state.mode;});
+      if(result&&(selected||(!state.draft&&latest)))return loadAutomaticCoachConversation(state,selected||latest.id,false);return result;
+    });
+  }
+  window.obAutomaticAiCoachInput=function(field){
+    var state=automaticChatCoachState;if(!automaticCoachCurrent(state)||state.pending)return;
+    state.draft=String(field&&field.value||'');if(state.retry&&state.retry.content!==state.draft.trim())state.retry=null;renderAutomaticCoach();
+  };
+  window.obAutomaticAiCoachRefresh=function(){return loadAutomaticCoachHistory();};
+  window.obAutomaticAiCoachSelect=function(id){
+    var state=automaticChatCoachState;if(!automaticCoachCurrent(state)||!automaticCoachMayNavigate(state))return Promise.resolve(false);
+    if(!id)return window.obAutomaticAiCoachNew();
+    if(!state.conversations.some(function(row){return row.id===id&&row.mode===state.mode;}))return Promise.resolve(false);
+    state.retry=null;state.approvalStatus='';return loadAutomaticCoachConversation(state,id,false);
+  };
+  window.obAutomaticAiCoachMode=function(mode){
+    var state=automaticChatCoachState;if(!automaticCoachCurrent(state)||['teach','simulate'].indexOf(mode)<0||mode===state.mode||!automaticCoachMayNavigate(state))return Promise.resolve(false);
+    if(state.pollTimer)clearTimeout(state.pollTimer);state.pollTimer=null;state.mode=mode;state.conversation=null;state.retry=null;state.approvals={};state.status='';state.approvalStatus='';renderAutomaticCoach();
+    var latest=state.conversations.find(function(row){return row.mode===mode;});return latest?loadAutomaticCoachConversation(state,latest.id,false):Promise.resolve(true);
+  };
+  window.obAutomaticAiCoachNew=function(){
+    var state=automaticChatCoachState;if(!automaticCoachCurrent(state)||state.pending||state.loading)return Promise.resolve(false);
+    var operation=automaticCoachOperation(state);state.pending=operation;state.status='Creating a new '+(state.mode==='teach'?'teaching':'client-test')+' conversation…';renderAutomaticCoach();
+    return api('/ai/expert-chat/coach',{method:'POST',body:{mode:state.mode},token:state.owner.token,signal:operation.controller.signal}).then(function(data){
+      if(!automaticCoachCurrent(state)||operation.controller.signal.aborted)return false;
+      var conversation=automaticCoachResponse(data);if(!conversation||conversation.mode!==state.mode)throw new Error('New conversation could not be verified.');
+      automaticCoachSetConversation(state,conversation);state.retry=null;state.approvalStatus='';state.status='New conversation ready. '+(state.draft?'Your unsent message was kept. ':'')+'Saved Automatic Chat instructions were not changed.';return true;
+    }).catch(function(error){if(!automaticCoachDenied(state,error)&&!operation.controller.signal.aborted)state.status=automaticCoachError(error,'New conversation could not be created.');return false;}).then(function(result){finishAutomaticCoachOperation(state,operation);if(automaticCoachCurrent(state))renderAutomaticCoach();return result;});
+  };
+  window.obAutomaticAiCoachSend=function(){
+    var owner=bindExpertAiFeatureOwner('automatic-chat-coach-send'),state=automaticChatCoach(owner);
+    if(!state||automaticCoachBusy(state)||!state.loaded)return Promise.resolve(false);
+    var content=state.draft.trim();
+    if(!content||automaticCoachText(content,4000)===null||new TextEncoder().encode(content).length>8000){state.status='Enter a message of up to 4,000 characters and 8,000 bytes. Nothing was sent.';renderAutomaticCoach();return Promise.resolve(false);}
+    var operation=automaticCoachOperation(state);state.pending=operation;state.status='Preparing your AI reply…';renderAutomaticCoach();
+    var create=state.conversation?Promise.resolve(state.conversation):api('/ai/expert-chat/coach',{method:'POST',body:{mode:state.mode},token:owner.token,signal:operation.controller.signal}).then(function(data){var conversation=automaticCoachResponse(data);if(!conversation||conversation.mode!==state.mode)throw new Error('New conversation could not be verified.');if(automaticCoachCurrent(state)&&!operation.controller.signal.aborted)automaticCoachSetConversation(state,conversation);return conversation;});
+    return create.then(function(conversation){
+      if(!automaticCoachCurrent(state)||state.pending!==operation||operation.controller.signal.aborted)return null;
+      if(!state.retry||state.retry.content!==content||state.retry.conversationId!==conversation.id)state.retry={requestId:window.crypto.randomUUID(),content:content,conversationId:conversation.id};
+      return api('/ai/expert-chat/coach/'+encodeURIComponent(conversation.id)+'/messages',{method:'POST',body:{request_id:state.retry.requestId,content:content,expected_revision:conversation.revision},token:owner.token,signal:operation.controller.signal});
+    }).then(function(data){
+      if(!data||!automaticCoachCurrent(state)||state.pending!==operation||operation.controller.signal.aborted)return false;
+      var conversation=automaticCoachResponse(data,state.conversation&&state.conversation.id),acknowledged=conversation&&state.retry&&conversation.turns.find(function(turn){return turn.request_id===state.retry.requestId;});if(!conversation||!acknowledged)throw new Error('Reply confirmation could not be verified. Your message was kept; retry safely.');
+      automaticCoachSetConversation(state,conversation);state.draft='';state.retry=null;state.status=acknowledged.status==='pending'?'Your message is saved. The reply is still being prepared.':acknowledged.status==='failed'?(acknowledged.error||'The AI could not finish this reply. Your message is saved in this conversation.'):state.mode==='teach'?'Reply ready. Review any proposed lessons before explicitly saving them.':'Client-test reply ready. This conversation has not changed the saved training.';return acknowledged.status!=='failed';
+    }).catch(function(error){
+      if(automaticCoachDenied(state,error)||operation.controller.signal.aborted||state.pending!==operation)return false;
+      var conflict=Number(error&&error.status)===409&&['automatic_ai_chat_coach_revision_conflict','automatic_ai_chat_coach_busy'].indexOf(error.code)>=0;
+      state.status=conflict?'This conversation changed or another reply is still running. Your unsent message was kept. Refresh, then retry.':automaticCoachError(error,'Reply failed. Your unsent message was kept; retry safely.');
+      if(conflict)operation.reload=true;return false;
+    }).then(function(result){
+      finishAutomaticCoachOperation(state,operation);if(!automaticCoachCurrent(state))return false;renderAutomaticCoach();
+      if(operation.reload&&state.conversation)return loadAutomaticCoachConversation(state,state.conversation.id,true).then(function(){return false;});
+      scheduleAutomaticCoachRefresh(state);return result;
+    });
+  };
+  window.obAutomaticAiCoachReview=function(turnId,checked){
+    var state=automaticChatCoachState,training=window.__obAutomaticAiChatTraining;
+    if(!automaticCoachCurrent(state)||automaticCoachBusy(state)||!training||!training.available)return;
+    var turn=state.conversation&&state.conversation.turns.find(function(row){return row.id===turnId;});
+    if(!turn||turn.status!=='complete'||!turn.proposed_lessons.length||turn.approved)return;
+    if(checked===true)state.approvals[turnId]={revision:training.revision};else delete state.approvals[turnId];renderAutomaticCoach();
+  };
+  window.obAutomaticAiCoachApprove=function(turnId){
+    var owner=bindExpertAiFeatureOwner('automatic-chat-coach-approve'),state=automaticChatCoach(owner),training=window.__obAutomaticAiChatTraining;
+    if(!state||automaticCoachBusy(state)||!training||!training.available||!state.conversation||!state.approvals[turnId])return Promise.resolve(false);
+    var turn=state.conversation.turns.find(function(row){return row.id===turnId;});if(!turn||turn.status!=='complete'||turn.approved||!turn.proposed_lessons.length)return Promise.resolve(false);
+    var review=state.approvals[turnId],field=document.getElementById('ob-automatic-ai-expert-instructions');
+    if(field&&field.value!==training.expertInstructions){state.approvalStatus='Save or discard your separate instruction edits before applying these lessons. The proposal is saved here.';renderAutomaticCoach();return Promise.resolve(false);}
+    if(review.revision!==training.revision){delete state.approvals[turnId];state.approvalStatus='Training changed since you reviewed this proposal. Review the latest instructions below, then approve these lessons again.';renderAutomaticCoach();return Promise.resolve(false);}
+    var operation=automaticCoachOperation(state);state.pending=operation;state.approvalStatus='Saving only the approved reusable lessons to Automatic AI Chat…';renderAutomaticCoach();
+    return api('/ai/expert-chat/coach/'+encodeURIComponent(state.conversation.id)+'/approve',{method:'POST',body:{turn_id:turnId,expected_training_revision:review.revision},token:owner.token,signal:operation.controller.signal}).then(function(data){
+      if(!automaticCoachCurrent(state)||state.pending!==operation||operation.controller.signal.aborted)return false;
+      var next=data&&data.success===true&&parseAutomaticChatTraining(data.training),conversation=automaticCoachResponse(data,state.conversation.id);
+      var approved=conversation&&conversation.turns.find(function(row){return row.id===turnId;});
+      if(!next||!next.available||next.revision<review.revision||!approved||approved.approved!==true)throw new Error('Lesson save confirmation could not be verified. Refresh training before trying again.');
+      window.__obAutomaticAiChatTraining=next;automaticCoachSetConversation(state,conversation);
+      var currentField=document.getElementById('ob-automatic-ai-expert-instructions');if(currentField&&currentField.value===training.expertInstructions)currentField.value=next.expertInstructions;
+      var count=document.getElementById('ob-automatic-ai-training-count');if(count)count.textContent=Array.from(next.expertInstructions).length+' / 6,000 characters';
+      state.approvalStatus='Approved lessons saved to Automatic AI Chat training revision '+next.revision+'. Future replies use them. Human Reply Assistant was not changed.';return true;
+    }).catch(function(error){
+      if(automaticCoachDenied(state,error)||operation.controller.signal.aborted||state.pending!==operation)return false;
+      delete state.approvals[turnId];state.approvalStatus=automaticCoachError(error,'Lessons were not applied. The proposal is saved here.');
+      if(Number(error&&error.status)!==409||['automatic_ai_chat_revision_conflict','automatic_ai_chat_training_conflict','reply_assistant_revision_conflict'].indexOf(error.code)<0)return false;
+      return api('/ai/expert-chat/training',{token:owner.token,signal:operation.controller.signal}).then(function(data){
+        if(!automaticCoachCurrent(state)||state.pending!==operation||operation.controller.signal.aborted)return false;
+        var latest=parseAutomaticChatTraining(data);if(!latest||!latest.available)throw new Error('Latest training could not be verified.');
+        window.__obAutomaticAiChatTraining=latest;var latestField=document.getElementById('ob-automatic-ai-expert-instructions');if(latestField&&latestField.value===training.expertInstructions)latestField.value=latest.expertInstructions;
+        state.approvalStatus='Training changed in another update. Latest instructions were loaded; review them below, then approve the saved proposal again. Nothing was overwritten.';return false;
+      }).catch(function(){if(automaticCoachCurrent(state))state.approvalStatus='Training changed and could not be refreshed. The proposal is saved here. Refresh training before trying again.';return false;});
+    }).then(function(result){finishAutomaticCoachOperation(state,operation);if(automaticCoachCurrent(state))renderAutomaticCoach();return result;});
+  };
+
   function automaticTrainingTime(value){
     if(value === null || value === undefined || value === '') return 'Not yet';
     var date = typeof value === 'number' ? new Date(value * 1000) : new Date(value);
@@ -56020,7 +56253,8 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     if(!training) return '<section id="ob-automatic-ai-training-center" style="border-top:1px solid var(--gray-200);padding-top:14px;"><div style="font-size:13px;font-weight:900;color:var(--brown);">Automatic AI Chat Training Center</div><div style="font-size:12px;color:#dc2626;margin-top:6px;">Training authority could not be loaded. Refresh before changing instructions.</div></section>';
     if(!training.available) return '<section id="ob-automatic-ai-training-center" style="border-top:1px solid var(--gray-200);padding-top:14px;"><div style="font-size:13px;font-weight:900;color:var(--brown);">Automatic AI Chat Training Center</div><div style="font-size:12px;color:var(--gray-400);margin-top:6px;">Training is not available for this expert account.</div></section>';
     return '<section id="ob-automatic-ai-training-center" style="border-top:1px solid var(--gray-200);padding-top:14px;display:flex;flex-direction:column;gap:13px;">'
-      + '<div><div style="font-size:13px;font-weight:900;color:var(--brown);">Automatic AI Chat Training Center</div><div style="font-size:12px;color:var(--gray-400);line-height:1.5;margin-top:3px;">Only Automatic AI Chat uses these instructions and learned principles. Raw transcripts are never shown here.</div></div>'
+      + '<div><div style="font-size:13px;font-weight:900;color:var(--brown);">Automatic AI Chat Training Center</div><div style="font-size:12px;color:var(--gray-400);line-height:1.5;margin-top:3px;">Only Automatic AI Chat uses these instructions and learned principles. Real client transcripts are not copied into this trainer.</div></div>'
+      + automaticCoachHtml()
       + '<div style="border:1px solid var(--gray-200);border-radius:9px;padding:11px 12px;"><div style="font-size:12px;font-weight:900;color:var(--brown);">Admin guidance · read only</div><div style="font-size:12px;color:var(--gray-500);line-height:1.55;white-space:pre-wrap;margin-top:5px;">'+safe(training.adminGuidance || 'No per-expert admin guidance has been added.')+'</div></div>'
       + '<label style="display:block;font-size:12px;font-weight:900;color:var(--brown);">Your Automatic Chat instructions<textarea id="ob-automatic-ai-expert-instructions" rows="6" maxlength="6000" oninput="obAutomaticAiChatTrainingDirty(this)" placeholder="Tone, spiritual approach, intake sequence, boundaries, and preferred wording for automatic replies." style="width:100%;box-sizing:border-box;border:1px solid var(--gray-200);border-radius:9px;padding:10px;margin-top:7px;font:inherit;font-size:13px;line-height:1.5;resize:vertical;color:var(--brown);background:#fff;">'+safe(training.expertInstructions)+'</textarea></label>'
       + '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;"><span id="ob-automatic-ai-training-count" style="font-size:11px;color:var(--gray-400);">'+Array.from(training.expertInstructions).length+' / 6,000 characters</span><button id="ob-automatic-ai-training-save" type="button" class="ob-credit-btn primary" style="font-size:12px;padding:8px 12px;" onclick="obAutomaticAiChatSaveTraining()">Save Automatic Chat instructions</button></div>'
@@ -56048,6 +56282,8 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
 		      var d=results[0],automaticConsent=automaticChatConsentState(results[1]),training=parseAutomaticChatTraining(results[2]);
 		      if(!automaticConsent)throw new Error('Automatic AI Chat consent state is unavailable.');
 		      if(!training)throw new Error('Automatic AI Chat training state is unavailable.');
+		      var currentTraining=window.__obAutomaticAiChatTraining;
+		      if(currentTraining&&Number.isSafeInteger(currentTraining.revision)&&training.revision<currentTraining.revision)return true;
 		      window.__obAutomaticAiChatConsent=automaticConsent;
 		      window.__obAutomaticAiChatTraining=training;
 		      var existing = document.getElementById('ob-expert-ai-pref-card');
@@ -56086,6 +56322,8 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
 		      var html = '<div id="ob-expert-ai-pref-card" class="db-card" data-dirty="0" style="padding:16px;margin-bottom:16px;display:flex;flex-direction:column;gap:14px;">'+chatPanel+'</div>';
 		      if(existing) existing.outerHTML = html;
 		      else host.insertAdjacentHTML('afterbegin', html);
+		      renderAutomaticCoach();
+		      if(document.getElementById('ob-automatic-ai-coach')&&automaticChatCoachState&&!automaticChatCoachState.loaded&&!automaticChatCoachState.loading)loadAutomaticCoachHistory();
 		      renderExpertAiFeatureShell();
 		      return true;
 		    }).catch(function(error){
@@ -56135,6 +56373,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
 	    var next=parseAutomaticChatTraining(data);if(!next||!next.available)throw new Error('Automatic Chat training confirmation is unavailable.');
 	    window.__obAutomaticAiChatTraining=next;
 	    var center=document.getElementById('ob-automatic-ai-training-center');if(center)center.outerHTML=automaticTrainingHtml(next);
+	    renderAutomaticCoach();
 	    var card=document.getElementById('ob-expert-ai-pref-card');if(card)card.setAttribute('data-dirty','0');
 	    var nextStatus=document.getElementById('ob-automatic-ai-training-status');if(nextStatus)nextStatus.textContent='Automatic Chat instructions saved.';
 	    notify('Automatic Chat instructions saved. Human Reply Assistant was not changed.','ok');return true;

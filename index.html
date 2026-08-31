@@ -9401,6 +9401,7 @@ if (!window.toast) {
 
             <!-- CHAT -->
             <div id="a4-chat-ui">
+              <div id="ob-client-chat-readiness" role="status" aria-live="polite" hidden style="padding:12px 16px;background:var(--cream);color:var(--brown);font-size:13px;line-height:1.5;">Connecting your chat. No session time is being charged yet. You can end the request at any time.</div>
               <div class="chat-messages" id="paid-chat-messages">
               </div>
               <div class="chat-input-bar">
@@ -9493,6 +9494,10 @@ if (!window.toast) {
                 <div class="receipt-row"><span>Duration</span><span id="receipt-duration">—</span></div>
                 <div class="receipt-row"><span>Rate</span><span id="receipt-rate">—</span></div>
                 <div class="receipt-row" style="border-top:1px solid var(--gray-200);padding-top:8px;margin-top:4px;font-weight:700;"><span>Total Charged</span><span id="receipt-total">—</span></div>
+              </div>
+              <div id="ob-client-startup-draft" hidden style="margin:12px 0;text-align:left;">
+                <label for="ob-client-startup-draft-text" style="display:block;font-size:13px;font-weight:700;margin-bottom:6px;color:var(--text,var(--brown));">Your unsent message</label>
+                <textarea id="ob-client-startup-draft-text" readonly style="width:100%;min-height:72px;padding:10px;border:1px solid var(--gray-200);border-radius:10px;resize:vertical;font:inherit;" aria-label="Your unsent message"></textarea>
               </div>
               <div class="receipt-actions">
                 <button class="btn btn-secondary" style="width:100%" onclick="window.print();">View Receipt</button>
@@ -28247,6 +28252,29 @@ window._handleRTCMessage=function(d){
       try { window[k] = null; } catch(e) {}
     });
   }
+  function renderClientChatReadiness(sess){
+    sess = sess || {};
+    var channel = String(sess.channel || window._obPendingChannel || 'chat').toLowerCase();
+    if(channel !== 'chat') return;
+    var sessionId = clientReceiptSessionId(sess);
+    var activeSessionId = String(window._obActiveSessId || window._sessId || window._sid || '');
+    var started = !!sessionId && sessionId === activeSessionId && Number(sess.started_at) > 0;
+    var closed = String(sess.status || '').toLowerCase() === 'settling'
+      || !!(window.obIsTerminalSessionStatus && window.obIsTerminalSessionStatus(sess.status));
+    var input = document.getElementById('paid-chat-input');
+    if(input){
+      input.disabled = !started || closed;
+      input.placeholder = closed ? 'Session closed' : (started ? 'Continue the conversation...' : 'Connecting your chat...');
+    }
+    var send = document.querySelector('#screen-A4 .chat-send');
+    if(send){
+      send.setAttribute('aria-disabled', started && !closed ? 'false' : 'true');
+      send.style.pointerEvents = started && !closed ? '' : 'none';
+      send.style.opacity = started && !closed ? '' : '.45';
+    }
+    var notice = document.getElementById('ob-client-chat-readiness');
+    if(notice) notice.hidden = started || closed;
+  }
   function updateClientTimerDisplays(elapsed, sess){
     sess = sess || window._obClientSessionSnapshot || {};
     var ch = (sess.channel || window._obPendingChannel || window.currentBookChannel || 'chat').toLowerCase();
@@ -28259,7 +28287,9 @@ window._handleRTCMessage=function(d){
     if(ch === 'voice') setText('ob-client-voice-live-cost', money(cost));
     if(ch === 'video') setText('ob-client-video-live-cost', money(cost));
     var rateLabel = free > 0 ? ('Free intro · ' + money(rate) + '/min after') : ('Billing · ' + money(rate) + '/min');
+    if(ch === 'chat' && !(Number(sess.started_at) > 0)) rateLabel = 'Connecting · no session charge yet';
     setText('a4-session-rate', rateLabel);
+    renderClientChatReadiness(sess);
   }
   function pauseClientTimers(sess){
     stopOriginalClientTimers();
@@ -28271,6 +28301,9 @@ window._handleRTCMessage=function(d){
     stopOriginalClientTimers();
     window._obClientStartedAt = int(startedAt, Math.floor(Date.now()/1000));
     if(sess) window._obClientSessionSnapshot = Object.assign(window._obClientSessionSnapshot || {}, sess);
+    if(String((sess && sess.channel) || window._obPendingChannel || 'chat').toLowerCase() === 'chat'){
+      window._obClientSessionSnapshot = Object.assign({}, window._obClientSessionSnapshot || {}, {started_at:window._obClientStartedAt});
+    }
     function tick(){ updateClientTimerDisplays(Math.max(0, Math.floor(Date.now()/1000) - window._obClientStartedAt), window._obClientSessionSnapshot || sess || {}); }
     tick();
     window._obClientElapsedInterval = setInterval(tick, 1000);
@@ -28554,6 +28587,15 @@ window._handleRTCMessage=function(d){
     sess.duration_secs = clientReceiptDuration(sess);
     return sess;
   }
+  function clientChatCancelledBeforeStart(sess){
+    return !!(sess && String(sess.channel || '').toLowerCase() === 'chat'
+      && String(sess.status || '').toLowerCase() === 'cancelled'
+      && Object.prototype.hasOwnProperty.call(sess, 'started_at') && sess.started_at === null
+      && sess.duration_secs != null && Number(sess.duration_secs) === 0
+      && sess.total_charged != null && Number(sess.total_charged) === 0
+      && sess.card_charged != null && Number(sess.card_charged) === 0
+      && !(Number(sess.credit_applied) > 0) && !(Number(sess.billing_attempted_amount) > 0));
+  }
   function setClientEndControlsEnding(ending){
     var controls = document.querySelectorAll('#view-5 button[onclick*="clientEndSession"],#view-5 .end-session-link,#view-5 .v-ctrl.end,#view-5 .vid-ctrl.end-vid');
     controls.forEach(function(el){
@@ -28677,7 +28719,8 @@ window._handleRTCMessage=function(d){
     window._obPendingSessId = null;
     window._pendingSid = null;
     if(typeof window.obCreditClearSessionPromo === 'function') window.obCreditClearSessionPromo();
-    ['paid-chat-input','ob-client-input'].forEach(function(id){var input=document.getElementById(id);if(input){input.disabled=true;input.value='';}});
+    var preserveDraft = clientChatCancelledBeforeStart(sess);
+    ['paid-chat-input','ob-client-input'].forEach(function(id){var input=document.getElementById(id);if(input){input.disabled=true;if(!preserveDraft)input.value='';}});
     clearClientEndingState();
     pauseClientTimers(sess);
     if(typeof phoneGo === 'function') phoneGo('A5');
@@ -28710,7 +28753,7 @@ window._handleRTCMessage=function(d){
     if(ownsTerminalLifecycle) finishClientTerminalUi(sess);
     return sess;
   }
-  function decorateClientTerminalStatus(status){
+  function decorateClientTerminalStatus(status,sess){
     status=clientTerminalStatusPolicy().normalize(status);
     var screen=document.getElementById('screen-A5');
     if(!screen)return;
@@ -28723,9 +28766,20 @@ window._handleRTCMessage=function(d){
       ended:['Session Complete!','How was your experience?','\u2b50'],
       completed:['Session Complete!','How was your experience?','\u2b50']
     }[status]||['Session closed','This session is no longer active.','\u00d7'];
+    var cancelledBeforeStart = clientChatCancelledBeforeStart(sess);
+    if(cancelledBeforeStart){
+      copy = ['Chat did not start','No session time was charged. Return to the expert page when you are ready to try again.','\u00d7'];
+      setText('receipt-duration', 'Not started');
+    }
     var title=screen.querySelector('.receipt-title');var sub=screen.querySelector('.receipt-sub');var icon=screen.querySelector('.receipt-icon');
     if(title)title.textContent=copy[0];if(sub)sub.textContent=copy[1];if(icon)icon.textContent=copy[2];
-    var rating=screen.querySelector('.rating-stars');if(rating)rating.style.display=status==='ended'||status==='completed'?'':'none';
+    var rating=screen.querySelector('.rating-stars');if(rating)rating.style.display=!cancelledBeforeStart&&(status==='ended'||status==='completed')?'':'none';
+    var draft = document.getElementById('paid-chat-input');
+    var draftText = cancelledBeforeStart && draft ? draft.value : '';
+    var savedDraft = document.getElementById('ob-client-startup-draft-text');
+    if(savedDraft) savedDraft.value = draftText;
+    var draftPanel = document.getElementById('ob-client-startup-draft');
+    if(draftPanel) draftPanel.hidden = !draftText;
   }
   function clientTerminalOwnership(payload,source){
     payload=payload||{};
@@ -28769,7 +28823,7 @@ window._handleRTCMessage=function(d){
     var firstReceiptForSession = !(prior && prior.sid === sid);
     var rendered = applyClientReceipt(candidate, {ownsTerminalLifecycle:firstReceiptForSession});
     if(completingPendingSettlement) finishClientTerminalUi(rendered);
-    decorateClientTerminalStatus(rendered.status||candidate.status||'ended');
+    decorateClientTerminalStatus(rendered.status||candidate.status||'ended',rendered);
     window._obClientReceiptAuthorityState = {
       sid: sid,
       score: clientReceiptAuthorityScore(rendered),
@@ -29619,7 +29673,7 @@ window._handleRTCMessage=function(d){
   if(window.OB_CLIENT_CONTEXT)window.OB_CLIENT_CONTEXT.register('client-rtc-media-start',{teardown:invalidateClientRtcMediaStarts});
   function applyClientSessionUi(sess){
     if(!sess) return;
-    var sessId = sess.id || sess.session_id || sess.sessionId || '';
+    var sessId = String(sess.id || sess.session_id || sess.sessionId || '');
     if(clientRecentlyEndedLocal(sessId)) return;
     if(window.obReduceClientSessionTerminal({session_id:sessId,session:sess},'apply-ui'))return;
     if(sessId && window._obClientReceiptAuthorityState
@@ -29635,13 +29689,15 @@ window._handleRTCMessage=function(d){
     var ch = (sess.channel || window._obPendingChannel || window.currentBookChannel || 'chat').toLowerCase();
     var rate = channelRate(ch, sess);
     var free = channelFree(ch, sess);
-    window._obActiveSessId = sess.id || window._obActiveSessId;
+    window._obActiveSessId = sessId || window._obActiveSessId;
     window._sessId = window._obActiveSessId;
     refreshClientSessionCredential();
     window._obPendingChannel = ch;
     window.currentBookChannel = ch;
     window._obPendingRate = rate;
-    window._obClientSessionSnapshot = Object.assign(window._obClientSessionSnapshot || {}, sess, {channel:ch, rate_per_min:rate, free_minutes:free});
+    var priorSnapshot = window._obClientSessionSnapshot || {};
+    var sameSessionSnapshot = sessId && clientReceiptSessionId(priorSnapshot) === sessId ? priorSnapshot : {};
+    window._obClientSessionSnapshot = Object.assign({}, sameSessionSnapshot, sess, {id:sessId || window._obActiveSessId, channel:ch, rate_per_min:rate, free_minutes:free});
     ['paid-chat-input','ob-client-input'].forEach(function(id){var input=document.getElementById(id);if(input)input.disabled=false;});
     if(typeof window.obCreditRememberSessionMode === 'function') window.obCreditRememberSessionMode(window._obClientSessionSnapshot);
     setClientFreeUi(ch, rate, free);
@@ -29734,6 +29790,7 @@ window._handleRTCMessage=function(d){
   function bindClientChatControls(){
     window.sendPaidMsg = function(){
       var inp = document.getElementById('paid-chat-input');
+      if(inp && inp.disabled) return false;
       var content = inp ? inp.value.trim() : '';
       var sid = window._obActiveSessId || window._sessId;
       if(!content || !sid) return;
@@ -43837,6 +43894,8 @@ body.ob-ui-dark .ob-connection-note,
     if(!res.ok) {
       var err = new Error(data.error || data.message || 'Message send failed');
       err.status = res.status;
+      err.code = typeof data.code === 'string' ? data.code : '';
+      err.retryable = data.retryable === true;
       throw err;
     }
     return data;
@@ -43855,6 +43914,10 @@ body.ob-ui-dark .ob-connection-note,
     }
     markDelivery(item, 'sent');
     return false;
+  }
+  function awaitingChatSessionStart(error){
+    return !!(error && error.status === 409
+      && error.code === 'session_message_session_not_started' && error.retryable === true);
   }
   async function flush(){
     if(isMiniSuiteRoute() || flushing || !navigator.onLine || !token()) return;
@@ -43877,7 +43940,7 @@ body.ob-ui-dark .ob-connection-note,
         }
         catch(e){
           if(e && e.code === 'principal_mismatch') break;
-          if(e && e.status && e.status < 500 && e.status !== 429){ removeItem(ownedItems[i]); markDelivery(ownedItems[i], 'failed', e); }
+          if(e && e.status && e.status < 500 && e.status !== 429 && !awaitingChatSessionStart(e)){ removeItem(ownedItems[i]); markDelivery(ownedItems[i], 'failed', e); }
         }
       }
     } finally {
@@ -43905,7 +43968,7 @@ body.ob-ui-dark .ob-connection-note,
     }).catch(function(e){
       if(e && e.code === 'principal_mismatch') return;
       if(e && e.status && e.status < 500) {
-        if(e.status === 429){ toastMsg('Message queued. It will retry shortly.', 'ok'); return; }
+        if(e.status === 429 || awaitingChatSessionStart(e)){ toastMsg('Message queued. It will retry shortly.', 'ok'); return; }
         removeItem(item);
         markDelivery(item, 'failed', e);
         toastMsg(e.message || 'Message failed', 'err');
@@ -43920,6 +43983,7 @@ body.ob-ui-dark .ob-connection-note,
     var previous = window.sendPaidMsg;
     var wrapped = function(){
       var input = document.getElementById('paid-chat-input');
+      if(input && input.disabled) return false;
       var content = input ? input.value.trim() : '';
       var sid = activeSid();
       if(content && sid) return sendWithRetry('paid-chat-messages', sid, content, input);
@@ -68903,7 +68967,8 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
   function clearClientSessionDom(){
     ['paid-chat-messages','free-chat-messages','ob-client-chat-messages'].forEach(function(id){var element=document.getElementById(id);if(element)element.replaceChildren();});
     ['ob-client-typing','client-typing-indicator'].forEach(function(id){var element=document.getElementById(id);if(element)element.textContent='';});
-    ['paid-chat-input','free-chat-input','ob-client-input'].forEach(function(id){var input=document.getElementById(id);if(input)input.value='';});
+    ['paid-chat-input','free-chat-input','ob-client-input','ob-client-startup-draft-text'].forEach(function(id){var input=document.getElementById(id);if(input)input.value='';});
+    ['ob-client-startup-draft','ob-client-chat-readiness'].forEach(function(id){var element=document.getElementById(id);if(element)element.hidden=true;});
     ['bov-name','bov-email','bov-pass','bfl-name','bfl-email','bfl-login-email','bfl-login-pass','bfl-password','bfl-notes',
       'clm-login-email','clm-login-pass','clm-signup-name','clm-signup-email','clm-signup-pass',
       'ob-od-auth-name','ob-od-auth-email','ob-od-auth-pass'].forEach(function(id){var input=document.getElementById(id);if(input)input.value='';});

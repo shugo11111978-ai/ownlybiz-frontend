@@ -344,10 +344,22 @@ assert.match(html, /function applyClientSettlementPending\(payload,\s*ownership\
   'client settlement-pending UI freezes the timer and renders a truthful finalizing receipt');
 assert.match(html, /action === 'stop_one'[\s\S]*\/admin\/observability\/sessions\/' \+ encodeURIComponent\(sessionId\) \+ '\/stop'[\s\S]*required_confirm/,
   'Ops exposes a target-bound emergency recovery flow for one exact session');
-assert.match(html, /SETTLE_AND_STOP_ACTIVE_SESSIONS[\s\S]*settles accrued usage, retries stuck finalizations/,
-  'bulk emergency stop uses the backend settlement confirmation contract and truthful billing copy');
-assert.match(html, /Server audit recorded:[\s\S]*audit_event_id/,
-  'Ops surfaces the durable server audit result for confirmed emergency actions');
+assert.match(html, /oneResult\.candidate_fingerprint[\s\S]*candidate_fingerprint:oneFingerprint/,
+  'targeted emergency stop echoes the exact opaque fingerprint from its fresh session preview');
+assert.match(html, /action === 'stop_all'[\s\S]*requirePreview\(previewStopEnvelope,stopResult\.required_confirm,'Emergency stop all'\)/,
+  'bulk emergency stop requires the exact confirmation contract returned by a fresh backend preview');
+assert.match(html, /stopResult\.candidate_fingerprint[\s\S]*candidate_fingerprint:stopFingerprint/,
+  'bulk emergency stop binds confirmation to the unchanged preview candidate fingerprint');
+assert.match(html, /settles accrued usage, retries stuck finalizations/,
+  'bulk emergency stop keeps truthful billing and stuck-finalization copy');
+assert.match(html, /Audit ID:/,
+  'Ops labels the durable server audit identifier for confirmed emergency actions');
+assert.match(html, /audit_event_id/,
+  'Ops reads the durable server audit identifier returned by confirmed emergency actions');
+assert.match(html, /body\.action_executed===true&&body\.audit_recorded===true&&body\.audit_completion_recorded===true/,
+  'Ops refuses to call a successful action fully complete without explicit execution and both durable audit phases');
+assert.match(html, /auditId===actionId&&validResult/,
+  'Ops also requires matching durable audit identity and a substantive non-dry-run result before showing green');
 assert.doesNotMatch(html, /STOP_ACTIVE_SESSIONS_WITHOUT_BILLING|ends active sessions without billing unpaid time/,
   'the former misleading emergency-stop contract and copy are removed');
 assert.equal((html.match(/window\.expertEndSession\s*=/g) || []).length, 1,

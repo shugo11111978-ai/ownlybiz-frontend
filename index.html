@@ -58310,9 +58310,9 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   .ob-capacity-actions{justify-content:flex-start;margin-top:16px}
   .ob-capacity-rollout{margin-top:20px;padding-top:18px;border-top:1px solid var(--border-color,rgba(150,140,125,.3))}
   .ob-capacity-rollout h4{font-size:14px;margin:0 0 8px}
-  #ob-admin-capacity-confirm-panel{padding:16px;margin-top:12px;border:1px solid #a57d2c;border-radius:10px}
-  #ob-admin-capacity-confirm-panel label{display:flex;gap:10px;align-items:flex-start;font-size:13px;line-height:1.6;margin-top:12px}
-  #ob-admin-capacity-confirm-panel input{margin-top:4px;flex:0 0 auto}
+  #ob-admin-capacity-confirm-panel,#ob-admin-capacity-allowance-approval{padding:16px;margin-top:12px;border:1px solid #a57d2c;border-radius:10px}
+  #ob-admin-capacity-confirm-panel label,#ob-admin-capacity-allowance-approval .ob-capacity-check{display:flex;gap:10px;align-items:flex-start;font-size:13px;line-height:1.6;margin-top:12px}
+  #ob-admin-capacity-confirm-panel input,#ob-admin-capacity-allowance-approval .ob-capacity-check input{margin-top:4px;flex:0 0 auto}
   #ob-admin-capacity-status{min-height:22px;margin:12px 0 0;font-size:13px;line-height:1.6;overflow-wrap:anywhere}
   #ob-admin-capacity-status[data-tone="error"]{color:#ef8c7d}
   #ob-admin-capacity-status[data-tone="ok"]{color:#91c99e}
@@ -58690,11 +58690,16 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       + '<div class="ob-capacity-lane"><h4>Human-led chat</h4><div class="ob-capacity-copy">Conversations handled by the expert, with optional AI drafting.</div>'
       + '<div class="ob-capacity-live"><strong id="ob-admin-capacity-human-live">—</strong><span class="ob-capacity-meta">currently allowed</span></div>'
       + '<label for="ob-admin-capacity-human">Preferred human chat limit</label><select id="ob-admin-capacity-human" class="admin-input" aria-describedby="ob-admin-capacity-human-meta" onchange="obAdminCapacityChanged()" disabled><option value="">Loading…</option></select>'
-      + '<div id="ob-admin-capacity-human-meta" class="ob-capacity-meta"></div></div>'
+      + '<div id="ob-admin-capacity-human-meta" class="ob-capacity-meta"></div>'
+      + '<label for="ob-admin-capacity-human-allowance">Admin human-chat allowance</label><select id="ob-admin-capacity-human-allowance" class="admin-input" aria-describedby="ob-admin-capacity-human-allowance-meta" onchange="obAdminCapacityAllowanceChanged()" disabled><option value="">No admin allowance</option><option value="2">2 total chats</option><option value="3">3 total chats</option><option value="4">4 total chats</option><option value="5">5 total chats</option></select>'
+      + '<div id="ob-admin-capacity-human-allowance-meta" class="ob-capacity-meta">Independent of Stripe billing and applies only to this expert.</div></div>'
       + '<div class="ob-capacity-lane"><h4>Automatic AI Chat</h4><div class="ob-capacity-copy">Conversations answered automatically using this expert’s saved AI guidance.</div>'
       + '<div class="ob-capacity-live"><strong id="ob-admin-capacity-ai-live">—</strong><span class="ob-capacity-meta">currently allowed</span></div>'
       + '<label for="ob-admin-capacity-ai">Preferred automatic chat limit</label><input id="ob-admin-capacity-ai" class="admin-input" type="number" min="1" step="1" inputmode="numeric" aria-describedby="ob-admin-capacity-ai-meta" oninput="obAdminCapacityChanged()" disabled>'
       + '<div id="ob-admin-capacity-ai-meta" class="ob-capacity-meta"></div></div></div>'
+      + '<div id="ob-admin-capacity-allowance-approval" role="group" aria-label="Confirm admin human-chat allowance" hidden><strong>Confirm this expert-only allowance</strong><p id="ob-admin-capacity-allowance-summary" class="ob-capacity-copy"></p>'
+      + '<label for="ob-admin-capacity-allowance-reason">Audit reason</label><input id="ob-admin-capacity-allowance-reason" class="admin-input" type="text" minlength="3" maxlength="500" autocomplete="off" placeholder="Why this expert needs the allowance" oninput="obAdminCapacityChanged()" disabled>'
+      + '<label class="ob-capacity-check"><input id="ob-admin-capacity-allowance-confirm" type="checkbox" onchange="obAdminCapacityAllowanceConfirmChanged()" disabled><span>I confirm this is a total human-chat allowance for this expert only. It does not change Stripe, the subscription plan, prices, payment settings, or other experts.</span></label></div>'
       + '<p class="ob-capacity-copy" id="ob-admin-capacity-preview">Loading saved limits…</p>'
       + '<div class="ob-capacity-actions"><button class="admin-action-btn" id="ob-admin-capacity-save" type="button" onclick="return obAdminCapacitySave('+target+')" disabled>Save preferences</button></div>'
       + '<div class="ob-capacity-rollout"><h4>Live availability</h4><div class="ob-capacity-copy" id="ob-admin-capacity-rollout-note">Checking which limits can be released for this expert…</div>'
@@ -58711,9 +58716,18 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       &&state.card===document.getElementById('ob-admin-live-capacity-card'));
   }
   function capacityNumber(value,min,max){return typeof value==='number'&&Number.isSafeInteger(value)&&value>=min&&value<=max;}
+  function capacityAllowanceValid(value){return value===null||capacityNumber(value,2,5);}
+  function capacityAllowanceText(value){return value===null?'none':String(value);}
+  function capacityAuthorityText(value){return value==='admin_allowance'?'admin allowance':value==='verified_subscription'?'verified subscription':'Starter fallback';}
   function capacitySettingsValid(value,id){
-    return !!(value&&String(value.expert_id)===String(id)&&value.human&&value.ai
-      &&capacityNumber(value.human.desired_concurrency,1,20)&&capacityNumber(value.human.plan_ceiling,1,20)
+    var human=value&&value.human,allowance=human&&human.admin_capacity_allowance;
+    return !!(value&&String(value.expert_id)===String(id)&&human&&value.ai
+      &&capacityNumber(human.desired_concurrency,1,20)&&capacityNumber(human.plan_ceiling,1,20)
+      &&capacityAllowanceValid(allowance)&&capacityNumber(human.authorized_ceiling,1,20)
+      &&human.authorized_ceiling===Math.max(human.plan_ceiling,allowance===null?1:allowance)
+      &&['verified_subscription','admin_allowance','starter'].includes(String(human.authorization_source||''))
+      &&(human.authorization_source==='admin_allowance'?allowance!==null&&allowance>human.plan_ceiling:human.authorization_source==='verified_subscription'?human.plan_ceiling>1&&human.plan_ceiling>=human.authorized_ceiling:human.plan_ceiling===1&&allowance===null)
+      &&capacityNumber(human.effective_concurrency,1,20)&&human.effective_concurrency<=human.authorized_ceiling
       &&capacityNumber(value.human.revision,1,Number.MAX_SAFE_INTEGER)
       &&capacityNumber(value.ai.desired_chat_capacity,1,500)&&capacityNumber(value.ai.safety_ceiling,1,500)
       &&typeof value.ai.fully_automated==='boolean'
@@ -58752,26 +58766,39 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   }
   function capacityTargets(state){
     if(!state.saved||!state.rollout)return null;
-    return {human:Math.min(state.saved.human.desired_concurrency,state.saved.human.plan_ceiling,state.rollout.environment_limits.human_ceiling_max),
+    return {human:Math.min(state.saved.human.desired_concurrency,state.saved.human.authorized_ceiling,state.rollout.environment_limits.human_ceiling_max),
       ai:Math.min(state.saved.ai.desired_chat_capacity,state.saved.ai.safety_ceiling,state.rollout.environment_limits.ai_ceiling_max)};
   }
+  function capacityAllowanceDraft(){
+    var node=capacityNode('human-allowance'),raw=node?String(node.value||''):'';
+    return raw===''?null:Number(raw);
+  }
+  function capacityAllowanceReason(){
+    var node=capacityNode('allowance-reason');return String(node&&node.value||'').replace(/[\u0000-\u001f\u007f]/g,' ').replace(/\s+/g,' ').trim();
+  }
   function capacityDraft(state){
-    var human=Number(capacityNode('human').value),ai=Number(capacityNode('ai').value);
-    return {human:human,ai:ai,valid:capacityNumber(human,1,state.saved.human.plan_ceiling)
+    var human=Number(capacityNode('human').value),ai=Number(capacityNode('ai').value),allowance=capacityAllowanceDraft();
+    var allowanceDirty=allowance!==state.saved.human.admin_capacity_allowance,reason=capacityAllowanceReason();
+    var review=state.allowanceReview,confirmed=!allowanceDirty||(capacityNode('allowance-confirm').checked&&review
+      &&review.revision===state.saved.human.revision&&review.allowance===allowance&&reason.length>=3&&reason.length<=500);
+    return {human:human,ai:ai,allowance:allowance,allowanceDirty:allowanceDirty,allowanceConfirmed:confirmed,reason:reason,
+      valid:capacityNumber(human,1,state.saved.human.authorized_ceiling)&&capacityAllowanceValid(allowance)
       &&capacityNumber(ai,1,state.saved.ai.safety_ceiling)
       &&(state.saved.ai.fully_automated===true||ai===state.saved.ai.desired_chat_capacity||ai===1),
-      dirty:human!==state.saved.human.desired_concurrency||ai!==state.saved.ai.desired_chat_capacity};
+      dirty:human!==state.saved.human.desired_concurrency||ai!==state.saved.ai.desired_chat_capacity||allowanceDirty};
   }
   function paintCapacity(detail,state){
     if(!capacityCurrent(detail,state))return;
     var ready=state.trusted&&state.saved&&state.rollout;
     state.card.setAttribute('aria-busy',state.busy?'true':'false');
     capacityNode('refresh').disabled=state.busy;
-    capacityNode('human').disabled=!ready;capacityNode('ai').disabled=!ready;
+    capacityNode('human').disabled=!ready;capacityNode('ai').disabled=!ready;capacityNode('human-allowance').disabled=!ready;
+    capacityNode('allowance-reason').disabled=true;capacityNode('allowance-confirm').disabled=true;
     capacityNode('save').disabled=true;capacityNode('review').disabled=true;
     capacityNode('apply').disabled=true;
     if(!ready){
       capacityNode('human-live').textContent='—';capacityNode('ai-live').textContent='—';
+      capacityNode('allowance-approval').hidden=true;
       capacityNode('preview').textContent='Current limits must load before changes can be saved.';
       capacityNode('rollout-note').textContent='Live capacity is unavailable. Refresh limits to retry; other expert settings are unchanged.';
       return;
@@ -58779,13 +58806,19 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     var saved=state.saved,rollout=state.rollout,draft=capacityDraft(state),target=capacityTargets(state);
     capacityNode('human-live').textContent=String(rollout.admission_limits.human_chat);
     capacityNode('ai-live').textContent=String(rollout.admission_limits.automatic_ai_chat);
-    capacityNode('human-meta').textContent='Saved: '+saved.human.desired_concurrency+' · Confirmed plan maximum: '+saved.human.plan_ceiling+' · Platform ceiling: '+rollout.effective_human_ceiling;
+    capacityNode('human-meta').textContent='Saved: '+saved.human.desired_concurrency+' · Verified plan max: '+saved.human.plan_ceiling+' · Admin allowance: '+capacityAllowanceText(saved.human.admin_capacity_allowance)+' · Authorized max: '+saved.human.authorized_ceiling+' · Platform ceiling: '+rollout.effective_human_ceiling+' · Authority: '+capacityAuthorityText(saved.human.authorization_source);
+    capacityNode('human-allowance-meta').textContent='Saved allowance: '+capacityAllowanceText(saved.human.admin_capacity_allowance)+' · Independent of Stripe billing and applies only to this expert.';
     capacityNode('ai-meta').textContent='Saved: '+saved.ai.desired_chat_capacity+' · Safety maximum: '+saved.ai.safety_ceiling+' · Platform ceiling: '+rollout.effective_ai_ceiling
       +(saved.ai.fully_automated===true?'':' · Automatic replies are not currently eligible. Enablement and consent stay in the separate AI settings.');
+    capacityNode('allowance-approval').hidden=!draft.allowanceDirty;
+    if(draft.allowanceDirty){
+      capacityNode('allowance-summary').textContent=(detail.name||'This expert')+': admin human-chat allowance '+capacityAllowanceText(saved.human.admin_capacity_allowance)+' → '+capacityAllowanceText(draft.allowance)+'. Enter an audit reason and confirm the exact expert-only change before saving.';
+      capacityNode('allowance-reason').disabled=state.busy;capacityNode('allowance-confirm').disabled=state.busy||draft.reason.length<3||draft.reason.length>500;
+    }
     capacityNode('preview').textContent=draft.dirty
-      ? (draft.valid?'Unsaved preferences. Saving can change new-session availability immediately, up to the current platform ceiling. The expert must be idle.':'Enter whole-number limits within the displayed maximums. Automatic AI capacity above 1 requires eligible automatic replies.')
+      ? (!draft.valid?'Enter whole-number limits within the displayed maximums. Automatic AI capacity above 1 requires eligible automatic replies.':draft.allowanceDirty&&!draft.allowanceConfirmed?'The admin allowance changed. Enter an audit reason and confirm the exact expert-only allowance before saving.':'Unsaved preferences. Saving can change new-session availability immediately, up to the current platform ceiling. The expert must be idle.')
       : 'Preferences match the saved values. A separate review is required to change the live platform ceilings.';
-    capacityNode('save').disabled=state.busy||!draft.valid||!draft.dirty;
+    capacityNode('save').disabled=state.busy||!draft.valid||!draft.dirty||!draft.allowanceConfirmed;
     var eligible=rollout.ceiling_editable===true&&rollout.environment_limits.valid===true;
     var differs=target.human!==rollout.human_ceiling||target.ai!==rollout.ai_ceiling;
     var note='Current live ceilings: '+rollout.effective_human_ceiling+' human chat / '+rollout.effective_ai_ceiling+' automatic chat. ';
@@ -58800,13 +58833,16 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     capacityNode('apply').disabled=state.busy||!state.review||!capacityNode('confirm').checked||draft.dirty||!eligible;
   }
   function acceptCapacitySettings(state,saved,submittedAiRevision){
-    var old=state.saved,human=capacityNode('human'),ai=capacityNode('ai');
-    var humanDraft=human.value,aiDraft=ai.value;
-    if(!old||old.human.plan_ceiling!==saved.human.plan_ceiling){
-      var options='';for(var n=1;n<=saved.human.plan_ceiling;n++)options+='<option value="'+n+'">'+n+(n===1?' client':' clients')+'</option>';
+    var old=state.saved,human=capacityNode('human'),allowance=capacityNode('human-allowance'),ai=capacityNode('ai');
+    var humanDraft=human.value,allowanceDraft=allowance.value,aiDraft=ai.value;
+    if(!old||old.human.authorized_ceiling!==saved.human.authorized_ceiling){
+      var options='';for(var n=1;n<=saved.human.authorized_ceiling;n++)options+='<option value="'+n+'">'+n+(n===1?' client':' clients')+'</option>';
       human.innerHTML=options;
     }
-    human.value=!old||humanDraft===String(old.human.desired_concurrency)?String(saved.human.desired_concurrency):humanDraft;
+    var defaultHuman=saved.human.desired_concurrency<=saved.human.authorized_ceiling?saved.human.desired_concurrency:Math.max(1,Math.min(saved.human.effective_concurrency,saved.human.authorized_ceiling));
+    var preserveHuman=!!old&&humanDraft!==String(old.human.desired_concurrency)&&capacityNumber(Number(humanDraft),1,saved.human.authorized_ceiling);
+    human.value=preserveHuman?humanDraft:String(defaultHuman);
+    allowance.value=!old||allowanceDraft===(old.human.admin_capacity_allowance===null?'':String(old.human.admin_capacity_allowance))?(saved.human.admin_capacity_allowance===null?'':String(saved.human.admin_capacity_allowance)):allowanceDraft;
     ai.value=!old||aiDraft===String(old.ai.desired_chat_capacity)?String(saved.ai.desired_chat_capacity):aiDraft;
     ai.max=String(saved.ai.safety_ceiling);state.saved=saved;
     // Only our confirmed capacity-only write may advance the separate assistant's CAS base.
@@ -58820,7 +58856,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   }
   async function refreshCapacity(detail,state,message){
     if(!capacityCurrent(detail,state))return false;
-    state.busy=true;state.trusted=false;state.review=null;capacityNode('confirm-panel').hidden=true;paintCapacity(detail,state);
+    state.busy=true;state.trusted=false;state.review=null;state.allowanceReview=null;capacityNode('confirm-panel').hidden=true;capacityNode('allowance-confirm').checked=false;paintCapacity(detail,state);
     try{
       var base='/admin/experts/'+encodeURIComponent(detail.id)+'/live-capacity';
       var results=await Promise.all([capacityRequest(detail,base),capacityRequest(detail,base+'/rollout')]);
@@ -58834,7 +58870,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     }finally{if(capacityCurrent(detail,state)){state.busy=false;paintCapacity(detail,state);}}
   }
   function mountAdminLiveCapacity(detail){
-    var state={card:document.getElementById('ob-admin-live-capacity-card'),saved:null,rollout:null,busy:false,trusted:false,review:null};
+    var state={card:document.getElementById('ob-admin-live-capacity-card'),saved:null,rollout:null,busy:false,trusted:false,review:null,allowanceReview:null};
     detail.capacity=state;return refreshCapacity(detail,state);
   }
   function selectedCapacity(id){
@@ -58845,13 +58881,26 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     var active=selectedCapacity();if(!active)return;
     active.state.review=null;capacityNode('confirm-panel').hidden=true;capacityNode('confirm').checked=false;paintCapacity(active.detail,active.state);
   };
+  window.obAdminCapacityAllowanceChanged=function(){
+    var active=selectedCapacity();if(!active)return;
+    active.state.review=null;active.state.allowanceReview=null;capacityNode('confirm-panel').hidden=true;capacityNode('confirm').checked=false;capacityNode('allowance-confirm').checked=false;paintCapacity(active.detail,active.state);
+  };
+  window.obAdminCapacityAllowanceConfirmChanged=function(){
+    var active=selectedCapacity();if(!active)return;
+    if(!active.state.trusted||!active.state.saved){capacityNode('allowance-confirm').checked=false;return;}
+    var draft=capacityDraft(active.state);
+    active.state.allowanceReview=capacityNode('allowance-confirm').checked?{revision:active.state.saved.human.revision,allowance:draft.allowance}:null;
+    paintCapacity(active.detail,active.state);
+  };
   window.obAdminCapacityConfirmChanged=function(){var active=selectedCapacity();if(active)paintCapacity(active.detail,active.state);};
   window.obAdminCapacityRefresh=function(id){var active=selectedCapacity(id);return active&&!active.state.busy?refreshCapacity(active.detail,active.state):Promise.resolve(false);};
   window.obAdminCapacitySave=async function(id){
     var active=selectedCapacity(id);if(!active||active.state.busy||!active.state.trusted)return false;
     var detail=active.detail,state=active.state,draft=capacityDraft(state);if(!draft.valid||!draft.dirty)return false;
-    var body={reason:'admin_parallel_chat_preferences'};
+    if(!draft.allowanceConfirmed)return false;
+    var body={reason:draft.allowanceDirty?draft.reason:'admin_parallel_chat_preferences'};
     if(draft.human!==state.saved.human.desired_concurrency){body.desired_human_concurrency=draft.human;body.expected_human_revision=state.saved.human.revision;}
+    if(draft.allowanceDirty){body.admin_human_capacity_allowance=draft.allowance;body.expected_human_revision=state.saved.human.revision;}
     if(draft.ai!==state.saved.ai.desired_chat_capacity){body.desired_ai_chat_capacity=draft.ai;body.expected_ai_revision=state.saved.ai.revision;}
     state.busy=true;state.review=null;capacityNode('confirm-panel').hidden=true;capacityStatus('Saving preferences. Existing sessions will not be stopped.');paintCapacity(detail,state);
     try{
@@ -58859,6 +58908,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       if(!capacityCurrent(detail,state))return false;
       if(!capacitySettingsValid(result.live_capacity,id)
         ||(body.desired_human_concurrency!==undefined&&result.live_capacity.human.desired_concurrency!==body.desired_human_concurrency)
+        ||(Object.prototype.hasOwnProperty.call(body,'admin_human_capacity_allowance')&&result.live_capacity.human.admin_capacity_allowance!==body.admin_human_capacity_allowance)
         ||(body.desired_ai_chat_capacity!==undefined&&result.live_capacity.ai.desired_chat_capacity!==body.desired_ai_chat_capacity))throw new Error('Missing confirmation');
       acceptCapacitySettings(state,result.live_capacity,body.expected_ai_revision);
       return await refreshCapacity(detail,state,'Preferences saved. Live platform ceilings were not changed; see currently allowed capacity above.');
@@ -71704,12 +71754,12 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     var live=elements();
     if(!live.editor)return;
     var selected=live.select?whole(Number(live.select.value),1,20):null;
-    var canReplaceAbovePlan=!!(state.capacity&&state.capacity.desired>state.capacity.planCeiling&&selected!==null&&selected<=state.capacity.planCeiling&&selected!==state.capacity.desired);
+    var canReplaceAboveAuthorized=!!(state.capacity&&state.capacity.desired>state.capacity.authorizedCeiling&&selected!==null&&selected<=state.capacity.authorizedCeiling&&selected!==state.capacity.desired);
     live.editor.setAttribute('aria-busy',state.loading||state.saving?'true':'false');
     if(live.select)live.select.disabled=!!(state.saving||!state.capacity);
     if(live.button){
       live.button.textContent=state.saving?'Saving…':(!state.capacity?(state.loading?'Loading…':'Reload setting'):'Save chat limit');
-      live.button.disabled=!!(state.saving||state.loading||(state.capacity&&!state.dirty&&!canReplaceAbovePlan));
+      live.button.disabled=!!(state.saving||state.loading||(state.capacity&&!state.dirty&&!canReplaceAboveAuthorized));
     }
   }
   function resetPrivate(){
@@ -71736,13 +71786,19 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     var desired=whole(human&&human.desired_concurrency,1,20);
     var effective=whole(human&&human.effective_concurrency,1,20);
     var plan=whole(human&&human.plan_ceiling,1,20);
+    var allowance=human&&human.admin_capacity_allowance;
+    var authorized=whole(human&&human.authorized_ceiling,1,20);
+    var authority=String(human&&human.authorization_source||'');
     var revision=whole(human&&human.revision,1,Number.MAX_SAFE_INTEGER);
     var rollout=whole(source&&source.human_rollout_ceiling,1,20);
     var mode=String(source&&source.rollout_mode||'');
-    if(!source||!human||desired===null||effective===null||plan===null||revision===null||rollout===null||['disabled','observe','enforce','paused'].indexOf(mode)<0||typeof source.admission_enforced!=='boolean'||effective>plan){
+    if(!source||!human||desired===null||effective===null||plan===null||(allowance!==null&&whole(allowance,2,5)===null)
+      ||authorized===null||authorized!==Math.max(plan,allowance===null?1:allowance)||['verified_subscription','admin_allowance','starter'].indexOf(authority)<0
+      ||(authority==='admin_allowance'&&!(allowance!==null&&allowance>plan))||(authority==='verified_subscription'&&!(plan>1&&plan>=authorized))||(authority==='starter'&&!(plan===1&&allowance===null))
+      ||revision===null||rollout===null||['disabled','observe','enforce','paused'].indexOf(mode)<0||typeof source.admission_enforced!=='boolean'||effective>authorized){
       throw {obLiveCapacityError:true,status:502,code:'live_capacity_invalid_response'};
     }
-    return {desired:desired,effective:effective,planCeiling:plan,revision:revision,rolloutCeiling:rollout,rolloutMode:mode,admissionEnforced:source.admission_enforced===true};
+    return {desired:desired,effective:effective,planCeiling:plan,adminAllowance:allowance,authorizedCeiling:authorized,authorizationSource:authority,revision:revision,rolloutCeiling:rollout,rolloutMode:mode,admissionEnforced:source.admission_enforced===true};
   }
   function request(context,method,body){
     var options={method:method,cache:'no-store',headers:{'Accept':'application/json','Authorization':'Bearer '+String(context.token||'')},signal:context.signal};
@@ -71760,7 +71816,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
   function errorMessage(error,action){
     var code=String(error&&error.code||''),status=Number(error&&error.status||0);
     if(code==='live_capacity_revision_conflict')return 'This setting changed elsewhere. Reload the latest value before saving again.';
-    if(code==='live_capacity_plan_limit_exceeded')return 'Your confirmed plan no longer allows that choice. Reload the current limit before saving again.';
+    if(code==='live_capacity_plan_limit_exceeded')return 'Your current capacity authorization no longer allows that choice. Reload the current limit before saving again.';
     if(code==='live_capacity_revision_required'||code==='live_capacity_revision_invalid')return 'The saved version is no longer current. Reload the setting before saving again.';
     if(code==='live_capacity_service_unavailable'||code==='live_capacity_price_authority_unavailable'||status===503)return 'Session capacity is temporarily unavailable. Try again shortly.';
     if(code==='live_capacity_invalid_response')return 'Session capacity returned an invalid response. Reload before making changes.';
@@ -71774,28 +71830,30 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     return Math.min(capacity.effective,capacity.rolloutCeiling);
   }
   function capacitySummary(capacity){
-    var base='Saved preference: '+capacity.desired+'. Your plan allows '+capacity.planCeiling+' and currently makes '+capacity.effective+' effective. ';
-    var replace=capacity.desired>capacity.planCeiling?' Save the selected plan-allowed value only if you want to replace the higher saved preference.':'';
+    var allowance=capacity.adminAllowance===null?'none':String(capacity.adminAllowance);
+    var source=capacity.authorizationSource==='admin_allowance'?'admin allowance':capacity.authorizationSource==='verified_subscription'?'verified subscription':'Starter fallback';
+    var base='Saved preference: '+capacity.desired+'. Verified plan max: '+capacity.planCeiling+'. Admin allowance: '+allowance+'. Authorized max: '+capacity.authorizedCeiling+' ('+source+'), making '+capacity.effective+' effective. ';
+    var replace=capacity.desired>capacity.authorizedCeiling?' Save the selected authorized value only if you want to replace the higher saved preference.':'';
     if(capacity.rolloutMode==='paused')return 'New live sessions are temporarily paused. '+base+'Voice and video remain one at a time.'+replace;
     if(!capacity.admissionEnforced||capacity.rolloutMode!=='enforce')return base+'Multi-session admission is not active yet, so new live chat work remains single-session. Voice and video remain one at a time.'+replace;
     return base+'The rollout ceiling is '+capacity.rolloutCeiling+', so up to '+activeLimit(capacity)+' parallel human chats are active. Voice and video remain one at a time.'+replace;
   }
   function draftSummary(capacity,draft){return 'Selected '+draft+' parallel chat'+(draft===1?'':'s')+'; this choice is not saved yet. '+capacitySummary(capacity);}
-  function defaultEditorValue(capacity){return capacity.desired<=capacity.planCeiling?capacity.desired:Math.max(1,Math.min(capacity.effective,capacity.planCeiling));}
+  function defaultEditorValue(capacity){return capacity.desired<=capacity.authorizedCeiling?capacity.desired:Math.max(1,Math.min(capacity.effective,capacity.authorizedCeiling));}
   function renderCapacity(capacity,options){
     options=options||{};
     var live=elements(),select=live.select;
     if(!select)return {draftDropped:false};
-    var preserveDirty=!!options.preserveDirty,draft=whole(options.preserveDraft,1,20),draftDropped=preserveDirty&&draft!==null&&draft>capacity.planCeiling;
+    var preserveDirty=!!options.preserveDirty,draft=whole(options.preserveDraft,1,20),draftDropped=preserveDirty&&draft!==null&&draft>capacity.authorizedCeiling;
     while(select.firstChild)select.removeChild(select.firstChild);
-    for(var value=1;value<=capacity.planCeiling;value+=1){
+    for(var value=1;value<=capacity.authorizedCeiling;value+=1){
       var option=document.createElement('option');option.value=String(value);option.textContent=value+(value===1?' chat':' chats');select.appendChild(option);
     }
     var chosen=defaultEditorValue(capacity);
-    if(preserveDirty&&draft!==null&&draft<=capacity.planCeiling)chosen=draft;
+    if(preserveDirty&&draft!==null&&draft<=capacity.authorizedCeiling)chosen=draft;
     select.value=String(chosen);
     state.capacity=capacity;
-    state.dirty=!!(preserveDirty&&draft!==null&&draft<=capacity.planCeiling&&draft!==capacity.desired);
+    state.dirty=!!(preserveDirty&&draft!==null&&draft<=capacity.authorizedCeiling&&draft!==capacity.desired);
     state.pendingDraft=state.dirty?draft:null;
     updateControls();
     return {draftDropped:draftDropped};
@@ -71803,7 +71861,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
   function reconciliationNotice(error,capacity,submitted){
     if(capacity.desired===submitted)return {tone:'ok',text:'Saved setting confirmed after checking the server. '+capacitySummary(capacity)};
     if(error&&error.code==='live_capacity_revision_conflict')return {tone:'warn',text:'This setting changed elsewhere. The latest value is loaded; review it before saving again. '+capacitySummary(capacity)};
-    if(error&&error.code==='live_capacity_plan_limit_exceeded')return {tone:'warn',text:'Your confirmed plan no longer allows that choice. The current limit is loaded; review it before saving again. '+capacitySummary(capacity)};
+    if(error&&error.code==='live_capacity_plan_limit_exceeded')return {tone:'warn',text:'Your current capacity authorization no longer allows that choice. The current limit is loaded; review it before saving again. '+capacitySummary(capacity)};
     return {tone:'warn',text:'The save outcome was checked against the server. Review the current value before saving again. '+capacitySummary(capacity)};
   }
   function load(options){
@@ -71832,7 +71890,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
         var notice=reconciliationNotice(options.saveError,capacity,whole(options.submitted,1,20));
         setStatus(notice.text,notice.tone);
       }else if(result.draftDropped){
-        setStatus('Your unsaved choice is above the refreshed plan limit and was not kept. '+capacitySummary(capacity),'warn');
+        setStatus('Your unsaved choice is above the refreshed authorized limit and was not kept. '+capacitySummary(capacity),'warn');
       }else if(state.dirty){
         setStatus(draftSummary(capacity,whole(Number(live.select.value),1,20)),'warn');
       }else{
@@ -71859,8 +71917,8 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     reveal(context);
     if(!state.capacity)return load({force:true,preserveDraft:state.pendingDraft,preserveDirty:state.pendingDraft!==null});
     if(state.saving)return state.savePromise||Promise.resolve(false);
-    var desired=whole(Number(live.select&&live.select.value),1,state.capacity.planCeiling);
-    if(desired===null){setStatus('Choose a chat limit allowed by your current plan.','error');return Promise.resolve(false);}
+    var desired=whole(Number(live.select&&live.select.value),1,state.capacity.authorizedCeiling);
+    if(desired===null){setStatus('Choose a chat limit within your current authorized maximum.','error');return Promise.resolve(false);}
     if(!state.dirty&&desired===state.capacity.desired){setStatus(capacitySummary(state.capacity),'');return Promise.resolve(true);}
     var expectedRevision=state.capacity.revision;
     var sequence=++state.saveSequence;
@@ -71880,7 +71938,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
   function onSelectInput(){
     var select=byId('avail-live-capacity');
     if(!select||!state.capacity||state.saving)return;
-    var desired=whole(Number(select.value),1,state.capacity.planCeiling);
+    var desired=whole(Number(select.value),1,state.capacity.authorizedCeiling);
     state.editGeneration+=1;state.dirty=desired!==null&&desired!==state.capacity.desired;state.pendingDraft=state.dirty?desired:null;
     setStatus(state.dirty?draftSummary(state.capacity,desired):capacitySummary(state.capacity),state.dirty?'warn':'');updateControls();
   }

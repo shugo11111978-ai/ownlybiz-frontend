@@ -92,9 +92,11 @@ class Document {
 function capacityFixture(id='expert-a',values={}){
   const human=values.human??2,ai=values.ai??3,humanCeiling=values.humanCeiling??1,aiCeiling=values.aiCeiling??1;
   const automated=values.automated??true,mode=values.mode??'enforce';
+  const plan=values.plan??5,allowance=values.allowance??null,authorized=Math.max(plan,allowance??1);
+  const authority=values.authority??(allowance!==null&&allowance>plan?'admin_allowance':plan>1?'verified_subscription':'starter');
   return {
     settings:{success:true,live_capacity:{phase:'atomic_admission',expert_id:id,admission_enforced:mode==='enforce',rollout_mode:mode,human_rollout_ceiling:humanCeiling,ai_rollout_ceiling:aiCeiling,stripe_order_guaranteed:true,
-      human:{desired_concurrency:human,effective_concurrency:Math.min(human,values.plan??5),plan_ceiling:values.plan??5,revision:values.humanRevision??7},
+      human:{desired_concurrency:human,effective_concurrency:Math.min(human,authorized),plan_ceiling:plan,admin_capacity_allowance:allowance,authorized_ceiling:authorized,authorization_source:authority,revision:values.humanRevision??7},
       ai:{desired_chat_capacity:ai,effective_chat_capacity:automated?Math.min(ai,aiCeiling):0,safety_ceiling:values.safety??20,fully_automated:automated,reply_assistant_enabled:true,training_enabled:true,revision:values.aiRevision??11}}},
     rollout:{success:true,rollout:{expert_id:id,mode,scope:values.scope??'expert',scope_expert_id:id,human_ceiling:humanCeiling,ai_ceiling:aiCeiling,revision:values.rolloutRevision??13,enforcement_epoch:1,activated_at:1700000000,
       effective_mode:mode,effective_scope:'expert',effective_human_ceiling:humanCeiling,effective_ai_ceiling:aiCeiling,admission_enforced:mode==='enforce',admission_paused:mode==='paused',stripe_order_guaranteed:true,
@@ -168,6 +170,50 @@ await check('unsaved preferences do not change confirmed capacity or submit requ
   assert.equal(h.node('human-live').textContent,'1');assert.equal(h.node('ai-live').textContent,'1');
   assert.match(h.node('human-meta').textContent,/Saved: 2/);assert.match(h.node('preview').textContent,/Unsaved/);
   assert.equal(h.node('save').disabled,false);assert.equal(h.node('review').disabled,true);assert.equal(h.mutations().length,0);
+});
+
+await check('admin allowance is truthful, expert-scoped, audited, confirmed, and expands only the authorized human editor',async()=>{
+  const h=createHarness({fixture:capacityFixture('expert-a',{human:1,plan:1,humanCeiling:1})});await h.open();
+  assert.deepEqual(h.node('human').children.map(option=>option.value),['1']);
+  assert.equal(h.node('human-allowance').value,'');
+  assert.match(h.node('human-meta').textContent,/Verified plan max: 1/);
+  assert.match(h.node('human-meta').textContent,/Admin allowance: none/);
+  assert.match(h.node('human-meta').textContent,/Authorized max: 1/);
+  h.node('human-allowance').value='5';h.root.obAdminCapacityAllowanceChanged();
+  assert.equal(h.node('allowance-approval').hidden,false);assert.equal(h.node('save').disabled,true);
+  assert.match(h.node('allowance-summary').textContent,/Luna synthetic/);assert.match(h.node('allowance-summary').textContent,/none → 5/);
+  h.node('allowance-reason').value='Approved Luna human concurrency fallback';h.root.obAdminCapacityChanged();
+  assert.equal(h.node('allowance-confirm').disabled,false);h.node('allowance-confirm').checked=true;h.root.obAdminCapacityAllowanceConfirmChanged();
+  assert.equal(h.node('save').disabled,false);
+  h.setHandler((call,next)=>{if(call.method==='PUT'){
+    h.fixtures.set('expert-a',capacityFixture('expert-a',{human:1,plan:1,allowance:5,humanRevision:8,humanCeiling:1}));return response(h.fixtures.get('expert-a').settings);
+  }return next();});
+  assert.equal(await h.root.obAdminCapacitySave('expert-a'),true);assert.equal(h.mutations().length,1);
+  assert.deepEqual(h.mutations()[0].body,{reason:'Approved Luna human concurrency fallback',admin_human_capacity_allowance:5,expected_human_revision:7});
+  assert.deepEqual(h.node('human').children.map(option=>option.value),['1','2','3','4','5']);
+  assert.match(h.node('human-meta').textContent,/Verified plan max: 1/);assert.match(h.node('human-meta').textContent,/Admin allowance: 5/);assert.match(h.node('human-meta').textContent,/Authorized max: 5/);assert.match(h.node('human-meta').textContent,/Authority: admin allowance/);
+  assert.doesNotMatch(JSON.stringify(h.mutations()[0].body),/stripe|payment|automatic|on.?demand|training/i);
+});
+
+await check('allowance mutations cannot save without a bounded reason and confirmation tied to the current revision and value',async()=>{
+  const h=createHarness({fixture:capacityFixture('expert-a',{human:1,plan:1})});await h.open();
+  h.node('human-allowance').value='5';h.root.obAdminCapacityAllowanceChanged();
+  for(const reason of ['','no']){h.node('allowance-reason').value=reason;h.root.obAdminCapacityChanged();h.node('allowance-confirm').checked=true;h.root.obAdminCapacityAllowanceConfirmChanged();assert.equal(h.node('save').disabled,true);assert.equal(await h.root.obAdminCapacitySave('expert-a'),false);}
+  h.node('allowance-reason').value='Approved capacity';h.root.obAdminCapacityChanged();h.node('allowance-confirm').checked=true;h.root.obAdminCapacityAllowanceConfirmChanged();assert.equal(h.node('save').disabled,false);
+  h.node('human-allowance').value='4';h.root.obAdminCapacityAllowanceChanged();assert.equal(h.node('allowance-confirm').checked,false);assert.equal(h.node('save').disabled,true);assert.equal(h.mutations().length,0);
+});
+
+await check('revoking an allowance sends explicit null and safely exposes the now-authorized replacement preference',async()=>{
+  const h=createHarness({fixture:capacityFixture('expert-a',{human:5,plan:1,allowance:5,humanRevision:7,humanCeiling:1})});await h.open();
+  h.node('human-allowance').value='';h.root.obAdminCapacityAllowanceChanged();h.node('allowance-reason').value='Allowance no longer required';h.root.obAdminCapacityChanged();h.node('allowance-confirm').checked=true;h.root.obAdminCapacityAllowanceConfirmChanged();
+  h.setHandler((call,next)=>{if(call.method==='PUT'){
+    h.fixtures.set('expert-a',capacityFixture('expert-a',{human:5,plan:1,allowance:null,humanRevision:8,humanCeiling:1}));return response(h.fixtures.get('expert-a').settings);
+  }return next();});
+  assert.equal(await h.root.obAdminCapacitySave('expert-a'),true);
+  assert.deepEqual(h.mutations()[0].body,{reason:'Allowance no longer required',admin_human_capacity_allowance:null,expected_human_revision:7});
+  assert.deepEqual(h.node('human').children.map(option=>option.value),['1']);assert.equal(h.node('human').value,'1');
+  assert.match(h.node('human-meta').textContent,/Saved: 5/);assert.match(h.node('human-meta').textContent,/Authorized max: 1/);
+  assert.equal(h.node('save').disabled,false,'admin can explicitly replace the now-above-authority saved preference');
 });
 
 await check('human-only preference save uses its revision and no AI/assistant/payment fields',async()=>{
@@ -354,6 +400,9 @@ await check('malformed or cross-expert authority cannot enable either save actio
     fixture=>{fixture.rollout.rollout.expert_id='expert-b';},
     fixture=>{fixture.settings.live_capacity.ai.fully_automated='true';},
     fixture=>{fixture.settings.live_capacity.human.revision=0;},
+    fixture=>{delete fixture.settings.live_capacity.human.admin_capacity_allowance;},
+    fixture=>{fixture.settings.live_capacity.human.authorization_source='admin_allowance';},
+    fixture=>{fixture.settings.live_capacity.human.authorized_ceiling=4;},
     fixture=>{fixture.rollout.rollout.environment_limits.valid='true';},
     fixture=>{delete fixture.rollout.rollout.effective_ai_ceiling;},
     fixture=>{fixture.rollout.rollout.ceiling_editable='true';},

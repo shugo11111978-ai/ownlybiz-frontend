@@ -92,13 +92,15 @@ function response(body, status = 200) {
   return {ok:status >= 200 && status < 300, status, json:async() => body};
 }
 
-function privateCapacity({desired = 3, effective = desired, plan = 5, revision = 7, rollout = 5, mode = 'enforce', enforced = mode === 'enforce', secret = 'AI_PRIVATE_SENTINEL'} = {}) {
+function privateCapacity({desired = 3, effective = desired, plan = 5, allowance = null, authority, revision = 7, rollout = 5, mode = 'enforce', enforced = mode === 'enforce', secret = 'AI_PRIVATE_SENTINEL'} = {}) {
+  const authorized = Math.max(plan, allowance ?? 1);
+  authority ||= allowance !== null && allowance > plan ? 'admin_allowance' : plan > 1 ? 'verified_subscription' : 'starter';
   return {
     success:true,
     live_capacity:{
       phase:'atomic_admission', admission_enforced:enforced, rollout_mode:mode,
       human_rollout_ceiling:rollout, expert_id:'private-expert-id',
-      human:{desired_concurrency:desired,effective_concurrency:effective,plan_ceiling:plan,revision},
+      human:{desired_concurrency:desired,effective_concurrency:effective,plan_ceiling:plan,admin_capacity_allowance:allowance,authorized_ceiling:authorized,authorization_source:authority,revision},
       ai:{desired_chat_capacity:99,reply_assistant_enabled:true,internal_secret:secret},
     },
   };
@@ -172,13 +174,15 @@ assert.equal(primary.calls[0].options.method, 'GET');
 assert.equal(primary.calls[0].options.cache, 'no-store');
 assert.equal(primary.calls[0].options.headers.Authorization, 'Bearer token-a');
 assert.equal(primary.editor.hidden, false);
-assert.deepEqual(primary.select.children.map((option) => option.value), ['1','2','3','4','5'], 'options are derived from the authoritative plan ceiling');
+assert.deepEqual(primary.select.children.map((option) => option.value), ['1','2','3','4','5'], 'options are derived from the authoritative ceiling');
 assert.equal(primary.select.value, '3');
 assert.equal(primary.select.disabled, false);
 assert.equal(primary.button.disabled, true);
 assert.match(primary.status.textContent, /Saved preference: 3/);
-assert.match(primary.status.textContent, /plan allows 5/);
-assert.match(primary.status.textContent, /makes 3 effective/);
+assert.match(primary.status.textContent, /Verified plan max: 5/);
+assert.match(primary.status.textContent, /Admin allowance: none/);
+assert.match(primary.status.textContent, /Authorized max: 5 \(verified subscription\)/);
+assert.match(primary.status.textContent, /making 3 effective/);
 assert.match(primary.status.textContent, /rollout ceiling is 5/);
 assert.match(primary.status.textContent, /up to 3 parallel human chats/);
 assert.doesNotMatch(primary.status.textContent, /AI_PRIVATE_SENTINEL|99|private-expert-id/, 'only allowlisted human settings reach the editor');
@@ -200,7 +204,7 @@ assert.equal(primary.hooks.state.dirty, false);
 assert.equal(primary.button.disabled, true);
 assert.match(primary.status.textContent, /^Saved\./);
 
-const clamp = {desired:5,effective:5,planCeiling:5,revision:2,rolloutCeiling:2,rolloutMode:'enforce',admissionEnforced:true};
+const clamp = {desired:5,effective:5,planCeiling:5,adminAllowance:null,authorizedCeiling:5,authorizationSource:'verified_subscription',revision:2,rolloutCeiling:2,rolloutMode:'enforce',admissionEnforced:true};
 assert.equal(primary.hooks.activeLimit(clamp), 2, 'rollout ceiling clamps the effective human preference');
 assert.match(primary.hooks.summary(clamp), /up to 2 parallel human chats/);
 const observe = {...clamp,rolloutMode:'observe',admissionEnforced:false};
@@ -267,10 +271,31 @@ assert.equal(downgrade.select.value, '1');
 assert.equal(downgrade.hooks.state.dirty, false, 'a plan downgrade does not silently replace the stored preference');
 assert.equal(downgrade.button.disabled, false, 'an explicit save can replace an above-plan preference even when only one legal option exists');
 assert.match(downgrade.status.textContent, /Saved preference: 5/);
-assert.match(downgrade.status.textContent, /plan allows 1/);
+assert.match(downgrade.status.textContent, /Verified plan max: 1/);
+assert.match(downgrade.status.textContent, /Authorized max: 1 \(Starter fallback\)/);
 assert.match(downgrade.status.textContent, /only if you want to replace/);
 downgrade.select.dispatchEvent({type:'input'});
 assert.equal(downgrade.hooks.state.dirty, true, 'an explicit interaction can replace an above-plan saved preference');
+
+const allowance = createHarness({fetchImpl:() => Promise.resolve(response(privateCapacity({desired:5,effective:5,plan:1,allowance:5,revision:9,rollout:5})))});
+await allowance.start();
+assert.deepEqual(allowance.select.children.map((option) => option.value), ['1','2','3','4','5'], 'admin-authorized capacity expands the expert selector without changing the verified plan');
+assert.match(allowance.status.textContent, /Verified plan max: 1/);
+assert.match(allowance.status.textContent, /Admin allowance: 5/);
+assert.match(allowance.status.textContent, /Authorized max: 5 \(admin allowance\)/);
+assert.doesNotMatch(source, /admin_human_capacity_allowance\s*:/, 'expert source cannot submit or mutate the admin allowance');
+
+for(const malformed of [
+  privateCapacity({plan:1}),
+  privateCapacity({plan:1,allowance:5}),
+  privateCapacity({plan:5}),
+]) {
+  if(malformed.live_capacity.human.plan_ceiling===1&&malformed.live_capacity.human.admin_capacity_allowance===null)malformed.live_capacity.human.authorization_source='admin_allowance';
+  else if(malformed.live_capacity.human.admin_capacity_allowance===5)malformed.live_capacity.human.authorized_ceiling=4;
+  else delete malformed.live_capacity.human.admin_capacity_allowance;
+  const rejected=createHarness({fetchImpl:()=>Promise.resolve(response(malformed))});await rejected.start();
+  assert.equal(rejected.hooks.state.capacity,null,'malformed authority fails closed');assert.equal(rejected.select.disabled,true);
+}
 
 const raceA = deferred();
 const race = createHarness({fetchImpl:(url, options) => options.headers.Authorization === 'Bearer token-a'

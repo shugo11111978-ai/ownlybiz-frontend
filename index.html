@@ -45024,10 +45024,23 @@ body.ob-ops-modal-open{overflow:hidden!important}
     var verification=options.identity_verification||opsIdentityVerification(data);
 	var freshnessAnchorAt=opsOverviewFreshnessAnchor(data,receivedAt);
 	var trustedCurrent=schemaValid&&verification.verified&&freshnessAnchorAt!=null&&Date.now()-freshnessAnchorAt<=OPS_OVERVIEW_MAX_SERVER_AGE_MS;
-	if(options.publish!==false&&trustedCurrent)lastVerifiedAt=freshnessAnchorAt;
+    if(options.publish!==false&&trustedCurrent)lastVerifiedAt=freshnessAnchorAt;
     var priorBodyScroll = body ? body.scrollTop : 0;
     var focused=document.activeElement&&body&&body.contains(document.activeElement)?document.activeElement:null;
     var focusDescriptor=focused?{key:focused.getAttribute&&focused.getAttribute('data-ob-focus-key')||'',id:focused.id||'',onclick:focused.getAttribute&&focused.getAttribute('onclick')||'',text:String(focused.textContent||'').trim()}:null;
+    var scrollAnchorDescriptor=null;
+    if(body&&priorBodyScroll>0&&body.querySelectorAll&&body.getBoundingClientRect){
+      var bodyViewport=body.getBoundingClientRect();
+      var scrollAnchor=Array.from(body.querySelectorAll('[data-ob-scroll-key],h3,[data-ob-focus-key^="table:"]')).find(function(node){
+        if(!node||typeof node.getBoundingClientRect!=='function')return false;
+        var rect=node.getBoundingClientRect();
+        return rect.bottom>bodyViewport.top+1&&rect.top<bodyViewport.bottom-1;
+      });
+      if(scrollAnchor){
+        var anchorRect=scrollAnchor.getBoundingClientRect();
+        scrollAnchorDescriptor={key:scrollAnchor.getAttribute&&scrollAnchor.getAttribute('data-ob-scroll-key')||scrollAnchor.getAttribute&&scrollAnchor.getAttribute('data-ob-focus-key')||'',id:scrollAnchor.id||'',text:scrollAnchor.tagName==='H3'?String(scrollAnchor.textContent||'').trim():'',offset:anchorRect.top-bodyViewport.top};
+      }
+    }
     var s = data.summary || {};
     var http = data.http || {};
 	    var httpAvailable=!!data.http&&http.available!==false;
@@ -45127,6 +45140,7 @@ body.ob-ops-modal-open{overflow:hidden!important}
       var maxScroll=Math.max(0,body.scrollHeight-body.clientHeight);
       var restoredScroll=Math.min(priorBodyScroll,maxScroll);
       var target=null;
+      try{body.scrollTop=restoredScroll;}catch(e){}
       if(focusDescriptor){
         if(focusDescriptor.key)target=Array.from(body.querySelectorAll('[data-ob-focus-key]')).find(function(node){return node.getAttribute('data-ob-focus-key')===focusDescriptor.key;});
         if(!target&&focusDescriptor.id)target=document.getElementById(focusDescriptor.id);
@@ -45135,6 +45149,19 @@ body.ob-ops-modal-open{overflow:hidden!important}
         if(target&&typeof target.focus==='function'){
           try{target.focus({preventScroll:true});}
           catch(e){try{target.focus();}catch(focusError){}}
+        }
+      }
+      try{body.scrollTop=restoredScroll;}catch(e){}
+      if(scrollAnchorDescriptor){
+        var candidates=Array.from(body.querySelectorAll('[data-ob-scroll-key],h3,[data-ob-focus-key^="table:"]'));
+        var restoredAnchor=candidates.find(function(node){
+          var nodeKey=node.getAttribute&&node.getAttribute('data-ob-scroll-key')||node.getAttribute&&node.getAttribute('data-ob-focus-key')||'';
+          return scrollAnchorDescriptor.key&&nodeKey===scrollAnchorDescriptor.key||scrollAnchorDescriptor.id&&node.id===scrollAnchorDescriptor.id||scrollAnchorDescriptor.text&&node.tagName==='H3'&&String(node.textContent||'').trim()===scrollAnchorDescriptor.text;
+        });
+        if(restoredAnchor&&typeof restoredAnchor.getBoundingClientRect==='function'){
+          var currentBodyViewport=body.getBoundingClientRect();
+          var currentAnchorOffset=restoredAnchor.getBoundingClientRect().top-currentBodyViewport.top;
+          restoredScroll=Math.max(0,Math.min(maxScroll,restoredScroll+currentAnchorOffset-scrollAnchorDescriptor.offset));
         }
       }
       try{body.scrollTop=restoredScroll;}catch(e){}
@@ -45510,7 +45537,7 @@ body.ob-ops-modal-open{overflow:hidden!important}
 	    var current=!!(snapshot&&typeof window.obIsCurrentOpsSnapshot==='function'&&window.obIsCurrentOpsSnapshot(snapshot));
 	    updateOpsBadge(data||{},snapshot);
 	    var problems=current?collectProblems(data):[]; window.__obProblemHandoffs = problems;
-	    var html = '<div class="ob-ops-dev-handoff" id="ob-ops-dev-handoff"><h3>Developer handoff for active problems</h3><p>Likely cause, evidence, and fastest developer action for each current issue.</p>';
+	    var html = '<div class="ob-ops-dev-handoff" id="ob-ops-dev-handoff" data-ob-scroll-key="developer-handoff"><h3>Developer handoff for active problems</h3><p>Likely cause, evidence, and fastest developer action for each current issue.</p>';
 	    if(!current)html += '<div class="ob-ops-empty-handoff ob-ops-unavailable"><b>UNKNOWN / STALE.</b> The canonical Ops snapshot is not current and verified, so this panel cannot claim that problems are present or clear. Refresh Ops Monitor.</div>';
 	    else if(!Array.isArray(data.alerts))html += '<div class="ob-ops-empty-handoff ob-ops-unavailable">Active-alert handoff data is unavailable in the latest snapshot; no clear state is inferred.</div>';
 	    if(problems.length) html += '<div class="ob-ops-cause-grid">' + problems.map(function(problem,index){ var cls = problem.severity === 'critical' ? 'is-critical' : (problem.severity === 'warning' || problem.severity === 'degraded' ? 'is-warning' : ''); return '<article class="ob-ops-cause-card ' + cls + '"><div class="ob-ops-cause-top"><strong>' + esc(problem.title) + '</strong><span class="ob-ops-cause-pill">' + esc(problem.severity) + '</span></div><dl><dt>Area</dt><dd>' + esc(problem.area) + '</dd><dt>Cause</dt><dd>' + esc(problem.cause) + '</dd><dt>Evidence</dt><dd>' + esc(problem.evidence) + '</dd><dt>Action</dt><dd>' + esc(problem.action) + '</dd></dl><button class="ob-ops-copy-handoff" data-ob-focus-key="problem-handoff:' + esc(problem.area) + ':' + esc(problem.title) + '" onclick="window.obCopyProblemHandoff(' + index + ')">Copy handoff</button></article>'; }).join('') + '</div>';
@@ -45747,7 +45774,7 @@ body.ob-ops-modal-open{overflow:hidden!important}
 	    var alerts = alertsKnown?visibleAlerts(data.alerts):[];
     var ownerItems = alerts.map(function(alert){ return { alert:alert, guide:(alert && alert.action_guide) || fallbackGuide(alert) }; });
     window.__obOwnerGuideItems = ownerItems;
-    var html = '<section id="ob-ops-owner-guide"><h3>What should I do?</h3><p>Owner-friendly actions for alerts that may jeopardize clients, experts, sessions, payments, websites, or admin access.</p>';
+    var html = '<section id="ob-ops-owner-guide" data-ob-scroll-key="owner-guide"><h3>What should I do?</h3><p>Owner-friendly actions for alerts that may jeopardize clients, experts, sessions, payments, websites, or admin access.</p>';
 	    if(!current){
 	      html += '<div class="ob-owner-guide-empty"><b>UNKNOWN / STALE.</b> The canonical Ops snapshot is not current and verified, so alert guidance cannot be trusted and no clear state is inferred. Refresh Ops Monitor.</div>';
 	    } else if(!alertsKnown){
@@ -51505,7 +51532,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     var body = document.getElementById('ob-ops-body');
     if(!body) return;
     var feedback=window.__obOpsActionFeedback||{text:'No owner action run in this browser.',state:'idle'};
-    var html = '<section id="ob-ops-action-center"><h3>Owner action center</h3><p>Use safe actions for routine incidents. Risky actions are guarded and should only be used when you are sure no real user session should continue.</p>' +
+    var html = '<section id="ob-ops-action-center" data-ob-scroll-key="action-center"><h3>Owner action center</h3><p>Use safe actions for routine incidents. Risky actions are guarded and should only be used when you are sure no real user session should continue.</p>' +
       '<div class="ob-ops-action-grid">' +
         '<article class="ob-ops-action-card"><strong>Refresh live telemetry</strong><span>Reload current Ops data without changing server state.</span><button type="button" data-ob-focus-key="action:refresh" onclick="window.obOpsRunControl(&quot;refresh&quot;)">Refresh</button></article>' +
         '<article class="ob-ops-action-card"><strong>Copy developer report</strong><span>Copies alerts, route health, sessions, realtime, storage, and asset evidence for an AI/developer.</span><button class="safe" type="button" data-ob-focus-key="action:copy-report" onclick="window.obOpsRunControl(&quot;copy_report&quot;)">Copy report</button></article>' +
@@ -61384,7 +61411,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
 	  }
 	  function mediaOpsHtml(raw){
 	    var m=normalizedMediaSfu(raw);
-	    if(!raw||typeof raw!=='object'||m.available!==true)return '<div class="ob-ops-section ob-ops-unavailable" id="ob-ops-sfu-panel"><h3>Ownlybiz SFU media usage and cost</h3><div class="ob-ops-empty">SFU telemetry is unavailable in the latest snapshot. No health or zero state is inferred.</div></div>';
+	    if(!raw||typeof raw!=='object'||m.available!==true)return '<div class="ob-ops-section ob-ops-unavailable" id="ob-ops-sfu-panel" data-ob-scroll-key="sfu"><h3>Ownlybiz SFU media usage and cost</h3><div class="ob-ops-empty">SFU telemetry is unavailable in the latest snapshot. No health or zero state is inferred.</div></div>';
 	    var est = m.estimated;
 	    var counters = m.counters;
 	    var assumptions = m.assumptions;
@@ -61395,7 +61422,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
 	    var consumeTiming = actionTimings.consume || {};
 	    var measured=m.measurement_available===true;
 	    var estimated=m.estimate_available===true;
-	    return '<div class="ob-ops-section" id="ob-ops-sfu-panel"><h3>Ownlybiz SFU media usage and cost</h3>'
+	    return '<div class="ob-ops-section" id="ob-ops-sfu-panel" data-ob-scroll-key="sfu"><h3>Ownlybiz SFU media usage and cost</h3>'
 	      + '<div class="ob-ops-grid">'
 	      + '<div class="ob-ops-card"><div class="ob-ops-label">1:1 mode</div><div class="ob-ops-value">'+esc(m.one_to_one_mode || 'Unknown')+'</div><div class="ob-ops-note">Fallback '+bool(m.one_to_one_fallback_enabled,'on','off')+'</div></div>'
 	      + '<div class="ob-ops-card"><div class="ob-ops-label">SFU health</div><div class="ob-ops-value">'+esc(m.status || 'Unknown')+'</div><div class="ob-ops-note">'+esc(m.last_error_code || bool(m.url_configured,'Media URL configured','No media URL'))+'</div></div>'
@@ -61430,7 +61457,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     if(panel&&!panel.classList.contains('show'))return;
 	    snapshot=snapshot&&snapshot.data?snapshot:(window.obGetOpsSnapshot&&window.obGetOpsSnapshot());
 	    var current=!!(snapshot&&typeof window.obIsCurrentOpsSnapshot==='function'&&window.obIsCurrentOpsSnapshot(snapshot));
-	    var html=current?mediaOpsHtml(snapshot.data.media_sfu):'<div class="ob-ops-section ob-ops-unavailable" id="ob-ops-sfu-panel"><h3>Ownlybiz SFU media usage and cost</h3><div class="ob-ops-empty"><b>UNKNOWN / STALE.</b> The canonical Ops snapshot is not current and verified, so SFU health and zero values are unavailable.</div></div>';
+	    var html=current?mediaOpsHtml(snapshot.data.media_sfu):'<div class="ob-ops-section ob-ops-unavailable" id="ob-ops-sfu-panel" data-ob-scroll-key="sfu"><h3>Ownlybiz SFU media usage and cost</h3><div class="ob-ops-empty"><b>UNKNOWN / STALE.</b> The canonical Ops snapshot is not current and verified, so SFU health and zero values are unavailable.</div></div>';
     var existing = document.getElementById('ob-ops-sfu-panel');
     if(existing){
       if(existing.outerHTML!==html) existing.outerHTML = html;

@@ -1327,6 +1327,10 @@ assert.match(html,/Platform and Connect webhook signing secrets must be differen
   'the frontend rejects copying the same new signing secret into both endpoint authorities');
 assert.match(html,/Trusted Ops receipts require two different webhook signing secrets/,
   'the active Admin form explains why both distinct endpoint secrets are required');
+assert.match(html,/Payment model for this environment: client payments are destination charges through Stripe Connect/,
+  'Platform Payments describes the active environment without falsely labeling staging data as production');
+assert.doesNotMatch(html,/Production payment model:/,
+  'Platform Payments does not label staging payment data as production');
 assert.match(html,/data-ob-stripe-state="loading"[\s\S]*Checking Stripe…/,
   'the expert Payment Processor starts in a fail-closed checking state');
 assert.match(html,/<div class="db-stripe-status" data-ob-stripe-state="loading"[^>]*>Checking Stripe…<\/div>/,

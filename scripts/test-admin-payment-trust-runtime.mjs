@@ -4,6 +4,48 @@ import vm from 'node:vm';
 
 const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 
+function functionDeclaration(name) {
+  const start = html.indexOf(`function ${name}(`);
+  assert(start >= 0, `${name} is present`);
+  const open = html.indexOf('{', start);
+  assert(open >= 0, `${name} has a body`);
+  let depth = 0;
+  for (let index = open; index < html.length; index += 1) {
+    if (html[index] === '{') depth += 1;
+    else if (html[index] === '}') {
+      depth -= 1;
+      if (depth === 0) return html.slice(start, index + 1);
+    }
+  }
+  assert.fail(`${name} has a complete body`);
+}
+
+const stripeInfoSandbox = { Object };
+vm.createContext(stripeInfoSandbox);
+new vm.Script(functionDeclaration('stripeInfo'), {
+  filename: 'expert-stripe-info.js',
+}).runInContext(stripeInfoSandbox);
+assert.deepEqual(
+  JSON.parse(JSON.stringify(stripeInfoSandbox.stripeInfo({
+    user: { stripe_connect_pending: true },
+    profile: {},
+    billing: {},
+    stripe: null,
+  }))),
+  { connected: false, pending: true },
+  'expert Stripe status safely reads the user pending fallback without an undeclared identifier',
+);
+assert.deepEqual(
+  JSON.parse(JSON.stringify(stripeInfoSandbox.stripeInfo({
+    user: {},
+    profile: { stripe_connect_pending: true },
+    billing: { stripe_connect: { connected: false } },
+    stripe: { connected: true },
+  }))),
+  { connected: true, pending: true },
+  'expert Stripe status combines the direct connection truth with the profile pending fallback',
+);
+
 const revenueStart = html.indexOf('  async function renderRevenue(){');
 const revenueEnd = html.indexOf('\n\n  async function renderPayouts(){', revenueStart);
 assert(revenueStart >= 0 && revenueEnd > revenueStart, 'canonical admin revenue renderer is present');

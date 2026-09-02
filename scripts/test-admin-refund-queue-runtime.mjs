@@ -163,7 +163,7 @@ function attributeValue(source, name) {
 function installQueue(htmlSource) {
   renderedHtml = String(htmlSource);
   const attributes = new Map();
-  for (const name of ['data-ob-refund-queue-state', 'data-ob-refund-queue-generation']) {
+  for (const name of ['data-ob-refund-queue-state', 'data-ob-refund-queue-generation', 'data-ob-refund-awaiting-count']) {
     const value = attributeValue(renderedHtml, name);
     if (value !== null) attributes.set(name, value);
   }
@@ -229,6 +229,12 @@ const sandbox = {
       style: 'currency', currency: String(currency || 'usd').toUpperCase(),
     }).format(Number(value || 0));
   },
+  when(value) {
+    if (!value) return '-';
+    const numeric = Number(value);
+    const date = Number.isFinite(numeric) ? new Date(numeric * 1000) : new Date(value);
+    return Number.isNaN(date.getTime()) ? '-' : date.toISOString();
+  },
   notify() {},
   prompt() { return ''; },
   setTimeout(callback, delay) {
@@ -266,11 +272,23 @@ for (const request of requests) {
 requests[1].resolve({ requests: [{
   id: 'voice-request-current', status: 'pending', request_type: 'session',
   session_id: 'voice-session-current', client_name: 'Voice client', expert_name: 'Expert',
-  amount_requested: 1.05, currency: 'usd', expert_reason: 'Voice refund',
+  amount_requested: 1.05, currency: 'usd', expert_reason: 'Voice refund', created_at: 1700000200,
+}, {
+  id: 'oldest-pending-request', status: 'pending', request_type: 'session',
+  session_id: 'oldest-pending-session', client_name: 'Oldest client', expert_name: 'Expert',
+  amount_requested: 4.25, currency: 'usd', expert_reason: 'Oldest decision', created_at: 1700000100,
+}, {
+  id: 'unknown-unresolved-request', status: 'provider_review', request_type: 'session',
+  client_name: 'Unknown-state client', expert_name: 'Expert',
+  amount_requested: 3, currency: 'usd', expert_reason: 'Unexpected durable state', created_at: 1700000350,
 }, {
   id: 'legacy-eur-written-reading', status: 'failed', request_type: 'on_demand',
   client_name: 'Legacy client', expert_name: 'Expert',
-  amount_requested: 21, currency: 'eur', expert_reason: 'Legacy currency review',
+  amount_requested: 21, currency: 'eur', expert_reason: 'Legacy currency review', created_at: 1700000300,
+}, {
+  id: 'approved-history-request', status: 'approved', request_type: 'session',
+  client_name: 'History client', expert_name: 'Expert', amount_requested: 2,
+  currency: 'usd', expert_reason: 'Decided history', created_at: 1700000400,
 }] });
 const voiceResult = await voiceLoad;
 assert.equal(voiceResult.applied, true);
@@ -281,6 +299,18 @@ assert.match(renderedHtml, /data-refund-request-status="pending"/);
 assert.match(renderedHtml, /data-refund-request-type="session"/);
 assert.match(renderedHtml, /data-refund-session-id="voice-session-current"/);
 assert.match(renderedHtml, /data-refund-action="approve"/);
+assert.equal(queueHost.getAttribute('data-ob-refund-awaiting-count'), '2');
+assert.match(renderedHtml, /Decision backlog: 2 awaiting admin/,
+  'the decision backlog is visible above decided history');
+assert.match(renderedHtml, /Ordered by urgency: awaiting-admin requests oldest first/);
+assert(renderedHtml.indexOf('oldest-pending-request') < renderedHtml.indexOf('voice-request-current'),
+  'awaiting-admin requests are ordered oldest first');
+assert(renderedHtml.indexOf('voice-request-current') < renderedHtml.indexOf('approved-history-request'),
+  'awaiting-admin work is rendered before approved history');
+assert(renderedHtml.indexOf('legacy-eur-written-reading') < renderedHtml.indexOf('unknown-unresolved-request'),
+  'failed and unknown unresolved states share a stable oldest-first bucket');
+assert.match(renderedHtml, /1 failed · 1 other unresolved · 1 decided/,
+  'unexpected durable states remain visible in the queue summary');
 assert.match(renderedHtml, /legacy-eur-written-reading[\s\S]*€21\.00/,
   'legacy non-USD records are displayed with their recorded currency instead of a false dollar label');
 assert(queueMount && queueMount !== content,

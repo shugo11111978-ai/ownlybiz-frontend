@@ -224,7 +224,11 @@ const sandbox = {
   api: deferredRequest,
   safe: escapeHtml,
   attr(value) { return escapeHtml(value).replace(/"/g, '&quot;'); },
-  usd(value) { return `$${Number(value || 0).toFixed(2)}`; },
+  usd(value, currency) {
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency', currency: String(currency || 'usd').toUpperCase(),
+    }).format(Number(value || 0));
+  },
   notify() {},
   prompt() { return ''; },
   setTimeout(callback, delay) {
@@ -262,7 +266,11 @@ for (const request of requests) {
 requests[1].resolve({ requests: [{
   id: 'voice-request-current', status: 'pending', request_type: 'session',
   session_id: 'voice-session-current', client_name: 'Voice client', expert_name: 'Expert',
-  amount_requested: 1.05, expert_reason: 'Voice refund',
+  amount_requested: 1.05, currency: 'usd', expert_reason: 'Voice refund',
+}, {
+  id: 'legacy-eur-written-reading', status: 'failed', request_type: 'on_demand',
+  client_name: 'Legacy client', expert_name: 'Expert',
+  amount_requested: 21, currency: 'eur', expert_reason: 'Legacy currency review',
 }] });
 const voiceResult = await voiceLoad;
 assert.equal(voiceResult.applied, true);
@@ -273,6 +281,8 @@ assert.match(renderedHtml, /data-refund-request-status="pending"/);
 assert.match(renderedHtml, /data-refund-request-type="session"/);
 assert.match(renderedHtml, /data-refund-session-id="voice-session-current"/);
 assert.match(renderedHtml, /data-refund-action="approve"/);
+assert.match(renderedHtml, /legacy-eur-written-reading[\s\S]*€21\.00/,
+  'legacy non-USD records are displayed with their recorded currency instead of a false dollar label');
 assert(queueMount && queueMount !== content,
   'the refund queue renders into a stable mount outside replaceable payment content');
 

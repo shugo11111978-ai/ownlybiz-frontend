@@ -56671,7 +56671,13 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   function token(){ return sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || ''; }
   function safe(v){ return String(v == null ? '' : v).replace(/[&<>"']/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
   function attr(v){ return safe(v).replace(/"/g,'&quot;'); }
-  function usd(v){ var n=Number(v||0); return '$' + (Number.isFinite(n)?n:0).toFixed(2); }
+  function usd(v, currency){
+    var n=Number(v||0), code=String(currency||'usd').trim().toUpperCase();
+    if(!Number.isFinite(n)) n=0;
+    if(!/^[A-Z]{3}$/.test(code)) code='USD';
+    try { return new Intl.NumberFormat('en-US',{style:'currency',currency:code}).format(n); }
+    catch(e){ return code + ' ' + n.toFixed(2); }
+  }
   function when(v){ if(!v) return '-'; var n=Number(v); var d=Number.isFinite(n) ? new Date(n*1000) : new Date(v); return isNaN(d.getTime()) ? '-' : d.toLocaleString(); }
   function notify(msg, kind){ if(typeof toastMsg==='function') toastMsg(msg, kind); else if(typeof toast==='function') toast(msg, kind); else console.log(msg); }
   function api(path, opts){
@@ -56929,7 +56935,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       var pending = normalizedStatus === 'pending';
       var requestId = attr(r.id || '');
       var decision = normalizedStatus === 'processing' ? 'In flight with Stripe; awaiting a signed terminal outcome. Approval and decline are disabled.' : safe(r.error_message || r.decline_reason || r.admin_note || '-');
-      return '<tr data-refund-request-id="' + requestId + '" data-refund-request-status="' + attr(normalizedStatus) + '" data-refund-request-type="' + attr(String(r.request_type || '').toLowerCase()) + '" data-refund-session-id="' + attr(r.session_id || '') + '"><td>' + safe(r.client_name || r.client_id || '-') + '<br><small>' + safe(r.client_email || '') + '</small></td><td>' + safe(r.expert_name || r.expert_id || '-') + '</td><td>' + safe(refundTypeLabel(r.request_type)) + (r.on_demand_topic ? '<br><small>' + safe(r.on_demand_topic) + '</small>' : '') + '</td><td>' + usd(r.amount_requested || 0) + '</td><td>' + refundStatusBadge(normalizedStatus) + '</td><td>' + safe(r.expert_reason || '-') + '</td><td>' + (pending ? '<button class="admin-action-btn" data-refund-request-id="' + requestId + '" data-refund-action="approve" onclick="obAdminApproveRefund(\'' + requestId + '\')">Approve</button> <button class="admin-action-btn danger" data-refund-request-id="' + requestId + '" data-refund-action="decline" onclick="obAdminDeclineRefund(\'' + requestId + '\')">Decline</button>' : decision) + '</td></tr>';
+      return '<tr data-refund-request-id="' + requestId + '" data-refund-request-status="' + attr(normalizedStatus) + '" data-refund-request-type="' + attr(String(r.request_type || '').toLowerCase()) + '" data-refund-session-id="' + attr(r.session_id || '') + '"><td>' + safe(r.client_name || r.client_id || '-') + '<br><small>' + safe(r.client_email || '') + '</small></td><td>' + safe(r.expert_name || r.expert_id || '-') + '</td><td>' + safe(refundTypeLabel(r.request_type)) + (r.on_demand_topic ? '<br><small>' + safe(r.on_demand_topic) + '</small>' : '') + '</td><td>' + usd(r.amount_requested || 0, r.currency) + '</td><td>' + refundStatusBadge(normalizedStatus) + '</td><td>' + safe(r.expert_reason || '-') + '</td><td>' + (pending ? '<button class="admin-action-btn" data-refund-request-id="' + requestId + '" data-refund-action="approve" onclick="obAdminApproveRefund(\'' + requestId + '\')">Approve</button> <button class="admin-action-btn danger" data-refund-request-id="' + requestId + '" data-refund-action="decline" onclick="obAdminDeclineRefund(\'' + requestId + '\')">Decline</button>' : decision) + '</td></tr>';
     }).join('');
     return '<div class="admin-card" id="ob-admin-refund-queue" data-ob-refund-queue-state="ready" style="margin-top:18px;"><div class="admin-card-title">Payments / Refund Requests <span class="admin-card-title-sub">Only untouched requests await an admin decision</span></div>' +
       '<div style="font-size:12px;color:rgba(246,241,233,.55);line-height:1.55;margin-bottom:12px;">For destination charges, approved refunds reverse the connected-account transfer and refund the proportional application fee when Stripe allows it. “Processing with Stripe” means Stripe already accepted the attempt: it is in flight, cannot be declined, and remains open until a signed terminal outcome is reconciled.</div>' +
@@ -57158,7 +57164,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
         card.querySelectorAll('button').forEach(function(btn){ if(/full refund/i.test(btn.textContent || '')) btn.textContent = 'Request refund'; });
       }
       api('/credits/clients/' + encodeURIComponent(clientId) + '/refund-requests').then(function(d){
-        var rows = (d.requests || []).slice(0,5).map(function(r){ return '<div style="display:flex;justify-content:space-between;gap:10px;border-top:1px solid rgba(0,0,0,.08);padding-top:8px;margin-top:8px;font-size:12px;"><span>' + refundStatusBadge(r.status) + ' ' + usd(r.amount_requested || 0) + '</span><span style="color:var(--gray-400);text-align:right;">' + safe(r.decline_reason || r.error_message || r.admin_note || 'Admin review') + '</span></div>'; }).join('');
+        var rows = (d.requests || []).slice(0,5).map(function(r){ return '<div style="display:flex;justify-content:space-between;gap:10px;border-top:1px solid rgba(0,0,0,.08);padding-top:8px;margin-top:8px;font-size:12px;"><span>' + refundStatusBadge(r.status) + ' ' + usd(r.amount_requested || 0, r.currency) + '</span><span style="color:var(--gray-400);text-align:right;">' + safe(r.decline_reason || r.error_message || r.admin_note || 'Admin review') + '</span></div>'; }).join('');
         if(card && rows && !document.getElementById('ob-client-refund-status-list')) card.insertAdjacentHTML('beforeend','<div id="ob-client-refund-status-list" style="width:100%;font-size:12px;color:var(--gray-500);">' + rows + '</div>');
       }).catch(function(){});
     }, 450);
@@ -59781,7 +59787,13 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   function token(){ return sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || ''; }
   function esc(v){ return String(v == null ? '' : v).replace(/[&<>"']/g,function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
   function attr(v){ return esc(v).replace(/"/g,'&quot;'); }
-  function money(v){ var n = Number(v || 0); return '$' + (Number.isFinite(n) ? n : 0).toFixed(2); }
+  function money(v, currency){
+    var n=Number(v||0), code=String(currency||'usd').trim().toUpperCase();
+    if(!Number.isFinite(n)) n=0;
+    if(!/^[A-Z]{3}$/.test(code)) code='USD';
+    try { return new Intl.NumberFormat('en-US',{style:'currency',currency:code}).format(n); }
+    catch(e){ return code + ' ' + n.toFixed(2); }
+  }
   function int(v){ var n = Number(v || 0); return Number.isFinite(n) ? Math.round(n) : 0; }
   function api(path, opts){
     opts = opts || {};
@@ -60046,7 +60058,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       var action = pending
         ? '<button class="admin-action-btn" type="button" onclick="obAdminExpertApproveRefund(&quot;' + attr(r.id) + '&quot;)">Approve</button> <button class="admin-action-btn danger" type="button" onclick="obAdminExpertDeclineRefund(&quot;' + attr(r.id) + '&quot;)">Decline</button>'
         : normalizedStatus === 'processing' ? 'In flight with Stripe; awaiting a signed terminal outcome. Approval and decline are disabled.' : esc(r.error_message || r.decline_reason || r.admin_note || '-');
-      return '<tr><td>' + esc(r.client_name || r.client_id || '-') + '<br><small>' + esc(r.client_email || '') + '</small></td><td>' + esc(refundTypeLabel(r.request_type)) + (r.on_demand_topic ? '<br><small>' + esc(r.on_demand_topic) + '</small>' : '') + '</td><td>' + money(r.amount_requested || 0) + '</td><td>' + refundStatus(r.status) + '</td><td>' + esc(r.expert_reason || '-') + '</td><td>' + action + '</td></tr>';
+      return '<tr><td>' + esc(r.client_name || r.client_id || '-') + '<br><small>' + esc(r.client_email || '') + '</small></td><td>' + esc(refundTypeLabel(r.request_type)) + (r.on_demand_topic ? '<br><small>' + esc(r.on_demand_topic) + '</small>' : '') + '</td><td>' + money(r.amount_requested || 0, r.currency) + '</td><td>' + refundStatus(r.status) + '</td><td>' + esc(r.expert_reason || '-') + '</td><td>' + action + '</td></tr>';
     }).join('');
     return '<div class="admin-card" id="ob-admin-expert-detail-refunds" style="padding:18px;margin-top:18px;"><div class="admin-card-title">Refund requests <span class="admin-card-title-sub">Review this expert without leaving their record</span></div><div style="font-size:12px;color:rgba(246,241,233,.55);line-height:1.55;margin-bottom:12px;">Only an untouched request marked “Awaiting admin” can be approved or declined. “Processing with Stripe” means Stripe accepted the refund attempt; it is in flight and cannot be declined while the signed terminal outcome is pending.</div><div style="overflow:auto;"><table class="experts-table" style="width:100%;"><thead><tr><th>Client</th><th>Type</th><th>Amount</th><th>Status</th><th>Expert note</th><th>Action / decision</th></tr></thead><tbody>' + (rows || '<tr><td colspan="6" style="padding:24px;text-align:center;color:rgba(246,241,233,.45);">No refund requests for this expert.</td></tr>') + '</tbody></table></div></div>';
   }

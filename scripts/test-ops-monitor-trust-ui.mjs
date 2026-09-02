@@ -304,6 +304,21 @@ const paymentOperationsHtml=hooks.renderPaymentOperations(healthyOverview);
 assert.match(paymentOperationsHtml,/Payment operations[\s\S]*Authoritative payment database aggregates: COMPLETE[\s\S]*End-to-end Stripe delivery: NOT COVERED/,'payment operations renders authoritative database scope without implying end-to-end Stripe delivery coverage');
 assert.match(paymentOperationsHtml,/Stripe delivery attempts \/ signature failures<\/td><td>NOT COVERED \/ NOT COVERED/,'unreceived Stripe attempts and signature failures stay explicitly outside the verified receipt ledger');
 assert.match(paymentOperationsHtml,/Stripe Connect bank payout failed[\s\S]*connected-account bank payout; not a platform payout queue/,'payout failure evidence is explicitly a Stripe Connect bank payout, not a platform payout queue');
+const authorizationOutcomeHtml=hooks.renderPaymentOperations({
+  ...healthyOverview,
+  payment_operations:{
+    ...healthyPaymentOperations,
+    authorizations:{
+      ...healthyPaymentOperations.authorizations,
+      total:6,
+      by_status:{...healthyPaymentOperations.authorizations.by_status,captured:1,released:2,canceled:1,expired:1,failed:1},
+    },
+  },
+});
+assert.match(authorizationOutcomeHtml,/Authorization outcomes[\s\S]*Captured 1 · released 2[\s\S]*Canceled 1 · expired 1 · failed 1/,
+  'Ops renders every terminal authorization outcome instead of only open holds');
+assert.match(authorizationOutcomeHtml,/Authorization captured \/ released \/ canceled \/ expired \/ failed · all recorded[\s\S]*1 \/ 2 \/ 1 \/ 1 \/ 1[\s\S]*outcome counts; captured\/released amounts are not aggregated here/,
+  'authorization outcomes identify their all-recorded count scope and do not imply amount coverage');
 const processingRefundPaymentOperations={...healthyPaymentOperations,refund_requests:{...healthyPaymentOperations.refund_requests,total:1,by_status:{...healthyPaymentOperations.refund_requests.by_status,processing:1},pending_amount_requested:12.34,oldest_pending_created_at:paymentDatabaseNow,oldest_pending_age_sec:0}};
 const processingRefundOverview=withOverviewProvenance({...healthyOverview,summary:{...healthyOverview.summary,pending_refund_requests:1,processing_refund_requests:1},payment_operations:processingRefundPaymentOperations});
 assert.equal(hooks.validOpsOverview(processingRefundOverview),true,'a Stripe-accepted refund remains a distinct in-flight processing state in the exact Ops contract');
@@ -1322,14 +1337,22 @@ assert.match(html,/setExpertStripeAction\('unknown',null\)[\s\S]*No connection, 
   'a failed expert readiness fetch becomes unavailable without retaining a live-looking Stripe state');
 assert.match(html,/!r\.ok\|\|!d\|\|typeof d\.connected!==['"]boolean['"][\s\S]*Stripe status unavailable/,
   'HTTP failures and malformed Stripe readiness payloads fail closed instead of becoming Not connected');
-assert.match(html,/d\.connected===true&&safeStripeDashboardUrl\(d\.dashboard_url\)[\s\S]*Open Stripe Dashboard/,
-  'Open Stripe Dashboard appears only after the authoritative readiness response and safe Dashboard URL validate');
+assert.match(html,/typeof d\.connected!==['"]boolean['"]\|\|!canonicalExpertConnectContractValid\(d\)/,
+  'the Stripe status fetch rejects responses that omit or corrupt the canonical readiness envelope');
+assert.match(html,/var dashboardUrl=state==='connected'\?safeStripeDashboardUrl\(data&&data\.dashboard_url\):''[\s\S]*state==='connected'&&!dashboardUrl[\s\S]*dashboardUrl\?'Open Stripe Dashboard/,
+  'Open Stripe Dashboard appears only after canonical readiness selects connected and the URL allowlist validates');
+assert.match(html,/authority\.state==='connected'&&authority\.dashboard_url[\s\S]*window\.open\(authority\.dashboard_url,'_blank','noopener'\)/,
+  'the expert Stripe action opens only its sanitized authority URL with opener isolation');
 assert.match(html,/id="pay-payout-btn"[\s\S]*disabled[\s\S]*Checking Stripe…/,
   'the transaction-history Stripe action also starts disabled while readiness is unknown');
 assert.doesNotMatch(html,/window\.open\(stripe\.dashboard_url/,
   'legacy expert payment code cannot open an unvalidated URL from a Stripe status response');
 assert.match(html,/A ready Connect signing secret proves only that receipts accepted by this endpoint were authenticated[\s\S]*does not establish the current connected-account capabilities, balance, or bank-payout state/,
   'Ops Monitor limits Connect signing evidence to authenticated receipts and requires provider reconciliation for current state');
+assert.match(html,/payment_failures_24h:'Sessions created in trailing 24h still show payment-failure status'/,
+  'the session payment-failure cohort is labeled as current state by creation window, not incident timing');
+assert.doesNotMatch(html,/payment_failures_24h:'Recent payment failures'/,
+  'the frontend does not describe an untimestamped current-state cohort as recent failure incidents');
 assert.doesNotMatch(html,/Pending Payouts|Pending payout|Pending withdrawal|Withdraw Earnings|acct_1234567890|acct_1QmXGE9jK7/,
   'live-looking internal payout queues, withdrawal claims, and fake connected-account IDs are absent');
 assert.doesNotMatch(html,/Default Payout Schedule|Minimum Payout Threshold|Payout hold period|Auto-approve payouts/,

@@ -20,11 +20,80 @@ function functionDeclaration(name) {
   assert.fail(`${name} has a complete body`);
 }
 
-const stripeInfoSandbox = { Object };
+const connectTrustStart = html.indexOf('\t  function safeStripeDashboardUrl(value){');
+const connectTrustEnd = html.indexOf('\t  function setExpertStripeAction(state,data){', connectTrustStart);
+assert(connectTrustStart >= 0 && connectTrustEnd > connectTrustStart,
+  'expert Connect trust helpers have a bounded runtime section');
+const stripeInfoSandbox = {
+  Object,
+  URL,
+  window: null,
+  location: { origin: 'https://staging.example.test' },
+  __OB_TEST_HOOKS__: {},
+};
+stripeInfoSandbox.window = stripeInfoSandbox;
 vm.createContext(stripeInfoSandbox);
+new vm.Script(html.slice(connectTrustStart, connectTrustEnd), {
+  filename: 'expert-connect-trust.js',
+}).runInContext(stripeInfoSandbox);
 new vm.Script(functionDeclaration('stripeInfo'), {
   filename: 'expert-stripe-info.js',
 }).runInContext(stripeInfoSandbox);
+new vm.Script(functionDeclaration('billingConnectReady'), {
+  filename: 'billing-connect-trust.js',
+}).runInContext(stripeInfoSandbox);
+
+const connectTrust = stripeInfoSandbox.__OB_TEST_HOOKS__.expertConnectTrust;
+assert(connectTrust, 'expert Connect trust hooks are exposed');
+const canonicalV2Ready = {
+  connected: true,
+  charges_enabled: false,
+  payouts_enabled: false,
+  details_submitted: false,
+  paid_sessions_ready: true,
+  expert_share_transfer_ready: true,
+  account_namespace: 'v2',
+  recipient_transfers_status: 'active',
+  connect_balance_status: 'not_included',
+  connect_bank_payouts_status: 'not_included',
+};
+assert.equal(connectTrust.isReady(canonicalV2Ready), true,
+  'Accounts v2 recipient-transfer readiness wins over unrelated legacy booleans');
+assert.equal(stripeInfoSandbox.billingConnectReady(canonicalV2Ready), true,
+  'billing surfaces use the same canonical v2 readiness decision');
+
+for (const [label, value] of [
+  ['legacy connected-only response', { connected: true, charges_enabled: true, payouts_enabled: true }],
+  ['partial canonical response', { ...canonicalV2Ready, connect_bank_payouts_status: undefined }],
+  ['disconnected canonical response', { ...canonicalV2Ready, connected: false }],
+  ['contradictory paid-session response', { ...canonicalV2Ready, paid_sessions_ready: false }],
+  ['contradictory transfer response', { ...canonicalV2Ready, expert_share_transfer_ready: false }],
+  ['pending response', { ...canonicalV2Ready, pending: true }],
+  ['restricted recipient transfers', { ...canonicalV2Ready, recipient_transfers_status: 'restricted' }],
+  ['provider error response', { ...canonicalV2Ready, error: 'provider_unavailable' }],
+  ['invalid namespace', { ...canonicalV2Ready, account_namespace: 'v3' }],
+  ['invalid recipient-transfer state', { ...canonicalV2Ready, recipient_transfers_status: 'ready' }],
+  ['invented balance state', { ...canonicalV2Ready, connect_balance_status: 'available' }],
+]) {
+  assert.equal(connectTrust.isReady(value), false, `${label} fails closed`);
+  assert.equal(stripeInfoSandbox.billingConnectReady(value), false,
+    `${label} also fails closed in billing surfaces`);
+}
+assert.equal(connectTrust.state({ ...canonicalV2Ready, recipient_transfers_status: 'restricted' }), 'pending',
+  'restricted recipient transfers render as incomplete setup, never Ready');
+assert.equal(connectTrust.state({ ...canonicalV2Ready, error: 'provider_unavailable' }), 'unknown',
+  'provider failures render as unavailable, never disconnected or Ready');
+assert.equal(connectTrust.safeDashboardUrl('https://dashboard.stripe.com/test/connect/accounts'),
+  'https://dashboard.stripe.com/test/connect/accounts');
+for (const unsafeUrl of [
+  'http://dashboard.stripe.com/test/connect/accounts',
+  'https://dashboard.stripe.com.evil.example/test/connect/accounts',
+  'javascript:alert(1)',
+  '/admin/fake-stripe-dashboard',
+]) {
+  assert.equal(connectTrust.safeDashboardUrl(unsafeUrl), '', `unsafe Stripe Dashboard URL is rejected: ${unsafeUrl}`);
+}
+
 assert.deepEqual(
   JSON.parse(JSON.stringify(stripeInfoSandbox.stripeInfo({
     user: { stripe_connect_pending: true },
@@ -32,18 +101,18 @@ assert.deepEqual(
     billing: {},
     stripe: null,
   }))),
-  { connected: false, pending: true },
+  { ready: false, connected: false, pending: true, state: 'unknown' },
   'expert Stripe status safely reads the user pending fallback without an undeclared identifier',
 );
 assert.deepEqual(
   JSON.parse(JSON.stringify(stripeInfoSandbox.stripeInfo({
     user: {},
-    profile: { stripe_connect_pending: true },
-    billing: { stripe_connect: { connected: false } },
-    stripe: { connected: true },
+    profile: {},
+    billing: { stripe_connect: {} },
+    stripe: canonicalV2Ready,
   }))),
-  { connected: true, pending: true },
-  'expert Stripe status combines the direct connection truth with the profile pending fallback',
+  { ready: true, connected: true, pending: false, state: 'connected' },
+  'expert Stripe status exposes canonical paid-session readiness without trusting legacy booleans',
 );
 
 const revenueStart = html.indexOf('  async function renderRevenue(){');
@@ -73,8 +142,29 @@ assert.doesNotMatch(html, /Revenue This Month/i,
 assert.match(html, /<div class="kpi-label">All-time earnings<\/div>/);
 assert.match(html, /if\(lbl\.includes\('all-time earnings'\)\)/,
   'expert earnings renderer targets the truthful all-time label');
-assert.match(html, /fmt\$\(dash\.recorded_expert_share\|\|0\)/,
-  'recorded expert share uses its dedicated backend field instead of duplicating total earnings');
+assert.match(html, /<div class="kpi-label">Stripe bank payout status<\/div>[\s\S]*?<div class="kpi-value"[^>]*>Check Stripe<\/div>/,
+  'the second expert KPI is a provider boundary instead of a duplicated earnings amount');
+assert.match(html, /Balance, eligibility, timing, and history are not mirrored here/,
+  'expert UI does not infer connected-account balance or bank-payout state');
+
+const staticAdminStart = html.indexOf('<!-- ========== ADMIN OVERVIEW ========== -->');
+const staticAdminEnd = html.indexOf('<!-- ========== EXPERTS PANEL ========== -->', staticAdminStart);
+assert(staticAdminStart >= 0 && staticAdminEnd > staticAdminStart, 'static admin overview is bounded');
+const staticAdminOverview = html.slice(staticAdminStart, staticAdminEnd);
+for (const id of ['kpi-total-experts', 'kpi-gross-revenue', 'kpi-platform-revenue', 'kpi-active-sessions']) {
+  assert.match(staticAdminOverview, new RegExp(`id="${id}">—<`),
+    `${id} starts unknown until authoritative data loads`);
+}
+assert.match(staticAdminOverview, /Loading authoritative sign-up data…/,
+  'recent signups start as an explicit loading state');
+assert.doesNotMatch(staticAdminOverview, /\+234 this week|\+22% vs last month|7,708|Raj Kumar|Maya Levi/,
+  'the initial admin dashboard has no live-looking sample growth, tier, or signup data');
+assert.match(html, /Live staging health and business snapshot/,
+  'the staging admin header identifies the environment truthfully');
+assert.match(html, /Loading live staging data/,
+  'staging loaders do not claim to be reading production');
+assert.doesNotMatch(html, /Live production health and business snapshot|Loading live production data|Changes affect production/,
+  'the staging admin surface contains no production-environment claims');
 
 const authStart = html.indexOf('\t  function stripeAdminAuthContext(scope){');
 const authEndMarker = '  window.loadAdminPaymentSettings = loadStripeSettings;';

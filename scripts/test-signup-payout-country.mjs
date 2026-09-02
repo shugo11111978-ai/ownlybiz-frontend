@@ -12,13 +12,21 @@ assert.match(html, />Learn more</, 'collapsed country guidance identifies the ex
 assert.match(html, />Show less</, 'expanded country guidance identifies the collapse action');
 assert.doesNotMatch(html, /\.ob-payout-country-details summary::after/, 'country guidance does not add a second arrow');
 assert.match(html, /aria-describedby="signup-payout-country-summary"/, 'country selector describes its live guidance accessibly');
-assert.match(html, /Stripe payouts and paid subscription plans are available/, 'expanded country guidance explains Stripe eligibility');
+assert.match(html, /Legal Stripe account country/, 'signup distinguishes the connected-account country from a payout destination');
+assert.match(html, /check Stripe Connect onboarding and paid-plan availability[\s\S]*does not confirm current balance or bank-payout eligibility/,
+  'expanded country guidance limits Ownlybiz eligibility claims and keeps bank-payout authority in Stripe');
 assert.doesNotMatch(html, /class="ob-payout-country-help"/, 'question-mark tooltip is removed');
-assert.match(html, /noteSummaryText\.textContent = 'Paid plans and Stripe payouts are not available for this country yet\.'/,
-  'step-one unsupported guidance does not mention manual approval');
+assert.match(html, /noteSummaryText\.textContent = 'Supported for Ownlybiz paid plans and Stripe Connect onboarding\. Bank-payout status is verified in Stripe\.'/,
+  'supported country guidance does not claim provider balance or bank-payout readiness');
+assert.match(html, /noteSummaryText\.textContent = 'Ownlybiz paid plans and Stripe Connect onboarding are not available for this country yet\.'/,
+  'step-one unsupported guidance does not imply a platform-controlled payout decision');
 assert.match(html, /\/api\/billing\/payout-countries/, 'signup loads the server country catalog');
 assert.match(html, /payout_country:payoutCountry/, 'signup sends payout country to the backend');
 assert.match(html, /Choose Starter to submit your account for manual review/, 'the later plan step explains Starter review');
+assert.match(html, />Stripe account country<\/label>/,
+  'Connect onboarding asks for the connected-account country without implying a platform payout account');
+assert.doesNotMatch(html, /Stripe payout account is legally based/,
+  'signup and Connect onboarding avoid the obsolete payout-account description');
 assert.match(html, /paidBlocked = p\.id !== 'starter'/, 'only paid signup plans are country-gated');
 assert.match(html, /btn\.disabled = paidBlocked/, 'unsupported paid checkout button is disabled');
 assert.match(

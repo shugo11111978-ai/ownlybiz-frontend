@@ -131,10 +131,10 @@ assert.match(authorizationPolicySource, /adoptPaymentsConfig:adoptPaymentsConfig
   'fresh payments config has one canonical policy adoption path');
 assert.match(html, /data-ob-session-authorization-copy="disclosure"/,
   'immediate payment disclosure is owned by the dynamic authorization policy');
-assert.match(html, /Any unused amount is released after the session/,
-  'payment page explains release of the unused authorization');
-assert.match(html, /your bank may show it as pending briefly/,
-  'payment page calmly explains that the released authorization can remain visible temporarily');
+assert.match(html, /After successful session settlement, Ownlybiz asks Stripe to release any unused amount/,
+  'payment page describes the release as a post-settlement request, not an immediate guarantee');
+assert.match(html, /your bank controls when the pending entry disappears/,
+  'payment page identifies the bank as the authority for pending-entry timing');
 assert.match(authorizationPolicySource, /is a temporary authorization, not an extra session charge/,
   'payment page does not describe the hold as a charge or card test');
 assert.match(html, />Verify payment &amp; Continue|>Verify payment & Continue/,

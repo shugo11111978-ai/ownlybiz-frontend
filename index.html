@@ -45477,11 +45477,17 @@ body.ob-ops-modal-open{overflow:hidden!important}
 	    'Application':Object.freeze({title:'Operational problem',cause:'The monitor reported abnormal aggregate behavior without a recognized problem category.',action:'Inspect the allowlisted aggregate report and recent deployment logs before changing state.',evidence:'Unknown free-form evidence is omitted from clipboard.'})
 	  });
 	  function projectedProblemHandoff(item){item=item&&typeof item==='object'&&!Array.isArray(item)?item:{};var area=Object.prototype.hasOwnProperty.call(PROBLEM_CLIPBOARD_COPY,item.area)?item.area:'Application',copy=PROBLEM_CLIPBOARD_COPY[area],severity=['critical','warning','degraded'].indexOf(String(item.severity||'').toLowerCase())>=0?String(item.severity).toLowerCase():'unknown';return {area:area,title:copy.title,severity:severity,cause:copy.cause,evidence:copy.evidence,action:copy.action};}
-  window.obCopyProblemHandoff = function(index){
+  window.obCopyProblemHandoff = async function(index){
     var item = (window.__obProblemHandoffs || [])[index]; if(!item) return;
 	    var projected=projectedProblemHandoff(item);
 	    var text = 'Area: ' + projected.area + '\nProblem: ' + projected.title + '\nSeverity: ' + projected.severity + '\nLikely cause: ' + projected.cause + '\nEvidence: ' + projected.evidence + '\nDeveloper action: ' + projected.action;
-    if(navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).catch(function(){});
+    try {
+      if(typeof window.obOpsCopyText !== 'function') throw new Error('The verified clipboard helper is not available yet.');
+      await window.obOpsCopyText(text);
+      if(typeof window.obOpsSetActionFeedback === 'function') window.obOpsSetActionFeedback('Copied a privacy-safe developer handoff to clipboard.','success');
+    } catch(error) {
+      if(typeof window.obOpsSetActionFeedback === 'function') window.obOpsSetActionFeedback('Copy handoff failed; no clipboard success was recorded: '+String(error&&error.message||error),'error');
+    }
   };
 	  if(window.__OB_TEST_HOOKS__)window.__OB_TEST_HOOKS__.opsProblemClipboard={projectedProblemHandoff:projectedProblemHandoff};
 	  function renderDeveloperHandoff(data,snapshot){
@@ -45651,8 +45657,8 @@ body.ob-ops-modal-open{overflow:hidden!important}
     var actions = guide.safe_actions || [];
     var action = actions.find(function(a){ return a.id === actionId; }) || {};
     if(action.id === 'copy_report'){
-      var text = reportText(item.alert, guide);
-      if(navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).catch(function(){});
+      if(typeof window.obOpsRunControl === 'function') return window.obOpsRunControl('copy_report');
+      if(typeof window.obOpsSetActionFeedback === 'function') window.obOpsSetActionFeedback('The verified developer-report copier is not available yet. Reopen Ops Monitor and try again.','error');
       return;
     }
     if(action.id === 'refresh_ops'){
@@ -45727,6 +45733,20 @@ body.ob-ops-modal-open{overflow:hidden!important}
 	    var snapshot=window.obGetOpsSnapshot&&window.obGetOpsSnapshot();if(snapshot)renderOwnerActionGuide(snapshot.data,snapshot);
   }
   function boot(){ wire(); }
+  var previousOpenOps = window.obOpenOpsDashboard;
+  if(typeof previousOpenOps === 'function') {
+    window.obOpenOpsDashboard = function(){
+      var out = previousOpenOps.apply(this, arguments);
+      wire();
+      return out;
+    };
+  }
+  if(window.OB_CLIENT_CONTEXT && typeof window.OB_CLIENT_CONTEXT.register === 'function') {
+    window.OB_CLIENT_CONTEXT.register('ops-owner-action-guides', {
+      changed:function(current){ if(current && current.role === 'admin') setTimeout(boot, 0); },
+      credentialRotated:function(current){ if(current && current.role === 'admin') setTimeout(boot, 0); }
+    });
+  }
   boot();
   [500,1600,3600,7000].forEach(function(ms){ setTimeout(boot, ms); });
   document.addEventListener('DOMContentLoaded', boot);
@@ -50973,10 +50993,14 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     var area = document.createElement('textarea');
     area.value = text;
     document.body.appendChild(area);
-    area.select();
-    document.execCommand('copy');
-    area.remove();
+    try {
+      area.select();
+      if(document.execCommand('copy') !== true) throw new Error('The browser did not confirm the clipboard write.');
+    } finally {
+      area.remove();
+    }
   }
+  window.obOpsCopyText=copyText;
   function actionResult(text,state,meta){
     var feedback={text:String(text||''),state:String(state||'info'),at:new Date().toISOString(),meta:meta||null};
     window.__obOpsActionFeedback=feedback;
@@ -51034,7 +51058,12 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
 	  var OPS_MUTATION_OVERVIEW_TTL_MS=30000;
 	  var OPS_ACTION_REQUEST_TIMEOUT_MS=15000;
 	  var opsActionControllers=[];
-	  function setOpsActionButtonsBusy(busy){if(typeof document==='undefined'||!document.querySelectorAll)return;Array.from(document.querySelectorAll('#ob-ops-action-center button')).forEach(function(button){button.disabled=!!busy;button.setAttribute('aria-busy',busy?'true':'false');});}
+	  function setOpsActionButtonsBusy(busy){
+	    if(typeof document==='undefined'||!document.querySelectorAll)return;
+	    Array.from(document.querySelectorAll('#ob-ops-action-center button')).forEach(function(button){button.disabled=!!busy;button.setAttribute('aria-busy',busy?'true':'false');});
+	    var center=document.getElementById&&document.getElementById('ob-ops-action-center');
+	    if(center)window.__obOpsActionCenterHtml=center.outerHTML;
+	  }
   function opsIdentityVerification(){
     var snapshot=window.obGetOpsSnapshot&&window.obGetOpsSnapshot();
     var raw=snapshot&&snapshot.data&&snapshot.data.runtime_identity||{};

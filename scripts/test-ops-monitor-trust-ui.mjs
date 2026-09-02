@@ -532,6 +532,24 @@ assert.equal(sandbox.obGetOpsSnapshot(),null,'the auth changed handler also scru
 assert.equal(sandbox.__obOpsActionFeedback,null,'the auth changed handler scrubs prior action feedback');
 
 const actionSource=scriptById('ob-admin-live-ops-20260516-script');
+const busyCacheButton={disabled:false,ariaBusy:'false',setAttribute(key,value){if(key==='aria-busy')this.ariaBusy=String(value);}};
+const busyCacheCenter={};
+Object.defineProperty(busyCacheCenter,'outerHTML',{get(){return '<section id="ob-ops-action-center"><button'+(busyCacheButton.disabled?' disabled':'')+' aria-busy="'+busyCacheButton.ariaBusy+'">Copy report</button></section>';}});
+const busyCacheSandbox={window:null,Array,document:{querySelectorAll:()=>[busyCacheButton],getElementById:()=>busyCacheCenter}};busyCacheSandbox.window=busyCacheSandbox;
+vm.createContext(busyCacheSandbox);new vm.Script(section(actionSource,'\t  function setOpsActionButtonsBusy(busy){','  function opsIdentityVerification(){')+'\nthis.testSetOpsActionButtonsBusy=setOpsActionButtonsBusy;').runInContext(busyCacheSandbox);
+busyCacheSandbox.testSetOpsActionButtonsBusy(true);
+assert.match(busyCacheSandbox.__obOpsActionCenterHtml,/disabled[\s\S]*aria-busy="true"/,'the cached action center records the in-flight state');
+busyCacheSandbox.testSetOpsActionButtonsBusy(false);
+assert.doesNotMatch(busyCacheSandbox.__obOpsActionCenterHtml,/disabled|aria-busy="true"/,'the cached action-center HTML is re-enabled before the next telemetry render');
+const copyTextSource=section(actionSource,'  async function copyText(text){','  function actionResult(text,state,meta){');
+let fallbackAreaRemoved=false;
+const fallbackCopySandbox={window:null,navigator:{},Error,document:{body:{appendChild(){}},createElement:()=>({value:'',select(){},remove(){fallbackAreaRemoved=true;}}),execCommand:()=>false}};fallbackCopySandbox.window=fallbackCopySandbox;
+vm.createContext(fallbackCopySandbox);new vm.Script(copyTextSource+'\nthis.testCopyText=copyText;').runInContext(fallbackCopySandbox);
+await assert.rejects(()=>fallbackCopySandbox.testCopyText('report'),/did not confirm the clipboard write/,'a false legacy clipboard result cannot produce success');
+assert.equal(fallbackAreaRemoved,true,'the legacy clipboard textarea is removed after a false result');
+fallbackAreaRemoved=false;fallbackCopySandbox.document.execCommand=()=>{throw new Error('legacy clipboard denied');};
+await assert.rejects(()=>fallbackCopySandbox.testCopyText('report'),/legacy clipboard denied/);
+assert.equal(fallbackAreaRemoved,true,'the legacy clipboard textarea is removed even when copy throws');
 new vm.Script(actionSource,{filename:'ob-admin-live-ops.js'});
 const actionIdentitySource=section(actionSource,"  var EXPECTED_OPS_API_BASE='https://victorious-wisdom-production-a6b0.up.railway.app';",'  function opsContractError(message,envelope){');
 const actionNow=Date.now();
@@ -947,6 +965,32 @@ assert.equal(raceCallCount,3,'the overlapping public call cannot race a fourth r
 const developerSource=scriptById('ob-prod-admin-monitor-fixes-script');
 const ownerSource=scriptById('ob-owner-action-guides-script');
 const sfuSource=scriptById('ownlybiz-one-to-one-sfu-admin-20260527');
+const ownerLifecycleLocalStorage=storage(),ownerLifecycleSessionStorage=storage(),ownerSnapshotListeners=[];
+let ownerLifecycleAdapter=null,ownerOpenCalls=0,ownerCopyControl=null;
+const ownerLifecycleSandbox={window:null,String,Number,Object,Array,JSON,Promise,Date,
+  localStorage:ownerLifecycleLocalStorage,sessionStorage:ownerLifecycleSessionStorage,
+  navigator:{clipboard:{writeText:async()=>{throw new Error('owner-guide copy must use the verified central report controller');}}},
+  document:{getElementById:()=>null,addEventListener(){}},
+  setTimeout:callback=>{callback();return 1;},
+  addEventListener:(type,handler)=>{if(type==='ob:ops-snapshot')ownerSnapshotListeners.push(handler);},
+  obOpenOpsDashboard:()=>{ownerOpenCalls+=1;},
+  obOpsRunControl:async action=>{ownerCopyControl=action;return {ok:true};},
+  OB_CLIENT_CONTEXT:{register:(name,adapter)=>{assert.equal(name,'ops-owner-action-guides');ownerLifecycleAdapter=adapter;return ()=>{};}},
+  __OB_TEST_HOOKS__:{},
+};
+ownerLifecycleSandbox.window=ownerLifecycleSandbox;
+vm.createContext(ownerLifecycleSandbox);new vm.Script(ownerSource,{filename:'ops-owner-action-guides.js'}).runInContext(ownerLifecycleSandbox);
+assert.equal(ownerSnapshotListeners.length,0,'the owner guide does not wire private admin telemetry before authentication');
+ownerLifecycleLocalStorage.setItem('ob_u',JSON.stringify({id:'admin-late',role:'admin'}));
+ownerLifecycleSandbox.obOpenOpsDashboard();
+assert.equal(ownerOpenCalls,1,'the late-auth owner-guide wrapper preserves the canonical Ops open action');
+assert.equal(ownerSnapshotListeners.length,1,'opening Ops Monitor after late authentication wires owner guidance immediately');
+ownerLifecycleAdapter.changed({id:'admin-late',role:'admin'});
+ownerLifecycleAdapter.credentialRotated({id:'admin-late',role:'admin'});
+assert.equal(ownerSnapshotListeners.length,1,'auth lifecycle retries cannot duplicate the owner-guide snapshot listener');
+ownerLifecycleSandbox.__obOwnerGuideItems=[{alert:{key:'background_task_dead_jobs'},guide:{safe_actions:[{id:'copy_report',label:'Copy developer report',kind:'client'}]}}];
+await ownerLifecycleSandbox.obOwnerActionGuideRun(0,'copy_report');
+assert.equal(ownerCopyControl,'copy_report','owner guidance delegates developer-report copying to the verified central controller with truthful feedback');
 const alertClipboardSandbox={window:null,String,Number,Object,Array,JSON,__OB_TEST_HOOKS__:{}};alertClipboardSandbox.window=alertClipboardSandbox;
 vm.createContext(alertClipboardSandbox);new vm.Script(section(ownerSource,'  function fallbackGuide(alert){','  var OWNER_ACTION_CONTROLS')).runInContext(alertClipboardSandbox);
 const maliciousAlertCopy=alertClipboardSandbox.__OB_TEST_HOOKS__.opsAlertClipboard.reportText({key:'broken_upload_assets',severity:'warning',title:'sk_live_51PRIVATEVALUE portrait-private.jpg alice@example.test',detail:'Bearer verysecrettokenvalue /private/uploads/portrait.jpg',at:'2026-09-01T08:00:00Z',meta:{missing_count:1,owner:'alice@example.test',name:'portrait.jpg',slug:'alice',id:'asset-secret-id',path:'/Users/admin/portrait.jpg',token:'LEAK-ME',provider:'sk_live_51PRIVATEVALUE'}},{impact:'Clients see a gap sk_live_51PRIVATEVALUE',cause:'token=LEAK-ME',owner_action:'Inspect /var/private/file',auto_recovery:'No',escalation:'password=LEAK-ME'});
@@ -960,11 +1004,20 @@ assert.equal(samplingAlertProjection.meta.latency_sampling,'latest_requests_with
 assert.match(samplingAlertProjection.impact,/evidence-completeness warning, not proof that the API is unhealthy/,'owner guidance treats bounded p95 sampling as evidence completeness rather than an incident claim');
 assert.match(unknownAlertCopy,/Unrecognized alert; free-form prose omitted/);
 assert.doesNotMatch(unknownAlertCopy,/sk_live_51PRIVATEVALUE|portrait-private\.jpg|alice@example|asset_secret-id|missing_count/,'unknown alert keys omit free-form prose and aggregate data');
-const problemClipboardSandbox={window:null,String,Object,Array,navigator:{clipboard:{writeText:async()=>{}}},__OB_TEST_HOOKS__:{}};problemClipboardSandbox.window=problemClipboardSandbox;
+let copiedProblemHandoff='',problemCopyFeedback=[];
+const problemClipboardSandbox={window:null,String,Object,Array,navigator:{clipboard:{writeText:async()=>{}}},__OB_TEST_HOOKS__:{},obOpsCopyText:async value=>{copiedProblemHandoff=String(value);},obOpsSetActionFeedback:(...args)=>problemCopyFeedback.push(args)};problemClipboardSandbox.window=problemClipboardSandbox;
 vm.createContext(problemClipboardSandbox);new vm.Script(section(developerSource,'  function safeProblemClipboardString(value){','\t  function renderDeveloperHandoff(data,snapshot){')).runInContext(problemClipboardSandbox);
 const maliciousProblemCopy=problemClipboardSandbox.__OB_TEST_HOOKS__.opsProblemClipboard.projectedProblemHandoff({area:'Uploads / Images',title:'Broken uploaded asset',severity:'warning',cause:'Bearer verysecrettokenvalue',evidence:'route=/private/uploads/portrait.jpg | owner=alice | slug=alice | id=asset-secret-id',action:'Inspect token=LEAK-ME'});
 assert.match(maliciousProblemCopy.evidence,/Only aggregate asset evidence/);
 assert.doesNotMatch(JSON.stringify(maliciousProblemCopy),/verysecrettokenvalue|LEAK-ME|portrait\.jpg|asset-secret-id|\/private|owner=|slug=/,'developer handoff clipboard projection derives all prose from its allowlisted area');
+problemClipboardSandbox.__obProblemHandoffs=[{area:'Uploads / Images',severity:'warning',title:'sk_live_51PRIVATEVALUE',evidence:'Bearer LEAK-ME'}];
+await problemClipboardSandbox.obCopyProblemHandoff(0);
+assert.match(copiedProblemHandoff,/Area: Uploads \/ Images[\s\S]*Only aggregate asset evidence/,'Copy handoff writes only the privacy-safe projection');
+assert.deepEqual(problemCopyFeedback.at(-1),['Copied a privacy-safe developer handoff to clipboard.','success'],'Copy handoff reports success only after the verified clipboard helper resolves');
+problemClipboardSandbox.obOpsCopyText=async()=>{throw new Error('clipboard denied');};
+await problemClipboardSandbox.obCopyProblemHandoff(0);
+assert.match(problemCopyFeedback.at(-1)[0],/failed; no clipboard success was recorded: clipboard denied/,'Copy handoff surfaces clipboard failure instead of silently claiming success');
+assert.equal(problemCopyFeedback.at(-1)[1],'error');
 const unknownProblemCopy=problemClipboardSandbox.__OB_TEST_HOOKS__.opsProblemClipboard.projectedProblemHandoff({area:'sk_live_51PRIVATEVALUE portrait-private.jpg',title:'alice@example.test',cause:'Bearer verysecrettokenvalue',evidence:'/private/portrait.jpg',action:'token=LEAK-ME'});
 assert.equal(unknownProblemCopy.area,'Application');
 assert.match(unknownProblemCopy.evidence,/Unknown free-form evidence is omitted/);

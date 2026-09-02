@@ -45442,9 +45442,13 @@ body.ob-ops-modal-open{overflow:hidden!important}
   }
   function classifyProblem(raw){
     var title = raw.title || raw.message || raw.route || raw.key || 'Operational problem';
+    var alertKey = String(raw.key || '').toLowerCase();
     var hay = (title + ' ' + (raw.detail || '') + ' ' + (raw.message || '') + ' ' + (raw.category || '') + ' ' + (raw.route || '') + ' ' + (raw.status_code || '')).toLowerCase();
     var out = { title:title, severity:String(raw.severity || raw.status || 'warning').toLowerCase(), area:'Application', cause:'The monitor found abnormal behavior but the source did not provide a specific root cause. Start with the evidence and recent deploys around the timestamp.', action:'Open the referenced route/component and backend logs, reproduce once, then add a guarded fix without changing payment/session state.', evidence:[raw.detail, raw.message, raw.route && ('route=' + raw.route), raw.value != null && ('value=' + raw.value), raw.threshold != null && ('threshold=' + raw.threshold), raw.status_code && ('status=' + raw.status_code), raw.at].filter(Boolean).join(' | ') || 'No extra evidence reported.' };
-    if(hay.includes('stripe') || hay.includes('payment') || hay.includes('billing')){ out.area='Payments / Stripe'; out.cause='A payment, webhook, billing, or settlement path is failing or delayed.'; out.action='Check Stripe webhook delivery and payment route logs. Reconcile event id, session id, amount, fee, connected account, and transfer before changing code.'; }
+    if(alertKey.indexOf('reply_assistant_')===0){ out.area='AI Reply Assistant'; out.cause='Provider authority, provider snapshot, or durable AI delivery worker is unavailable or unhealthy.'; out.action='Keep human handling active. Inspect AI provider authority/generation, route configuration, worker state, and AI queue/dead jobs without changing Stripe or copying credentials from another environment.'; }
+    else if(alertKey.indexOf('background_task_')===0){ out.area='Background jobs'; out.cause='The durable task queue is unavailable, unhealthy, dropping work, or contains jobs that exhausted retries.'; out.action='Inspect queue readiness and dead jobs privately. Confirm idempotency before any separate replay procedure; do not delete or replay jobs from Ops Monitor.'; }
+    else if(alertKey.indexOf('alert_window_warming')!==-1||alertKey==='http_latency_sample_partial'||alertKey==='asset_scan_partial_coverage'){ out.area='Monitoring coverage'; out.cause='The current measurement is bounded, sampled, warming, or incomplete; it is not direct proof of the underlying service incident.'; out.action='Use the coverage/sample fields and wait for complete evidence. Escalate the underlying service only when a separate alert or user impact supports it.'; }
+    else if(hay.includes('stripe') || hay.includes('payment') || hay.includes('billing')){ out.area='Payments / Stripe'; out.cause='A payment, webhook, billing, or settlement path is failing or delayed.'; out.action='Check Stripe webhook delivery and payment route logs. Reconcile event id, session id, amount, fee, connected account, and transfer before changing code.'; }
     else if(hay.includes('429') || hay.includes('rate') || hay.includes('too many')){ out.area='Rate limiting / Auth'; out.cause='A user, bot, browser loop, or retrying client is hitting auth/API limits.'; out.action='Check for repeated login calls or polling without backoff. Stop accidental retries before tuning limits.'; }
     else if(hay.includes('5xx') || hay.includes('500') || hay.includes('502') || hay.includes('failed request')){ out.area='Backend API'; out.cause='A backend route is throwing, timing out, or failing to respond.'; out.action='Open backend logs for this route and timestamp, identify the thrown error or slow dependency, and add a fallback.'; }
     else if(hay.includes('slow') || hay.includes('latency') || hay.includes('p95') || hay.includes('load')){ out.area='Performance'; out.cause='A page, route, database query, asset, or dependency is slower than threshold.'; out.action='Use the route as the starting point. Check waterfall, API duration, DB time, and synchronous frontend work.'; }
@@ -45466,6 +45470,9 @@ body.ob-ops-modal-open{overflow:hidden!important}
   }
 	  function safeProblemClipboardString(value){return String(value||'').slice(0,1000).replace(/\bBearer\s+[A-Za-z0-9._~+\/-]+/gi,'Bearer [REDACTED]').replace(/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g,'[JWT REDACTED]').replace(/\b(?:sk|rk|pk)_(?:live|test)_[A-Za-z0-9_-]+\b/gi,'[PROVIDER SECRET REDACTED]').replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi,'[EMAIL REDACTED]').replace(/\b[^\s"']+\.(?:avif|gif|jpe?g|png|svg|webp)\b/gi,'[ASSET NAME REDACTED]').replace(/\b(token|secret|password|authorization|api[_-]?key)\s*[:=]\s*[^\s,;]+/gi,'$1=[REDACTED]').replace(/([?&](?:token|secret|password|authorization|api[_-]?key)=)[^&#\s]*/gi,'$1[REDACTED]').replace(/(?:\/Users|\/home|\/private|\/var|\/tmp)\/[^\s"']+/g,'[internal path redacted]').replace(/[A-Za-z]:\\[^\s"']+/g,'[internal path redacted]');}
 	  var PROBLEM_CLIPBOARD_COPY=Object.freeze({
+	    'AI Reply Assistant':Object.freeze({title:'AI Reply Assistant problem',cause:'AI provider authority, provider snapshot, or durable delivery is unavailable or unhealthy.',action:'Keep human handling active and inspect AI authority, provider generation, route configuration, worker state, and AI queues. Do not change Stripe.',evidence:'Only aggregate AI authority and worker evidence is copied; credentials, prompts, user content, and provider response text are omitted.'}),
+	    'Background jobs':Object.freeze({title:'Background-job problem',cause:'The durable task queue is unavailable, unhealthy, dropping work, or contains exhausted jobs.',action:'Inspect aggregate queue readiness/depth and private dead-job evidence. Confirm idempotency before any separately authorized replay.',evidence:'Only aggregate queue and worker evidence is copied; job payloads, recipients, session IDs, and credentials are omitted.'}),
+	    'Monitoring coverage':Object.freeze({title:'Monitoring evidence is incomplete',cause:'The current signal is bounded, sampled, warming, or incomplete and is not direct proof of a service incident.',action:'Use coverage/sample fields, wait for complete evidence, and correlate with a separate alert or user impact.',evidence:'Only aggregate coverage evidence is copied; incomplete monitoring is not rewritten as a confirmed underlying incident.'}),
 	    'Payments / Stripe':Object.freeze({title:'Payment or settlement problem',cause:'A payment, webhook, billing, or settlement aggregate is unhealthy or delayed.',action:'Inspect authoritative payment and settlement logs. Do not manually retry charges.',evidence:'Only aggregate payment evidence is copied; payment, session, account, and customer identifiers are omitted.'}),
 	    'Rate limiting / Auth':Object.freeze({title:'Rate limiting or authentication problem',cause:'Authentication or API rate-limit aggregates indicate repeated or abusive traffic.',action:'Inspect aggregate request rates and retry behavior before changing limits.',evidence:'Only aggregate rate-limit evidence is copied; principals, credentials, routes, and request values are omitted.'}),
 	    'Backend API':Object.freeze({title:'Backend API problem',cause:'Backend request aggregates indicate errors or unavailable responses.',action:'Inspect backend error aggregates and deployment logs for the relevant time window.',evidence:'Only aggregate HTTP evidence is copied; routes, request bodies, principals, and internal paths are omitted.'}),
@@ -45489,7 +45496,7 @@ body.ob-ops-modal-open{overflow:hidden!important}
       if(typeof window.obOpsSetActionFeedback === 'function') window.obOpsSetActionFeedback('Copy handoff failed; no clipboard success was recorded: '+String(error&&error.message||error),'error');
     }
   };
-	  if(window.__OB_TEST_HOOKS__)window.__OB_TEST_HOOKS__.opsProblemClipboard={projectedProblemHandoff:projectedProblemHandoff};
+	  if(window.__OB_TEST_HOOKS__)window.__OB_TEST_HOOKS__.opsProblemClipboard={projectedProblemHandoff:projectedProblemHandoff,classifyProblem:classifyProblem};
 	  function renderDeveloperHandoff(data,snapshot){
 	    if(role() !== 'admin') return;
 	    var opsBody = document.getElementById('ob-ops-body'); if(!opsBody) return;
@@ -45587,6 +45594,34 @@ body.ob-ops-modal-open{overflow:hidden!important}
 	  guide.auto_recovery = 'The warning clears when the observed request count fits within the bounded latency sample set; it does not require a server mutation.';
 	  guide.escalation = 'Escalate only when a latency/rate alert or real user impact accompanies the partial-sample warning.';
 	  guide.safe_actions = [{id:'refresh_ops',label:'Refresh Ops Monitor',kind:'client'},{id:'copy_report',label:'Copy developer report',kind:'client'}];
+    } else if(key.indexOf('reply_assistant_')===0){
+      guide.impact = 'Automatic AI replies and AI auto-accept are paused or untrusted. Human-operated sessions, session ending, emergency controls, payments, and non-AI APIs are not reported down by this alert.';
+      guide.cause = 'The Reply Assistant provider authority, provider snapshot, or durable delivery worker is unavailable or unhealthy.';
+      guide.owner_action = 'Keep human handling active, refresh once, and copy the developer report. Do not investigate Stripe or retry charges unless a separate payment alert is active.';
+      guide.auto_recovery = 'Possibly if the provider route or worker recovers; remain in manual handling until authority is explicitly ready.';
+      guide.escalation = 'Escalate when automated handling is required, AI work is backlogging, or the alert persists.';
+      guide.safe_actions = [{id:'refresh_ops',label:'Refresh Ops Monitor',kind:'client'},{id:'copy_report',label:'Copy developer report',kind:'client'}];
+    } else if(key==='asset_scan_partial_coverage'){
+      guide.impact = 'The bounded scan did not cover every expert/reference, so zero findings cannot prove all images are healthy. This alert does not itself prove an asset is missing.';
+      guide.cause = 'The scan reached its coverage boundary before complete platform coverage was established.';
+      guide.owner_action = 'Do not ask experts to re-upload from this warning alone. Refresh and copy the report; act only when a separate broken-asset alert identifies a specific failure.';
+      guide.auto_recovery = 'It clears only after a later scan proves complete expert, reference, and known-field coverage.';
+      guide.escalation = 'Escalate if coverage stays incomplete or users report missing images.';
+      guide.safe_actions = [{id:'refresh_ops',label:'Refresh Ops Monitor',kind:'client'},{id:'copy_report',label:'Copy developer report',kind:'client'}];
+    } else if(key.indexOf('background_task_')===0){
+      guide.impact = 'Queued email, receipt, and durable background work may be delayed or permanently parked in the dead-job queue.';
+      guide.cause = 'The background-task queue is unavailable, unhealthy, dropping work, or contains jobs that exhausted automatic retries.';
+      guide.owner_action = 'Refresh once and copy the developer report. Do not flush, delete, or replay queue entries from the dashboard.';
+      guide.auto_recovery = 'Transient queue connectivity can recover, but dead jobs do not leave the dead queue automatically.';
+      guide.escalation = 'Escalate immediately when dead jobs exist or the required queue is not ready.';
+      guide.safe_actions = [{id:'refresh_ops',label:'Refresh Ops Monitor',kind:'client'},{id:'copy_report',label:'Copy developer report',kind:'client'}];
+    } else if(key.indexOf('alert_window_warming')!==-1){
+      guide.impact = 'The recent monitoring window is incomplete after a restart. This is not proof of a service incident.';
+      guide.cause = 'The current backend replica has not yet observed a full trailing 15-minute window.';
+      guide.owner_action = 'Wait for the 15-minute window to fill, then refresh. Copy the report sooner only if another alert is active or users are affected.';
+      guide.auto_recovery = 'Yes, when the current process reaches complete window coverage.';
+      guide.escalation = 'Escalate only if coverage repeatedly resets, never completes, or users are affected.';
+      guide.safe_actions = [{id:'refresh_ops',label:'Refresh Ops Monitor',kind:'client'},{id:'copy_report',label:'Copy developer report',kind:'client'}];
     } else if(text.indexOf('memory') !== -1 || text.indexOf('heap') !== -1){
       guide.impact = 'If real memory pressure continues rising, sessions, admin pages, or expert websites may become slower or unstable.';
       guide.cause = 'Server memory is elevated against the real runtime limit or configured pressure threshold.';
@@ -51319,12 +51354,12 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
           report_created_at:reportCreatedAt,
 	          generated_at:safeOpsTimestamp(overview.generated_at),
 	          snapshot_generated_at:safeOpsTimestamp(overview.generated_at),
-          snapshot_received_at:snapshot.received_at||null,
-          snapshot_last_verified_at:snapshot.last_verified_at||null,
+          snapshot_received_at:safeOpsTimestamp(snapshot.received_at),
+	          snapshot_last_verified_at:safeOpsTimestamp(snapshot.last_verified_at),
           snapshot_age_ms:snapshotAgeMs,
           snapshot_state:stale?'stale':'current',
           stale:stale,
-          stale_since:snapshot.stale_since||null,
+          stale_since:safeOpsTimestamp(snapshot.stale_since),
           last_refresh_error:safeOpsScalar(snapshot.last_error),
           frontend_url:frontendUrl,
 	          backend:verification.verified?EXPECTED_OPS_API_BASE:null,

@@ -44173,7 +44173,7 @@ body.ob-ops-modal-open{overflow:hidden!important}
   function boolText(v,yes,no){ return typeof v === 'boolean' ? (v ? yes : no) : 'Unknown'; }
 	function epochTimestampLabel(value){var numeric=typeof value==='number'&&Number.isSafeInteger(value)&&value>0?value:null;if(numeric==null)return 'Unknown';var date=new Date(numeric<1000000000000?numeric*1000:numeric);return Number.isFinite(date.getTime())?date.toISOString():'Unknown';}
   function pill(status){ var s=String(status || 'unknown').toLowerCase(); if(['ok','warning','critical','unknown'].indexOf(s)===-1)s=s==='degraded'?'warning':'unknown'; return '<span class="ob-pill '+esc(s)+'">'+esc(s.toUpperCase())+'</span>'; }
-  function tableRegion(label,html){ return '<div class="ob-ops-table-wrap" role="region" aria-label="'+esc(label)+'" tabindex="0">'+html+'</div>'; }
+  function tableRegion(label,html){ return '<div class="ob-ops-table-wrap" role="region" aria-label="'+esc(label)+'" data-ob-focus-key="table:'+esc(label)+'" tabindex="0">'+html+'</div>'; }
   window.obOpsTableRegion=tableRegion;
   var ACKNOWLEDGED_ALERTS_KEY = 'ob_ops_acknowledged_alerts_v2';
   var ACKNOWLEDGEMENT_TTL_MS = 15 * 60 * 1000;
@@ -45027,7 +45027,7 @@ body.ob-ops-modal-open{overflow:hidden!important}
 	if(options.publish!==false&&trustedCurrent)lastVerifiedAt=freshnessAnchorAt;
     var priorBodyScroll = body ? body.scrollTop : 0;
     var focused=document.activeElement&&body&&body.contains(document.activeElement)?document.activeElement:null;
-    var focusDescriptor=focused?{id:focused.id||'',onclick:focused.getAttribute&&focused.getAttribute('onclick')||'',text:String(focused.textContent||'').trim()}:null;
+    var focusDescriptor=focused?{key:focused.getAttribute&&focused.getAttribute('data-ob-focus-key')||'',id:focused.id||'',onclick:focused.getAttribute&&focused.getAttribute('onclick')||'',text:String(focused.textContent||'').trim()}:null;
     var s = data.summary || {};
     var http = data.http || {};
 	    var httpAvailable=!!data.http&&http.available!==false;
@@ -45123,16 +45123,21 @@ body.ob-ops-modal-open{overflow:hidden!important}
 	if(trustedCurrent)notifyIfNeeded(data);
 	var publishedSnapshot=null;
 	if(options.publish!==false)publishedSnapshot=publishSnapshot(data,trends,verification,receivedAt,schemaValid);
-    if(body && priorBodyScroll > 0) {
-      requestAnimationFrame(function(){
-        try { body.scrollTop = Math.min(priorBodyScroll, Math.max(0, body.scrollHeight - body.clientHeight)); } catch(e) {}
-      });
-    }
-    if(focusDescriptor)requestAnimationFrame(function(){
-      var target=focusDescriptor.id&&document.getElementById(focusDescriptor.id);
-      if(!target&&focusDescriptor.onclick)target=Array.from(body.querySelectorAll('[onclick]')).find(function(node){return node.getAttribute('onclick')===focusDescriptor.onclick;});
-      if(!target&&focusDescriptor.text)target=Array.from(body.querySelectorAll('button,a,[tabindex]')).find(function(node){return String(node.textContent||'').trim()===focusDescriptor.text;});
-      if(target&&typeof target.focus==='function')try{target.focus();}catch(e){}
+    if(body && (priorBodyScroll > 0 || focusDescriptor)) requestAnimationFrame(function(){
+      var maxScroll=Math.max(0,body.scrollHeight-body.clientHeight);
+      var restoredScroll=Math.min(priorBodyScroll,maxScroll);
+      var target=null;
+      if(focusDescriptor){
+        if(focusDescriptor.key)target=Array.from(body.querySelectorAll('[data-ob-focus-key]')).find(function(node){return node.getAttribute('data-ob-focus-key')===focusDescriptor.key;});
+        if(!target&&focusDescriptor.id)target=document.getElementById(focusDescriptor.id);
+        if(!target&&focusDescriptor.onclick)target=Array.from(body.querySelectorAll('[onclick]')).find(function(node){return node.getAttribute('onclick')===focusDescriptor.onclick;});
+        if(!target&&focusDescriptor.text)target=Array.from(body.querySelectorAll('button,a,[tabindex]')).find(function(node){return String(node.textContent||'').trim()===focusDescriptor.text;});
+        if(target&&typeof target.focus==='function'){
+          try{target.focus({preventScroll:true});}
+          catch(e){try{target.focus();}catch(focusError){}}
+        }
+      }
+      try{body.scrollTop=restoredScroll;}catch(e){}
     });
 	return publishedSnapshot;
   }
@@ -45508,10 +45513,10 @@ body.ob-ops-modal-open{overflow:hidden!important}
 	    var html = '<div class="ob-ops-dev-handoff" id="ob-ops-dev-handoff"><h3>Developer handoff for active problems</h3><p>Likely cause, evidence, and fastest developer action for each current issue.</p>';
 	    if(!current)html += '<div class="ob-ops-empty-handoff ob-ops-unavailable"><b>UNKNOWN / STALE.</b> The canonical Ops snapshot is not current and verified, so this panel cannot claim that problems are present or clear. Refresh Ops Monitor.</div>';
 	    else if(!Array.isArray(data.alerts))html += '<div class="ob-ops-empty-handoff ob-ops-unavailable">Active-alert handoff data is unavailable in the latest snapshot; no clear state is inferred.</div>';
-	    if(problems.length) html += '<div class="ob-ops-cause-grid">' + problems.map(function(problem,index){ var cls = problem.severity === 'critical' ? 'is-critical' : (problem.severity === 'warning' || problem.severity === 'degraded' ? 'is-warning' : ''); return '<article class="ob-ops-cause-card ' + cls + '"><div class="ob-ops-cause-top"><strong>' + esc(problem.title) + '</strong><span class="ob-ops-cause-pill">' + esc(problem.severity) + '</span></div><dl><dt>Area</dt><dd>' + esc(problem.area) + '</dd><dt>Cause</dt><dd>' + esc(problem.cause) + '</dd><dt>Evidence</dt><dd>' + esc(problem.evidence) + '</dd><dt>Action</dt><dd>' + esc(problem.action) + '</dd></dl><button class="ob-ops-copy-handoff" onclick="window.obCopyProblemHandoff(' + index + ')">Copy handoff</button></article>'; }).join('') + '</div>';
+	    if(problems.length) html += '<div class="ob-ops-cause-grid">' + problems.map(function(problem,index){ var cls = problem.severity === 'critical' ? 'is-critical' : (problem.severity === 'warning' || problem.severity === 'degraded' ? 'is-warning' : ''); return '<article class="ob-ops-cause-card ' + cls + '"><div class="ob-ops-cause-top"><strong>' + esc(problem.title) + '</strong><span class="ob-ops-cause-pill">' + esc(problem.severity) + '</span></div><dl><dt>Area</dt><dd>' + esc(problem.area) + '</dd><dt>Cause</dt><dd>' + esc(problem.cause) + '</dd><dt>Evidence</dt><dd>' + esc(problem.evidence) + '</dd><dt>Action</dt><dd>' + esc(problem.action) + '</dd></dl><button class="ob-ops-copy-handoff" data-ob-focus-key="problem-handoff:' + esc(problem.area) + ':' + esc(problem.title) + '" onclick="window.obCopyProblemHandoff(' + index + ')">Copy handoff</button></article>'; }).join('') + '</div>';
 	    else if(current&&Array.isArray(data.alerts)) html += '<div class="ob-ops-empty-handoff">No active problems detected in the current verified snapshot.</div>';
     html += '</div>';
-    var prior=document.getElementById('ob-ops-dev-handoff');if(prior)prior.outerHTML=html;else opsBody.insertAdjacentHTML('beforeend',html);
+    var prior=document.getElementById('ob-ops-dev-handoff');if(prior&&prior.outerHTML!==html)prior.outerHTML=html;else if(!prior)opsBody.insertAdjacentHTML('beforeend',html);
   }
   function wireOpsMonitor(){
     ensureOpsSidebarItem();
@@ -45717,7 +45722,7 @@ body.ob-ops-modal-open{overflow:hidden!important}
     var actions = (guide.safe_actions || []).slice(0, 4);
     var buttons = actions.map(function(action){
       var primary = action.id === 'cleanup_stale_sessions' ? ' primary' : '';
-      return '<button type="button" class="' + primary + '" onclick="window.obOwnerActionGuideRun(' + index + ',&quot;' + esc(action.id) + '&quot;)">' + esc(action.label || action.id) + '</button>';
+      return '<button type="button" class="' + primary + '" data-ob-focus-key="owner-guide:' + esc(String(alert.key || alert.code || alert.title || index)) + ':' + esc(action.id) + '" onclick="window.obOwnerActionGuideRun(' + index + ',&quot;' + esc(action.id) + '&quot;)">' + esc(action.label || action.id) + '</button>';
     }).join('');
     return '<article class="ob-owner-guide-card ' + (severity === 'critical' ? 'is-critical' : 'is-warning') + '">' +
       '<div class="ob-owner-guide-top"><div class="ob-owner-guide-title">' + esc(alert.title || 'Operational alert') + '</div><span class="ob-owner-guide-pill">' + esc(severity) + '</span></div>' +
@@ -45757,7 +45762,7 @@ body.ob-ops-modal-open{overflow:hidden!important}
     window.__obOpsOwnerGuideHtml = html;
     var existing = document.getElementById('ob-ops-owner-guide');
     if(existing && existing.outerHTML === html) return;
-    if(existing) existing.outerHTML = html;
+    if(existing&&existing.outerHTML!==html) existing.outerHTML = html;
     else body.insertAdjacentHTML('afterbegin', html);
   }
   function wire(){
@@ -51502,24 +51507,26 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     var feedback=window.__obOpsActionFeedback||{text:'No owner action run in this browser.',state:'idle'};
     var html = '<section id="ob-ops-action-center"><h3>Owner action center</h3><p>Use safe actions for routine incidents. Risky actions are guarded and should only be used when you are sure no real user session should continue.</p>' +
       '<div class="ob-ops-action-grid">' +
-        '<article class="ob-ops-action-card"><strong>Refresh live telemetry</strong><span>Reload current Ops data without changing server state.</span><button type="button" onclick="window.obOpsRunControl(&quot;refresh&quot;)">Refresh</button></article>' +
-        '<article class="ob-ops-action-card"><strong>Copy developer report</strong><span>Copies alerts, route health, sessions, realtime, storage, and asset evidence for an AI/developer.</span><button class="safe" type="button" onclick="window.obOpsRunControl(&quot;copy_report&quot;)">Copy report</button></article>' +
-        '<article class="ob-ops-action-card"><strong>Clear server cache</strong><span>Clears temporary read cache only. Safe for data, sessions, billing, and Stripe.</span><button class="safe" type="button" onclick="window.obOpsRunControl(&quot;clear_cache&quot;)">Clear cache</button></article>' +
-        '<article class="ob-ops-action-card"><strong>Settle stale started sessions</strong><span>Dangerous: previews an exact fingerprint, then stops and settles accrued usage; card capture or prepaid-credit debit may occur.</span><button class="danger" type="button" onclick="window.obOpsRunControl(&quot;cleanup_stale&quot;)">Preview settlement</button></article>' +
-        '<article class="ob-ops-action-card"><strong>Clean old pending requests</strong><span>Cancels live requests pending more than 5 minutes so clients are not stuck waiting.</span><button class="safe" type="button" onclick="window.obOpsRunControl(&quot;cleanup_pending&quot;)">Clean pending</button></article>' +
-        '<article class="ob-ops-action-card"><strong>Stop or recover one session</strong><span>Targets one exact session. Stops delivery, settles accrued usage, or retries a stuck finalization.</span><button class="danger" type="button" onclick="window.obOpsRunControl(&quot;stop_one&quot;)">Stop one session</button></article>' +
-        '<article class="ob-ops-action-card"><strong>Emergency stop all sessions</strong><span>Risky point-in-time action: admissions are not paused. Confirmation is bound to the exact active or finalizing session IDs in the fresh preview; new admissions require another sweep. It settles accrued usage, retries stuck finalizations, and releases unstarted holds.</span><button class="danger" type="button" onclick="window.obOpsRunControl(&quot;stop_all&quot;)">Emergency stop all</button></article>' +
+        '<article class="ob-ops-action-card"><strong>Refresh live telemetry</strong><span>Reload current Ops data without changing server state.</span><button type="button" data-ob-focus-key="action:refresh" onclick="window.obOpsRunControl(&quot;refresh&quot;)">Refresh</button></article>' +
+        '<article class="ob-ops-action-card"><strong>Copy developer report</strong><span>Copies alerts, route health, sessions, realtime, storage, and asset evidence for an AI/developer.</span><button class="safe" type="button" data-ob-focus-key="action:copy-report" onclick="window.obOpsRunControl(&quot;copy_report&quot;)">Copy report</button></article>' +
+        '<article class="ob-ops-action-card"><strong>Clear server cache</strong><span>Clears temporary read cache only. Safe for data, sessions, billing, and Stripe.</span><button class="safe" type="button" data-ob-focus-key="action:clear-cache" onclick="window.obOpsRunControl(&quot;clear_cache&quot;)">Clear cache</button></article>' +
+        '<article class="ob-ops-action-card"><strong>Settle stale started sessions</strong><span>Dangerous: previews an exact fingerprint, then stops and settles accrued usage; card capture or prepaid-credit debit may occur.</span><button class="danger" type="button" data-ob-focus-key="action:cleanup-stale" onclick="window.obOpsRunControl(&quot;cleanup_stale&quot;)">Preview settlement</button></article>' +
+        '<article class="ob-ops-action-card"><strong>Clean old pending requests</strong><span>Cancels live requests pending more than 5 minutes so clients are not stuck waiting.</span><button class="safe" type="button" data-ob-focus-key="action:cleanup-pending" onclick="window.obOpsRunControl(&quot;cleanup_pending&quot;)">Clean pending</button></article>' +
+        '<article class="ob-ops-action-card"><strong>Stop or recover one session</strong><span>Targets one exact session. Stops delivery, settles accrued usage, or retries a stuck finalization.</span><button class="danger" type="button" data-ob-focus-key="action:stop-one" onclick="window.obOpsRunControl(&quot;stop_one&quot;)">Stop one session</button></article>' +
+        '<article class="ob-ops-action-card"><strong>Emergency stop all sessions</strong><span>Risky point-in-time action: admissions are not paused. Confirmation is bound to the exact active or finalizing session IDs in the fresh preview; new admissions require another sweep. It settles accrued usage, retries stuck finalizations, and releases unstarted holds.</span><button class="danger" type="button" data-ob-focus-key="action:stop-all" onclick="window.obOpsRunControl(&quot;stop_all&quot;)">Emergency stop all</button></article>' +
       '</div><div id="ob-ops-action-result" class="ob-ops-action-result" data-state="'+esc(feedback.state)+'" aria-live="polite">'+esc(feedback.text)+'</div></section>';
-    window.__obOpsActionCenterHtml = html;
     var old = document.getElementById('ob-ops-action-center');
-    if(old && old.outerHTML === html){setOpsActionButtonsBusy(window.__obOpsActionBusy===true);return;}
-    if(old) old.outerHTML = html;
-    else {
+    if(old){
+      var oldFeedback=old.querySelector&&old.querySelector('#ob-ops-action-result');
+      if(oldFeedback){oldFeedback.textContent=feedback.text;oldFeedback.setAttribute('data-state',feedback.state);}
+    } else {
       var guide = document.getElementById('ob-ops-owner-guide');
       if(guide) guide.insertAdjacentHTML('afterend', html);
       else body.insertAdjacentHTML('afterbegin', html);
     }
     setOpsActionButtonsBusy(window.__obOpsActionBusy===true);
+    var current=document.getElementById('ob-ops-action-center');
+    window.__obOpsActionCenterHtml=current?current.outerHTML:html;
   }
   var previousOpenOps = window.obOpenOpsDashboard;
   if(typeof previousOpenOps === 'function') {
@@ -61425,8 +61432,9 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
 	    var current=!!(snapshot&&typeof window.obIsCurrentOpsSnapshot==='function'&&window.obIsCurrentOpsSnapshot(snapshot));
 	    var html=current?mediaOpsHtml(snapshot.data.media_sfu):'<div class="ob-ops-section ob-ops-unavailable" id="ob-ops-sfu-panel"><h3>Ownlybiz SFU media usage and cost</h3><div class="ob-ops-empty"><b>UNKNOWN / STALE.</b> The canonical Ops snapshot is not current and verified, so SFU health and zero values are unavailable.</div></div>';
     var existing = document.getElementById('ob-ops-sfu-panel');
-    if(existing) existing.outerHTML = html;
-    else {
+    if(existing){
+      if(existing.outerHTML!==html) existing.outerHTML = html;
+    } else {
       var after = body.querySelector('.ob-ops-grid');
       if(after) after.insertAdjacentHTML('afterend', html);
       else body.insertAdjacentHTML('afterbegin', html);

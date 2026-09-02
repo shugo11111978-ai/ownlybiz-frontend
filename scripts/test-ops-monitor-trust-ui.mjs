@@ -31,21 +31,28 @@ function classList(){
     contains:name=>values.has(name),
   };
 }
-function node(id=''){
+function node(id='',options={}){
   const attributes=new Map();
-  return {
-    id,classList:classList(),innerHTML:'',outerHTML:'',textContent:'',hidden:false,scrollTop:0,scrollHeight:1000,clientHeight:500,offsetParent:{},inert:false,
+  let innerHTML='';
+  const element={
+    id,classList:classList(),outerHTML:'',textContent:'',hidden:false,scrollTop:0,scrollHeight:1000,clientHeight:500,offsetParent:{},inert:false,
     addEventListener(){},insertAdjacentHTML(_where,value){this.innerHTML+=value;},querySelector(){return null;},querySelectorAll(){return [];},
     setAttribute:(key,value)=>attributes.set(key,String(value)),getAttribute:key=>attributes.get(key)||null,
     hasAttribute:key=>attributes.has(key),removeAttribute:key=>attributes.delete(key),
     contains(){return false;},focus(){this.focused=true;},
   };
+  Object.defineProperty(element,'innerHTML',{
+    enumerable:true,
+    get(){return innerHTML;},
+    set(value){innerHTML=String(value);if(options.resetScrollOnInnerHTML)element.scrollTop=0;},
+  });
+  return element;
 }
 
 const opsSource=scriptById('ownlybiz-ops-monitor-trust-20260901');
 const nodes={
   'ob-ops-panel':node('ob-ops-panel'),
-  'ob-ops-body':node('ob-ops-body'),
+  'ob-ops-body':node('ob-ops-body',{resetScrollOnInnerHTML:true}),
   'ob-ops-launcher':node('ob-ops-launcher'),
   'ob-ops-launcher-count':node('ob-ops-launcher-count'),
   'ob-ops-updated':node('ob-ops-updated'),
@@ -413,6 +420,58 @@ assert.equal(healthyRefresh.identity_verification.verified,true);
 assert(nodes['ob-ops-launcher'].classList.contains('unknown')===false,'an exact verified zero-alert snapshot can render OK');
 assert.equal(nodes['ob-admin-ops-badge'].textContent,'OK');
 assert.match(nodes['ob-ops-body'].innerHTML,/Asset storage[\s\S]*READY[\s\S]*Exists yes · writable yes · durable yes/,'asset storage existence, writability, and durability render independently');
+
+const priorOpsBodyContains=nodes['ob-ops-body'].contains;
+const priorGetElementById=document.getElementById;
+const priorActiveElement=document.activeElement;
+const pollFocusBefore=node('ob-ops-poll-focus');
+const pollFocusAfter=node('ob-ops-poll-focus');
+pollFocusBefore.textContent='Refresh';
+pollFocusAfter.textContent='Refresh';
+let currentPollFocusTarget=pollFocusAfter;
+pollFocusAfter.focus=function(options){
+  this.focused=true;
+  this.focusOptions=options||null;
+  if(!(options&&options.preventScroll===true))nodes['ob-ops-body'].scrollTop=0;
+};
+nodes['ob-ops-body'].contains=candidate=>candidate===pollFocusBefore;
+document.getElementById=id=>id==='ob-ops-poll-focus'?currentPollFocusTarget:priorGetElementById(id);
+document.activeElement=pollFocusBefore;
+sandbox.__obOpsActionCenterHtml='<section id="ob-ops-action-center"><button id="ob-ops-poll-focus" type="button">Refresh</button></section>';
+nodes['ob-ops-panel'].classList.add('show');
+nodes['ob-ops-body'].scrollTop=420;
+const pollOverview=withOverviewProvenance({...healthyOverview,generated_at:new Date().toISOString()});
+fetchPlan=[response(200,pollOverview),response(200,validTrends())];
+const scrolledPollRefresh=await hooks.refresh('poll');
+assert.equal(scrolledPollRefresh.ok,true,'a visible-panel poll refresh succeeds');
+assert.equal(pollFocusAfter.focused,true,'polling restores keyboard focus to the recreated action-center control');
+assert.equal(pollFocusAfter.focusOptions?.preventScroll,true,'polling restores focus without asking the browser to scroll the recreated control into view');
+assert.equal(nodes['ob-ops-body'].scrollTop,420,'polling must preserve the owner\'s modal scroll position even when restoring focus to a recreated action-center control');
+assert.match(nodes['ob-ops-body'].innerHTML,/id="ob-ops-action-center"[\s\S]*id="ob-ops-poll-focus"/,'the cached action center survives the telemetry rerender');
+
+const fallbackPollFocus=node('ob-ops-poll-focus');
+let fallbackFocusAttempts=0;
+fallbackPollFocus.focus=function(options){
+  fallbackFocusAttempts+=1;
+  if(options&&options.preventScroll===true)throw new Error('focus options unsupported');
+  this.focused=true;
+  nodes['ob-ops-body'].scrollTop=0;
+};
+currentPollFocusTarget=fallbackPollFocus;
+document.activeElement=pollFocusBefore;
+nodes['ob-ops-body'].scrollTop=430;
+fetchPlan=[response(200,withOverviewProvenance({...healthyOverview,generated_at:new Date().toISOString()})),response(200,validTrends())];
+const fallbackFocusRefresh=await hooks.refresh('poll');
+assert.equal(fallbackFocusRefresh.ok,true,'the poll still succeeds when the browser rejects focus options');
+assert.equal(fallbackFocusAttempts,2,'focus restoration falls back exactly once for browsers without focus options');
+assert.equal(fallbackPollFocus.focused,true,'fallback focus still preserves keyboard context');
+assert.equal(nodes['ob-ops-body'].scrollTop,430,'the final scroll restoration wins even when fallback focus scrolls the recreated control into view');
+nodes['ob-ops-body'].contains=priorOpsBodyContains;
+document.getElementById=priorGetElementById;
+document.activeElement=priorActiveElement;
+nodes['ob-ops-panel'].classList.remove('show');
+sandbox.__obOpsActionCenterHtml='';
+
 const realtimeCriticalAlert={key:'realtime_unhealthy',severity:'critical',title:'Realtime not ready',detail:'presence cycle incomplete',at:new Date().toISOString()};
 const criticalRealtime={...healthyOverview.realtime,status:'critical',connected_users:null,websocket:{...healthyOverview.realtime.websocket,cluster:{...healthyOverview.realtime.websocket.cluster,status:'connecting',client_ready:false}}};
 const criticalRealtimeOverview=withOverviewProvenance({...healthyOverview,generated_at:new Date().toISOString(),status:'critical',alerts:[realtimeCriticalAlert],summary:{...healthyOverview.summary,active_alerts:1,critical_alerts:1,connected_users:null},realtime:criticalRealtime});
@@ -974,6 +1033,15 @@ assert.equal(raceCallCount,3,'the overlapping public call cannot race a fourth r
 const developerSource=scriptById('ob-prod-admin-monitor-fixes-script');
 const ownerSource=scriptById('ob-owner-action-guides-script');
 const sfuSource=scriptById('ownlybiz-one-to-one-sfu-admin-20260527');
+const actionCenterRenderSource=section(actionSource,'  function renderOpsActionCenter(){','  var previousOpenOps = window.obOpenOpsDashboard;');
+assert.match(opsSource,/focus\(\{preventScroll:true\}\)/,'poll rerenders restore focus without browser-driven scroll');
+assert.match(opsSource,/try\{body\.scrollTop=restoredScroll;\}/,'saved modal scroll is reapplied after focus as a browser compatibility fallback');
+assert.match(opsSource,/data-ob-focus-key="table:/,'focusable telemetry regions have stable semantic keys');
+assert.doesNotMatch(actionCenterRenderSource,/old\.outerHTML\s*=/,'delayed action-center refreshes update live state without replacing the focused section');
+assert.match(actionCenterRenderSource,/data-ob-focus-key="action:stop-one"/,'action-center controls expose stable semantic focus keys');
+assert.match(ownerSource,/data-ob-focus-key="owner-guide:/,'owner guidance uses alert/action focus keys instead of visible index alone');
+assert.match(developerSource,/prior&&prior\.outerHTML!==html/,'unchanged developer handoff content keeps its DOM identity');
+assert.match(sfuSource,/existing\.outerHTML!==html/,'unchanged SFU evidence keeps its DOM identity');
 const ownerLifecycleLocalStorage=storage(),ownerLifecycleSessionStorage=storage(),ownerSnapshotListeners=[];
 let ownerLifecycleAdapter=null,ownerOpenCalls=0,ownerCopyControl=null;
 const ownerLifecycleSandbox={window:null,String,Number,Object,Array,JSON,Promise,Date,

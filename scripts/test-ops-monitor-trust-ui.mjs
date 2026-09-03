@@ -1285,6 +1285,8 @@ assert.match(opsSource,/data-ob-focus-key="table:/,'focusable telemetry regions 
 assert.doesNotMatch(actionCenterRenderSource,/old\.outerHTML\s*=/,'delayed action-center refreshes update live state without replacing the focused section');
 assert.match(actionCenterRenderSource,/data-ob-focus-key="action:stop-one"/,'action-center controls expose stable semantic focus keys');
 assert.match(actionCenterRenderSource,/data-ob-scroll-key="action-center"/,'the action center exposes a stable visual scroll anchor');
+assert.match(actionCenterRenderSource,/Clean old pending requests[\s\S]*releases their unused payment authorization holds/,
+  'pending-request cleanup discloses its payment-authorization release before confirmation');
 assert.match(ownerSource,/data-ob-focus-key="owner-guide:/,'owner guidance uses alert/action focus keys instead of visible index alone');
 assert.match(developerSource,/prior&&prior\.outerHTML!==html/,'unchanged developer handoff content keeps its DOM identity');
 assert.match(sfuSource,/existing\.outerHTML!==html/,'unchanged SFU evidence keeps its DOM identity');

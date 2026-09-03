@@ -166,6 +166,28 @@ assert.match(html, /Loading live staging data/,
 assert.doesNotMatch(html, /Live production health and business snapshot|Loading live production data|Changes affect production/,
   'the staging admin surface contains no production-environment claims');
 
+const adminLoadingStart = html.indexOf('  function setContent(panel, html){');
+const adminLoadingEnd = html.indexOf('\n  function errorBox(err){', adminLoadingStart);
+assert(adminLoadingStart >= 0 && adminLoadingEnd > adminLoadingStart,
+  'live admin content and refresh handling have a bounded runtime section');
+const adminLoadingSource = html.slice(adminLoadingStart, adminLoadingEnd);
+assert.match(adminLoadingSource, /node\.dataset\.obLiveRendered = '1'/,
+  'a completed live render is recorded before later refreshes');
+assert.match(adminLoadingSource, /if\(node\.dataset\.obLiveRendered === '1'\)[\s\S]*?node\.setAttribute\('aria-busy','true'\)[\s\S]*?return;/,
+  'refreshing an already-rendered admin panel preserves its content height and scroll position');
+assert.doesNotMatch(adminLoadingSource, /function loading\(panel\)\{\s*setContent\(/,
+  'a refresh cannot replace established admin content with a short loading placeholder');
+
+const adminNavScrollStart = html.indexOf('  function allowAdminScrollReset(){', adminLoadingEnd);
+const adminNavScrollEnd = html.indexOf('\n  async function copyText(text){', adminNavScrollStart);
+assert(adminNavScrollStart >= 0 && adminNavScrollEnd > adminNavScrollStart,
+  'admin navigation scroll handling has a bounded runtime section');
+const adminNavScrollSource = html.slice(adminNavScrollStart, adminNavScrollEnd);
+assert.match(adminNavScrollSource, /window\.__obAdminAllowScrollResetUntil = Date\.now\(\) \+ 50;\s*resetAdminScroll\(\);/,
+  'an intentional navigation resets scroll immediately before the user can scroll');
+assert.doesNotMatch(adminNavScrollSource, /setTimeout\(function\(\)\{\s*resetAdminScroll\(\);\s*\},\s*260\)/,
+  'no delayed navigation reset can pull the dashboard upward after the user starts scrolling');
+
 const authStart = html.indexOf('\t  function stripeAdminAuthContext(scope){');
 const authEndMarker = '  window.loadAdminPaymentSettings = loadStripeSettings;';
 const authEnd = html.indexOf(authEndMarker, authStart);

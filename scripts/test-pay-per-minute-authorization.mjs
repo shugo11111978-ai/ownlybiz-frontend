@@ -342,24 +342,21 @@ assert.match(html, /function applyAuthoritativeClientTerminal\(payload\)[\s\S]*c
   'client terminal delivery recognizes the server settling state before rendering a final receipt');
 assert.match(html, /function applyClientSettlementPending\(payload,\s*ownership\)[\s\S]*pauseClientTimers\(sess\)[\s\S]*showClientReceiptPending\(sess\)/,
   'client settlement-pending UI freezes the timer and renders a truthful finalizing receipt');
-assert.match(html, /action === 'stop_one'[\s\S]*\/admin\/observability\/sessions\/' \+ encodeURIComponent\(sessionId\) \+ '\/stop'[\s\S]*required_confirm/,
-  'Ops exposes a target-bound emergency recovery flow for one exact session');
-assert.match(html, /oneResult\.candidate_fingerprint[\s\S]*candidate_fingerprint:oneFingerprint/,
-  'targeted emergency stop echoes the exact opaque fingerprint from its fresh session preview');
-assert.match(html, /action === 'stop_all'[\s\S]*requirePreview\(previewStopEnvelope,stopResult\.required_confirm,'Emergency stop all'\)/,
-  'bulk emergency stop requires the exact confirmation contract returned by a fresh backend preview');
-assert.match(html, /stopResult\.candidate_fingerprint[\s\S]*candidate_fingerprint:stopFingerprint/,
-  'bulk emergency stop binds confirmation to the unchanged preview candidate fingerprint');
-assert.match(html, /settles accrued usage, retries stuck finalizations/,
-  'bulk emergency stop keeps truthful billing and stuck-finalization copy');
-assert.match(html, /Audit ID:/,
-  'Ops labels the durable server audit identifier for confirmed emergency actions');
-assert.match(html, /audit_event_id/,
-  'Ops reads the durable server audit identifier returned by confirmed emergency actions');
-assert.match(html, /body\.action_executed===true&&body\.audit_recorded===true&&body\.audit_completion_recorded===true/,
-  'Ops refuses to call a successful action fully complete without explicit execution and both durable audit phases');
-assert.match(html, /auditId===actionId&&validResult/,
-  'Ops also requires matching durable audit identity and a substantive non-dry-run result before showing green');
+assert.match(html, /var OPS_SERVER_MUTATIONS_ENABLED=false/,
+  'production Ops keeps server-mutating controls disabled in source');
+assert.match(html, /if\(\(method\|\|'POST'\)!=='GET'\)[\s\S]*mutationError\.code='ops_production_read_only';throw mutationError/,
+  'production Ops blocks every non-GET request before fetch');
+const productionActionCenterStart = html.indexOf('  function renderOpsActionCenter(){');
+const productionActionCenterEnd = html.indexOf('  var previousOpenOps = window.obOpenOpsDashboard;', productionActionCenterStart);
+assert(productionActionCenterStart >= 0 && productionActionCenterEnd > productionActionCenterStart,
+  'the production action-center source is bounded');
+const productionActionCenter = html.slice(productionActionCenterStart, productionActionCenterEnd);
+assert.match(productionActionCenter, /Refresh live telemetry/,
+  'production Ops exposes the safe telemetry refresh action');
+assert.match(productionActionCenter, /Copy developer report/,
+  'production Ops exposes the privacy-safe read-only report action');
+assert.doesNotMatch(productionActionCenter, /clear_cache|cleanup_stale_sessions|cleanup_pending_sessions|stop_one|stop_all/,
+  'production Ops renders no server-mutating recovery control');
 assert.doesNotMatch(html, /STOP_ACTIVE_SESSIONS_WITHOUT_BILLING|ends active sessions without billing unpaid time/,
   'the former misleading emergency-stop contract and copy are removed');
 assert.equal((html.match(/window\.expertEndSession\s*=/g) || []).length, 1,

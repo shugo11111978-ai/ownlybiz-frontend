@@ -159,12 +159,14 @@ assert.match(staticAdminOverview, /Loading authoritative sign-up data…/,
   'recent signups start as an explicit loading state');
 assert.doesNotMatch(staticAdminOverview, /\+234 this week|\+22% vs last month|7,708|Raj Kumar|Maya Levi/,
   'the initial admin dashboard has no live-looking sample growth, tier, or signup data');
-assert.match(html, /Live staging health and business snapshot/,
-  'the staging admin header identifies the environment truthfully');
-assert.match(html, /Loading live staging data/,
-  'staging loaders do not claim to be reading production');
-assert.doesNotMatch(html, /Live production health and business snapshot|Loading live production data|Changes affect production/,
-  'the staging admin surface contains no production-environment claims');
+assert.match(html, /Live production health and business snapshot/,
+  'the production admin header identifies the environment truthfully');
+assert.match(html, /Loading live production data/,
+  'production loaders identify their environment truthfully');
+assert.match(html, /Changes affect production/,
+  'the production settings surface states the impact boundary explicitly');
+assert.doesNotMatch(html, /Live staging health and business snapshot|Loading live staging data|Changes affect staging/,
+  'the production admin surface contains no staging-environment claims');
 
 const adminLoadingStart = html.indexOf('  function setContent(panel, html){');
 const adminLoadingEnd = html.indexOf('\n  function errorBox(err){', adminLoadingStart);

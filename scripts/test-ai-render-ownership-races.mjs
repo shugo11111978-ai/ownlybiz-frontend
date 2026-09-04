@@ -105,7 +105,7 @@ const adminContent={innerHTML:'',scrollIntoView(){}};const adminPending=[];
 const adminIdentity={token:'admin-token',principal:'admin:one',role:'admin',identityGeneration:1,credentialGeneration:1,signal:{aborted:false}};
 const adminRoot={window:null,Promise,String,Number,encodeURIComponent,console,
   OB_CLIENT_CONTEXT:{capture(_scope,extras){return {...adminIdentity,...extras};},isCurrent(owner,options){return owner&&owner.principal===adminIdentity.principal&&(!(options&&options.exactCredential)||owner.token===adminIdentity.token);}},
-  notify(){},panelContent:()=>adminContent,detailHtml:id=>`detail:${id}`,esc:value=>String(value??''),
+  notify(){},panelContent:()=>adminContent,detailHtml:id=>`detail:${id}`,esc:value=>String(value??''),mountAdminLiveCapacity(){},
   api(path,options){const request=deferred();adminPending.push({path,options,request});return request.promise;}
 };
 adminRoot.window=adminRoot;vm.createContext(adminRoot);

@@ -79,7 +79,7 @@ const OB_CLIENT_CONTEXT={
   register(name,adapter){assert.equal(name,'ops-monitor-trust-ui');registeredContextAdapter=adapter;return ()=>{};},
 };
 const sandbox={
-  console,window:null,document,localStorage,sessionStorage,location:{hostname:'ownlybiz-git-staging.example.test',href:'https://ownlybiz-git-staging.example.test/admin'},
+  console,window:null,document,localStorage,sessionStorage,location:{hostname:'ownlybiz.example.test',href:'https://ownlybiz.example.test/admin'},
   fetch:async()=>{throw new Error('unexpected fetch');},
   setTimeout:()=>1,clearTimeout(){},setInterval:()=>1,clearInterval(){},requestAnimationFrame:callback=>callback(),
   AbortController,OB_CLIENT_CONTEXT,
@@ -123,13 +123,13 @@ const verifiedIdentity={
   environment:'production',
   provider_environment_name:'production',
   node_environment:'production',
-  runtime_classification:'staging',
-  classification_basis:'is_staging_flag',
+  runtime_classification:'production',
+  classification_basis:'node_env_production',
   environment_id:'9d2e708e-24af-4fea-a5a3-796d4cd9956f',
-  service_id:'69c78756-c810-4e87-b482-3fee37eb6657',
+  service_id:'d2da7d7a-3d63-4b1d-b47e-9c0366f8a50c',
   service_name:'ownlybiz-backend',deployment_id:'deploy-1',replica_id:'replica-1',git_commit_sha:null,process_started_at:new Date(Date.now()-900000).toISOString(),uptime_sec:900,node_version:'v24.1.0',
 };
-assert.equal(hooks.opsIdentityVerification({runtime_identity:verifiedIdentity}).verified,true,'the exact API base plus Railway service and environment IDs verify staging even when its display name is production');
+assert.equal(hooks.opsIdentityVerification({runtime_identity:verifiedIdentity}).verified,true,'the exact API base, Railway service/environment IDs, and normalized runtime classification verify production');
 assert.equal(hooks.opsIdentityVerification({runtime_identity:{...verifiedIdentity,service_id:'wrong-service'}}).environment,'unknown','an identity mismatch is never labeled production or staging');
 hooks.render({status:'ok',alerts:[],summary:{active_alerts:0,critical_alerts:0,warning_alerts:0},runtime_identity:{...verifiedIdentity,service_id:'wrong-service'}},{state:'available',data:{}});
 assert(nodes['ob-ops-launcher'].classList.contains('unknown'),'a healthy-looking response from the wrong runtime identity is presented as UNKNOWN');
@@ -169,7 +169,7 @@ const authorities=hooks.renderOperationalAuthorities({
   runtime_identity:verifiedIdentity,
 });
 assert.match(authorities,/149/,'dead background jobs remain visible');
-assert.match(authorities,/Suppressed by staging safety<\/td><td>37[\s\S]*not dead or permanently failed jobs/i,'staging safety suppressions render as a distinct informational outcome');
+assert.match(authorities,/Suppressed by recipient safety<\/td><td>37[\s\S]*not dead or permanently failed jobs/i,'recipient-safety suppressions render as a distinct informational outcome');
 assert.doesNotMatch(authorities,/Dead 37/,'suppressed jobs are never presented as dead jobs');
 assert.match(authorities,/Background tasks[\s\S]*?CRITICAL[\s\S]*?Transport ready · health critical/,'queue transport readiness cannot overwrite critical queue health');
 assert.match(authorities,/Update provenance[\s\S]*reason recorded \(redacted\)/,'capacity-change provenance keeps presence and time without private actor or reason text');
@@ -179,12 +179,12 @@ assert.match(authorities,/GUARANTEED/,'Stripe-order guarantee is rendered');
 assert.match(authorities,/Stripe runtime[\s\S]*?LIVE/,'active Stripe mode is rendered');
 assert.match(authorities,/Active configuration ready[\s\S]*?yes[\s\S]*?Configured mode[\s\S]*?LIVE/,'the exact active Stripe configuration readiness and coherent configured mode are visible');
 assert.match(authorities,/platform \/ Connect signing[\s\S]*READY \/ READY/,'platform and Connect signing authorities render separately');
-assert.match(authorities,/Runtime classification[\s\S]*?staging/,'the backend-normalized runtime classification is rendered');
-assert.match(authorities,/Raw provider environment[\s\S]*?production/,'the raw Railway display environment is rendered separately without being trusted as the staging verifier');
+assert.match(authorities,/Runtime classification[\s\S]*?production/,'the backend-normalized runtime classification is rendered');
+assert.match(authorities,/Raw provider environment[\s\S]*?production/,'the raw Railway display environment is rendered separately from the exact production verifier');
 assert.match(hooks.renderOperationalAuthorities({}),/Unknown/,'absent authority fields render Unknown');
 assert.match(hooks.renderOperationalAuthorities({runtime_identity:{environment:'production',provider_environment_name:'production'}}),/Runtime classification[\s\S]*?Unknown[\s\S]*?Raw provider environment[\s\S]*?production/,'a provider display name never synthesizes a normalized runtime classification');
 const classifiedAuthorities=hooks.renderOperationalAuthorities({runtime_identity:verifiedIdentity});
-assert.match(classifiedAuthorities,/Runtime classification[\s\S]*?staging[\s\S]*?Raw provider environment[\s\S]*?production/,'normalized runtime classification is distinct from the misleading raw provider environment name');
+assert.match(classifiedAuthorities,/Runtime classification[\s\S]*?production[\s\S]*?Raw provider environment[\s\S]*?production/,'normalized runtime classification and the raw provider label remain separately visible');
 
 const provenanceHtml=hooks.renderProvenance({
   http:{available:true,provenance:{status:'collected',source:'backend_http_metrics',scope:'backend_replica',collected_at:'2026-09-01T08:00:00.000Z',window:'trailing_15m_rates_and_latency_plus_process_lifetime_totals',sample_count:18,coverage:{scope:'current_backend_process',rate_window_sec:900,observed_window_sec:61,window_coverage_complete:false,latency_sample_count:18,latency_sample_limit:400,latency_samples_truncated:false,route_detail_limit:80,route_details_truncated:true,problem_samples_truncated:false},stale:false,cached:false,age_basis:'collected_at',cache_semantics:'uncached_process_snapshot',freshness_semantics:'collected_on_overview_request'}},
@@ -243,7 +243,7 @@ const healthySecurity={available:true,status:'ok',last_error_code:null,level:'he
 const replyNow=Math.floor(Date.now()/1000);
 const healthyReplyAssistant={available:true,status:'ok',reason_codes:[],authority:{available:true,ready:true,secret_configuration_ready:true,provider_route_ready:true,provider_generation:1,provider_snapshot_ready:true},started:true,running:false,processed:0,retried:0,compensated:0,cancelled:0,failed:0,guarded:0,reconciled:0,by_state:{queued:0,retry:0,claimed:0,completed:0,superseded:0,cancelled:0,compensated:0,dead:0},pending_jobs:0,dead_jobs:0,oldest_due_at:null,oldest_due_age_sec:0,oldest_claimed_at:null,oldest_claimed_age_sec:0,last_run_at:replyNow,last_run_age_sec:0,started_at:replyNow-60,worker_age_sec:60,current_run_started_at:null,current_run_age_sec:null,last_error_code:null};
 const healthyThresholds={http_p95_warning_ms:900,http_p95_critical_ms:2500,settlement_stuck_warning_sec:120,error_rate_warning_pct:2,error_rate_critical_pct:8,rate_limit_warning_pct:0.5,rate_limit_critical_pct:2,rate_limit_recent_critical_count:5,heap_limit_warning_pct:75,heap_limit_critical_pct:85,rss_warning_mb:0,rss_critical_mb:0,event_loop_p95_warning_ms:250,event_loop_p95_critical_ms:600,pending_sessions_warning_count:25,media_wait_warning_sec:120,rtc_weak_quality_warning_count:5,broken_asset_scan_limit:500,broken_asset_warning_count:1,broken_asset_critical_count:10,reply_assistant_backlog_warning_sec:15,reply_assistant_backlog_critical_sec:45,reply_assistant_claim_warning_sec:105,reply_assistant_claim_critical_sec:210,reply_assistant_worker_stale_sec:15,configuration_valid:true,invalid_keys:[]};
-const healthySummary={snapshot_source:'backend_private_observability',primary_window:'live_trailing_15m_and_trailing_24h',runtime_environment:'production',runtime_classification:'staging',runtime_deployment_id:'deploy-1',active_alerts:0,critical_alerts:0,warning_alerts:0,api_window_sec:900,api_observed_window_sec:900,api_window_coverage_complete:true,api_window_request_count:0,api_p95_ms:null,api_error_rate_pct:null,api_429_count:0,active_sessions:0,settling_sessions:0,stuck_settling_sessions:0,pending_sessions:0,payment_operations_status:'ok',payment_operations_coverage_complete:true,payment_authorization_manual_review_jobs:0,payment_active_disputes:0,payment_dispute_manual_review:0,payment_dispute_lost_unrecovered:0,payment_dispute_compensation_pending:0,payment_outstanding_sessions:0,payment_outstanding_amount:0,pending_refund_requests:0,processing_refund_requests:0,failed_refund_requests:0,connected_users:0,broken_assets:0,asset_scan_coverage_pct:100,asset_scan_coverage_complete:true,asset_storage_status:'ok',asset_storage_durable:true,media_sfu_status:'disabled',one_to_one_media_mode:'peer',media_sfu_rooms:null,media_sfu_peers:null,media_sfu_estimated_usd_per_hour:null,security_level:'heavy',email_delivery_configured:true,turnstile_configured:true,reply_assistant_status:'ok',reply_assistant_pending_jobs:0,reply_assistant_dead_jobs:0,background_task_status:'ready',background_task_health:'ok',background_task_health_code:null,background_task_driver:'redis',background_task_required:true,background_task_queue_depth:0,background_task_processing_depth:0,background_task_dead_jobs:0,background_task_dropped:0,background_task_suppressed:0,live_capacity_status:'ok',live_capacity_mode:'enforce',live_capacity_effective_mode:'enforce',live_capacity_revision:1,live_capacity_admission_enforced:true,live_capacity_admission_paused:false,live_capacity_stripe_order_guaranteed:true,stripe_mode:'test',stripe_webhook_configuration_ready:true};
+const healthySummary={snapshot_source:'backend_private_observability',primary_window:'live_trailing_15m_and_trailing_24h',runtime_environment:'production',runtime_classification:'production',runtime_deployment_id:'deploy-1',active_alerts:0,critical_alerts:0,warning_alerts:0,api_window_sec:900,api_observed_window_sec:900,api_window_coverage_complete:true,api_window_request_count:0,api_p95_ms:null,api_error_rate_pct:null,api_429_count:0,active_sessions:0,settling_sessions:0,stuck_settling_sessions:0,pending_sessions:0,payment_operations_status:'ok',payment_operations_coverage_complete:true,payment_authorization_manual_review_jobs:0,payment_active_disputes:0,payment_dispute_manual_review:0,payment_dispute_lost_unrecovered:0,payment_dispute_compensation_pending:0,payment_outstanding_sessions:0,payment_outstanding_amount:0,pending_refund_requests:0,processing_refund_requests:0,failed_refund_requests:0,connected_users:0,broken_assets:0,asset_scan_coverage_pct:100,asset_scan_coverage_complete:true,asset_storage_status:'ok',asset_storage_durable:true,media_sfu_status:'disabled',one_to_one_media_mode:'peer',media_sfu_rooms:null,media_sfu_peers:null,media_sfu_estimated_usd_per_hour:null,security_level:'heavy',email_delivery_configured:true,turnstile_configured:true,reply_assistant_status:'ok',reply_assistant_pending_jobs:0,reply_assistant_dead_jobs:0,background_task_status:'ready',background_task_health:'ok',background_task_health_code:null,background_task_driver:'redis',background_task_required:true,background_task_queue_depth:0,background_task_processing_depth:0,background_task_dead_jobs:0,background_task_dropped:0,background_task_suppressed:0,live_capacity_status:'ok',live_capacity_mode:'enforce',live_capacity_effective_mode:'enforce',live_capacity_revision:1,live_capacity_admission_enforced:true,live_capacity_admission_paused:false,live_capacity_stripe_order_guaranteed:true,stripe_mode:'live',stripe_webhook_configuration_ready:true};
 healthySummary.stripe_platform_webhook_configuration_ready=true;
 healthySummary.stripe_connect_webhook_configuration_ready=true;
 const overviewProvenanceSpecs={
@@ -316,6 +316,8 @@ const healthyOverview=withOverviewProvenance({
 });
 healthyOverview.payment_runtime.platform_webhook_configuration_ready=true;
 healthyOverview.payment_runtime.connect_webhook_configuration_ready=true;
+healthyOverview.payment_runtime.active_stripe_mode='live';
+healthyOverview.payment_runtime.configured_mode='live';
 assert.equal(hooks.validOpsOverview(healthyOverview),true,'the current backend overview contract is accepted');
 const paymentOperationsHtml=hooks.renderPaymentOperations(healthyOverview);
 assert.match(paymentOperationsHtml,/Payment operations[\s\S]*Authoritative paid-domain database aggregates: COMPLETE[\s\S]*End-to-end Stripe delivery: NOT COVERED/,'payment operations renders authoritative paid-domain database scope without implying end-to-end Stripe delivery coverage');
@@ -459,6 +461,13 @@ assert.equal(hooks.validOpsOverview({...healthyOverview,alert_event_history:{...
 assert.equal(hooks.validOpsOverview({...healthyOverview,status:'warning'}),false,'a warning label without warning alert evidence cannot become a trusted current snapshot');
 const statusMismatchAlert={key:'cache_observability_unavailable',severity:'warning',title:'Cache warning',detail:'warning-only evidence',at:new Date().toISOString()};
 assert.equal(hooks.validOpsOverview({...healthyOverview,status:'critical',alerts:[statusMismatchAlert],summary:{...healthyOverview.summary,active_alerts:1,warning_alerts:1}}),false,'a critical label with warning-only alert evidence is rejected');
+const coherentProductionWarning={...healthyOverview,status:'warning',alerts:[statusMismatchAlert],summary:{...healthyOverview.summary,active_alerts:1,critical_alerts:0,warning_alerts:1}};
+assert.equal(hooks.validOpsOverview(coherentProductionWarning),true,'a coherent production warning remains trusted when Stripe authority is LIVE');
+assert.equal(hooks.validOpsOverview({...coherentProductionWarning,payment_runtime:{...healthyOverview.payment_runtime,active_stripe_mode:'test',configured_mode:'test'}}),false,'a warning production envelope cannot bypass the Stripe LIVE trust requirement');
+const productionCriticalAlert={key:'payment_runtime_unavailable',severity:'critical',title:'Payment runtime unavailable',detail:'critical authority evidence',at:new Date().toISOString()};
+const coherentProductionCritical={...healthyOverview,status:'critical',alerts:[productionCriticalAlert],summary:{...healthyOverview.summary,active_alerts:1,critical_alerts:1,warning_alerts:0}};
+assert.equal(hooks.validOpsOverview(coherentProductionCritical),true,'a coherent production critical envelope remains trusted when Stripe authority is LIVE');
+assert.equal(hooks.validOpsOverview({...coherentProductionCritical,payment_runtime:{...healthyOverview.payment_runtime,active_stripe_mode:'test',configured_mode:'test'}}),false,'a critical production envelope cannot bypass the Stripe LIVE trust requirement');
 assert.equal(hooks.validOpsOverview({...healthyOverview,realtime:{...healthyOverview.realtime,websocket:{...healthyOverview.realtime.websocket,available:true,status:'ok'}}}),true,'extra legacy websocket labels do not replace or invalidate the actual backend driver/local/cluster/metrics contract');
 assert.equal(hooks.validOpsOverview({...healthyOverview,realtime:{...healthyOverview.realtime,websocket:{...healthyOverview.realtime.websocket,connected_users:1,active_rooms:1,total_sockets:1}}}),true,'request-time local socket counters may legitimately differ from the last published cluster-local snapshot during socket churn');
 assert.equal(hooks.validOpsOverview({...healthyOverview,realtime:{...healthyOverview.realtime,websocket:{...healthyOverview.realtime.websocket,runtime:{...realtimeRuntime,disconnect_timers:'0'}}}}),false,'numeric-looking realtime runtime counters cannot enter a trusted overview');
@@ -500,16 +509,17 @@ assert.equal(hooks.validOpsOverview({...healthyOverview,realtime:{...healthyOver
 assert.equal(hooks.validOpsOverview({...healthyOverview,background_tasks:{...healthyBackground,health:'degraded'}}),false,'global OK cannot hide degraded background-task health');
 const backgroundWithoutSuppressed={...healthyOverview.background_tasks};
 delete backgroundWithoutSuppressed.suppressed;
-assert.equal(hooks.validOpsOverview({...healthyOverview,background_tasks:backgroundWithoutSuppressed}),false,'current authoritative background snapshots require the staging-safety suppression counter');
+assert.equal(hooks.validOpsOverview({...healthyOverview,background_tasks:backgroundWithoutSuppressed}),false,'current authoritative background snapshots require the recipient-safety suppression counter');
 assert.equal(hooks.validOpsOverview({...healthyOverview,background_tasks:{...healthyOverview.background_tasks,suppressed:-1},summary:{...healthyOverview.summary,background_task_suppressed:-1}}),false,'negative suppression counters fail closed');
 assert.equal(hooks.validOpsOverview({...healthyOverview,background_tasks:{...healthyOverview.background_tasks,suppressed:0.5},summary:{...healthyOverview.summary,background_task_suppressed:0.5}}),false,'fractional suppression counters fail closed');
-const stagingSuppressionOverview={...healthyOverview,background_tasks:{...healthyOverview.background_tasks,suppressed:7},summary:{...healthyOverview.summary,background_task_suppressed:7}};
-assert.equal(hooks.validOpsOverview(stagingSuppressionOverview),true,'intentional staging suppressions do not become dead-job or permanent-failure health');
-const stagingSuppressionHtml=hooks.renderOperationalAuthorities(stagingSuppressionOverview);
-assert.match(stagingSuppressionHtml,/Suppressed by staging safety<\/td><td>7[\s\S]*not dead or permanently failed jobs/i);
-assert.match(stagingSuppressionHtml,/Queue health \/ code<\/td><td>ok \/ Unknown/i,'nonzero safety suppressions preserve healthy queue status when no real failure exists');
+const recipientSuppressionOverview={...healthyOverview,background_tasks:{...healthyOverview.background_tasks,suppressed:7},summary:{...healthyOverview.summary,background_task_suppressed:7}};
+assert.equal(hooks.validOpsOverview(recipientSuppressionOverview),true,'intentional recipient-safety suppressions do not become dead-job or permanent-failure health');
+const recipientSuppressionHtml=hooks.renderOperationalAuthorities(recipientSuppressionOverview);
+assert.match(recipientSuppressionHtml,/Suppressed by recipient safety<\/td><td>7[\s\S]*not dead or permanently failed jobs/i);
+assert.match(recipientSuppressionHtml,/Queue health \/ code<\/td><td>ok \/ Unknown/i,'nonzero safety suppressions preserve healthy queue status when no real failure exists');
 assert.equal(hooks.validOpsOverview({...healthyOverview,payment_runtime:{...healthyOverview.payment_runtime,active_configuration_ready:false}}),false,'a healthy-looking payment section requires the active Stripe configuration to be ready');
-assert.equal(hooks.validOpsOverview({...healthyOverview,payment_runtime:{...healthyOverview.payment_runtime,configured_mode:'live'}}),false,'configured Stripe mode must exactly match the authoritative active mode');
+assert.equal(hooks.validOpsOverview({...healthyOverview,payment_runtime:{...healthyOverview.payment_runtime,configured_mode:'test'}}),false,'configured Stripe mode must exactly match the authoritative active mode');
+assert.equal(hooks.validOpsOverview({...healthyOverview,payment_runtime:{...healthyOverview.payment_runtime,active_stripe_mode:'test',configured_mode:'test'}}),false,'a production overview cannot be trusted while Stripe is in test mode');
 const measuredHttp={...healthyHttp,measurement_available:true,total_requests:4,status_counts:{'2xx':4,'3xx':0,'4xx':0,'5xx':0,other:0},rate_window_request_count:4,rate_window_status_counts:{'2xx':4,'3xx':0,'4xx':0,'5xx':0,other:0},error_rate_pct:0,client_error_rate_pct:0,rate_limited_rate_pct:0,avg_ms:10,p95_ms:10,max_ms:10,latency_sample_count:4,latency_samples_truncated:false,last_request_at:healthyHttp.rate_window_ended_at,tracked_route_count:1,returned_route_count:1,hottest_routes:[{route:'GET /api/admin/observability/overview',count:4,errors:0,avg_ms:10,p95_ms:10,max_ms:10,last_status_code:200,last_duration_ms:10,last_request_at:healthyHttp.rate_window_ended_at,status_counts:{'2xx':4,'3xx':0,'4xx':0,'5xx':0,other:0},latency_sample_count:4,latency_sample_limit:120,latency_samples_truncated:false}]};
 const measuredHttpOverview=withOverviewProvenance({...healthyOverview,http:measuredHttp,summary:{...healthyOverview.summary,api_window_request_count:4,api_p95_ms:10,api_error_rate_pct:0}});
 assert.equal(hooks.validOpsOverview(measuredHttpOverview),true,'a sampled trailing-window HTTP contract with bounded route evidence remains trusted');
@@ -800,89 +810,48 @@ fallbackAreaRemoved=false;fallbackCopySandbox.document.execCommand=()=>{throw ne
 await assert.rejects(()=>fallbackCopySandbox.testCopyText('report'),/legacy clipboard denied/);
 assert.equal(fallbackAreaRemoved,true,'the legacy clipboard textarea is removed even when copy throws');
 new vm.Script(actionSource,{filename:'ob-admin-live-ops.js'});
-const actionIdentitySource=section(actionSource,"  var EXPECTED_OPS_API_BASE='https://victorious-wisdom-production-a6b0.up.railway.app';",'  function opsContractError(message,envelope){');
+const actionIdentitySource=section(actionSource,"  var EXPECTED_OPS_API_BASE='https://ownlybiz-backend-production.up.railway.app';",'  function opsContractError(message,envelope){');
 const actionNow=Date.now();
-const verifiedActionSnapshot=()=>({data:{generated_at:new Date(actionNow).toISOString(),runtime_identity:verifiedIdentity,payment_runtime:{available:true,status:'ok',active_stripe_mode:'test',active_configuration_ready:true,platform_webhook_configuration_ready:true,connect_webhook_configuration_ready:true,webhook_configuration_ready:true,configured_mode:'test'}},overview_schema_valid:true,received_at:actionNow,last_verified_at:actionNow,freshness_anchor_at:actionNow,identity_verification:{verified:true},freshness:'current',stale:false});
-let actionSnapshot=verifiedActionSnapshot(),actionIdentityFeedback=null,actionBase='https://victorious-wisdom-production-a6b0.up.railway.app';
+const verifiedActionSnapshot=()=>({data:{generated_at:new Date(actionNow).toISOString(),runtime_identity:verifiedIdentity,payment_runtime:{available:true,status:'ok',active_stripe_mode:'live',active_configuration_ready:true,platform_webhook_configuration_ready:true,connect_webhook_configuration_ready:true,webhook_configuration_ready:true,configured_mode:'live'}},overview_schema_valid:true,received_at:actionNow,last_verified_at:actionNow,freshness_anchor_at:actionNow,identity_verification:{verified:true},freshness:'current',stale:false});
+let actionSnapshot=verifiedActionSnapshot(),actionIdentityFeedback=null,actionBase='https://ownlybiz-backend-production.up.railway.app';
 const actionIdentityDocument={hidden:false};
 const actionIdentitySandbox={Object,String,Array,Number,Date,AbortController,document:actionIdentityDocument,window:null,base:()=>actionBase,role:()=> 'admin',token:()=> 'admin-token',actionResult:(...args)=>{actionIdentityFeedback=args;}};
 actionIdentitySandbox.window=actionIdentitySandbox;
 actionIdentitySandbox.obGetOpsSnapshot=()=>actionSnapshot;
 vm.createContext(actionIdentitySandbox);
 new vm.Script(actionIdentitySource+'\nthis.opsEnvironment=opsEnvironment;this.requireVerifiedMutationTarget=requireVerifiedMutationTarget;').runInContext(actionIdentitySandbox);
-assert.equal(actionIdentitySandbox.opsEnvironment(),'staging','action controls label staging only after the exact runtime identity matches');
-assert.equal(actionIdentitySandbox.requireVerifiedMutationTarget(),true);
-actionSnapshot={...verifiedActionSnapshot(),data:{...verifiedActionSnapshot().data,runtime_identity:{...verifiedIdentity,runtime_classification:'production'}}};
+assert.equal(actionIdentitySandbox.opsEnvironment(),'production','the action layer labels production only after the exact runtime identity matches');
+assert.equal(actionIdentitySandbox.requireVerifiedMutationTarget(),false,'production never authorizes an Ops server mutation');
+assert.match(actionIdentityFeedback[0],/Production Ops Monitor is read-only/);
+assert.equal(actionIdentityFeedback[2].kind,'ops_production_read_only');
+actionSnapshot={...verifiedActionSnapshot(),data:{...verifiedActionSnapshot().data,runtime_identity:{...verifiedIdentity,runtime_classification:'staging'}}};
 assert.equal(actionIdentitySandbox.opsEnvironment(),'unknown','exact provider IDs do not override a contradictory normalized runtime classification');
-assert.equal(actionIdentitySandbox.requireVerifiedMutationTarget(),false,'a non-staging normalized runtime cannot authorize mutation');
-actionSnapshot={...verifiedActionSnapshot(),data:{...verifiedActionSnapshot().data,payment_runtime:{available:true,status:'ok',active_stripe_mode:'live',active_configuration_ready:true,configured_mode:'live'}}};
-assert.equal(actionIdentitySandbox.requireVerifiedMutationTarget(),false,'authoritative Stripe LIVE mode blocks every mutation even on the exact staging deployment');
-assert.match(actionIdentityFeedback[0],/UNSAFE PAYMENT MODE[\s\S]*Stripe TEST mode/);
-actionSnapshot={...verifiedActionSnapshot(),data:{...verifiedActionSnapshot().data,payment_runtime:{available:false,status:'unavailable',active_stripe_mode:null,active_configuration_ready:false,configured_mode:null}}};
-assert.equal(actionIdentitySandbox.requireVerifiedMutationTarget(),false,'unavailable payment authority fails closed even when a test-looking mode is present');
-actionSnapshot={...verifiedActionSnapshot(),data:{...verifiedActionSnapshot().data,payment_runtime:{available:true,status:'warning',active_stripe_mode:'unknown',active_configuration_ready:false,configured_mode:null}}};
-assert.equal(actionIdentitySandbox.requireVerifiedMutationTarget(),false,'an unknown Stripe mode fails closed');
-actionSnapshot={...verifiedActionSnapshot(),data:{...verifiedActionSnapshot().data,payment_runtime:{available:true,status:'ok',active_stripe_mode:'test',active_configuration_ready:false,configured_mode:'test'}}};
-assert.equal(actionIdentitySandbox.requireVerifiedMutationTarget(),false,'a test-looking Stripe mode cannot authorize mutation without active configuration readiness');
-actionSnapshot={...verifiedActionSnapshot(),data:{...verifiedActionSnapshot().data,payment_runtime:{...verifiedActionSnapshot().data.payment_runtime,connect_webhook_configuration_ready:false,webhook_configuration_ready:false,status:'critical',last_error_code:'stripe_connect_webhook_configuration_unavailable'}}};
-assert.equal(actionIdentitySandbox.requireVerifiedMutationTarget(),false,'a test-mode runtime cannot authorize mutation without distinct Stripe Connect webhook signing readiness');
-assert.equal(actionIdentityFeedback[2].connect_webhook_configuration_ready,false,'blocked mutation diagnostics preserve the separate Connect-signing readiness fact');
-actionSnapshot={...verifiedActionSnapshot(),data:{...verifiedActionSnapshot().data,generated_at:new Date(actionNow-30001).toISOString()}};
-assert.equal(actionIdentitySandbox.requireVerifiedMutationTarget(),false,'fresh browser receipt times cannot authorize an old server-generated overview');
-actionSnapshot={...verifiedActionSnapshot(),data:{runtime_identity:{...verifiedIdentity,environment:'staging',environment_id:'wrong-environment'}},identity_verification:{verified:false}};
-assert.equal(actionIdentitySandbox.opsEnvironment(),'unknown','a friendly staging display name cannot override a wrong Railway environment ID');
-assert.equal(actionIdentitySandbox.requireVerifiedMutationTarget(),false,'mutations are blocked for an unverified runtime identity');
-assert.match(actionIdentityFeedback[0],/Mutation blocked[\s\S]*UNKNOWN \/ UNVERIFIED/);
+assert.equal(actionIdentitySandbox.requireVerifiedMutationTarget(),false,'a contradictory runtime cannot authorize mutation');
 actionBase='https://untrusted-api.example.test';actionSnapshot=verifiedActionSnapshot();
 assert.equal(actionIdentitySandbox.opsEnvironment(),'unknown','a runtime identity cannot verify an unexpected API base');
-actionBase='https://victorious-wisdom-production-a6b0.up.railway.app';
-actionSnapshot={...verifiedActionSnapshot(),received_at:actionNow-30001,last_verified_at:actionNow-30001};
-assert.equal(actionIdentitySandbox.requireVerifiedMutationTarget(),false,'freshness strings cannot authorize a snapshot older than the documented 30-second wall-clock TTL');
-assert.match(actionIdentityFeedback[0],/no older than 30 seconds[\s\S]*Refresh Ops Monitor/);
-actionSnapshot={...verifiedActionSnapshot(),last_verified_at:actionNow-1};
-assert.equal(actionIdentitySandbox.requireVerifiedMutationTarget(),false,'a received snapshot without matching successful-verification provenance is rejected');
-actionSnapshot={...verifiedActionSnapshot()};delete actionSnapshot.overview_schema_valid;
-assert.equal(actionIdentitySandbox.requireVerifiedMutationTarget(),false,'identity and timestamps cannot authorize a snapshot without explicit overview-schema validity');
-actionSnapshot=verifiedActionSnapshot();actionIdentityDocument.hidden=true;
-assert.equal(actionIdentitySandbox.requireVerifiedMutationTarget(),false,'mutations fail closed while visibility suspension has stopped polling');
-actionIdentityDocument.hidden=false;
-const actionRequestSource=section(actionSource,"  var EXPECTED_OPS_API_BASE='https://victorious-wisdom-production-a6b0.up.railway.app';",'  function refreshAfterAction(){');
-let actionCredentialGeneration=1,actionIdentityController=new AbortController(),resolveStaleAction,actionRequestSignal;
-const actionExactCredentialChecks=[];
-const actionRequestSandbox={Object,String,Array,AbortController,Error,Number,Date,JSON,Promise,document:{hidden:false},window:null,base:()=> 'https://victorious-wisdom-production-a6b0.up.railway.app',role:()=> 'admin',token:()=> 'admin-token',actionResult:()=>{},fetch:async(_url,init)=>{actionRequestSignal=init.signal;return new Promise(resolve=>{resolveStaleAction=resolve;});}};
+const actionRequestSource=section(actionSource,"  var EXPECTED_OPS_API_BASE='https://ownlybiz-backend-production.up.railway.app';",'  function refreshAfterAction(){');
+let actionFetches=0,actionRequestInit=null,actionRequestUrl=null;
+const actionRequestSandbox={Object,String,Array,AbortController,Error,Number,Date,JSON,Promise,document:{hidden:false,querySelectorAll:()=>[]},window:null,base:()=>actionBase,role:()=> 'admin',token:()=> 'admin-token',actionResult:()=>{},setTimeout,clearTimeout,fetch:async(url,init)=>{actionFetches+=1;actionRequestUrl=url;actionRequestInit=init;return response(200,{events:[]});}};
 actionRequestSandbox.window=actionRequestSandbox;
-actionRequestSandbox.obGetOpsSnapshot=verifiedActionSnapshot;
 actionRequestSandbox.OB_CLIENT_CONTEXT={
-  capture:scope=>Object.freeze({scope,token:'admin-token',principal:'admin:1',role:'admin',identityGeneration:actionCredentialGeneration,credentialGeneration:actionCredentialGeneration,signal:actionIdentityController.signal}),
-  isCurrent:(context,options)=>{actionExactCredentialChecks.push(options&&options.exactCredential===true);return !context.signal.aborted&&context.credentialGeneration===actionCredentialGeneration;},
+  capture:scope=>Object.freeze({scope,token:'admin-token',principal:'admin:1',role:'admin',signal:new AbortController().signal}),
+  isCurrent:(_context,options)=>options&&options.exactCredential===true,
 };
 vm.createContext(actionRequestSandbox);
-new vm.Script(actionRequestSource+'\nthis.testOpsApi=opsApi;').runInContext(actionRequestSandbox);
-const staleActionPromise=actionRequestSandbox.testOpsApi('/admin/observability/cache/clear',{dry_run:true});
-assert(actionRequestSignal,'mutating Ops requests are abortable');
-actionIdentityController.abort();actionCredentialGeneration+=1;actionIdentityController=new AbortController();
-assert.equal(actionRequestSignal.aborted,true,'an identity transition aborts a pending mutating Ops request');
-resolveStaleAction(response(200,{success:true,dry_run:true,required_confirm:'SERVER_TOKEN'}));
-let staleActionError=null;try{await staleActionPromise;}catch(error){staleActionError=error;}
-assert.equal(staleActionError&&staleActionError.code,'ops_principal_changed','a response for an old action principal is ignored');
-assert(actionExactCredentialChecks.length>0&&actionExactCredentialChecks.every(Boolean),'action request checks use exactCredential=true');
-let fireActionTimeout=null,clearedActionTimeout=null;
-const timeoutRequestSandbox={Object,String,Array,AbortController,Error,Number,Date,JSON,Promise,document:{hidden:false,querySelectorAll:()=>[]},window:null,base:()=> 'https://victorious-wisdom-production-a6b0.up.railway.app',role:()=> 'admin',token:()=> 'admin-token',actionResult:()=>{},setTimeout:callback=>{fireActionTimeout=callback;return 77;},clearTimeout:id=>{clearedActionTimeout=id;},fetch:async(_url,init)=>new Promise((_resolve,reject)=>init.signal.addEventListener('abort',()=>{const error=new Error('aborted');error.name='AbortError';reject(error);},{once:true}))};
-timeoutRequestSandbox.window=timeoutRequestSandbox;
-vm.createContext(timeoutRequestSandbox);
-new vm.Script(actionRequestSource+'\nthis.testOpsApi=opsApi;this.testActionControllers=opsActionControllers;').runInContext(timeoutRequestSandbox);
-const timedActionPromise=timeoutRequestSandbox.testOpsApi('/admin/observability/cache/clear',{dry_run:true});
-await Promise.resolve();
-assert.equal(typeof fireActionTimeout,'function','every Ops action request installs a bounded timeout');
-fireActionTimeout();
-let timedActionError=null;try{await timedActionPromise;}catch(error){timedActionError=error;}
-assert.equal(timedActionError&&timedActionError.code,'ops_action_timeout');
-assert.match(timedActionError.message,/timed out after 15 seconds[\s\S]*no successful completion/,'timeouts are distinct from ordinary failures and never imply completion');
-assert.equal(clearedActionTimeout,77,'the action timeout timer is always cleaned up');
-assert.equal(timeoutRequestSandbox.testActionControllers.length,0,'a timed-out action releases its AbortController');
+new vm.Script(actionRequestSource+'\nthis.testOpsApi=opsApi;this.testOpsGet=opsGet;').runInContext(actionRequestSandbox);
+actionBase='https://ownlybiz-backend-production.up.railway.app';
+await assert.rejects(()=>actionRequestSandbox.testOpsApi('/admin/observability/cache/clear',{dry_run:true}),error=>error&&error.code==='ops_production_read_only','production refuses a mutating Ops request before fetch');
+assert.equal(actionFetches,0,'production mutation refusal sends no bearer token or request');
+const readEnvelope=await actionRequestSandbox.testOpsGet('/admin/observability/events');
+assert.equal(actionFetches,1,'the bounded read-only report request remains available');
+assert.equal(actionRequestInit.method,'GET');
+assert.equal(actionRequestUrl,'https://ownlybiz-backend-production.up.railway.app/api/admin/observability/events');
+actionBase='https://untrusted-api.example.test';
+await assert.rejects(()=>actionRequestSandbox.testOpsGet('/admin/observability/events'),error=>error&&error.code==='ops_api_base_unverified','read-only requests are also exact-production-base bound');
+assert.equal(actionFetches,1,'an unverified target receives no admin bearer token');
 const helperSource=section(actionSource,'  function opsContractError(message,envelope){','  function refreshAfterAction(){');
 let appliedFeedback=null;
-const actionSandbox={Error,Object,Array,String,Number,Date,JSON,Promise,EXPECTED_OPS_API_BASE:'https://victorious-wisdom-production-a6b0.up.railway.app',EXPECTED_OPS_SERVICE_ID:verifiedIdentity.service_id,EXPECTED_OPS_ENVIRONMENT_ID:verifiedIdentity.environment_id,fetch:async()=>{},base:()=>'',token:()=>'',actionResult:(...args)=>{appliedFeedback=args;},obValidOpsEventHistoryEnvelope:()=>true,obValidOpsOverviewEventHistory:()=>true};
+const actionSandbox={Error,Object,Array,String,Number,Date,JSON,Promise,EXPECTED_OPS_API_BASE:'https://ownlybiz-backend-production.up.railway.app',EXPECTED_OPS_SERVICE_ID:verifiedIdentity.service_id,EXPECTED_OPS_ENVIRONMENT_ID:verifiedIdentity.environment_id,fetch:async()=>{},base:()=>'',token:()=>'',actionResult:(...args)=>{appliedFeedback=args;},obValidOpsEventHistoryEnvelope:()=>true,obValidOpsOverviewEventHistory:()=>true};
 vm.createContext(actionSandbox);
 new vm.Script(helperSource+'\nthis.requirePreview=requirePreview;this.requireCandidateFingerprint=requireCandidateFingerprint;this.isCandidateFingerprintMismatch=isCandidateFingerprintMismatch;this.requiredCount=requiredCount;this.classifyOpsResponse=classifyOpsResponse;this.applyOpsOutcome=applyOpsOutcome;this.safeOpsTimestamp=safeOpsTimestamp;this.safeNormalizedOpsReportSections=safeNormalizedOpsReportSections;this.safeOpsReportSections=safeOpsReportSections;').runInContext(actionSandbox);
 const normalizedTimestamp='2026-09-01T08:09:10.000Z',normalizedTimestampMs=Date.parse(normalizedTimestamp);
@@ -938,7 +907,7 @@ actionSandbox.applyOpsOutcome('Emergency stop',{status:200,body:{success:true,ac
 assert.match(appliedFeedback[0],/Full server response:[\s\S]*"audit_recorded": true[\s\S]*"audit_completion_recorded": true[\s\S]*"billing_stopped": true[\s\S]*"settlement_pending": false[\s\S]*"result"/,'action feedback preserves top-level audit-start, audit-completion, billing, settlement, and result fields');
 
 const reportSections=actionSandbox.safeNormalizedOpsReportSections({
-  runtime_identity:{...verifiedIdentity,provider_environment_name:'production',node_environment:'production',classification_basis:'is_staging_flag',git_commit_sha:'abcdef1234567890',process_started_at:'2026-09-01T07:00:00Z',secret:'LEAK-ME'},
+  runtime_identity:{...verifiedIdentity,provider_environment_name:'production',node_environment:'production',classification_basis:'node_env_production',git_commit_sha:'abcdef1234567890',process_started_at:'2026-09-01T07:00:00Z',secret:'LEAK-ME'},
   provenance:{media_sfu:{status:'collected',source:'strict_sfu_settings_and_media_health',scope:'media_service',coverage:{pct:100,complete:true,truncated:false},stale:false,cached:false,age_basis:'collected_at',raw_health:'LEAK-ME'}},
   media_sfu:{available:true,status:'ok',candidate_policy:'udp-preferred',deployment_mode:'direct-ice',udp_ready:true,measurement_available:true,rooms:1,counters:{rooms_created_total:8},timings:{join:{p95_ms:24}},latest_client_timing:{marks_count:3,total_ms:180},health:{authorization:'Bearer LEAK-ME'},raw_health:{secret:'LEAK-ME'},url:'https://user:password@example.test'},
   security:{available:true,status:'ok',level:'medium',turnstile_enabled:true,readiness:{rate_limits:'active'},api_key:'LEAK-ME',profiles:{token:'LEAK-ME'}},
@@ -953,7 +922,7 @@ assert.equal(reportSections.media_sfu.latest_client_timing.total_ms,180);
 assert.equal(reportSections.security.readiness.rate_limits,'active','the exact bounded security readiness state survives projection');
 assert.equal(reportSections.reply_assistant.pending_jobs,0,'known zero reply-assistant backlog is preserved');
 assert.equal(reportSections.system.event_loop.p95_ms,3);
-assert.equal(reportSections.runtime_identity.runtime_classification,'staging');
+assert.equal(reportSections.runtime_identity.runtime_classification,'production');
 assert.equal(reportSections.runtime_identity.deployment_id,'deploy-1');
 assert.equal(reportSections.runtime_identity.replica_id,'replica-1');
 assert.equal(reportSections.runtime_identity.git_commit_sha,'abcdef1234567890');
@@ -1038,7 +1007,7 @@ assert.equal(fullSafeReport.cache.revision,12);
 assert.equal(fullSafeReport.storage.database.driver,'postgres-primary-hybrid');
 assert.equal(fullSafeReport.background_tasks.health_code,'background_task_dropped_work');
 assert.equal(fullSafeReport.background_tasks.queue_depth,2);
-assert.equal(fullSafeReport.summary.background_task_suppressed,6,'the bounded summary report preserves the staging-safety suppression count');
+assert.equal(fullSafeReport.summary.background_task_suppressed,6,'the bounded summary report preserves the recipient-safety suppression count');
 assert.equal(fullSafeReport.background_tasks.suppressed,6,'the background-task report preserves suppressions separately from dead jobs');
 assert.match(fullSafeReport.background_tasks.suppression_semantics,/not dead or permanently failed jobs/i,'the copied report labels suppression semantics explicitly');
 assert.equal(fullSafeReport.live_capacity.reason_present,true,'the report retains only the boolean fact that a rollout reason exists');
@@ -1141,15 +1110,14 @@ assert.match(actionSource,/security:safeReportSections\.security/,'reports carry
 assert.match(actionSource,/reply_assistant:safeReportSections\.reply_assistant/,'reports carry only the projected normalized reply-assistant section');
 assert.match(actionSource,/system:safeReportSections\.system/,'reports carry only the projected normalized system section');
 assert.doesNotMatch(actionSource,/summary:overview\.summary|alerts:overview\.alerts|http:overview\.http|business:overview\.business|payment_operations:overview\.payment_operations|realtime:overview\.realtime|assets:overview\.assets|cache:overview\.cache|storage:overview\.storage|background_tasks:overview\.background_tasks|live_capacity:overview\.live_capacity|payment_runtime:overview\.payment_runtime|media_sfu:overview\.media_sfu|security:overview\.security|reply_assistant:overview\.reply_assistant|system:overview\.system|trends:trends|events:events/,'no raw overview, trend, or event section bypasses the clipboard projectors');
-assert.match(actionSource,/EXPECTED_OPS_SERVICE_ID='69c78756-c810-4e87-b482-3fee37eb6657'/);
+assert.match(actionSource,/EXPECTED_OPS_SERVICE_ID='d2da7d7a-3d63-4b1d-b47e-9c0366f8a50c'/);
 assert.match(actionSource,/EXPECTED_OPS_ENVIRONMENT_ID='9d2e708e-24af-4fea-a5a3-796d4cd9956f'/);
-assert.doesNotMatch(section(actionSource,'  function opsEnvironment(){','  function captureOpsActionContext(){'),/OWNLYBIZ_IS_STAGING|hostname|\.environment\b/,'the staging label does not trust frontend flags, hostnames, or Railway display names');
+assert.doesNotMatch(section(actionSource,'  function opsEnvironment(){','  function captureOpsActionContext(){'),/OWNLYBIZ_IS_STAGING|hostname|\.environment\b/,'the production label does not trust frontend flags, hostnames, or Railway display names');
 assert.match(actionSource,/client\.isCurrent\(context\.captured,\{exactCredential:true\}\)===true/,'Ops action responses are bound to an exact credential');
 assert.match(actionSource,/signal:controller\.signal/,'Ops action requests are abortable');
-assert.match(actionSource,/\['clear_cache','cleanup_stale','cleanup_pending','stop_one','stop_all'\][\s\S]*requireVerifiedMutationTarget/,'every mutating Ops control is identity gated');
-assert.match(actionSource,/OPS_MUTATION_OVERVIEW_TTL_MS=30000/,'mutation identity evidence has a documented two-refresh wall-clock TTL');
-assert.match(actionSource,/freshnessAnchorAt===lastVerifiedAt[\s\S]*freshnessAnchorAt===expectedFreshnessAnchor[\s\S]*wallClockAge>=0[\s\S]*wallClockAge<=OPS_MUTATION_OVERVIEW_TTL_MS[\s\S]*document[^;]*hidden/,'mutation gating uses the earliest server-generation/receipt freshness anchor, exact successful provenance, recent wall-clock age, and active visibility');
-assert.match(actionSource,/runtimeSafe[\s\S]*runtime_classification[\s\S]*paymentSafe[\s\S]*active_stripe_mode[\s\S]*==='test'/,'mutations require backend-normalized staging identity and authoritative Stripe test mode');
+assert.match(actionSource,/var OPS_SERVER_MUTATIONS_ENABLED=false/,'production declares server-mutating Ops controls disabled');
+assert.match(actionSource,/function requireVerifiedMutationTarget\(\)[\s\S]*OPS_SERVER_MUTATIONS_ENABLED===true[\s\S]*ops_production_read_only[\s\S]*return false/,'production mutation authorization is unconditionally fail-closed');
+assert.match(actionSource,/if\(\(method\|\|'POST'\)!=='GET'\)[\s\S]*ops_production_read_only[\s\S]*throw mutationError/,'the request layer independently rejects every non-GET Ops request before fetch');
 assert.match(actionSource,/__obOpsActionBusy[\s\S]*ops_action_in_flight[\s\S]*setOpsActionButtonsBusy\(true\)[\s\S]*finally[\s\S]*setOpsActionButtonsBusy\(false\)/,'owner controls reject overlaps and keep controls disabled through completion');
 assert.match(actionSource,/isCandidateFingerprintMismatch\(err\)[\s\S]*obRefreshOpsDashboard\('candidate-mismatch'\)[\s\S]*return await runOpsControl\(action,OPS_INTERNAL_REPREVIEW_TOKEN\)/,'stale candidate fingerprints keep the original busy owner while awaiting one internal refresh, new preview, and reconfirmation');
 assert.doesNotMatch(actionSource,/candidateRepreviewed|obOpsRunControl=function\(action,options\)/,'no public option can bypass the candidate re-preview guard');
@@ -1252,7 +1220,7 @@ await mismatchControl.obOpsRunControl('cleanup_pending');
 assert.equal(mismatchCalls.length,4,'a 409 candidate mismatch forces exactly one fresh preview and reconfirmation before retrying mutation');
 assert.equal(mismatchCalls[1].body.candidate_fingerprint,'e'.repeat(64));
 assert.equal(mismatchCalls[3].body.candidate_fingerprint,'f'.repeat(64),'the retry uses only the replacement preview fingerprint');
-assert.match(mismatchFeedback[0][0],/candidate fingerprint[\s\S]*changed[\s\S]*new preview/i);
+assert.match(mismatchFeedback[0][0],/candidate fingerprint[\s\S]*changed[\s\S]*No mutation was applied/i);
 
 let raceCallCount=0,releaseInternalPreview=null;
 const raceBusyStates=[],raceFeedback=[];
@@ -1283,10 +1251,10 @@ assert.match(opsSource,/try\{body\.scrollTop=restoredScroll;\}/,'saved modal scr
 assert.match(opsSource,/currentAnchorOffset-scrollAnchorDescriptor\.offset/,'poll rerenders compensate for changing content height above the owner\'s visible reading anchor');
 assert.match(opsSource,/data-ob-focus-key="table:/,'focusable telemetry regions have stable semantic keys');
 assert.doesNotMatch(actionCenterRenderSource,/old\.outerHTML\s*=/,'delayed action-center refreshes update live state without replacing the focused section');
-assert.match(actionCenterRenderSource,/data-ob-focus-key="action:stop-one"/,'action-center controls expose stable semantic focus keys');
+assert.match(actionCenterRenderSource,/data-ob-focus-key="action:refresh"[\s\S]*data-ob-focus-key="action:copy-report"/,'the two read-only production controls expose stable semantic focus keys');
 assert.match(actionCenterRenderSource,/data-ob-scroll-key="action-center"/,'the action center exposes a stable visual scroll anchor');
-assert.match(actionCenterRenderSource,/Clean old pending requests[\s\S]*releases their unused payment authorization holds/,
-  'pending-request cleanup discloses its payment-authorization release before confirmation');
+assert.doesNotMatch(actionCenterRenderSource,/clear_cache|cleanup_stale|cleanup_pending|stop_one|stop_all|Clear server cache|Emergency stop/,
+  'the production action center omits all server-mutating controls');
 assert.match(ownerSource,/data-ob-focus-key="owner-guide:/,'owner guidance uses alert/action focus keys instead of visible index alone');
 assert.match(developerSource,/prior&&prior\.outerHTML!==html/,'unchanged developer handoff content keeps its DOM identity');
 assert.match(sfuSource,/existing\.outerHTML!==html/,'unchanged SFU evidence keeps its DOM identity');
@@ -1305,6 +1273,12 @@ const ownerLifecycleSandbox={window:null,String,Number,Object,Array,JSON,Promise
 };
 ownerLifecycleSandbox.window=ownerLifecycleSandbox;
 vm.createContext(ownerLifecycleSandbox);new vm.Script(ownerSource,{filename:'ops-owner-action-guides.js'}).runInContext(ownerLifecycleSandbox);
+const injectedBackendGuideAlert={key:'stale_active_sessions',severity:'critical',title:'Stale sessions',detail:'settlement candidates exist',action_guide:{impact:'INJECTED IMPACT',owner_action:'RUN PROD MUTATION',safe_actions:[{id:'cleanup_stale_sessions',label:'Settle now',kind:'api'},{id:'stop_all',label:'Stop all',kind:'api'},{id:'clear_cache',label:'Clear cache',kind:'api'}]}};
+const projectedProductionGuide=ownerLifecycleSandbox.__OB_TEST_HOOKS__.opsOwnerGuide.projectGuide(injectedBackendGuideAlert);
+assert.deepEqual(Array.from(projectedProductionGuide.safe_actions,function(action){return action.id;}),['refresh_ops','copy_report'],'backend-supplied actions are projected to the two production read-only controls');
+const renderedProductionGuide=ownerLifecycleSandbox.__OB_TEST_HOOKS__.opsOwnerGuide.renderCard({alert:injectedBackendGuideAlert,guide:projectedProductionGuide},0);
+assert.match(renderedProductionGuide,/Refresh Ops Monitor[\s\S]*Copy developer report/);
+assert.doesNotMatch(renderedProductionGuide,/cleanup_stale|stop_all|clear_cache|Settle now|Stop all|Clear cache|RUN PROD MUTATION|INJECTED IMPACT/,'backend guide prose and mutating actions cannot enter the production owner UI');
 assert.equal(ownerSnapshotListeners.length,0,'the owner guide does not wire private admin telemetry before authentication');
 ownerLifecycleLocalStorage.setItem('ob_u',JSON.stringify({id:'admin-late',role:'admin'}));
 ownerLifecycleSandbox.obOpenOpsDashboard();
@@ -1317,7 +1291,7 @@ ownerLifecycleSandbox.__obOwnerGuideItems=[{alert:{key:'background_task_dead_job
 await ownerLifecycleSandbox.obOwnerActionGuideRun(0,'copy_report');
 assert.equal(ownerCopyControl,'copy_report','owner guidance delegates developer-report copying to the verified central controller with truthful feedback');
 const alertClipboardSandbox={window:null,String,Number,Object,Array,JSON,__OB_TEST_HOOKS__:{}};alertClipboardSandbox.window=alertClipboardSandbox;
-vm.createContext(alertClipboardSandbox);new vm.Script(section(ownerSource,'  function fallbackGuide(alert){','  var OWNER_ACTION_CONTROLS')).runInContext(alertClipboardSandbox);
+vm.createContext(alertClipboardSandbox);new vm.Script(section(ownerSource,'  function fallbackGuide(alert){','  window.obOwnerActionGuideRun = async function(index, actionId){')).runInContext(alertClipboardSandbox);
 const maliciousAlertCopy=alertClipboardSandbox.__OB_TEST_HOOKS__.opsAlertClipboard.reportText({key:'broken_upload_assets',severity:'warning',title:'sk_live_51PRIVATEVALUE portrait-private.jpg alice@example.test',detail:'Bearer verysecrettokenvalue /private/uploads/portrait.jpg',at:'2026-09-01T08:00:00Z',meta:{missing_count:1,owner:'alice@example.test',name:'portrait.jpg',slug:'alice',id:'asset-secret-id',path:'/Users/admin/portrait.jpg',token:'LEAK-ME',provider:'sk_live_51PRIVATEVALUE'}},{impact:'Clients see a gap sk_live_51PRIVATEVALUE',cause:'token=LEAK-ME',owner_action:'Inspect /var/private/file',auto_recovery:'No',escalation:'password=LEAK-ME'});
 assert.match(maliciousAlertCopy,/missing_count[^\n]*1/,'safe alert aggregate evidence is retained');
 assert.doesNotMatch(maliciousAlertCopy,/verysecrettokenvalue|LEAK-ME|sk_live_51PRIVATEVALUE|alice@example|portrait(?:-private)?\.jpg|asset-secret-id|\/private|\/Users|\/var|"owner"|"name"|"slug"|"id"|"path"|"token"|"provider"/,'known alert copy derives prose from its allowlisted key and retains only safe aggregates');
@@ -1435,7 +1409,7 @@ assert.doesNotMatch(sfuHtml,/LEAK-ME|tcp-only|99999|secret\.example/,'raw upstre
 const unmeasuredSfuHtml=sfuSandbox.testMediaOpsHtml({...normalizedSfuFixture,measurement_available:false,estimate_available:false,rooms:0,peers:0,consumers:0,estimated:{outbound_mbps:0,egress_gb_per_hour:0,egress_usd_per_hour:0}});
 assert.match(unmeasuredSfuHtml,/Rooms \/ peers[\s\S]*Unknown \/ Unknown/,'unavailable SFU measurement is Unknown even when numeric-looking zero fields are present');
 assert.match(unmeasuredSfuHtml,/Media egress cost[\s\S]*Unknown[\s\S]*Estimate unavailable/,'unavailable estimates never render as free/zero usage');
-assert.match(ownerSource,/OWNER_ACTION_CONTROLS=Object\.freeze/);
+assert.doesNotMatch(ownerSource,/OWNER_ACTION_CONTROLS|action\.kind === 'api'|function api\(|fetch\(/,'production owner guidance cannot dispatch server-mutating requests');
 assert.match(developerSource,/Active-alert handoff data is unavailable/,'the developer handoff does not infer clear from a missing alerts array');
 assert.doesNotMatch(ownerSource,/await api\(action\.path/,'owner guide cannot dispatch an arbitrary server path');
 assert.equal((html.match(/\/admin\/observability\/overview/g)||[]).length,1,'only the core monitor fetches the overview');
@@ -1451,8 +1425,8 @@ assert.doesNotMatch(opsSource,/focusInsideOpsBody/,'keyboard focus inside the mo
 assert.match(opsSource,/isCurrent\(context\.captured,\{exactCredential:true\}\)===true/,'overview and trend responses are exact-credential bound');
 assert.match(opsSource,/freshness:'stale',stale:true/,'overview failure explicitly makes the retained snapshot stale');
 assert.match(opsSource,/return \{ok:false,stale:true/,'overview failure returns a failure result');
-assert.match(opsSource,/EXPECTED_OPS_API_BASE = 'https:\/\/victorious-wisdom-production-a6b0\.up\.railway\.app'/);
-assert.match(opsSource,/EXPECTED_OPS_SERVICE_ID = '69c78756-c810-4e87-b482-3fee37eb6657'/);
+assert.match(opsSource,/EXPECTED_OPS_API_BASE = 'https:\/\/ownlybiz-backend-production\.up\.railway\.app'/);
+assert.match(opsSource,/EXPECTED_OPS_SERVICE_ID = 'd2da7d7a-3d63-4b1d-b47e-9c0366f8a50c'/);
 assert.match(opsSource,/EXPECTED_OPS_ENVIRONMENT_ID = '9d2e708e-24af-4fea-a5a3-796d4cd9956f'/);
 assert.match(opsSource,/PARTIAL \/ UNKNOWN scan[\s\S]*zero does not prove clear/,'the asset summary card cannot present a partial zero-result scan as clear');
 assert.match(opsSource,/event\.key==='Escape'/);
@@ -1486,10 +1460,10 @@ assert.match(html,/Platform and Connect webhook signing secrets must be differen
   'the frontend rejects copying the same new signing secret into both endpoint authorities');
 assert.match(html,/Trusted Ops receipts require two different webhook signing secrets/,
   'the active Admin form explains why both distinct endpoint secrets are required');
-assert.match(html,/Payment model for this environment: client payments are destination charges through Stripe Connect/,
-  'Platform Payments describes the active environment without falsely labeling staging data as production');
-assert.doesNotMatch(html,/Production payment model:/,
-  'Platform Payments does not label staging payment data as production');
+assert.match(html,/Production payment model: client payments are destination charges through Stripe Connect/,
+  'Platform Payments identifies the production payment model explicitly');
+assert.doesNotMatch(html,/Payment model for this environment:/,
+  'the production surface does not use environment-ambiguous payment copy');
 assert.match(html,/data-ob-stripe-state="loading"[\s\S]*Checking Stripe…/,
   'the expert Payment Processor starts in a fail-closed checking state');
 assert.match(html,/<div class="db-stripe-status" data-ob-stripe-state="loading"[^>]*>Checking Stripe…<\/div>/,

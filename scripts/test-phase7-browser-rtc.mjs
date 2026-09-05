@@ -163,7 +163,7 @@ function runContract() {
   const source = guardSource(html);
   const guardStart = html.indexOf(`<script id="${GUARD_ID}">`);
   const guardEnd = html.indexOf('</script>', guardStart);
-  const firstHostedConstant = html.indexOf('https://victorious-wisdom-production-a6b0.up.railway.app');
+  const firstHostedConstant = html.indexOf('https://ownlybiz-backend-production.up.railway.app');
   const firstRuntimeSocket = html.indexOf('new WebSocket(', guardEnd);
   assert(guardStart >= 0 && guardEnd > guardStart, 'guard framing invalid');
   assert(guardEnd < firstHostedConstant, 'guard must precede hosted constants');

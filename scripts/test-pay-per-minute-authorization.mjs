@@ -343,20 +343,20 @@ assert.match(html, /function applyAuthoritativeClientTerminal\(payload\)[\s\S]*c
 assert.match(html, /function applyClientSettlementPending\(payload,\s*ownership\)[\s\S]*pauseClientTimers\(sess\)[\s\S]*showClientReceiptPending\(sess\)/,
   'client settlement-pending UI freezes the timer and renders a truthful finalizing receipt');
 assert.match(html, /var OPS_SERVER_MUTATIONS_ENABLED=false/,
-  'staging Ops keeps server-mutating controls disabled in source');
+  'production Ops keeps server-mutating controls disabled in source');
 assert.match(html, /if\(\(method\|\|'POST'\)!=='GET'\)[\s\S]*mutationError\.code='ops_read_only';throw mutationError/,
-  'staging Ops blocks every non-GET request before fetch');
+  'production Ops blocks every non-GET request before fetch');
 const safeActionsStart = html.indexOf('  function renderSafeActionsTab(){');
 const safeActionsEnd = html.indexOf('  function opsTabButton(id)', safeActionsStart);
 assert(safeActionsStart >= 0 && safeActionsEnd > safeActionsStart,
   'the tabbed Safe actions source is bounded');
 const safeActions = html.slice(safeActionsStart, safeActionsEnd);
 assert.match(safeActions, /Refresh live telemetry/,
-  'staging Ops exposes the safe telemetry refresh action');
+  'production Ops exposes the safe telemetry refresh action');
 assert.match(safeActions, /Copy developer report/,
-  'staging Ops exposes the privacy-safe read-only report action');
+  'production Ops exposes the privacy-safe read-only report action');
 assert.doesNotMatch(safeActions, /clear_cache|cleanup_stale_sessions|cleanup_pending_sessions|stop_one|stop_all/,
-  'staging Ops renders no server-mutating recovery control');
+  'production Ops renders no server-mutating recovery control');
 assert.doesNotMatch(html, /STOP_ACTIVE_SESSIONS_WITHOUT_BILLING|ends active sessions without billing unpaid time/,
   'the former misleading emergency-stop contract and copy are removed');
 assert.equal((html.match(/window\.expertEndSession\s*=/g) || []).length, 1,

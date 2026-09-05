@@ -57,9 +57,9 @@ assert.match(opsSource,/textarea:not\(\[disabled\]\),summary,\[tabindex\]/,'the 
 const safeActionsSource=sourceSection(opsSource,'  function renderSafeActionsTab(){','  function opsTabButton(id)');
 assert.match(safeActionsSource,/Refresh live telemetry[\s\S]*Copy developer report/);
 assert.doesNotMatch(safeActionsSource,/Clear server cache|Clean stale|Clean old pending|Stop one session|Emergency stop|method\s*:\s*['"](?:POST|DELETE|PATCH)['"]/i,'the rendered Safe actions tab is read-only');
-assert.match(opsSource,/EXPECTED_OPS_API_BASE = 'https:\/\/victorious-wisdom-production-a6b0\.up\.railway\.app'/);
-assert.match(opsSource,/EXPECTED_OPS_SERVICE_ID = '69c78756-c810-4e87-b482-3fee37eb6657'/);
-assert.match(opsSource,/runtime_classification\|\|''\)==='staging'/);
+assert.match(opsSource,/EXPECTED_OPS_API_BASE = 'https:\/\/ownlybiz-backend-production\.up\.railway\.app'/);
+assert.match(opsSource,/EXPECTED_OPS_SERVICE_ID = 'd2da7d7a-3d63-4b1d-b47e-9c0366f8a50c'/);
+assert.match(opsSource,/runtime_classification\|\|''\)==='production'/);
 
 const nodes={};
 for(const id of ['ob-ops-panel','ob-ops-body','ob-ops-launcher','ob-ops-launcher-count','ob-ops-updated','ob-ops-tabs','ob-ops-freshness-banner','ob-ops-close','ob-admin-ops-nav','ob-admin-ops-badge'])nodes[id]=fakeNode(id);
@@ -75,7 +75,7 @@ const bodyMarkupWrites=()=>nodes['ob-ops-body'].innerHTMLWrites||0;
 const localStorage=storage(),sessionStorage=storage(),bodyNode=fakeNode('body');
 bodyNode.children=[];
 const document={body:bodyNode,activeElement:bodyNode,hidden:false,getElementById:id=>nodes[id]||null,addEventListener(){},contains:()=>true};
-const sandbox={console,window:null,document,localStorage,sessionStorage,location:{hostname:'staging.example',href:'https://staging.example/admin'},fetch:async()=>{throw new Error('unexpected fetch');},setTimeout:()=>1,clearTimeout(){},setInterval:()=>1,clearInterval(){},requestAnimationFrame:callback=>callback(),AbortController,CSS:{escape:value=>String(value)},CustomEvent:class CustomEvent{constructor(type,options){this.type=type;this.detail=options?.detail;}},__OB_TEST_HOOKS__:{}};
+const sandbox={console,window:null,document,localStorage,sessionStorage,location:{hostname:'ownlybiz.com',href:'https://ownlybiz.com/admin'},fetch:async()=>{throw new Error('unexpected fetch');},setTimeout:()=>1,clearTimeout(){},setInterval:()=>1,clearInterval(){},requestAnimationFrame:callback=>callback(),AbortController,CSS:{escape:value=>String(value)},CustomEvent:class CustomEvent{constructor(type,options){this.type=type;this.detail=options?.detail;}},__OB_TEST_HOOKS__:{}};
 sandbox.window=sandbox;sandbox.addEventListener=()=>{};sandbox.dispatchEvent=()=>true;
 vm.createContext(sandbox);
 new vm.Script(opsSource,{filename:'ops-monitor-tabs.js'}).runInContext(sandbox);

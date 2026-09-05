@@ -306,7 +306,7 @@ const healthyPaymentOperations={
   coverage:{complete:true,global_complete:true,scope:'authoritative_database_and_verified_webhook_receipt_processing',database_complete:true,legacy_compatibility_present:false,compatibility_counts:{expert_subscriptions:0,group_tickets:0,receipt_outbox:0,total:0},webhook_ledger_complete:true,end_to_end_delivery_complete:false,visibility_gaps:['stripe_delivery_attempts_not_received_by_endpoint','webhook_signature_verification_failures'],sources:{authorizations:'complete',authorization_recovery:'complete',settlements:'complete',refund_requests:'complete',dispute_recovery:'complete',expert_subscriptions_and_attempts:'complete',ai_credit_checkouts_and_grants:'complete',group_capacity_payments_and_entitlements:'complete',group_ticket_checkouts_and_registrations:'complete',on_demand_payments_delivery_and_refunds:'complete',payment_receipt_outbox:'complete',stripe_webhook_verified_receipt_processing:'complete',stripe_webhook_delivery_attempts:'not_covered',stripe_webhook_signature_failures:'not_covered',stripe_connect_provider_capabilities:'not_covered',stripe_connect_provider_balance:'not_covered',stripe_connect_bank_payout_state:'not_covered'},declared_not_covered_sources:declaredNotCoveredPaymentSources.slice(),incomplete_sources:[]},
   authorizations:{total:0,by_status:Object.fromEntries(paymentAuthorizationStatuses.map(key=>[key,0])),open_count:0,open_expired_count:0,open_amount_cents:0,recent_failed_24h:0,oldest_open_updated_at:null,oldest_open_age_sec:0},
   authorization_recovery:{total:0,by_state:Object.fromEntries(paymentRecoveryStates.map(key=>[key,0])),pending_count:0,due_count:0,stale_claim_count:0,active_error_count:0,oldest_pending_updated_at:null,oldest_pending_age_sec:0},
-  settlements:{active_count:0,by_phase:Object.fromEntries(paymentSettlementPhases.map(key=>[key,0])),stuck_count:0,expired_owner_count:0,current_error_count:0,recent_ended_error_count_24h:0,errors_by_code:Object.fromEntries(paymentErrorBuckets.map(key=>[key,{current:0,recent_ended_24h:0}])),oldest_settling_reference_at:null,oldest_settling_age_sec:0,oldest_mutation_reference_at:null,oldest_mutation_age_sec:0,outstanding_session_count:0,outstanding_amount:0,oldest_outstanding_reference_at:null,oldest_outstanding_age_sec:0},
+  settlements:{active_count:0,by_phase:Object.fromEntries(paymentSettlementPhases.map(key=>[key,0])),stuck_count:0,expired_owner_count:0,current_error_count:0,recent_ended_error_count_24h:0,errors_by_code:Object.fromEntries(paymentErrorBuckets.map(key=>[key,{current:0,recent_ended_24h:0}])),oldest_settling_reference_at:null,oldest_settling_age_sec:0,oldest_mutation_reference_at:null,oldest_mutation_age_sec:0,outstanding_session_count:0,recent_outstanding_session_count:0,outstanding_amount:0,oldest_outstanding_reference_at:null,oldest_outstanding_age_sec:0},
   refund_requests:{total:0,by_status:{pending:0,processing:0,approved:0,declined:0,failed:0},stale_pending_count:0,recent_failed_24h:0,pending_amount_requested:0,failed_unresolved_amount:0,oldest_pending_created_at:null,oldest_pending_age_sec:0,oldest_failed_updated_at:null,oldest_failed_age_sec:0},
   dispute_recovery:{total:0,by_state:Object.fromEntries(paymentDisputeStates.map(key=>[key,0])),active_count:0,reversed_open_count:0,deferred_cross_border_count:0,compensation_pending_count:0,manual_review_count:0,lost_unrecovered_count:0,unknown_canonical_status_count:0,stale_claim_count:0,active_error_count:0,transfer_reversal_amount_cents:0,application_fee_refund_cents:0,expert_clawback_cents:0,reinstated_amount_cents:0,compensation_amount_cents:0,oldest_attention_updated_at:null,oldest_attention_age_sec:0},
   expert_subscriptions:{total:0,by_status:Object.fromEntries(expertSubscriptionStatuses.map(key=>[key,0])),payment_attention_count:0,active_attempt_count:0,checkout_attempt_count:0,change_attempt_count:0,cancel_attempt_count:0,stale_attempt_count:0,legacy_compatibility_count:0,integrity_mismatch_count:0,oldest_attempt_created_at:null,oldest_attempt_age_sec:0},
@@ -375,6 +375,76 @@ const unavailablePaymentAlert={key:'payment_operations_observability_unavailable
 const unavailablePaymentOverview=withOverviewProvenance({...healthyOverview,status:'warning',alerts:[unavailablePaymentAlert],summary:{...healthyOverview.summary,active_alerts:1,critical_alerts:0,warning_alerts:1,payment_operations_status:'unavailable',payment_operations_coverage_complete:false,payment_authorization_manual_review_jobs:null,payment_active_disputes:null,payment_dispute_manual_review:null,payment_dispute_lost_unrecovered:null,payment_dispute_compensation_pending:null,payment_outstanding_sessions:null,payment_outstanding_amount:null,pending_refund_requests:null,processing_refund_requests:null,failed_refund_requests:null},payment_operations:unavailablePaymentOperations});
 assert.equal(hooks.validOpsOverview(unavailablePaymentOverview),true,'the exact unavailable paid-domain shape is accepted as UNKNOWN evidence, never synthesized as healthy');
 assert.equal(hooks.validOpsOverview({...unavailablePaymentOverview,payment_operations:{...unavailablePaymentOverview.payment_operations,expert_subscriptions:{}}}),false,'unavailable payment evidence requires every paid-domain aggregate to remain explicitly null');
+assert.equal(hooks.validOpsOverview({...unavailablePaymentOverview,payment_operations:{...unavailablePaymentOverview.payment_operations,settlements:{...unavailablePaymentOverview.payment_operations.settlements,recent_outstanding_session_count:0}}}),false,'unavailable recent-outstanding evidence must remain explicitly null rather than looking healthy');
+function outstandingBalanceOverview(total,recent,amount,oldestAgeSec){
+  const hasOutstanding=total>0,hasRecent=recent>0;
+  const settlements={
+    ...healthyPaymentOperations.settlements,
+    outstanding_session_count:total,
+    recent_outstanding_session_count:recent,
+    outstanding_amount:amount,
+    oldest_outstanding_reference_at:hasOutstanding?paymentDatabaseNow-oldestAgeSec:null,
+    oldest_outstanding_age_sec:hasOutstanding?oldestAgeSec:0,
+  };
+  const reasonCodes=hasOutstanding?['session_outstanding_balance']:[];
+  const paymentOperations={
+    ...healthyPaymentOperations,
+    status:hasRecent?'warning':'ok',
+    reason_codes:reasonCodes,
+    critical_reason_codes:[],
+    warning_reason_codes:hasRecent?reasonCodes:[],
+    review_reason_codes:hasOutstanding&&!hasRecent?reasonCodes:[],
+    info_reason_codes:[],
+    settlements,
+  };
+  const classification=hasOutstanding?{
+    priority:hasRecent?'warning':'review',
+    urgency:'review_soon',
+    kind:'work_item',
+    domain:'payments',
+    customer_impact:'possible',
+    money_risk:'confirmed',
+    requires_action:true,
+    affects_status:hasRecent,
+    rationale_code:hasRecent?'signal_payment_operations_outstanding_balance':'historical_recorded_balance_requires_reconciliation',
+  }:null;
+  const alerts=hasOutstanding?[{key:'payment_operations_outstanding_balance',severity:'warning',source:'payment_operations',title:'Sessions have recorded outstanding balances',detail:'Aggregate fixture for recorded ended-session balances.',at:healthyOverview.generated_at,meta:{outstanding_session_count:total,recent_outstanding_session_count:recent,outstanding_amount:amount,oldest_outstanding_age_sec:oldestAgeSec},classification}]:[];
+  const summary={
+    ...healthySummary,
+    active_alerts:hasRecent?1:0,
+    critical_alerts:0,
+    warning_alerts:hasRecent?1:0,
+    total_alerts:alerts.length,
+    review_alerts:hasOutstanding&&!hasRecent?1:0,
+    information_alerts:0,
+    actionable_count:hasOutstanding?1:0,
+    attention:{critical_count:0,warning_count:hasRecent?1:0,review_count:hasOutstanding&&!hasRecent?1:0,information_count:0,actionable_count:hasOutstanding?1:0,status_affecting_count:hasRecent?1:0},
+    payment_operations_status:hasRecent?'warning':'ok',
+    payment_outstanding_sessions:total,
+    payment_outstanding_amount:amount,
+  };
+  return withOverviewProvenance({...healthyOverview,status:hasRecent?'warning':'ok',alerts,summary,payment_operations:paymentOperations});
+}
+const historicalOutstandingOverview=outstandingBalanceOverview(2,0,9,90000);
+const recentOutstandingOverview=outstandingBalanceOverview(1,1,4.5,60);
+const mixedOutstandingOverview=outstandingBalanceOverview(2,1,9,90000);
+const zeroOutstandingOverview=outstandingBalanceOverview(0,0,0,0);
+assert.equal(hooks.validOpsOverview(historicalOutstandingOverview),true,'historical-only recorded balances are accepted as owner review without coloring payment or global health');
+assert.equal(hooks.rawOpsState(historicalOutstandingOverview),'ok','historical-only outstanding balances cannot create a global warning');
+assert.deepEqual(historicalOutstandingOverview.payment_operations.review_reason_codes,['session_outstanding_balance'],'historical outstanding balances are reconstructed in the review partition');
+assert.equal(hooks.validOpsOverview(recentOutstandingOverview),true,'a recent recorded balance is accepted as a current payment warning');
+assert.equal(hooks.rawOpsState(recentOutstandingOverview),'warning','a recent outstanding balance remains status affecting');
+assert.deepEqual(recentOutstandingOverview.payment_operations.warning_reason_codes,['session_outstanding_balance'],'recent outstanding balances are reconstructed in the warning partition');
+assert.equal(hooks.validOpsOverview(mixedOutstandingOverview),true,'mixed historical and recent balances are accepted as a current payment warning');
+assert.equal(hooks.rawOpsState(mixedOutstandingOverview),'warning','one recent balance keeps a mixed outstanding set status affecting');
+assert.equal(hooks.validOpsOverview(zeroOutstandingOverview),true,'zero total and zero recent outstanding balances preserve a healthy contract');
+assert.deepEqual(zeroOutstandingOverview.payment_operations.reason_codes,[],'zero outstanding balances do not synthesize a review or warning reason');
+assert.match(hooks.renderPaymentsTab(historicalOutstandingOverview),/Outstanding[\s\S]*Recent 24h 0[\s\S]*\$9 recorded/,'the Payments tab distinguishes historical recorded balances from recent money risk');
+assert.match(hooks.renderPaymentsTab(recentOutstandingOverview),/Outstanding[\s\S]*Recent 24h 1[\s\S]*\$4\.5(?:0)? recorded/,'the Payments tab exposes the current 24-hour outstanding count');
+assert.equal(hooks.validOpsOverview(outstandingBalanceOverview(1,2,4.5,60)),false,'recent outstanding sessions cannot exceed the total outstanding session count');
+assert.equal(hooks.validOpsOverview({...zeroOutstandingOverview,payment_operations:{...zeroOutstandingOverview.payment_operations,settlements:{...zeroOutstandingOverview.payment_operations.settlements,recent_outstanding_session_count:'0'}}}),false,'numeric-looking recent outstanding counts are rejected');
+const missingRecentOutstandingSettlements={...zeroOutstandingOverview.payment_operations.settlements};delete missingRecentOutstandingSettlements.recent_outstanding_session_count;
+assert.equal(hooks.validOpsOverview({...zeroOutstandingOverview,payment_operations:{...zeroOutstandingOverview.payment_operations,settlements:missingRecentOutstandingSettlements}}),false,'the recent outstanding count is required by the exact settlement contract');
 const authorizationOutcomeHtml=hooks.renderPaymentOperations({
   ...healthyOverview,
   payment_operations:{
@@ -868,7 +938,7 @@ const helperSource=section(actionSource,'  function opsContractError(message,env
 let appliedFeedback=null;
 const actionSandbox={Error,Object,Array,String,Number,Date,JSON,Promise,EXPECTED_OPS_API_BASE:'https://victorious-wisdom-production-a6b0.up.railway.app',EXPECTED_OPS_SERVICE_ID:verifiedIdentity.service_id,EXPECTED_OPS_ENVIRONMENT_ID:verifiedIdentity.environment_id,fetch:async()=>{},base:()=>'',token:()=>'',actionResult:(...args)=>{appliedFeedback=args;},obValidOpsEventHistoryEnvelope:()=>true,obValidOpsOverviewEventHistory:()=>true};
 vm.createContext(actionSandbox);
-new vm.Script(helperSource+'\nthis.requirePreview=requirePreview;this.requireCandidateFingerprint=requireCandidateFingerprint;this.isCandidateFingerprintMismatch=isCandidateFingerprintMismatch;this.requiredCount=requiredCount;this.classifyOpsResponse=classifyOpsResponse;this.applyOpsOutcome=applyOpsOutcome;this.safeOpsTimestamp=safeOpsTimestamp;this.safeNormalizedOpsReportSections=safeNormalizedOpsReportSections;this.safeOpsReportSections=safeOpsReportSections;').runInContext(actionSandbox);
+new vm.Script(helperSource+'\nthis.requirePreview=requirePreview;this.requireCandidateFingerprint=requireCandidateFingerprint;this.isCandidateFingerprintMismatch=isCandidateFingerprintMismatch;this.requiredCount=requiredCount;this.classifyOpsResponse=classifyOpsResponse;this.applyOpsOutcome=applyOpsOutcome;this.safeOpsTimestamp=safeOpsTimestamp;this.safeNormalizedOpsReportSections=safeNormalizedOpsReportSections;this.safeOpsPaymentOperations=safeOpsPaymentOperations;this.safeOpsReportSections=safeOpsReportSections;').runInContext(actionSandbox);
 const normalizedTimestamp='2026-09-01T08:09:10.000Z',normalizedTimestampMs=Date.parse(normalizedTimestamp);
 assert.equal(actionSandbox.safeOpsTimestamp(normalizedTimestampMs),normalizedTimestamp,'millisecond epoch timestamps normalize to explicit UTC ISO');
 assert.equal(actionSandbox.safeOpsTimestamp(normalizedTimestampMs/1000),normalizedTimestamp,'second epoch timestamps normalize to explicit UTC ISO');
@@ -1014,6 +1084,10 @@ assert.equal(fullSafeReport.payment_operations.connect_provider_visibility.bank_
 assert.equal(fullSafeReport.payment_operations.connect_provider_visibility.inference_permitted,false);
 assert.match(fullSafeReport.payment_operations.connect_provider_visibility.coverage_semantics,/NOT COVERED[\s\S]*no provider state may be inferred/i,'the report explains that Connect capabilities, balance, and bank-payout state are outside coverage');
 assert.equal(fullSafeReport.payment_operations.settlements.by_phase.claimed,0,'the copied payment report preserves the real claimed settlement phase');
+assert.equal(fullSafeReport.payment_operations.settlements.recent_outstanding_session_count,0,'the copied payment report preserves the aggregate recent-outstanding split');
+assert.equal(actionSandbox.safeOpsPaymentOperations({...healthyPaymentOperations,settlements:{...healthyPaymentOperations.settlements,recent_outstanding_session_count:-1}}).settlements.recent_outstanding_session_count,null,'negative recent-outstanding counts fail closed in the aggregate report sanitizer');
+assert.equal(actionSandbox.safeOpsPaymentOperations({...healthyPaymentOperations,settlements:{...healthyPaymentOperations.settlements,outstanding_session_count:1,recent_outstanding_session_count:2}}).settlements.recent_outstanding_session_count,null,'report sanitization cannot preserve a recent count above its total');
+assert.equal(actionSandbox.safeOpsPaymentOperations({...unavailablePaymentOperations,settlements:{...unavailablePaymentOperations.settlements,recent_outstanding_session_count:0}}).settlements.recent_outstanding_session_count,null,'report sanitization preserves unavailable total/recent null parity');
 assert.equal(fullSafeReport.payment_operations.refund_requests.by_status.processing,0,'the copied payment report preserves the distinct Stripe-processing refund count');
 assert.equal(fullSafeReport.payment_operations.dispute_recovery.total,0,'the copied payment report preserves aggregate durable dispute-recovery state');
 assert.equal(fullSafeReport.summary.payment_active_disputes,0,'the bounded summary projection preserves the active dispute count');
@@ -1302,6 +1376,10 @@ const paymentActionRequiredProjection=alertClipboardSandbox.__OB_TEST_HOOKS__.op
 assert.equal(paymentActionRequiredProjection.meta.by_status.payment_action_required,1,'payment_action_required attention evidence survives the owner alert clipboard projection');
 const aiStaleAlertProjection=alertClipboardSandbox.__OB_TEST_HOOKS__.opsAlertClipboard.projectedAlertHandoff({key:'payment_operations_ai_credit_checkout_stale_or_failed',severity:'warning',meta:{stale_open_count:2,recent_failed_24h:1}});
 assert.equal(aiStaleAlertProjection.meta.stale_open_count,2,'new checkout alert metadata preserves safe stale-open aggregate counts');
+const outstandingBalanceProjection=alertClipboardSandbox.__OB_TEST_HOOKS__.opsAlertClipboard.projectedAlertHandoff({key:'payment_operations_outstanding_balance',severity:'warning',meta:{outstanding_session_count:2,recent_outstanding_session_count:0,outstanding_amount:9,oldest_outstanding_age_sec:90000,session_id:'private-session-id'}});
+assert.equal(outstandingBalanceProjection.meta.recent_outstanding_session_count,0,'the owner alert projection preserves only the safe aggregate recent-outstanding count');
+assert.equal(Object.hasOwn(outstandingBalanceProjection.meta,'session_id'),false,'the outstanding-balance projection never exposes a session identifier');
+assert.equal(alertClipboardSandbox.__OB_TEST_HOOKS__.opsAlertClipboard.projectedAlertHandoff({key:'payment_operations_outstanding_balance',severity:'warning',meta:{outstanding_session_count:1,recent_outstanding_session_count:2}}).meta.recent_outstanding_session_count,null,'alert clipboard sanitization drops an incoherent recent-outstanding count');
 const unknownAlertCopy=alertClipboardSandbox.__OB_TEST_HOOKS__.opsAlertClipboard.reportText({key:'asset_secret-id',severity:'warning',title:'sk_live_51PRIVATEVALUE portrait-private.jpg alice@example.test',detail:'Bearer verysecrettokenvalue',meta:{missing_count:1}},{impact:'sk_live_51PRIVATEVALUE'});
 const samplingAlertProjection=alertClipboardSandbox.__OB_TEST_HOOKS__.opsAlertClipboard.projectedAlertHandoff(latencySampleAlert);
 assert.equal(samplingAlertProjection.title,'HTTP latency evidence is sampled');

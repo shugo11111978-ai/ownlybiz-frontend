@@ -1,6 +1,8 @@
 import fs from 'fs';
 import path from 'path';
 import zlib from 'zlib';
+import contentWave20260906 from './ownlybiz-content-wave-20260906.mjs';
+import promotionGuide20260906 from './ownlybiz-promotion-guide-20260906.mjs';
 
 const root = process.cwd();
 const dataDir = path.join(root, 'data');
@@ -1477,9 +1479,12 @@ const selectedSlugs = new Set([
   'independent-expert-dashboard-checklist',
   'repeat-client-system-packages-credit-email',
   'ownlybiz-feature-map-for-experts',
+  'linkedin-content-plan-independent-experts',
+  'human-expertise-value-ai-answers',
+  'consultation-promotions-discounts-intro-minutes-prepaid-credit',
 ]);
 
-const selectedPosts = posts
+const selectedPosts = [...posts, ...contentWave20260906, promotionGuide20260906]
   .filter((post) => selectedSlugs.has(post.slug))
   .map(normalizePost);
 
@@ -1509,7 +1514,10 @@ function normalizePost(post) {
   ].join(' ');
   normalized.wordCount = articleText.trim().split(/\s+/u).filter(Boolean).length;
   normalized.readTime = `${Math.max(1, Math.ceil(normalized.wordCount / 220))} min read`;
-  return normalized;
+  // Keep the deployed serialization order while deriving, not hardcoding, time.
+  const { readTime, ...fields } = normalized;
+  return Object.fromEntries(Object.entries(fields).flatMap(([key, value]) => key === 'image'
+    ? [['readTime', readTime], [key, value]] : [[key, value]]));
 }
 
 function writeJson() {
@@ -1673,7 +1681,14 @@ function mix(a, b, t) { return a * (1 - t) + b * t; }
 function clamp(v) { return Math.max(0, Math.min(255, Math.round(v))); }
 
 writeJson();
-if (!contentOnly) selectedPosts.forEach(drawImage);
+const renderedImages = new Set();
+if (!contentOnly) selectedPosts.forEach((post, index) => {
+  // A later guide may reuse a deployed illustration. Preserve the original
+  // guide's seed and index instead of overwriting that shared image again.
+  if (renderedImages.has(post.image)) return;
+  drawImage(post, index);
+  renderedImages.add(post.image);
+});
 console.log(contentOnly
   ? `Generated ${selectedPosts.length} blog posts; existing header images left unchanged.`
-  : `Generated ${selectedPosts.length} blog posts and ${selectedPosts.length} header images.`);
+  : `Generated ${selectedPosts.length} blog posts and ${renderedImages.size} unique header images.`);

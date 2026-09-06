@@ -49,7 +49,7 @@ assert.ok(rootsLiteral);
 const platformRoots = vm.runInNewContext(`(${rootsLiteral})`, Object.create(null), { timeout: 1000 });
 const helpers = [
   ...['obMarketingSeoPageFromPath', 'obMarketingSeoForPage', 'obApplyMarketingSeo'].map(name => extract(marketingSource, name)),
-  ...['obBlogEsc', 'obBlogDate', 'obBlogDecode', 'obBlogSlugFromPath', 'obBlogUrl', 'obBlogTags', 'obBlogFeatures', 'obBlogLoadPosts', 'obBlogHub', 'obBlogArticle', 'obRenderBlogRoute', 'obApplyBlogSeo'].map(name => extract(blogSource, name)),
+  ...['obBlogEsc', 'obBlogDate', 'obBlogDecode', 'obBlogSlugFromPath', 'obBlogUrl', 'obBlogTags', 'obBlogFeatures', 'obBlogReferences', 'obBlogLoadPosts', 'obBlogHub', 'obBlogArticle', 'obRenderBlogRoute', 'obApplyBlogSeo'].map(name => extract(blogSource, name)),
   ...['clean', 'escapeText', 'setMeta', 'setProp', 'setCanonical', 'setVerification', 'setJsonLd', 'listFromSetting', 'absoluteUrl', 'isPlatformSeoRoute', 'seoEnabled', 'platformSeoDefaults', 'buildPlatformSchema', 'applyPlatformSeo', 'isExpertRoute'].map(name => extract(platformSource, name)),
 ].join('\n');
 

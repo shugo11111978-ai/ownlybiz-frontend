@@ -200,6 +200,20 @@ function renderBlogFeatures(post) {
   return (post.relatedFeatures || []).map((feature) => `<a class="ob-blog-feature-chip" href="/features">${esc(feature)}</a>`).join('');
 }
 
+function renderBlogReferences(post) {
+  const references = Array.isArray(post.references) ? post.references : [];
+  const items = references.map((reference) => {
+    if (!reference || typeof reference.title !== 'string' || !reference.title.trim() || typeof reference.url !== 'string') return '';
+    if (/[\u0000-\u0020\u007f]/.test(reference.url)) return '';
+    let url;
+    try { url = new URL(reference.url); } catch (_) { return ''; }
+    if (url.protocol !== 'https:' || !url.hostname || url.username || url.password) return '';
+    const note = typeof reference.note === 'string' && reference.note.trim() ? `<p>${esc(reference.note.trim())}</p>` : '';
+    return `<li><a href="${esc(url.href)}" target="_blank" rel="noopener noreferrer">${esc(reference.title.trim())}</a>${note}</li>`;
+  }).filter(Boolean);
+  return items.length ? `<section class="ob-blog-references"><h2>Sources and further reading</h2><ul>${items.join('')}</ul></section>` : '';
+}
+
 function renderBlogHub(posts) {
   if (!posts.length) return '<div class="ob-blog-loading">Ownlybiz guides are being prepared.</div>';
   const featured = posts[0];
@@ -269,6 +283,7 @@ function renderBlogArticle(post, posts) {
             '</section>',
           ].join('')).join(''),
           `<div class="ob-blog-faq"><strong>FAQ</strong>${(post.faqs || []).map((faq) => `<div class="ob-blog-faq-item"><h3>${esc(faq.question)}</h3><p>${esc(faq.answer)}</p></div>`).join('')}</div>`,
+          renderBlogReferences(post),
           '<div class="ob-blog-legal-note"><strong>Responsible use note</strong><p>Ownlybiz provides business infrastructure for independent experts. This guide is educational and operational, not legal, tax, medical, financial, therapy, or professional advice. Experts should review claims, policies, and field-specific obligations before publishing or sending campaigns.</p></div>',
         '</div>',
         '<aside class="ob-blog-aside">',

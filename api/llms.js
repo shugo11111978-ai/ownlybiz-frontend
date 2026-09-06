@@ -2,10 +2,15 @@ const fs = require('fs');
 const path = require('path');
 
 const BLOG_POSTS_PATH = path.join(process.cwd(), 'data', 'ownlybiz-blog-posts.json');
+// Freeze only the already-deployed guide labels/URLs outside the Ownlybiz host.
+// Platform editorial updates must not alter independent experts' llms responses.
+const LEGACY_GUIDES_PATH = path.join(process.cwd(), 'data', 'ownlybiz-legacy-llms-guides.json');
 
-function readBlogPosts() {
+function readBlogPosts(legacy) {
   try {
-    const parsed = JSON.parse(fs.readFileSync(BLOG_POSTS_PATH, 'utf8'));
+    // Keep literal filesystem dependencies visible to the function packager.
+    const contents = legacy ? fs.readFileSync(LEGACY_GUIDES_PATH, 'utf8') : fs.readFileSync(BLOG_POSTS_PATH, 'utf8');
+    const parsed = JSON.parse(contents);
     return Array.isArray(parsed) ? parsed : [];
   } catch (_) {
     return [];
@@ -13,9 +18,9 @@ function readBlogPosts() {
 }
 
 module.exports = async function handler(req, res) {
-  const posts = readBlogPosts();
   const host = String(req.headers?.['x-forwarded-host'] || req.headers?.host || '').split(',')[0].trim().toLowerCase().replace(/:\d+$/, '');
   const platformHost = ['ownlybiz.com', 'www.ownlybiz.com', 'localhost', '127.0.0.1'].includes(host) || /\.vercel\.app$/.test(host);
+  const posts = readBlogPosts(!platformHost);
   const lines = [
     '# Ownlybiz',
     '',

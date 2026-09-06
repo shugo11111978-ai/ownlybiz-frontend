@@ -11,12 +11,18 @@ const PLATFORM_HOSTS = new Set([
 const BLOG_POSTS_PATH = path.join(process.cwd(), 'data', 'ownlybiz-blog-posts.json');
 
 const PLATFORM_URLS = [
-  ['https://ownlybiz.com/', '2026-04-26', 'weekly', '1.0'],
-  ['https://ownlybiz.com/blog', '2026-06-14', 'weekly', '0.9'],
-  ['https://ownlybiz.com/legal/terms', '2026-04-26', 'monthly', '0.4'],
-  ['https://ownlybiz.com/legal/privacy', '2026-04-26', 'monthly', '0.4'],
-  ['https://ownlybiz.com/legal/independent-professional-terms', '2026-04-26', 'monthly', '0.4'],
-  ['https://ownlybiz.com/legal/platform-policy', '2026-04-26', 'monthly', '0.4'],
+  // Omit lastmod where no maintained content-change timestamp exists.
+  ['https://ownlybiz.com/', '', 'weekly', '1.0'],
+  ['https://ownlybiz.com/how', '', 'monthly', '0.8'],
+  ['https://ownlybiz.com/features', '', 'monthly', '0.9'],
+  ['https://ownlybiz.com/pricing', '', 'monthly', '0.9'],
+  ['https://ownlybiz.com/experts', '', 'monthly', '0.8'],
+  ['https://ownlybiz.com/contact', '', 'monthly', '0.5'],
+  ['https://ownlybiz.com/blog', '', 'weekly', '0.9'],
+  ['https://ownlybiz.com/legal/terms', '', 'monthly', '0.4'],
+  ['https://ownlybiz.com/legal/privacy', '', 'monthly', '0.4'],
+  ['https://ownlybiz.com/legal/independent-professional-terms', '', 'monthly', '0.4'],
+  ['https://ownlybiz.com/legal/platform-policy', '', 'monthly', '0.4'],
 ];
 
 let cachedBlogPosts = null;
@@ -57,7 +63,7 @@ function renderUrl(loc, lastmod, changefreq, priority) {
   return [
     '  <url>',
     `    <loc>${esc(loc)}</loc>`,
-    `    <lastmod>${esc(lastmod)}</lastmod>`,
+    ...(lastmod ? [`    <lastmod>${esc(lastmod)}</lastmod>`] : []),
     `    <changefreq>${esc(changefreq)}</changefreq>`,
     `    <priority>${esc(priority)}</priority>`,
     '  </url>',
@@ -74,11 +80,17 @@ function renderSitemap(urls) {
   ].join('\n');
 }
 
+function contentDate(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value || '')) return '';
+  const parsed = new Date(`${value}T00:00:00Z`);
+  return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value ? value : '';
+}
+
 module.exports = async function handler(req, res) {
   const host = hostFromReq(req);
   const blogUrls = readBlogPosts().map((post) => [
     `https://ownlybiz.com/blog/${encodeURIComponent(post.slug)}`,
-    post.date || new Date().toISOString().slice(0, 10),
+    contentDate(post.dateModified) || contentDate(post.date),
     'monthly',
     '0.75',
   ]);

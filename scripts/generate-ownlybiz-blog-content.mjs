@@ -5,8 +5,9 @@ import zlib from 'zlib';
 const root = process.cwd();
 const dataDir = path.join(root, 'data');
 const assetDir = path.join(root, 'assets', 'blog');
+const contentOnly = process.argv.includes('--content-only');
 fs.mkdirSync(dataDir, { recursive: true });
-fs.mkdirSync(assetDir, { recursive: true });
+if (!contentOnly) fs.mkdirSync(assetDir, { recursive: true });
 
 const posts = [
   {
@@ -14,7 +15,6 @@ const posts = [
     title: 'Ownlybiz and Transparent Platform Fees: How Independent Experts Keep More of Each Session',
     category: 'Platform Fees',
     date: '2026-06-14',
-    readTime: '9 min read',
     image: '/assets/blog/ownlybiz-transparent-platform-fees-expert-keep-rate.png',
     imageAlt: 'Ownlybiz-style dashboard illustration showing a session payment flowing to an expert with a small transparent platform fee.',
     summary: 'Ownlybiz is built around a simple idea: experts should understand what the platform takes, what payment processors may charge, and what they keep before they start selling sessions.',
@@ -102,7 +102,6 @@ const posts = [
     title: 'One Expert Business Tool Stack vs. Many Separate Apps',
     category: 'Operations',
     date: '2026-06-14',
-    readTime: '8 min read',
     image: '/assets/blog/expert-business-tool-stack-vs-ownlybiz.png',
     imageAlt: 'Branded illustration of separate business apps merging into one Ownlybiz expert command center.',
     summary: 'Many experts start with a patchwork of tools. Ownlybiz brings the main paid-session workflow into one branded operating layer.',
@@ -174,7 +173,6 @@ const posts = [
     title: 'Pay-By-Minute Sessions: A Practical Guide for Independent Experts',
     category: 'Pricing',
     date: '2026-06-14',
-    readTime: '8 min read',
     image: '/assets/blog/pay-by-minute-sessions-guide.png',
     imageAlt: 'Ownlybiz-style timer and payment meter illustration for pay-by-minute expert sessions.',
     summary: 'Pay-by-minute sessions are useful when clients need immediate help, variable time, or a lightweight way to start working with an expert.',
@@ -250,7 +248,6 @@ const posts = [
     title: 'Packages, Fixed Sessions, and Per-Minute Pricing: How to Choose the Right Offer',
     category: 'Monetization',
     date: '2026-06-14',
-    readTime: '9 min read',
     image: '/assets/blog/packages-fixed-sessions-per-minute-pricing.png',
     imageAlt: 'Three Ownlybiz pricing cards showing per-minute, fixed session, and package offers.',
     summary: 'Experts do not need one pricing model for every client. Ownlybiz supports multiple offer types so the service can match the client need.',
@@ -326,7 +323,6 @@ const posts = [
     title: 'Stripe, Apple Pay, Google Pay, and Expert Checkout: What Clients Need Before They Pay',
     category: 'Payments',
     date: '2026-06-14',
-    readTime: '8 min read',
     image: '/assets/blog/stripe-apple-pay-google-pay-expert-checkout.png',
     imageAlt: 'Secure checkout illustration with card, Apple Pay, Google Pay, and Stripe-powered payment rails.',
     summary: 'A good expert checkout should feel clear, secure, and fast. Ownlybiz uses Stripe-powered flows and supports wallet options when available on the client’s device.',
@@ -395,7 +391,6 @@ const posts = [
     title: 'Why Your Expert Business Needs Its Own Website and Domain',
     category: 'Brand',
     date: '2026-06-14',
-    readTime: '8 min read',
     image: '/assets/blog/custom-domain-expert-website.png',
     imageAlt: 'Ownlybiz branded website and custom domain cards connected to an expert profile.',
     summary: 'A branded site and custom domain help clients understand who they are hiring, what you offer, and how to book you without hunting across disconnected links.',
@@ -465,7 +460,6 @@ const posts = [
     title: 'How to Turn Social Followers and DMs Into Paid Expert Sessions',
     category: 'Growth',
     date: '2026-06-14',
-    readTime: '9 min read',
     image: '/assets/blog/turn-social-followers-into-paid-sessions.png',
     imageAlt: 'Social messages flowing into an Ownlybiz booking and paid session workflow.',
     summary: 'The goal is not to move every conversation off social immediately. The goal is to give serious clients a clear path from interest to paid time.',
@@ -538,7 +532,6 @@ const posts = [
     title: 'Free Intro Minutes Without Undervaluing Your Expert Work',
     category: 'Conversion',
     date: '2026-06-14',
-    readTime: '7 min read',
     image: '/assets/blog/free-intro-minutes-without-undervaluing-work.png',
     imageAlt: 'Ownlybiz session timer illustration showing a short free intro period before paid time begins.',
     summary: 'Free intro minutes can lower client hesitation, but they work best when they are used for fit, context, and setup rather than unpaid delivery.',
@@ -605,7 +598,6 @@ const posts = [
     title: 'Chat, Voice, Video, or Written Advice: Matching the Format to the Client Need',
     category: 'Service Design',
     date: '2026-06-14',
-    readTime: '8 min read',
     image: '/assets/blog/chat-voice-video-written-session-formats.png',
     imageAlt: 'Four Ownlybiz session cards for chat, voice, video, and written expert services.',
     summary: 'A better expert business does not force every client into the same format. Ownlybiz supports multiple service styles so experts can match the work to the situation.',
@@ -672,11 +664,11 @@ const posts = [
     title: 'How to Write Expert Service Pages That Convert and Set Clear Expectations',
     category: 'Conversion',
     date: '2026-06-14',
-    readTime: '9 min read',
+    dateModified: '2026-09-06',
     image: '/assets/blog/expert-service-pages-that-convert.png',
     imageAlt: 'Ownlybiz service page mockup with clear offer, scope, rate, and booking call-to-action.',
-    summary: 'The best service page does not only sell. It helps the right client understand the offer, the format, the limits, and the next step.',
-    seoDescription: 'A guide to writing expert service pages that improve conversion while reducing confusion, refund pressure, and overpromising.',
+    summary: 'A useful service page answers a client’s practical questions before they book. Use this worked example and publishing checklist to explain the service, preparation, price format, boundaries, and next step.',
+    seoDescription: 'Write a clear expert service page with a worked consultation example, preparation checklist, honest boundaries, and checks against your live booking options.',
     tags: ['service pages', 'conversion', 'copywriting', 'expectations'],
     audience: 'Experts writing public service descriptions for their Ownlybiz site.',
     email: {
@@ -692,45 +684,82 @@ const posts = [
     ],
     sections: [
       {
-        heading: 'Conversion improves when clients understand the offer',
+        heading: 'Answer the questions that come before booking',
         body: [
-          'A vague service page makes the client guess. A strong service page explains what the client can book, who it is for, what happens during or after the session, and what is not included.'
+          'A visitor should be able to explain your offer to someone else after reading the page. They need to know who the service is for, what they can bring, how you will work together, what they are paying for, and what happens next. A headline such as “Transform your business” leaves all five questions unanswered.',
+          'Start with one specific client situation. “Review the first screen of your portfolio before you send it to prospects” is easier to evaluate than “Unlock your potential.” It describes a task without guaranteeing sales, employment, or any other result you cannot control. Clear copy helps visitors choose; it does not guarantee a particular conversion rate.'
         ]
       },
       {
-        heading: 'Use a simple page structure',
+        heading: 'Worked example: a portfolio review page',
         body: [
-          'You do not need clever copy. You need clear copy.'
+          'The following is an illustrative offer for a designer who reviews freelance portfolios. It is not an Ownlybiz preset, a customer case study, or a claim about results. Adapt the scope and format to work you can actually deliver.',
+          'Headline: “Get a second pair of eyes on your freelance portfolio.” Introduction: “Bring one portfolio page and the type of project you want it to attract. We will review whether the first screen explains your work, whether the examples support your positioning, and whether a prospective client can find a clear next step.”'
         ],
         bullets: [
-          'Headline: the client problem or desired service.',
-          'Who it is for: the best-fit client.',
-          'What is included: format, time, deliverable, or process.',
-          'What is not included: boundaries and limitations.',
-          'Next step: book, choose a package, or send a contact message.'
+          'Best fit: an independent designer with an existing portfolio page and one target type of client.',
+          'Prepare: have the page URL ready and write down the one question you most want to resolve. Do not send passwords or private client material.',
+          'During the session: work through the headline, project examples, and contact path together. Identify up to three changes to prioritize.',
+          'Not included: a full website redesign, implementation, unlimited revisions, or a promise of new clients.',
+          'Format and price: name the live channel you have enabled and direct visitors to its current rate before they start. Explain whether time is metered.',
+          'Next step: “View the review options” linking to the public booking page. Use “Start now” only when that option is actually available.'
         ]
       },
       {
-        heading: 'Write safer claims',
+        heading: 'Make the deliverable observable',
         body: [
-          'Experts should avoid guarantees like “you will make more money,” “this will fix your relationship,” or “you will get approved.” Instead, describe the process: review, guidance, planning, interpretation, coaching, or troubleshooting, depending on the field.'
+          'Replace “You will feel confident” with something the client can recognize: “We will compare two options and list the tradeoffs,” or “We will identify three places where the page is difficult to understand.” The first phrase predicts a feeling; the alternatives describe work you intend to do.',
+          'Separate what happens during a live session from anything you will deliver afterward. If a written summary or an extra review is included, say what it covers and when you will provide it. If it is not included, do not imply that a live conversation automatically comes with a report. For a written offer, specify the question or material you accept, the response format, and the turnaround you can maintain.'
         ]
       },
       {
-        heading: 'Connect the page to the right checkout',
+        heading: 'Keep the page consistent with enabled booking options',
         body: [
-          'If the service is open-ended, connect it to a pay-by-minute session. If it has a defined scope, use a fixed session or written service. If it is repeatable, consider a package.'
+          'Ownlybiz separates website content from settings such as live channel rates, availability, and service configuration. Editing a sentence on a public page does not itself change those settings. Review both places when you update an offer. A visitor should not read one price or free-intro allowance on the homepage and encounter another on the booking page.',
+          'Use only formats that are enabled for your expert site. A live conversation, a scheduled appointment, a written response, and a prepaid balance are different things. Do not advertise a package purchase or a fixed-price checkout just because the word “package” appears in an old template. Confirm the corresponding public option exists first; otherwise explain the sequence of separate visits instead.'
+        ]
+      },
+      {
+        heading: 'Use headings and FAQs that help a reader decide',
+        body: [
+          'A readable structure is more useful than repeating the same keyword. Use headings such as “Who this review is for,” “What to prepare,” and “What is included.” Put the direct answer at the start of each section, then add the detail needed to make it credible.',
+          'Choose FAQs from actual questions about your service, not a generic list added to fill space. For the portfolio example, useful questions include “Do I need a finished portfolio?” and “Will you make the edits for me?” Answer plainly: a draft page may be enough to review, while implementation is outside this example’s scope. Describe your own offer accurately if its boundaries differ.'
+        ]
+      },
+      {
+        heading: 'Review the public page as a new visitor',
+        body: [
+          'Save the content using the website editor controls available to you, then inspect the public page in a separate signed-out window. Read it on a narrow screen as well as a desktop. This catches assumptions that are invisible when you already know how your service works.',
+          'You can check the copy, links, and visible booking choices without completing a purchase. Confirm that the main action points to your own intended page, the service is available in the promised format, and the visible rate matches the wording. If something differs, resolve the mismatch before promoting the link.'
+        ],
+        bullets: [
+          'Can a new reader identify the intended client and the task in the first paragraph?',
+          'Are preparation, scope, timing, and any follow-up explained?',
+          'Does every action label describe the page or option it opens?',
+          'Are names, testimonials, and qualifications accurate and used with permission?',
+          'Does the mobile page retain the same essential information?'
+        ]
+      },
+      {
+        heading: 'Improve the page using real questions',
+        body: [
+          'Keep a short list of questions prospects ask before booking. If several ask whether you review an entire site or only one page, revise that sentence near the top. If they ask when a written response arrives, move the turnaround next to the action. These are specific changes you can evaluate.',
+          'Change one unclear part at a time and record what changed. A few bookings or a quiet week do not prove that a headline caused the result. Look for fewer repeated questions and a better match between what clients expected and what you delivered, alongside any traffic or booking data available to you.'
         ]
       }
     ],
     faqs: [
       {
-        question: 'Should experts include disclaimers on service pages?',
-        answer: 'For sensitive fields, yes. Experts should explain limitations and consult qualified legal or compliance support for their specific profession and region.'
+        question: 'How long should an expert service page be?',
+        answer: 'Long enough to explain fit, format, preparation, scope, and the next step without repetition. Start with a short overview, then use sections for details a client needs before booking. Length alone is not a quality target.'
       },
       {
-        question: 'Can better service copy reduce refund pressure?',
-        answer: 'It can help by setting expectations, but it does not eliminate all disputes. Clear delivery, communication, and policies still matter.'
+        question: 'Should I put the same price in every paragraph?',
+        answer: 'No. Keep pricing easy to find and consistent with the current booking options. Repeating rates in many blocks creates more places to miss when a rate changes. Copy changes do not update the configured rate.'
+      },
+      {
+        question: 'Can I use an AI draft for my service page?',
+        answer: 'You can use a draft as a starting point where drafting tools are available. Review the actual service, rates, availability, credentials, and claims yourself. Remove invented testimonials, unsupported results, and formats you have not enabled.'
       }
     ],
     relatedFeatures: ['Website editor', 'Service pages', 'Booking CTAs', 'SEO settings', 'Packages']
@@ -740,7 +769,6 @@ const posts = [
     title: 'Client Trust for Expert Businesses: Receipts, Reviews, Availability, and Clear Rules',
     category: 'Trust',
     date: '2026-06-14',
-    readTime: '8 min read',
     image: '/assets/blog/client-trust-receipts-reviews-availability-rules.png',
     imageAlt: 'Trust-focused Ownlybiz illustration with receipt, review stars, availability calendar, and session rules.',
     summary: 'Clients are more likely to book when they can see how the service works, what they are paying for, and how the expert handles expectations.',
@@ -807,11 +835,11 @@ const posts = [
     title: 'Email Marketing for Independent Experts: What to Send After a Session',
     category: 'Email Marketing',
     date: '2026-06-14',
-    readTime: '9 min read',
+    dateModified: '2026-09-06',
     image: '/assets/blog/email-marketing-for-independent-experts.png',
     imageAlt: 'Ownlybiz Email Center illustration with campaign cards, opt-in audience segments, and preview panel.',
-    summary: 'Email works best when it helps clients remember, prepare, and return without turning every message into a hard sell.',
-    seoDescription: 'A practical email marketing guide for independent experts using opt-in audiences, educational follow-up, campaigns, and Ownlybiz Email Center tools.',
+    summary: 'Plan one useful message for a specific opted-in audience, then review its content, sender, links, and recipients. This guide includes an example campaign and the preparation steps in Expert Email Center.',
+    seoDescription: 'Plan an expert email campaign with a worked message, own-provider setup, consented lists, previews, audience review, scheduling, and delivery checks.',
     tags: ['email marketing', 'Email Center', 'campaigns', 'client retention'],
     audience: 'Experts who want repeat clients and useful follow-up campaigns.',
     email: {
@@ -821,51 +849,88 @@ const posts = [
       cta: 'Plan your next campaign'
     },
     takeaways: [
-      'Email is strongest when it is useful, permission-based, and specific.',
-      'Post-session follow-up can drive repeat bookings without pressure.',
-      'AI drafting tools should create drafts for human review, not automatic advice.'
+      'A completed session is not the same as an invitation to send marketing.',
+      'Use your own verified sending domain and test the provider before campaign delivery.',
+      'Review the message and exact eligible audience before sending or scheduling.'
     ],
     sections: [
       {
-        heading: 'Email is a relationship tool',
+        heading: 'Choose one reason to send the message',
         body: [
-          'Independent experts often rely on social algorithms for reach. Email gives experts a more direct way to stay useful to people who have opted in. The goal is not to blast. The goal is to send helpful, relevant messages that make the next step easy.'
+          'A useful campaign answers a question the recipient already has. A portfolio reviewer might explain how to choose project examples. A language tutor might share a preparation exercise. An advisor might announce new appointment hours. Choose one topic and one next step so the email is easy to understand without opening several links.',
+          'Keep a private service follow-up separate from a bulk marketing campaign. A client-specific recap may contain information that belongs only with that client. A newsletter should contain general guidance suitable for everyone on its selected list. Do not paste session messages, personal details, or a private question into a campaign simply because the client recently booked.'
         ]
       },
       {
-        heading: 'Useful campaign types',
+        heading: 'Check the audience before writing',
         body: [
-          'A good expert email does one clear job.'
+          'Expert Email Center includes contact lists and an “All opted-in contacts” audience. A named list can make a message more relevant, but membership alone does not mean every address is eligible to receive it. Review consent and suppression status as well as the list name.',
+          'For example, a list named “Portfolio tips” could contain people who specifically asked for those updates. It should not silently become every past client or every address in an imported spreadsheet. If you do not have a suitable audience, keep the campaign as a draft while you establish how people can ask to receive it.'
         ],
         bullets: [
-          'Post-session recap: what to prepare or review next.',
-          'Educational tip: a short lesson related to the expert’s field.',
-          'Package introduction: when repeat support makes sense.',
-          'Availability update: new hours or a limited booking window.',
-          'Platform update: explaining new service formats or checkout options.'
+          'Educational tip: send to people who requested updates on that subject.',
+          'Availability update: explain the relevant channel or booking hours accurately.',
+          'New service introduction: describe what changed and who the new format suits.',
+          'Repeat-visit invitation: make the next step optional and specific; avoid guilt or invented urgency.'
         ]
       },
       {
-        heading: 'How Ownlybiz Email Center helps',
+        heading: 'Prepare your sender in Expert Email Center',
         body: [
-          'The Email Center is built for drafting, reviewing, previewing, and sending marketing/platform update emails to appropriate audiences. It can help generate draft text, refresh preview content, create campaign images, and organize marketing journeys, but the human admin or expert should review before sending.'
+          'Expert-to-client campaigns use the expert’s own email provider and verified sending domain. Ownlybiz platform account email is a separate service. In Email Center Settings, configure the supported provider you use, a recognizable From name, and a From address on your verified domain. An Ownlybiz address or subdomain is not a substitute for that sender.',
+          'Complete the provider setup and its test before relying on delivery. The Email Center distinguishes “Provider off,” “Test send required,” and “Provider ready.” Campaign access also depends on your account’s entitlement. If the dashboard shows a plan restriction or a provider problem, resolve that first; writing a draft does not make the account ready to send.'
         ]
       },
       {
-        heading: 'Keep the legal basics boring and safe',
+        heading: 'Worked example: one portfolio tip',
         body: [
-          'Send only to people who have appropriate permission or an applicable email preference. Include unsubscribe handling where required. Avoid sensitive personalized advice in bulk marketing emails, especially in regulated fields.'
+          'This sample is an editorial example, not a sent campaign or evidence of business results. It assumes the expert offers portfolio reviews and the recipients opted into portfolio tips. Replace the service and destination with your own.',
+          'Subject: “Does your first portfolio screen explain your work?” Preheader: “A quick check before you share your page.”',
+          'Body: “Open your portfolio and look only at the first screen. Can a new visitor tell what kind of work you do, who you do it for, and where to see an example? If one answer is missing, draft a clearer sentence before adding another project. You can try this on your own. If you would like a second pair of eyes, my review page explains the format, preparation, and current booking options.”',
+          'Action: “See portfolio review options.” Link it to the relevant public service or booking page, not an internal dashboard. Keep the sender identity and unsubscribe information intact. The email gives readers something usable even if they decide not to book.'
+        ]
+      },
+      {
+        heading: 'Turn the message into a reviewed draft',
+        body: [
+          'Create a campaign in Expert Email Center and choose the intended list. Enter the subject, preheader, body, and action destination. AI drafting and campaign-image tools can help where available, but generated material remains a draft. Check every service claim and link against your actual public site.',
+          'Save the campaign and refresh its preview after edits. Once your provider is ready, use the campaign’s test option to inspect a real delivered version at the test recipient. Read the subject and preheader together, check the message on a small screen, and open the main link. A preview of an older draft is not a review of the latest copy.'
+        ],
+        bullets: [
+          'Remove invented qualifications, client quotes, results, discounts, or availability.',
+          'Keep sensitive session material out of bulk copy and AI prompts.',
+          'Check image meaning and alternative text; the message should still make sense without the image.',
+          'Confirm the link opens the intended public page and its current offer.'
+        ]
+      },
+      {
+        heading: 'Use final audience review before delivery',
+        body: [
+          'Review/send resolves the campaign audience and shows the audience label, eligible sends, skipped entries, and send cap. Compare those values with what you intended. “All opted-in contacts” is a broader choice than a specific list, so an unexpectedly large count is a reason to return to the draft and check the selection.',
+          'For scheduled delivery, review the day offset, send time, and time zone together. A zero-day offset means today in the selected zone, and the scheduled time must still be in the future. Complete the content and audience confirmations only when you are ready to queue or schedule the reviewed message.',
+          'Email Center offers “Stop queued” for remaining queued sends. It cannot recall messages already sent. Treat scheduling as a delivery commitment, not as another way to save a draft.'
+        ]
+      },
+      {
+        heading: 'Evaluate the next campaign without inventing a success story',
+        body: [
+          'After delivery, review the campaign’s sent, queued, and failed counts before interpreting engagement. Email Center also exposes open and click signals where collected. A click is not proof that a client booked, and a small campaign is not a reliable test of every possible headline.',
+          'Keep a simple record: audience, purpose, message version, delivery date, reported results, and one change to try next. If recipients ask the same question, improve the service page or explain that point in a future tip. Do not increase frequency merely because one person booked after an email; use the response in context.'
         ]
       }
     ],
     faqs: [
       {
-        question: 'Can AI write the email for the expert?',
-        answer: 'AI-assisted tools can draft marketing copy or images for human review. The expert or admin should review, edit, and approve before sending.'
+        question: 'Does saving a campaign send it?',
+        answer: 'No. Saving creates or updates the draft. Campaign delivery uses separate review and final confirmation steps. Scheduled campaigns are different: they have been approved for delivery at the selected future time.'
       },
       {
-        question: 'Should every client receive marketing emails?',
-        answer: 'No. Email should respect opt-in status, preferences, and applicable laws. Transactional messages and marketing campaigns should be treated differently.'
+        question: 'Can I send a campaign to all past clients?',
+        answer: 'Do not assume a previous booking grants marketing permission. Use the appropriate opted-in audience, respect unsubscribed or suppressed contacts, and check the eligible recipients in final audience review.'
+      },
+      {
+        question: 'Why can the list count differ from eligible sends?',
+        answer: 'A list can include contacts that are not eligible for a particular send, and a campaign can have a send cap. Review the eligible and skipped counts rather than treating the total list size as a delivery promise.'
       }
     ],
     relatedFeatures: ['Email Center', 'Audience segments', 'Campaign drafts', 'AI draft suggestions', 'Image generation']
@@ -875,7 +940,6 @@ const posts = [
     title: 'AI Drafting for Expert Marketing: Helpful Suggestions, Human Review',
     category: 'AI Drafting',
     date: '2026-06-14',
-    readTime: '7 min read',
     image: '/assets/blog/ai-drafting-for-expert-marketing.png',
     imageAlt: 'Ownlybiz marketing workspace illustration showing AI draft text and campaign image generation with human review.',
     summary: 'Ownlybiz AI features should be understood as drafting and content-preparation tools for marketing/admin workflows, with expert or admin review before anything is published or sent.',
@@ -944,7 +1008,6 @@ const posts = [
     title: 'The Independent Expert Dashboard Checklist: What to Set Up Before Going Live',
     category: 'Launch',
     date: '2026-06-14',
-    readTime: '10 min read',
     image: '/assets/blog/independent-expert-dashboard-checklist.png',
     imageAlt: 'Ownlybiz expert dashboard checklist with launch status, payments, services, availability, and website setup.',
     summary: 'A good launch is not only a beautiful page. Experts should check payments, services, availability, profile copy, client expectations, and follow-up workflows.',
@@ -1014,11 +1077,11 @@ const posts = [
     title: 'Building a Repeat-Client System With Packages, Credits, and Follow-Up Emails',
     category: 'Retention',
     date: '2026-06-14',
-    readTime: '9 min read',
+    dateModified: '2026-09-06',
     image: '/assets/blog/repeat-client-system-packages-credit-email.png',
     imageAlt: 'Ownlybiz repeat-client loop with package card, prepaid credit, email follow-up, and session history.',
-    summary: 'Repeat client systems are built through clear next steps: useful follow-up, appropriate packages, prepaid options, and service boundaries.',
-    seoDescription: 'How independent experts can encourage repeat clients with packages, prepaid credit, opt-in email follow-up, and clear service journeys.',
+    summary: 'Give clients a reason to return when there is more useful work to do. Map a series of visits, distinguish a package from prepaid credit, and plan follow-up around the options your Ownlybiz site actually offers.',
+    seoDescription: 'Build a repeat-client plan with a worked visit sequence, package-versus-credit distinctions, permission-based follow-up, and a clear retention calculation.',
     tags: ['retention', 'packages', 'prepaid credit', 'email follow-up'],
     audience: 'Experts who want client relationships beyond one-off sessions.',
     email: {
@@ -1028,50 +1091,95 @@ const posts = [
       cta: 'Create a repeat-client offer'
     },
     takeaways: [
-      'Repeat clients need a clear next step, not pressure.',
-      'Packages work best when the client need is recurring.',
-      'Prepaid credit and email follow-up require clear expectations and permission.'
+      'A repeat visit should have its own useful purpose; one completed session can be enough.',
+      'A planned series, a package purchase, and prepaid credit are different offers.',
+      'Use enabled booking options and opted-in audiences, then measure repeat visits over a defined period.'
     ],
     sections: [
       {
         heading: 'Retention starts during the first session',
         body: [
-          'A repeat-client system is not just an email campaign. It starts when the expert makes the first session useful, clear, and respectful. The client should leave knowing what was covered and what the next logical step could be.'
+          'At the end of a useful session, the client should know what you covered, what they can do independently, and whether another visit would serve a specific purpose. If the task is complete, say so. A repeat-client plan should make future help understandable rather than make the client feel that every answer requires another purchase.',
+          'Ask yourself what would be different at the next visit. A language learner may return after practicing an exercise. A portfolio client may return after revising a page. A technical consultant may need a fresh set of observations before continuing. Those changes create a reason to meet again; a generic “book another call” message does not explain one.'
         ]
       },
       {
-        heading: 'Use packages for recurring needs',
+        heading: 'Worked example: three visits with distinct purposes',
         body: [
-          'Packages should not exist only because they raise order value. They should map to a real client journey: multiple coaching calls, ongoing advisory support, a bundle of reviews, or regular check-ins.'
-        ]
-      },
-      {
-        heading: 'Use prepaid credit carefully',
-        body: [
-          'Prepaid credit can make repeat sessions easier for clients who already trust the expert. It should be explained plainly, including how unused credit is handled and any relevant obligations the expert has to honor purchased balances.'
-        ]
-      },
-      {
-        heading: 'Use email for helpful follow-up',
-        body: [
-          'Email follow-up should be permission-based and useful. Send summaries, preparation tips, availability updates, educational content, or package explanations. Do not send sensitive personalized advice to a broad marketing list.'
+          'Consider an illustrative portfolio-review plan for a freelance designer. This is an example of organizing work, not an existing Ownlybiz package or a report of a customer’s results. The client wants feedback while improving one portfolio page.',
+          'The plan gives each visit a decision to make and something the client can do between visits. The expert can describe the sequence without promising new clients or assuming that every person needs all three sessions.'
         ],
         bullets: [
-          'After a first session: recap next steps and link to the right offer.',
-          'After a package purchase: explain how to use the sessions.',
-          'After inactivity: share a useful resource, not guilt.',
-          'Before a busy season: announce availability and relevant services.'
+          'Visit one: review the page’s intended audience and identify up to three changes. The client leaves with a prioritized edit list.',
+          'Between visits: the client makes the edits. Implementation is not included unless separately agreed.',
+          'Visit two: review the revised page and compare it with the original questions. Decide whether the message and examples are now clearer.',
+          'Visit three, only if useful: review a new project example or an unresolved part of the page. If the work is complete after visit two, no extra visit is needed.'
+        ]
+      },
+      {
+        heading: 'Do not confuse a service plan with a package checkout',
+        body: [
+          'A service plan describes the work. A purchasable package promises a specific bundle under stated terms. They are not interchangeable. Before advertising a package, confirm that your expert site has the required purchase and redemption options enabled. Older labels or examples in a template are not proof that a bundle can be bought.',
+          'If your public site currently offers individual live sessions, describe the visits as separate bookings. Explain the expected scope and current rate for each one. Do not imply that writing “three-session package” in a page creates a bundle, reserves three appointments, or changes how payment works.',
+          'Where a package option is available, define its units: how many sessions or deliverables, what channel, and what is included. Explain scheduling and any follow-up separately. Keep the public description consistent with the actual offer instead of inventing expiry or refund terms in a marketing paragraph.'
+        ]
+      },
+      {
+        heading: 'Explain prepaid credit as a balance, not a promise of visits',
+        body: [
+          'Ownlybiz’s prepaid credit is associated with the client and the particular expert. It is a balance used for eligible live sessions when the client chooses prepaid credit; it is not a general balance for every expert or a guarantee that appointments are reserved. The current public credit interface describes the balance as having no expiration.',
+          'Use simple arithmetic when explaining the difference between value and time. For illustration only, a $20 balance at a $2-per-minute rate represents 10 paid minutes, before any separately applicable free introduction or promotion. Those are example numbers, not a rate recommendation or an Ownlybiz-wide price. A different channel rate changes the time that the same balance can cover.',
+          'Ask clients to check the balance and selected payment option shown for their session. Do not describe prepaid credit as a fixed number of visits unless that is what the actual offer supports. If a client asks about unused credit or a refund, refer them to the applicable account information and policy rather than improvising a promise.'
+        ]
+      },
+      {
+        heading: 'Follow up with one relevant next step',
+        body: [
+          'Keep private service communication separate from marketing. An agreed recap of one client’s work belongs with that client. A campaign to an opted-in list should use general guidance that is appropriate for all its recipients, such as how to prepare a revised portfolio page for review.',
+          'For the example plan, a useful general email might say: “Before a second portfolio review, compare your updated first screen with the questions you started with. Note what changed and what still feels unclear. If you want another review, the booking page shows the current options.” This gives readers an action they can take without buying.'
+        ],
+        bullets: [
+          'At the end of a visit: agree on any preparation and whether a next session is useful.',
+          'For an opted-in educational list: send a relevant exercise or explanation, with one optional public link.',
+          'When availability changes: state the new hours or format accurately.',
+          'If someone has stopped receiving marketing: respect that choice rather than moving them to a different list.'
+        ]
+      },
+      {
+        heading: 'Use Email Center controls deliberately',
+        body: [
+          'On an eligible account, Expert Email Center supports campaign drafts, selected lists, previews, tests, audience review, and scheduled sends. Delivery requires the expert’s configured provider and verified sender. Saving a useful follow-up draft is different from approving it to send.',
+          'Choose a list whose members requested the subject matter. Review the eligible audience and skipped contacts before scheduling. If you configure a marketing cycle, inspect its trigger, steps, timing, and content; do not assume that every completed session should automatically produce a sales email. A short, reviewed campaign can be enough while you learn what readers find useful.'
+        ]
+      },
+      {
+        heading: 'Measure repeat visits using a defined group and window',
+        body: [
+          'Define the group before calculating a repeat rate. For example, count clients who completed their first session in a particular month, then count how many of those same clients completed another within 30 days of their first visit. Give every client the full observation period before comparing months.',
+          'In a hypothetical group of 20 first-time clients, if six return within that window, the repeat rate is 6 divided by 20, or 30%. This is an arithmetic example, not an Ownlybiz benchmark or a claim about typical results. Twenty sessions from six people are not twenty repeat clients.',
+          'Use the client and session history available to you to check the counts. Do not assume there is a ready-made report for this exact cohort definition. Also note format, availability, and client goals: a one-off service can be successful even when a satisfied client never needs it again.'
+        ]
+      },
+      {
+        heading: 'Review the plan when the work changes',
+        body: [
+          'Look for specific friction: clients cannot tell what to prepare, they mistake credit for a package, or they expect an unavailable channel. Improve the relevant description and public link, then verify that the next visit is still useful and deliverable.',
+          'A repeat-client system is ready when the offer, booking choices, balance explanation, and follow-up agree with one another. Its purpose is to make the next appropriate visit easier to understand. It does not guarantee repeat bookings, revenue, or a particular client outcome.'
         ]
       }
     ],
     faqs: [
       {
-        question: 'Are packages always better than single sessions?',
-        answer: 'No. Packages are best when there is a recurring need. Some clients only need one focused session.'
+        question: 'Is prepaid credit the same as a session package?',
+        answer: 'No. Credit is a value balance for eligible sessions with the relevant expert; a package describes a particular bundle of sessions or deliverables. Check the public options before advertising either, and do not promise that credit reserves appointment times.'
       },
       {
-        question: 'Can experts email all past clients?',
-        answer: 'Experts should respect opt-in status, email preferences, and applicable laws. Marketing and transactional emails should not be treated the same.'
+        question: 'Does every service need a repeat-visit offer?',
+        answer: 'No. Some questions are resolved in one session. Offer another visit when there is a clear next task, fresh material to review, or an ongoing need the client wants help with.'
+      },
+      {
+        question: 'Does a campaign click prove that an email caused a repeat booking?',
+        answer: 'No. A click shows engagement with a link, not necessarily a completed session or a cause of the booking. Compare delivery and engagement information with actual session records, and keep small samples in perspective.'
       }
     ],
     relatedFeatures: ['Packages', 'Prepaid credit', 'Email Center', 'Client list', 'Session history']
@@ -1081,7 +1189,6 @@ const posts = [
     title: 'Promotion Codes for Expert Services: Discounts Without Training Clients to Wait',
     category: 'Promotions',
     date: '2026-06-14',
-    readTime: '7 min read',
     image: '/assets/blog/promotion-codes-for-expert-services.png',
     imageAlt: 'Ownlybiz promotion code panel with percentage discount, service type, and checkout preview.',
     summary: 'Promotion codes can help with launches, loyal clients, and seasonal campaigns, but they should have a purpose and a clear limit.',
@@ -1149,7 +1256,6 @@ const posts = [
     title: 'Written and Async Expert Services: When Clients Do Not Need a Live Call',
     category: 'Async Services',
     date: '2026-06-14',
-    readTime: '8 min read',
     image: '/assets/blog/written-async-services-for-experts.png',
     imageAlt: 'Ownlybiz written service workflow with client question, expert response, and delivery status.',
     summary: 'Not every client problem needs chat, voice, or video. Written services can give experts time to review, think, and respond with structure.',
@@ -1217,7 +1323,6 @@ const posts = [
     title: 'Analytics for Independent Experts: What to Watch After You Launch',
     category: 'Analytics',
     date: '2026-06-14',
-    readTime: '7 min read',
     image: '/assets/blog/analytics-for-independent-experts.png',
     imageAlt: 'Ownlybiz analytics dashboard illustration with sessions, revenue, clients, and channel mix.',
     summary: 'Useful analytics do not need to be complicated. Experts should watch the few signals that help them improve pricing, service clarity, and follow-up.',
@@ -1285,7 +1390,6 @@ const posts = [
     title: 'Ownlybiz Feature Map: What Independent Experts Can Actually Use',
     category: 'Features',
     date: '2026-06-14',
-    readTime: '10 min read',
     image: '/assets/blog/ownlybiz-feature-map-for-experts.png',
     imageAlt: 'Map-style illustration of Ownlybiz features including website, payments, sessions, packages, email, analytics, and domains.',
     summary: 'Ownlybiz is easiest to understand as a connected feature map: publish, sell, deliver, manage, follow up, and improve.',
@@ -1390,6 +1494,21 @@ function normalizePost(post) {
       answer: 'Experts should review their service promises, pricing, client permissions, refund or cancellation expectations, and any field-specific rules before publishing pages, sending campaigns, or accepting paid work.'
     });
   }
+  // Estimate from the article itself, excluding campaign drafts and navigation.
+  // The same rule applies to every guide so copy edits cannot leave stale labels.
+  const articleText = [
+    normalized.title,
+    normalized.summary,
+    ...(normalized.takeaways || []),
+    ...(normalized.sections || []).flatMap((section) => [
+      section.heading,
+      ...(section.body || []),
+      ...(section.bullets || [])
+    ]),
+    ...(normalized.faqs || []).flatMap((faq) => [faq.question, faq.answer])
+  ].join(' ');
+  normalized.wordCount = articleText.trim().split(/\s+/u).filter(Boolean).length;
+  normalized.readTime = `${Math.max(1, Math.ceil(normalized.wordCount / 220))} min read`;
   return normalized;
 }
 
@@ -1554,5 +1673,7 @@ function mix(a, b, t) { return a * (1 - t) + b * t; }
 function clamp(v) { return Math.max(0, Math.min(255, Math.round(v))); }
 
 writeJson();
-selectedPosts.forEach(drawImage);
-console.log(`Generated ${selectedPosts.length} blog posts and ${selectedPosts.length} header images.`);
+if (!contentOnly) selectedPosts.forEach(drawImage);
+console.log(contentOnly
+  ? `Generated ${selectedPosts.length} blog posts; existing header images left unchanged.`
+  : `Generated ${selectedPosts.length} blog posts and ${selectedPosts.length} header images.`);

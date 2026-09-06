@@ -3,6 +3,8 @@ const path = require('path');
 
 const BACKEND = (process.env.OWNLYBIZ_API_URL || process.env.OWNLY_API || 'https://ownlybiz-backend-production.up.railway.app').replace(/\/+$/, '');
 const INDEX_PATH = path.join(process.cwd(), 'index.html');
+const PLATFORM_INDEX_PATH = path.join(process.cwd(), 'data', 'ownlybiz-platform.html');
+const PLATFORM_LEGAL_PATH = path.join(process.cwd(), 'data', 'ownlybiz-platform-legal.json');
 const BLOG_POSTS_PATH = path.join(process.cwd(), 'data', 'ownlybiz-blog-posts.json');
 const RESERVED = new Set([
   '', 'index.html', 'admin', 'api', 'app', 'auth', 'billing', 'checkout',
@@ -22,6 +24,10 @@ const PUBLIC_LITE_EXPERT_SLUGS = publicSlugSet(process.env.OB_PUBLIC_EXPERT_LITE
 
 let cachedIndex = null;
 let cachedBlogPosts = null;
+let cachedPlatformIndex = null;
+let cachedPlatformLegal = null;
+let cachedPlatformSeo = null;
+let pendingPlatformSeo = null;
 const publicExpertProfileCache = new Map();
 
 function readIndex() {
@@ -29,6 +35,70 @@ function readIndex() {
     cachedIndex = fs.readFileSync(INDEX_PATH, 'utf8');
   }
   return cachedIndex;
+}
+
+function readPlatformIndex() {
+  try {
+    if (!cachedPlatformIndex || process.env.NODE_ENV !== 'production') {
+      cachedPlatformIndex = fs.readFileSync(PLATFORM_INDEX_PATH, 'utf8');
+    }
+    return cachedPlatformIndex;
+  } catch (_) {
+    // Local source-only checks and older builds retain the original shell.
+    return readIndex();
+  }
+}
+
+function readPlatformLegal() {
+  try {
+    if (!cachedPlatformLegal || process.env.NODE_ENV !== 'production') {
+      cachedPlatformLegal = JSON.parse(fs.readFileSync(PLATFORM_LEGAL_PATH, 'utf8'));
+    }
+    return cachedPlatformLegal;
+  } catch (_) {
+    return {};
+  }
+}
+
+function normalizedPublicPath(pathname) {
+  return String(pathname || '/').replace(/\/+$/, '') || '/';
+}
+
+const PLATFORM_MARKETING_PATHS = new Set(['/', '/how', '/features', '/pricing', '/experts', '/contact']);
+const PLATFORM_LEGAL_ROUTES = {
+  '/legal/terms': { key: 'terms', title: 'Terms of Service' },
+  '/legal/privacy': { key: 'privacy', title: 'Privacy Policy' },
+  '/legal/independent-professional-terms': { key: 'independent', title: 'Independent Professional Terms' },
+  '/legal/platform-policy': { key: 'platform', title: 'Platform Policy' },
+  '/terms': { key: 'terms', title: 'Terms of Service', canonicalPath: '/legal/terms' },
+  '/privacy': { key: 'privacy', title: 'Privacy Policy', canonicalPath: '/legal/privacy' },
+};
+
+function platformLegalRoute(pathname) {
+  return PLATFORM_LEGAL_ROUTES[normalizedPublicPath(pathname)] || null;
+}
+
+function knownPublicPlatformPath(pathname) {
+  const routePath = normalizedPublicPath(pathname);
+  if (PLATFORM_MARKETING_PATHS.has(routePath) || platformLegalRoute(routePath) || routePath === '/blog') return true;
+  if (!/^\/blog\/[^/]+$/.test(routePath)) return false;
+  const slug = blogSlugFromPath(routePath);
+  return !!slug && readBlogPosts().some((post) => post.slug === slug);
+}
+
+function publicPlatformRequest(req, host) {
+  if (!isPlatformHost(host)) return false;
+  if (!['GET', 'HEAD'].includes(String(req.method || 'GET').toUpperCase())) return false;
+  const allowed = /^(?:utm_(?:source|medium|campaign|term|content|id|source_platform|creative_format|marketing_tactic)|gclid|dclid|fbclid|msclkid|gbraid|wbraid)$/;
+  // Unknown parameters may belong to an authenticated or payment-return flow.
+  return [...new URLSearchParams(queryOnly(req)).keys()].every((key) => allowed.test(key));
+}
+
+function invalidPublicPlatformPath(pathname) {
+  const routePath = normalizedPublicPath(pathname);
+  const first = routePath.split('/')[1];
+  return ['how', 'features', 'pricing', 'experts', 'contact', 'legal', 'terms', 'privacy'].includes(first)
+    && !PLATFORM_MARKETING_PATHS.has(routePath) && !platformLegalRoute(routePath);
 }
 
 function esc(value) {
@@ -127,7 +197,7 @@ function renderBlogTags(post) {
 }
 
 function renderBlogFeatures(post) {
-  return (post.relatedFeatures || []).map((feature) => `<span class="ob-blog-feature-chip">${esc(feature)}</span>`).join('');
+  return (post.relatedFeatures || []).map((feature) => `<a class="ob-blog-feature-chip" href="/features">${esc(feature)}</a>`).join('');
 }
 
 function renderBlogHub(posts) {
@@ -149,7 +219,7 @@ function renderBlogHub(posts) {
       '</article>',
       '<aside class="ob-blog-side-card">',
         '<h2>Built for expert revenue, not content filler.</h2>',
-        '<p>These guides explain how Ownlybiz helps independent experts publish, sell, deliver, manage, follow up, and improve while keeping AI features framed as reviewed marketing/admin support.</p>',
+        '<p>These guides explain how Ownlybiz helps independent experts publish, sell, deliver, manage, and follow up. Marketing AI tools assist with drafts that experts review before publishing or sending.</p>',
         '<div class="ob-blog-side-list">',
           '<span>Transparent platform fee and expert keep-rate language.</span>',
           '<span>Stripe-powered checkout with card and wallet flows where available.</span>',
@@ -175,7 +245,9 @@ function renderBlogHub(posts) {
 }
 
 function renderBlogArticle(post, posts) {
-  const related = posts.filter((item) => item.slug !== post.slug).slice(0, 3);
+  const tags = new Set((post.tags || []).map((tag) => String(tag).toLowerCase()));
+  const overlap = (item) => (item.tags || []).filter((tag) => tags.has(String(tag).toLowerCase())).length;
+  const related = posts.filter((item) => item.slug !== post.slug).sort((a, b) => overlap(b) - overlap(a)).slice(0, 3);
   return [
     '<article class="ob-blog-article">',
       `<div class="ob-blog-article-hero"><img src="${esc(post.image)}" alt="${esc(post.imageAlt)}"></div>`,
@@ -184,7 +256,7 @@ function renderBlogArticle(post, posts) {
         `<div class="ob-blog-kicker">${esc(post.category)} · ${esc(post.readTime)}</div>`,
         `<h1>${esc(post.title)}</h1>`,
         `<p class="ob-blog-article-summary">${esc(post.summary)}</p>`,
-        `<div class="ob-blog-meta"><span>${esc(post.date)}</span><span>Ownlybiz Team</span><span>${esc(post.audience || 'Independent experts')}</span></div>`,
+        `<div class="ob-blog-meta"><span>${esc(post.date)}${post.dateModified && post.dateModified !== post.date ? ` · Updated ${esc(post.dateModified)}` : ''}</span><span>Ownlybiz Team</span><span>${esc(post.audience || 'Independent experts')}</span></div>`,
       '</div>',
       '<div class="ob-blog-article-body">',
         '<div class="ob-blog-prose">',
@@ -201,7 +273,6 @@ function renderBlogArticle(post, posts) {
         '</div>',
         '<aside class="ob-blog-aside">',
           `<div class="ob-blog-aside-card"><h2>Ownlybiz features mentioned</h2><div class="ob-blog-feature-list">${renderBlogFeatures(post)}</div></div>`,
-          `<div class="ob-blog-aside-card"><h2>Email campaign angle</h2><p><strong>Subject:</strong> ${esc(post.email && post.email.subject)}</p><p><strong>Preheader:</strong> ${esc(post.email && post.email.preheader)}</p><p><strong>CTA:</strong> ${esc(post.email && post.email.cta)}</p></div>`,
           `<div class="ob-blog-aside-card"><h2>Related guides</h2>${related.map((item) => `<p><a href="${blogUrl(item).replace('https://ownlybiz.com', '')}">${esc(item.title)}</a></p>`).join('')}</div>`,
         '</aside>',
       '</div>',
@@ -227,7 +298,7 @@ function blogJsonLd(post, posts) {
     description: post.seoDescription || post.summary,
     image: `https://ownlybiz.com${post.image}`,
     datePublished: post.date,
-    dateModified: post.date,
+    dateModified: post.dateModified || post.date,
     author: { '@type': 'Organization', name: 'Ownlybiz' },
     publisher: { '@type': 'Organization', name: 'Ownlybiz' },
     mainEntityOfPage: blogUrl(post),
@@ -245,9 +316,103 @@ function blogJsonLd(post, posts) {
   return faq ? [article, faq] : article;
 }
 
-function injectJsonLd(html, data) {
+function injectJsonLd(html, data, id = '') {
   const safe = JSON.stringify(data).replace(/</g, '\\u003c');
-  return html.replace(/<\/head>/i, `<script type="application/ld+json">${safe}</script>\n</head>`);
+  return html.replace(/<\/head>/i, `<script${id ? ` id="${esc(id)}"` : ''} type="application/ld+json">${safe}</script>\n</head>`);
+}
+
+async function readPublicPlatformSeo() {
+  if (cachedPlatformSeo && cachedPlatformSeo.expiresAt > Date.now()) return cachedPlatformSeo.value;
+  if (pendingPlatformSeo) return pendingPlatformSeo;
+  pendingPlatformSeo = (async () => {
+    const config = await fetchJson(`${BACKEND}/api/config`, 1500);
+    const source = config && config.seo;
+    const fields = ['platform_schema_enabled', 'platform_schema_name', 'platform_schema_url', 'platform_schema_logo_url',
+      'platform_schema_type', 'platform_schema_description', 'platform_schema_same_as', 'platform_schema_contact_email'];
+    const value = source && typeof source === 'object' ? Object.fromEntries(fields
+      .filter((key) => ['string', 'number', 'boolean'].includes(typeof source[key]))
+      .map((key) => [key, String(source[key]).slice(0, 4096)])) : null;
+    // Cache only this public allowlist, never other platform configuration.
+    // Cache failures too: optional structured data must not create retry storms.
+    cachedPlatformSeo = { value, expiresAt: Date.now() + 300000 };
+    return value;
+  })().finally(() => { pendingPlatformSeo = null; });
+  return pendingPlatformSeo;
+}
+
+function identityUrl(value) {
+  try {
+    const url = new URL(clean(value));
+    return url.protocol === 'https:' && !url.username && !url.password ? url.href : '';
+  } catch (_) {
+    return '';
+  }
+}
+
+function platformIdentityJsonLd(seo) {
+  if (!seo || !/^(?:1|true|on|yes|enabled)$/i.test(clean(seo.platform_schema_enabled))) return null;
+  const url = identityUrl(seo.platform_schema_url);
+  const name = clean(seo.platform_schema_name);
+  if (!url || !name) return null;
+  const description = clean(seo.platform_schema_description);
+  const org = { '@type': 'Organization', '@id': `${url}#organization`, name, url };
+  if (description) org.description = description;
+  const logo = identityUrl(seo.platform_schema_logo_url);
+  if (logo) org.logo = logo;
+  const sameAs = String(seo.platform_schema_same_as || '').split(/,|\n/).map(identityUrl).filter(Boolean);
+  if (sameAs.length) org.sameAs = sameAs;
+  const email = clean(seo.platform_schema_contact_email);
+  if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) org.contactPoint = [{ '@type': 'ContactPoint', email, contactType: 'customer support' }];
+  const website = { '@type': 'WebSite', '@id': `${url}#website`, name, url, publisher: { '@id': org['@id'] } };
+  if (description) website.description = description;
+  const graph = [org, website];
+  if (seo.platform_schema_type === 'SoftwareApplication') {
+    const app = { '@type': 'SoftwareApplication', '@id': `${url}#software`, name, url, applicationCategory: 'BusinessApplication', operatingSystem: 'Web', publisher: { '@id': org['@id'] } };
+    if (description) app.description = description;
+    graph.push(app);
+  }
+  return {
+    '@context': 'https://schema.org',
+    '@graph': graph,
+  };
+}
+
+function activatePlatformPage(html, page) {
+  // Select the existing public markup before JavaScript runs; do not touch
+  // expert, dashboard, signup, session or payment panels.
+  if (!html.includes(`id="mkt-page-${page}"`)) return html;
+  return html.replace(/<div class="mkt-page(?: active)?" id="mkt-page-([a-z-]+)"([^>]*)>/g,
+    (tag, id, attrs) => `<div class="mkt-page${id === page ? ' active' : ''}" id="mkt-page-${id}"${attrs}>`);
+}
+
+function renderPlatformLegal(doc) {
+  const body = (doc.body || []).map((row) => {
+    if (row[0] === 'h2' || row[0] === 'p') return `<${row[0]}>${esc(row[1])}</${row[0]}>`;
+    if (row[0] === 'links') return '<p>' + (Array.isArray(row[1]) ? row[1] : []).map((link) => {
+      const href = String(link && link[1] || '');
+      return /^https:\/\//i.test(href) ? `<a href="${esc(href)}" target="_blank" rel="noopener noreferrer">${esc(link[0] || href)}</a>` : '';
+    }).filter(Boolean).join(' &middot; ') + '</p>';
+    return '';
+  }).join('');
+  const links = Object.entries(PLATFORM_LEGAL_ROUTES).filter(([route]) => route.startsWith('/legal/'))
+    .map(([route, info]) => `<a class="legal-pill" href="${route}" data-legal-link="${info.key}">${esc(info.title)}</a>`).join('');
+  return `<div class="legal-shell"><div class="legal-kicker">${esc(doc.kicker)}</div><h1>${esc(doc.title)}</h1><div class="legal-updated">${esc(doc.updated)}</div>${body}<div class="legal-link-row">${links}<button class="legal-pill" onclick="obOpenConsentManager();return false;">Cookie Preferences</button></div></div>`;
+}
+
+function injectPlatformLegal(html, info) {
+  const doc = readPlatformLegal()[info.key];
+  if (!doc || !Array.isArray(doc.body)) return html;
+  html = activatePlatformPage(html, 'home');
+  html = html.replace(/<section class="legal-page" id="legal-page" aria-live="polite"><\/section>/,
+    `<section class="legal-page active" id="legal-page" aria-live="polite">${renderPlatformLegal(doc)}</section>`);
+  html = html.replace(/<body([^>]*)>/i, (tag, attrs) => /\bclass=/.test(attrs)
+    ? tag.replace(/class="([^"]*)"/, 'class="$1 ob-legal-route"')
+    : `<body${attrs} class="ob-legal-route">`);
+  return html.replace(/<\/head>/i, '<style id="ob-legal-ssr-style">body.ob-legal-route #mkt-page-home > :not(#legal-page){display:none!important}body.ob-legal-route #legal-page{display:block!important}</style>\n</head>');
+}
+
+function publicNotFoundHtml() {
+  return '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Page not found | Ownlybiz</title><meta name="robots" content="noindex,follow"></head><body><main><h1>Page not found</h1><p>This Ownlybiz page is not published.</p><nav><a href="/">Ownlybiz home</a> · <a href="/blog">Current guides</a> · <a href="/contact">Contact</a></nav></main></body></html>';
 }
 
 function injectBlogContent(html, rendered) {
@@ -1379,7 +1544,16 @@ module.exports = async function handler(req, res) {
     }
   }
 
-  let html = readIndex();
+  const platformPublic = !isExpert && publicPlatformRequest(req, host);
+  const publicPath = normalizedPublicPath(pathOnly(req));
+  const knownPlatformPublic = platformPublic && knownPublicPlatformPath(publicPath);
+  if (host === 'www.ownlybiz.com' && knownPlatformPublic && ['GET', 'HEAD'].includes(String(req.method || 'GET').toUpperCase())) {
+    res.setHeader('Location', `https://ownlybiz.com${pathOnly(req)}${queryOnly(req)}`);
+    res.setHeader('Cache-Control', 'public, s-maxage=300, stale-while-revalidate=3600');
+    res.status(308).end();
+    return;
+  }
+  let html = knownPlatformPublic ? readPlatformIndex() : readIndex();
   let statusCode = 200;
   if (isExpert) {
     const preloadOnDemand = publicFirstPaintEnabled(clean(expert && (expert.slug || expertResult.slug)))
@@ -1410,12 +1584,29 @@ module.exports = async function handler(req, res) {
     });
     html = setFavicon(html, expertFaviconUrl(expert, req, host, origin));
     res.setHeader('X-Robots-Tag', robotsValue);
+  } else if (platformPublic && invalidPublicPlatformPath(publicPath)) {
+    html = publicNotFoundHtml();
+    statusCode = 404;
+    res.setHeader('X-Robots-Tag', 'noindex,follow');
+  } else if (platformPublic && platformLegalRoute(publicPath)) {
+    const legal = platformLegalRoute(publicPath);
+    const canonicalPath = legal.canonicalPath || publicPath;
+    html = injectPlatformLegal(html, legal);
+    html = injectSeo(html, {
+      title: `${legal.title} - Ownlybiz`,
+      description: `Ownlybiz ${legal.title} for platform users, independent experts, clients, privacy, payments, and acceptable use.`,
+      canonical: `https://ownlybiz.com${canonicalPath}`,
+      robots: 'index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1',
+      image: '',
+    });
+    res.setHeader('X-Robots-Tag', 'index,follow');
   } else if (isBlogPath(pathOnly(req))) {
     const posts = readBlogPosts();
     const slug = blogSlugFromPath(pathOnly(req));
     const hasSlug = slug !== '';
-    const post = hasSlug && slug ? posts.find((item) => item.slug === slug) : null;
-    const knownBlogRoute = !hasSlug || !!post;
+    const invalidDepth = platformPublic && publicPath.split('/').filter(Boolean).length > 2;
+    const post = !invalidDepth && hasSlug && slug ? posts.find((item) => item.slug === slug) : null;
+    const knownBlogRoute = !invalidDepth && (!hasSlug || !!post);
     if (!knownBlogRoute) statusCode = 404;
     const rendered = post
       ? renderBlogArticle(post, posts)
@@ -1434,6 +1625,7 @@ module.exports = async function handler(req, res) {
         : 'The requested Ownlybiz guide is not published.';
     const canonicalPath = post ? `/blog/${encodeURIComponent(post.slug)}` : '/blog';
     html = injectBlogContent(html, rendered);
+    if (platformPublic) html = activatePlatformPage(html, 'blog');
     html = injectSeo(html, {
       title,
       description,
@@ -1443,10 +1635,12 @@ module.exports = async function handler(req, res) {
         : 'noindex,follow',
       image: post ? `https://ownlybiz.com${post.image}` : '',
     });
-    html = injectJsonLd(html, blogJsonLd(post, posts));
+    if (knownBlogRoute) html = injectJsonLd(html, blogJsonLd(post, posts), 'ob-blog-schema');
+    if (post) html = setMeta(html, 'property', 'og:type', 'article');
     res.setHeader('X-Robots-Tag', knownBlogRoute ? 'index,follow' : 'noindex,follow');
   } else {
     const seo = platformMarketingSeo(pathOnly(req));
+    if (knownPlatformPublic) html = activatePlatformPage(html, publicPath === '/' ? 'home' : publicPath.slice(1));
     html = injectSeo(html, {
       title: seo.title,
       description: seo.description,
@@ -1454,6 +1648,11 @@ module.exports = async function handler(req, res) {
       robots: 'index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1',
       image: '',
     });
+  }
+
+  if (knownPlatformPublic && statusCode === 200) {
+    const identity = platformIdentityJsonLd(await readPublicPlatformSeo());
+    if (identity) html = injectJsonLd(html, identity, 'ob-platform-schema');
   }
 
   res.setHeader('Content-Type', 'text/html; charset=utf-8');

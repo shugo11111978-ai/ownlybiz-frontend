@@ -71,9 +71,13 @@ try {
       await show();
       const geometry = await page.locator('.ob-session-receipt-dialog').evaluate(element => {
         const rect = element.getBoundingClientRect();
-        return { left: rect.left, right: rect.right, width: innerWidth, overflow: element.scrollWidth > element.clientWidth + 1, color: getComputedStyle(element).color, background: getComputedStyle(element).backgroundColor };
+        return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom, width: innerWidth, height: innerHeight, overflow: element.scrollWidth > element.clientWidth + 1, color: getComputedStyle(element).color, background: getComputedStyle(element).backgroundColor };
       });
       assert(geometry.left >= 0 && geometry.right <= geometry.width + 1 && !geometry.overflow);
+      assert(geometry.left >= 12 && geometry.width - geometry.right >= 12, 'Dialog keeps at least 12px of horizontal breathing room');
+      assert(Math.abs(geometry.left - (geometry.width - geometry.right)) <= 1, 'Dialog is horizontally centered despite the global margin reset');
+      assert(geometry.top >= 16 && geometry.height - geometry.bottom >= 16, 'Dialog keeps vertical viewport breathing room');
+      assert(Math.abs(geometry.top - (geometry.height - geometry.bottom)) <= 1, 'Dialog is vertically centered in the available viewport');
       assert.equal(geometry.color, 'rgb(36, 26, 21)');
       assert.equal(geometry.background, 'rgb(255, 255, 255)');
       if (output) await page.screenshot({ path: path.join(output, `receipt-${theme}-${width}.png`), fullPage: true });

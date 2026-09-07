@@ -23,11 +23,12 @@ const response = data => ({ ok: true, json: async () => ({ success: true, ...dat
 const session = (extra = {}) => ({ id: 'session-1', status: 'ended', channel: 'chat', started_at: 100, duration_secs: 60, expert_id: 'expert-1', expert_slug: 'luna', ...extra });
 function harness(role = 'client') {
   const elements = new Map();
+  const timers = [], documentEvents = new Map(), selectorNodes = new Map();
   function node(id) {
     if (!elements.has(id)) elements.set(id, {
       id, innerHTML: '', textContent: '', hidden: false, disabled: false, focused: false,
       classList: { contains: name => name === 'active', add() {}, remove() {} },
-      addEventListener() {}, contains() { return true; }, querySelector() { return null; }, focus() { this.focused = true; },
+      addEventListener() {}, contains() { return true; }, querySelector() { return null; }, querySelectorAll() { return []; }, appendChild() {}, focus() { this.focused = true; },
     });
     return elements.get(id);
   }
@@ -51,17 +52,19 @@ function harness(role = 'client') {
   const context = {
     window, location, document: {
       getElementById: id => elements.get(id) || null,
-      querySelector: () => null, querySelectorAll: () => [], addEventListener() {},
+      querySelector: () => null, querySelectorAll: selector => selectorNodes.get(selector) || [],
+      addEventListener(name, callback) { if (!documentEvents.has(name)) documentEvents.set(name, []); documentEvents.get(name).push(callback); },
+      createElement: name => node(`created-${name}`),
     },
     fetch: async (url, options = {}) => { calls.push({ url, ...options, body: options.body ? JSON.parse(options.body) : null }); return responder(url, options); },
-    AbortController, URL, console, setTimeout: () => 1, clearTimeout() {},
+    AbortController, URL, console, setTimeout: (callback, delay) => { timers.push({ callback, delay }); return timers.length; }, clearTimeout() {},
     prompt: () => 'A public reply', confirm: () => true,
   };
   vm.createContext(context);
   new vm.Script(source).runInContext(context);
   const hooks = window.__OB_TEST_HOOKS__.sessionReviews;
   return {
-    window, hooks, calls, elements, node, location,
+    window, hooks, calls, elements, node, location, context, timers, documentEvents, selectorNodes,
     respond(fn) { responder = fn; },
     ready(value = session()) { window._obClientReceiptAuthorityState = { sid: value.id, snapshot: value, settlementPending: false }; hooks.ready(value); },
     changeIdentity(notify = true) {
@@ -195,6 +198,50 @@ await test('an older public expert fetch cannot overwrite newly supplied expert 
   for (let n = 0; n < 10; n++) await Promise.resolve();
   assert.match(h.node('ew-reviews-container').innerHTML, /CURRENT REVIEW/);
   assert.doesNotMatch(h.node('ew-reviews-container').innerHTML, /STALE REVIEW/);
+});
+
+const publicPayload = { expert: { id: 'expert-1', slug: 'luna', name: 'Luna' }, reviews: [{ id: 'r-public', status: 'published', is_visible: 1, rating: 5, comment: 'PUBLIC REVIEW', expert_reply: 'PUBLIC REPLY' }] };
+await test('fast public payload survives both startup callbacks and removes legacy duplicate cards', async () => {
+  const h = harness();
+  let removed = false;
+  h.selectorNodes.set('#ep-reviews .ob-reviews', [{ parentNode: { removeChild() { removed = true; } } }]);
+  h.window.obRenderPublicReviews(publicPayload);
+  for (const timer of h.timers.filter(timer => timer.delay === 100)) timer.callback();
+  for (const callback of h.documentEvents.get('DOMContentLoaded') || []) callback();
+  assert.match(h.node('ew-reviews-container').innerHTML, /PUBLIC REVIEW[\s\S]*PUBLIC REPLY/);
+  assert.equal(removed, true, 'the old appended reviews list cannot compete with the canonical container');
+});
+
+await test('deferred lexical loader renders full reviews after replacing early wrappers and rejects older fetches', async () => {
+  const h = harness(), pending = deferred(); h.respond(() => pending.promise);
+  h.window.loadExpertWebsite('old-expert');
+  for (let n = 0; n < 4; n++) await Promise.resolve();
+  const loader = html.match(/  async function loadExpertWebsite\(slug\) \{[\s\S]*?\n  \}\n\n  \/\* ═/)?.[0].replace(/\n\n  \/\* ═$/, '');
+  assert(loader, 'extract the actual lexical public loader');
+  let applied = false;
+  h.window._applyExpertWebsite = () => { applied = true; };
+  Object.assign(h.context, { api: async () => publicPayload, $$: () => [], $: h.node, freeMinutes: {}, fmt$: () => '$0' });
+  new vm.Script(`${loader}\nwindow.__deferredReviewLoader=loadExpertWebsite;`).runInContext(h.context);
+  await h.window.__deferredReviewLoader('luna');
+  assert.equal(applied, true);
+  assert.match(h.node('ew-reviews-container').innerHTML, /PUBLIC REVIEW[\s\S]*PUBLIC REPLY/);
+  pending.resolve(response({ expert: { slug: 'old-expert' }, reviews: [{ status: 'published', is_visible: 1, rating: 1, comment: 'STALE REVIEW' }] }));
+  for (let n = 0; n < 10; n++) await Promise.resolve();
+  assert.match(h.node('ew-reviews-container').innerHTML, /PUBLIC REVIEW[\s\S]*PUBLIC REPLY/);
+  assert.doesNotMatch(h.node('ew-reviews-container').innerHTML, /STALE REVIEW/);
+});
+
+await test('canonical public payload applier forwards source reviews after deferred website rendering', async () => {
+  const h = harness();
+  const start = html.indexOf('function obApplyPublicExpertPayload(e, slug, source) {');
+  const end = html.indexOf('function obPublicLoaderApiBase()', start);
+  assert(start > 0 && end > start);
+  h.window._applyExpertWebsite = () => {};
+  h.window._refreshPublicPage = () => {};
+  h.window.OB_RATE_POLICY = { ownerRate: () => 0 };
+  new vm.Script(html.slice(start, end)).runInContext(h.context);
+  h.context.obApplyPublicExpertPayload({ ...publicPayload.expert }, 'luna', publicPayload);
+  assert.match(h.node('ew-reviews-container').innerHTML, /PUBLIC REVIEW[\s\S]*PUBLIC REPLY/);
 });
 
 const managerPayload = { collection_enabled: false, reviews: [{ id: 'r1', status: 'pending', is_visible: 0, rating: 4, comment: '<svg/onload=alert(1)>', client_name: '<Client>', source: 'verified_session' }], stats: { pending: 1 } };

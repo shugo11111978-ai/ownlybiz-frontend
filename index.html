@@ -17436,21 +17436,6 @@ async function savePaymentConfig() {
       // Free minutes map for booking overlay & phone funnel (chat only for now)
       freeMinutes.chat = typeof e.free_minutes === 'number' ? e.free_minutes : freeMinutes.chat;
 
-      // Reviews on reviews page
-      const revPage=$('ep-reviews');
-      if(revPage&&d.reviews?.length){
-        let rc=revPage.querySelector('.ob-reviews'); if(!rc){rc=document.createElement('div');rc.className='ob-reviews';revPage.appendChild(rc);}
-        rc.innerHTML=d.reviews.map(r=>`
-          <div style="background:rgba(255,255,255,.04);border-radius:16px;padding:18px;margin-bottom:12px;">
-            <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
-              <div style="width:36px;height:36px;border-radius:50%;background:${clr(r.client_name)};color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;">${ini(r.client_name)}</div>
-              <div><div style="font-weight:600;">${esc(r.client_name)}</div><div style="font-size:11px;color:#888;">${dt(r.created_at)}</div></div>
-              <div style="margin-left:auto;color:var(--gold);">${'★'.repeat(r.rating)}${'☆'.repeat(5-r.rating)}</div>
-            </div>
-            ${r.comment?`<p style="font-size:14px;color:rgba(255,255,255,.8);line-height:1.6;margin:0;">"${esc(r.comment)}"</p>`:''}
-          </div>`).join('');
-      }
-
       // Legacy fixed-price packages are retired until their checkout is rebuilt.
       // Remove any stale render synchronously; never expose a briefly clickable
       // affordance and rely on the periodic compatibility cleanup to catch it.
@@ -17458,6 +17443,8 @@ async function savePaymentConfig() {
       if(svcPage) svcPage.querySelectorAll('.ob-packages').forEach(function(node){ node.remove(); });
     // Apply website editor content (hero, about, credentials, footer, pages, theme, rates)
       if(typeof window._applyExpertWebsite === 'function') window._applyExpertWebsite(e);
+      // This lexical loader also runs after deferred scripts replace window wrappers.
+      if(typeof window.obRenderPublicReviews === 'function') window.obRenderPublicReviews(d);
     } catch(err){ console.warn('Expert website:',err.message); }
   }
 
@@ -20270,6 +20257,10 @@ function obApplyPublicExpertPayload(e, slug, source) {
   if(typeof window._applyExpertWebsite === 'function') window._applyExpertWebsite(e);
   if(typeof window._refreshPublicPage === 'function') window._refreshPublicPage(e);
   else if(typeof _refreshPublicPage === 'function') _refreshPublicPage(e);
+  if(typeof window.obRenderPublicReviews === 'function'){
+    if(source && Array.isArray(source.reviews)) window.obRenderPublicReviews({expert:e,reviews:source.reviews});
+    else if(Array.isArray(e.reviews)) window.obRenderPublicReviews({expert:e,reviews:e.reviews});
+  }
   if(typeof window._markRouteReady === 'function') window._markRouteReady('public');
   return e;
 }
@@ -62539,10 +62530,13 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   function removeDuplicateReviewPages(){
     var pages = Array.prototype.slice.call(document.querySelectorAll('#ep-reviews'));
     pages.forEach(function(page, index){ if(index > 0 && page.parentNode) page.parentNode.removeChild(page); });
+    document.querySelectorAll('#ep-reviews .ob-reviews').forEach(function(node){ if(node.parentNode) node.parentNode.removeChild(node); });
   }
+  var publicReviewRenderedPayload = null;
   function renderPublicReviews(data){
     removeDuplicateReviewPages();
     data = normalizePublicPayload(data || {});
+    publicReviewRenderedPayload = data;
     var reviews = (data.reviews || []).filter(function(r){ return r && approvedReview(r); });
     var section = document.querySelector('#view-4 .testimonials');
     var grid = document.querySelector('#view-4 .testimonials .testi-grid');
@@ -62561,8 +62555,14 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       }
     }
   }
-  window.obRenderPublicReviews = renderPublicReviews;
   var publicReviewFetchState = { key:'', promise:null, at:0, generation:0 };
+  function applyPublicReviews(data){
+    publicReviewFetchState.generation += 1;
+    publicReviewFetchState.key = String(currentSlug(data));
+    publicReviewFetchState.promise = null;
+    renderPublicReviews(data);
+  }
+  window.obRenderPublicReviews = applyPublicReviews;
   function publicReviewStatusAllows(slug){
     slug = String(slug || '').trim().toLowerCase();
     if(!slug) return Promise.resolve(false);
@@ -62610,10 +62610,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   window._applyExpertWebsite = function(data){
     var result = oldApply ? oldApply.apply(this, arguments) : undefined;
     if(data && data.reviews) {
-      publicReviewFetchState.generation += 1;
-      publicReviewFetchState.key = String(currentSlug(data));
-      publicReviewFetchState.promise = null;
-      renderPublicReviews(data);
+      applyPublicReviews(data);
     }
     else fetchPublicReviewsForSlug(currentSlug(data));
     return result;
@@ -62637,12 +62634,16 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     if(section === 'reviews') setTimeout(window.loadReviews, 80);
     return result;
   };
-  document.addEventListener('DOMContentLoaded', function(){
+  function initializePublicReviews(){
     ensureManagerShell();
-    renderPublicReviews({reviews:[]});
+    // Early inline boot can precede deferred loaders, DOM readiness, or a fast response.
+    renderPublicReviews(publicReviewRenderedPayload || {reviews:[]});
+  }
+  document.addEventListener('DOMContentLoaded', function(){
+    initializePublicReviews();
     if(window._browseExpert || window._currentExpertSlug) fetchPublicReviewsForSlug(currentSlug());
   });
-  setTimeout(function(){ ensureManagerShell(); renderPublicReviews({reviews:[]}); }, 100);
+  setTimeout(initializePublicReviews, 100);
 })();
 </script>
 <style id="ownlybiz-email-center-v1-css">

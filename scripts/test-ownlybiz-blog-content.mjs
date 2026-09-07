@@ -17,6 +17,10 @@ const updatedSlugs = new Set([
   'email-marketing-for-independent-experts',
   'repeat-client-system-packages-credit-email'
 ]);
+const reviewUpdatedSlugs = new Set([
+  'independent-expert-dashboard-checklist',
+  'expert-business-tool-stack-vs-ownlybiz'
+]);
 
 try {
   // Content regeneration must reproduce committed data without touching images.
@@ -31,8 +35,14 @@ try {
   assert.equal(generated.length, 18);
   assert.equal(new Set(generated.map(post => post.slug)).size, generated.length, 'Every published guide needs a unique route');
   const baseline = JSON.parse(execFileSync('git', ['show', '36c2f6ea2c5bf00b8c3f6e3d8509c531dcfc4d62:data/ownlybiz-blog-posts.json'], { cwd: root, encoding: 'utf8' }));
-  assert.deepEqual(generated.filter(post => !newSlugs.has(post.slug)), baseline, 'All 15 deployed guides and their order must remain unchanged');
-  assert.equal(JSON.stringify(generated.filter(post => !newSlugs.has(post.slug))), JSON.stringify(baseline), 'Preserve deployed guide field serialization as well as content');
+  const unaffectedOriginal = post => !newSlugs.has(post.slug) && !reviewUpdatedSlugs.has(post.slug);
+  assert.deepEqual(generated.filter(unaffectedOriginal), baseline.filter(unaffectedOriginal), 'The 13 original guides outside the Sep7 update must remain unchanged');
+  assert.equal(JSON.stringify(generated.filter(unaffectedOriginal)), JSON.stringify(baseline.filter(unaffectedOriginal)), 'Preserve original guide field serialization as well as content');
+  const contentBaseline = JSON.parse(execFileSync('git', ['show', 'fd6b235cdb5720d294b07a22d25288c2dbc074a5:data/ownlybiz-blog-posts.json'], { cwd: root, encoding: 'utf8' }));
+  assert.deepEqual(generated.map(post => post.slug), contentBaseline.map(post => post.slug), 'Keep all 18 routes and their exact deployed order');
+  const untouched = post => !reviewUpdatedSlugs.has(post.slug);
+  assert.deepEqual(generated.filter(untouched), contentBaseline.filter(untouched), 'All 16 guides outside the two Sep7 updates must remain unchanged, including the Sep6 additions and prior editorial updates');
+  assert.equal(JSON.stringify(generated.filter(untouched)), JSON.stringify(contentBaseline.filter(untouched)), 'Preserve the 16 untouched deployed records and field serialization');
   assert.equal(generated.filter(post => newSlugs.has(post.slug)).length, newSlugs.size);
 
   // Default generation runs only in an owned fixture. New articles reuse images;
@@ -67,7 +77,11 @@ try {
       continue;
     }
     assert.equal(post.date, '2026-06-14', 'An editorial update must not reset the original publication date');
-    if (updatedSlugs.has(post.slug)) {
+    if (reviewUpdatedSlugs.has(post.slug)) {
+      assert.equal(post.dateModified, '2026-09-07');
+      assert.ok(post.sections.length >= 7, `${post.slug}: retain the substantive expanded guide structure`);
+      assert.ok(post.faqs.length >= 3, `${post.slug}: retain substantive FAQs`);
+    } else if (updatedSlugs.has(post.slug)) {
       assert.equal(post.dateModified, '2026-09-06');
       assert.ok(post.sections.length >= 7, `${post.slug}: keep the expanded guide structure`);
       assert.equal(post.faqs.length, 3);
@@ -77,7 +91,7 @@ try {
     }
   }
 
-  console.log('PASS: 18 guides regenerate identically; 15 deployed guides are unchanged; 3 original additions have labeled examples and references; dates and reading estimates are consistent; content-only mode and default-mode shared-image preservation pass.');
+  console.log('PASS: 18 guides regenerate identically; 16 deployed guides are unchanged; only two Sep7 editorial dates change; the 3 Sep6 additions retain labeled examples and references; historical dates and reading estimates are consistent; content-only mode and default-mode shared-image preservation pass.');
 } finally {
   fs.rmSync(output, { recursive: true, force: true });
 }

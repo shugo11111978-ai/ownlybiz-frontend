@@ -3,6 +3,7 @@ import path from 'path';
 import zlib from 'zlib';
 import contentWave20260906 from './ownlybiz-content-wave-20260906.mjs';
 import promotionGuide20260906 from './ownlybiz-promotion-guide-20260906.mjs';
+import reviewInformedUpdates20260907 from './ownlybiz-review-informed-updates-20260907.mjs';
 
 const root = process.cwd();
 const dataDir = path.join(root, 'data');
@@ -1486,6 +1487,7 @@ const selectedSlugs = new Set([
 
 const selectedPosts = [...posts, ...contentWave20260906, promotionGuide20260906]
   .filter((post) => selectedSlugs.has(post.slug))
+  .map((post) => ({ ...post, ...reviewInformedUpdates20260907[post.slug] }))
   .map(normalizePost);
 
 function normalizePost(post) {

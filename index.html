@@ -1439,7 +1439,6 @@
   function standardBookingPaymentNodes(){
     var card = document.getElementById('bov-card-element');
     return [
-      document.getElementById('bov-wallet-section'),
       card && card.previousElementSibling && card.previousElementSibling.tagName === 'LABEL' ? card.previousElementSibling : null,
       card,
       document.getElementById('bov-card-error'),
@@ -1484,19 +1483,10 @@
 
   function restoreStandardBookingPayment(){
     if(getBookingPaymentMode() === 'topup') return;
-    var walletSection = document.getElementById('bov-wallet-section');
     var walletButton = document.getElementById('bov-wallet-button');
-    if(walletSection) {
-      var originalDisplay = walletSection.dataset.obCreditOriginalDisplay || '';
-      walletSection.style.display = originalDisplay === 'none' ? '' : originalDisplay;
-      walletSection.style.visibility = '';
-    }
     if(walletButton && window._bovStripe && typeof window._obMountBovWallet === 'function'){
-      walletButton._obWalletMounted = false;
-      walletButton.innerHTML = '';
-      setTimeout(function(){
-        if(getBookingPaymentMode() !== 'topup') window._obMountBovWallet(window._bovStripe);
-      }, 60);
+      // Stripe owns the iframe DOM and eligibility visibility; the mode class only hides it.
+      window._obMountBovWallet(window._bovStripe);
     }
   }
 
@@ -1835,17 +1825,14 @@
     var accountNote=document.getElementById('bfl-payment-account-note');
     if(accountNote&&state.bookLaterPayMode!=='prepaid')accountNote.textContent=minutePaymentRequired?'\u2713 Account ready':'\u2713 No payment required \u00b7 $0.00/min';
     if(minutePaymentRequired && typeof window.mountBflCardElement === 'function') {
-      setTimeout(function(){ window.mountBflCardElement(); }, 80);
       setTimeout(function(){
+        if(bookLaterPaymentMode() === 'prepaid') return;
+        window.mountBflCardElement();
+      }, 80);
+      setTimeout(function(){
+        if(bookLaterPaymentMode() === 'prepaid') return;
         var walletButton = document.getElementById('bfl-wallet-button');
-        var walletSection = document.getElementById('bfl-wallet-section');
         if(walletButton && window._bflStripe && typeof window._obMountBflWallet === 'function'){
-          if(walletSection) {
-            walletSection.style.display = 'block';
-            walletSection.style.visibility = 'visible';
-          }
-          walletButton._obWalletMounted = false;
-          walletButton.innerHTML = '';
           window._obMountBflWallet(window._bflStripe);
         }
       }, 260);
@@ -5238,6 +5225,7 @@ body.ob-ui-light #view-6 .ob-admin-refresh-btn{background:#241A15;color:#FFF7EC;
 .ob-ops-dev-handoff{margin-top:16px;border:1px solid rgba(255,255,255,.12);border-radius:20px;background:rgba(255,255,255,.055);padding:15px}
 .ob-ops-dev-handoff h3{margin:0 0 6px;font-size:15px;color:#f5fff9}.ob-ops-dev-handoff>p{margin:0 0 12px;color:rgba(245,255,249,.62);font-size:12px}.ob-ops-cause-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px}.ob-ops-cause-card{border:1px solid rgba(255,255,255,.12);border-radius:16px;background:rgba(0,0,0,.18);padding:13px}.ob-ops-cause-card.is-critical{border-color:rgba(239,68,68,.36)}.ob-ops-cause-card.is-warning{border-color:rgba(245,158,11,.36)}.ob-ops-cause-top{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}.ob-ops-cause-top strong{font-size:13px;color:#f5fff9}.ob-ops-cause-pill{border-radius:999px;padding:4px 8px;font-size:10px;font-weight:900;text-transform:uppercase;background:rgba(34,197,94,.18);color:#86efac;white-space:nowrap}.ob-ops-cause-card.is-critical .ob-ops-cause-pill{background:rgba(239,68,68,.18);color:#fca5a5}.ob-ops-cause-card.is-warning .ob-ops-cause-pill{background:rgba(245,158,11,.18);color:#fcd34d}.ob-ops-cause-card dl{display:grid;grid-template-columns:82px 1fr;gap:7px 10px;margin:10px 0 0;font-size:12px;color:rgba(245,255,249,.76)}.ob-ops-cause-card dt{font-weight:900;color:rgba(245,255,249,.48);text-transform:uppercase}.ob-ops-cause-card dd{margin:0;line-height:1.45}.ob-ops-copy-handoff{margin-top:10px;border:0;border-radius:999px;background:#41b883;color:#06110d;font-size:12px;font-weight:900;padding:8px 11px;cursor:pointer}.ob-ops-empty-handoff{border:1px dashed rgba(134,239,172,.3);border-radius:14px;padding:14px;color:#86efac;background:rgba(34,197,94,.08);font-weight:800;font-size:13px}
 </style>
+<link rel="stylesheet" href="/assets/session-receipt.css">
 </head>
 <body>
 <script>
@@ -9478,7 +9466,7 @@ if (!window.toast) {
               </div>
               <div class="receipt-actions">
                 <button class="btn btn-primary" id="ob-client-review-continue" type="button" style="width:100%" onclick="window.obClientReviewContinue ? window.obClientReviewContinue() : returnToExpertPage()">Continue</button>
-                <button class="btn btn-secondary" style="width:100%" onclick="window.print();">View Receipt</button>
+                <button class="btn btn-secondary" id="ob-client-view-receipt" type="button" style="width:100%" onclick="window.obViewClientReceipt && window.obViewClientReceipt()" disabled>View receipt</button>
               </div>
               </div>
               <section id="ob-client-review-panel" class="ob-client-review-panel" aria-labelledby="ob-client-review-title" hidden></section>
@@ -28882,6 +28870,7 @@ window._handleRTCMessage=function(d){
       settlementPending: false,
     };
     if(typeof window.obClientReviewReceiptReady === 'function') window.obClientReviewReceiptReady(rendered);
+    if(typeof window.obRenderClientReceiptPresentation === 'function') window.obRenderClientReceiptPresentation(rendered);
     return rendered;
   }
   window.obApplyAuthoritativeClientTerminal=applyAuthoritativeClientTerminal;
@@ -28954,6 +28943,7 @@ window._handleRTCMessage=function(d){
       settlementPending: true,
     };
     if(typeof window.obClientReviewReset === 'function') window.obClientReviewReset();
+    if(typeof window.obClearClientReceiptPresentation === 'function') window.obClearClientReceiptPresentation();
     return sess;
   }
   window.obApplyClientSettlementPending = applyClientSettlementPending;
@@ -28968,7 +28958,7 @@ window._handleRTCMessage=function(d){
     if(d.expert_earned != null && (!(Number(sess.expert_earned) > 0) || Number(d.expert_earned) > Number(sess.expert_earned || 0))) sess.expert_earned = d.expert_earned;
     if(d.payment_status != null) sess.payment_status = d.payment_status;
     if(d.payout_status != null) sess.payout_status = d.payout_status;
-    ['credit_applied','card_charged','promo_discount','promo_applied','promo_skipped_reason','session_promo_code','session_promo_id','session_promo_percent_off','credit_mode','payment_mode'].forEach(function(key){
+    ['credit_applied','card_charged','promo_discount','promo_applied','promo_skipped_reason','session_promo_code','session_promo_id','session_promo_percent_off','credit_mode','payment_mode','credit_cash_applied','credit_promo_discount','billing_attempted_amount','billing_outstanding_amount','billing_paid_amount','currency','authorized_amount'].forEach(function(key){
       if(d[key] != null && sess[key] == null) sess[key] = d[key];
     });
     return sess;
@@ -37801,10 +37791,10 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
     if(!section || !mount) return;
     var mountContext=clientContext.capture('wallet-mount',{buttonId:opts.buttonId,expertId:String(currentExpertId()||'')});
     if(!mountContext.token||!mountContext.principal||!mountContext.expertId)return;
-    if(walletMountIsCurrent(walletMounts[opts.buttonId]&&walletMounts[opts.buttonId].context)) {
-      section.style.display = 'block';
-      section.style.visibility = 'visible';
-      return walletMounts[opts.buttonId].express;
+    var existing = walletMounts[opts.buttonId];
+    if(walletMountIsCurrent(existing&&existing.context) && existing.mount === mount && existing.section === section) {
+      // Reusing an owned mount must retain Stripe's ready/loaderror visibility decision.
+      return existing.express;
     }
     destroyWalletEntry(opts.buttonId);
     if(opts.buttonId==='bfl-wallet-button'&&window._bflWalletPaymentSavedExpertId!==mountContext.expertId){
@@ -71045,7 +71035,9 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
 </script>
 
 <style id="ownlybiz-pay-per-minute-authorization-20260814-css">
-  #bov-pay-explainer strong{display:block;margin-bottom:3px;color:var(--brown)}
+  #booking-overlay #bov-pay-explainer,
+  #booking-overlay #bov-pay-explainer strong{color:#241A15!important}
+  #bov-pay-explainer strong{display:block;margin-bottom:3px}
   #bov-card-error[role="alert"]{line-height:1.5}
   #ob-booking-session-authorization{
     margin:0 0 18px;padding:14px 16px;border:1px solid rgba(122,140,110,.25);border-radius:12px;
@@ -74572,4 +74564,6 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
   if(root.__OB_TEST_HOOKS__)root.__OB_TEST_HOOKS__.expertLiveWorkspace={render:render,beforeFocus:root.obExpertWorkspaceBeforeFocus,activateRoom:activateRoom,reviewPending:reviewPending,saveNotes:saveNotes,operationContext:operationContext,operationCurrent:operationCurrent,principalOperationCurrent:principalOperationCurrent,drafts:function(){return {composer:Object.assign({},composerDrafts),notes:Object.assign({},noteDrafts),projectedSid:projectedSid,focusGeneration:focusGeneration};},lastReason:function(){return lastReason;}};
 })(window);
 </script>
-	</html>
+	<script src="/assets/session-receipt-presentation.js" defer></script>
+<script src="/assets/ownlybiz-session-receipt.js" defer></script>
+</html>

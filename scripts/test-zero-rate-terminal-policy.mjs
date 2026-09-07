@@ -3,10 +3,12 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 
 const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
-const builtHtml = readFileSync(new URL('../.vercel/output/static/index.html', import.meta.url), 'utf8');
-assert.equal(builtHtml, html, 'the built static HTML is byte-identical to the source HTML');
+const builtHtml = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
 const policyMatch = html.match(/<script id="ownlybiz-rate-and-session-status-policy-20260827">([\s\S]*?)<\/script>/);
 assert(policyMatch, 'shared rate and terminal-status policy is installed');
+const builtPolicy = builtHtml.match(/<script id="ownlybiz-rate-and-session-status-policy-20260827">([\s\S]*?)<\/script>/);
+assert(builtPolicy, 'the compact public build retains the early rate and terminal-status policy');
+assert.equal(builtPolicy[1], policyMatch[1], 'the deployed public policy is byte-identical to the tested source policy');
 
 const sandbox = { window: null, Object, Number, String };
 sandbox.window = sandbox;

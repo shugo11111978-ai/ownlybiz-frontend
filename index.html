@@ -9462,12 +9462,10 @@ if (!window.toast) {
                ═══════════════════════════════════════ -->
           <div class="phone-screen" id="screen-A5">
             <div class="receipt-screen">
+              <div id="ob-client-review-summary">
               <div class="receipt-icon">⭐</div>
               <div class="receipt-title">Session Complete!</div>
-              <div class="receipt-sub">How was your experience?</div>
-              <div class="rating-stars" id="rating-stars" onclick="handleRating(event)">
-                <span data-r="1">☆</span><span data-r="2">☆</span><span data-r="3">☆</span><span data-r="4">☆</span><span data-r="5">☆</span>
-              </div>
+              <div class="receipt-sub">Your session summary</div>
               <div class="receipt-card">
                 <div class="receipt-row"><span>Session</span><span id="receipt-session-type">Chat with Expert</span></div>
                 <div class="receipt-row"><span>Duration</span><span id="receipt-duration">—</span></div>
@@ -9479,9 +9477,11 @@ if (!window.toast) {
                 <textarea id="ob-client-startup-draft-text" readonly style="width:100%;min-height:72px;padding:10px;border:1px solid var(--gray-200);border-radius:10px;resize:vertical;font:inherit;" aria-label="Your unsent message"></textarea>
               </div>
               <div class="receipt-actions">
+                <button class="btn btn-primary" id="ob-client-review-continue" type="button" style="width:100%" onclick="window.obClientReviewContinue ? window.obClientReviewContinue() : returnToExpertPage()">Continue</button>
                 <button class="btn btn-secondary" style="width:100%" onclick="window.print();">View Receipt</button>
-              <button class="btn" style="width:100%;margin-top:8px;color:var(--gray-400);font-size:13px;background:none;border:none;cursor:pointer;" onclick="returnToExpertPage()">← Return to Expert Page</button>
               </div>
+              </div>
+              <section id="ob-client-review-panel" class="ob-client-review-panel" aria-labelledby="ob-client-review-title" hidden></section>
             </div>
           </div>
 
@@ -17176,17 +17176,8 @@ async function savePaymentConfig() {
   };
 
   /* ── Submit review ────────────────────────────────── */
-  const _origHandleRating=window.handleRating;
-  window.handleRating=async function(rating){
-    if(READY&&window._sid&&Auth.ok){
-      try {
-        const comment=val('review-comment')||val('review-text')||'';
-        await api('POST',`/sessions/${window._sid}/review`,{rating,comment});
-        toast('Review submitted! Thank you ⭐');
-      } catch(err){ console.warn('Review:',err.message); }
-    }
-    _origHandleRating?.(rating);
-  };
+  // Reviews are submitted explicitly from the identity-bound post-summary form.
+  // Selecting a rating never creates a review or uses a cleared live-session id.
 
   /* ── Chat messages ────────────────────────────────── */
   const _origSendMsg=window.sendExpertMsg;
@@ -19985,6 +19976,7 @@ function _adminPath(suffix) {
 
 // loadReviews: when admin context, use public expert data
 (function(){
+  function reviewSafe(value){return String(value==null?'':value).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
   var _origLR = window.loadReviews;
   window.loadReviews = function() {
     if(!_isAdminCtx()) { if(_origLR) _origLR.call(this); return; }
@@ -20009,14 +20001,14 @@ function _adminPath(suffix) {
         }
         // render reviews (same as loadReviews logic)
         var html = reviews.map(function(r){
-          var stars='\u2605'.repeat(Math.round(r.rating||5));
+          var stars='\u2605'.repeat(Math.max(0,Math.min(5,Math.round(Number(r.rating)||0))));
           var initials=(r.client_name||'?').split(' ').map(function(w){return w[0]||'';}).join('').substring(0,2).toUpperCase();
           return '<div style="background:var(--white);border:1px solid var(--gray-100);border-radius:12px;padding:20px;margin-bottom:12px">'+
             '<div style="display:flex;gap:10px;align-items:center;margin-bottom:10px">'+
-            '<div style="width:36px;height:36px;border-radius:50%;background:var(--terra);color:white;display:flex;align-items:center;justify-content:center;font-weight:600;font-size:13px">'+initials+'</div>'+
-            '<div><div style="font-weight:600;font-size:14px">'+(r.client_name||'Client')+'</div>'+
+            '<div style="width:36px;height:36px;border-radius:50%;background:var(--terra);color:white;display:flex;align-items:center;justify-content:center;font-weight:600;font-size:13px">'+reviewSafe(initials)+'</div>'+
+            '<div><div style="font-weight:600;font-size:14px">'+reviewSafe(r.client_name||'Client')+'</div>'+
             '<div style="color:var(--terra);font-size:14px">'+stars+'</div></div></div>'+
-            '<p style="font-size:14px;color:var(--gray-600);margin:0">'+(r.comment||r.text||'Great session!')+'</p></div>';
+            '<p style="font-size:14px;color:var(--gray-600);margin:0">'+reviewSafe(r.comment||r.text||'')+'</p></div>';
         }).join('');
         var wrap = panel.querySelector('[class*="testimonials-inner"],[class*="reviews-inner"]') || panel;
         wrap.innerHTML = html;
@@ -28830,8 +28822,8 @@ window._handleRTCMessage=function(d){
       expired:['Request expired','The session request expired before it started.','\u231b'],
       declined:['Request declined','The expert declined this session request.','\u00d7'],
       no_show:['Session closed','The scheduled session was marked as a no-show.','\u00d7'],
-      ended:['Session Complete!','How was your experience?','\u2b50'],
-      completed:['Session Complete!','How was your experience?','\u2b50']
+      ended:['Session Complete!','Your session summary','\u2b50'],
+      completed:['Session Complete!','Your session summary','\u2b50']
     }[status]||['Session closed','This session is no longer active.','\u00d7'];
     var cancelledBeforeStart = clientChatCancelledBeforeStart(sess);
     if(cancelledBeforeStart){
@@ -28898,6 +28890,7 @@ window._handleRTCMessage=function(d){
       snapshot: Object.assign({}, rendered),
       settlementPending: false,
     };
+    if(typeof window.obClientReviewReceiptReady === 'function') window.obClientReviewReceiptReady(rendered);
     return rendered;
   }
   window.obApplyAuthoritativeClientTerminal=applyAuthoritativeClientTerminal;
@@ -28969,6 +28962,7 @@ window._handleRTCMessage=function(d){
       snapshot: Object.assign({}, snapshot),
       settlementPending: true,
     };
+    if(typeof window.obClientReviewReset === 'function') window.obClientReviewReset();
     return sess;
   }
   window.obApplyClientSettlementPending = applyClientSettlementPending;
@@ -62197,7 +62191,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
 .ob-review-btn{border:1px solid rgba(196,98,45,.38);background:rgba(196,98,45,.12);color:var(--terra,#C4622D);border-radius:10px;padding:9px 12px;font-weight:800;font-size:12px;cursor:pointer}
 .ob-review-btn.secondary{background:transparent;border-color:rgba(246,241,233,.18);color:var(--gray-300,rgba(246,241,233,.72))}
 .ob-review-btn.danger{background:rgba(239,68,68,.12);border-color:rgba(239,68,68,.28);color:#f87171}
-.ob-review-summary{display:grid;grid-template-columns:repeat(5,minmax(110px,1fr));gap:10px}
+.ob-review-summary{display:grid;grid-template-columns:repeat(3,minmax(110px,1fr));gap:10px}
 .ob-review-kpi{border:1px solid rgba(246,241,233,.12);background:rgba(255,255,255,.035);border-radius:12px;padding:14px}
 .ob-review-kpi b{display:block;font-size:24px;color:var(--brown,#f8f3ea);line-height:1}
 .ob-review-kpi span{display:block;margin-top:6px;font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--gray-400,rgba(246,241,233,.6));font-weight:800}
@@ -62217,7 +62211,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
 .ob-review-badges{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
 .ob-review-badge{border:1px solid rgba(246,241,233,.14);border-radius:999px;padding:4px 8px;font-size:10px;font-weight:900;letter-spacing:.04em;text-transform:uppercase;color:var(--gray-400,rgba(246,241,233,.62))}
 .ob-review-badge.live{border-color:rgba(34,197,94,.28);color:#86efac;background:rgba(34,197,94,.1)}
-.ob-review-badge.hidden{border-color:rgba(245,158,11,.28);color:#fbbf24;background:rgba(245,158,11,.1)}
+.ob-review-badge.unpublished{border-color:rgba(245,158,11,.38);color:var(--text,var(--brown,#241a15));background:rgba(245,158,11,.1)}
 .ob-review-card-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
 .ob-review-empty{border:1px dashed rgba(246,241,233,.18);border-radius:12px;padding:36px 18px;text-align:center;color:var(--gray-400,rgba(246,241,233,.62));font-size:14px}
 .ob-public-review-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px}
@@ -62225,6 +62219,35 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
 .ob-public-review-card p{color:var(--ob-site-muted,var(--gray-500,#6b7280));font-size:14px;line-height:1.7;margin:10px 0 0}
 .ob-public-review-person{font-size:13px;font-weight:900;color:var(--ob-site-text,var(--brown,#3b2417));margin-top:14px}
 .ob-public-review-role{font-size:12px;color:var(--ob-site-soft,var(--gray-400,#9ca3af));margin-top:3px}
+.ob-public-review-card .ob-review-reply{color:var(--ob-site-text,var(--text,var(--brown)))}
+.ob-review-collection{padding:16px;border:1px solid var(--border,var(--gray-200));border-radius:12px;background:var(--surface,var(--white))}
+.ob-review-collection label{display:flex;align-items:flex-start;gap:12px;cursor:pointer;color:var(--text,var(--brown));font-size:14px;line-height:1.5}
+.ob-review-collection input{width:20px;height:20px;flex-shrink:0;margin-top:2px;accent-color:var(--terra)}
+.ob-review-collection .ob-review-note{display:block;margin-top:4px}
+.ob-review-manager .ob-review-btn.secondary,.ob-review-manager .ob-review-filter,.ob-review-manager .ob-review-text,.ob-review-manager .ob-review-reply{color:var(--text,var(--brown));border-color:var(--border,var(--gray-200))}
+.ob-review-manager button:disabled,.ob-client-review-panel button:disabled{opacity:.55;cursor:wait}
+.ob-review-manager button:focus-visible,.ob-review-collection input:focus-visible,.ob-client-review-panel :is(button,input,textarea):focus-visible{outline:3px solid var(--terra,#c4622d);outline-offset:3px}
+.ob-review-name,.ob-review-text,.ob-review-reply{overflow-wrap:anywhere;white-space:pre-wrap}
+.ob-client-review-panel{max-width:540px;margin:0 auto;text-align:left;color:var(--text,var(--brown));font-size:14px;line-height:1.65}
+.ob-client-review-panel[hidden],#ob-client-review-summary[hidden]{display:none!important}
+.ob-client-review-panel h2{font-family:var(--font-head);font-size:26px;line-height:1.2;margin:0 0 12px}
+.ob-client-review-panel fieldset{border:0;padding:0;margin:20px 0}
+.ob-client-review-panel legend,.ob-review-comment-label{font-size:14px;font-weight:700;display:block;margin-bottom:8px}
+.ob-review-comment-label span{font-weight:400;color:var(--text-mid,var(--gray-400))}
+.ob-review-rating-options{display:flex;gap:8px}
+.ob-review-rating-choice{position:relative;flex:1;min-width:0;cursor:pointer}
+.ob-review-rating-choice input{position:absolute;inset:0;opacity:0;width:100%;height:100%;margin:0;cursor:pointer}
+.ob-review-rating-choice span[aria-hidden]{display:block;text-align:center;border:1px solid var(--border,var(--gray-200));border-radius:10px;padding:11px 2px;background:var(--surface,var(--white));font-size:16px;font-weight:700}
+.ob-review-rating-choice input:checked+span{background:var(--terra,#c4622d);border-color:var(--terra,#c4622d);color:#fff}
+.ob-review-rating-choice input:focus-visible+span{outline:3px solid var(--terra,#c4622d);outline-offset:3px}
+.ob-review-sr-only{position:absolute;width:1px;height:1px;padding:0;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.ob-client-review-panel textarea{display:block;box-sizing:border-box;width:100%;resize:vertical;min-height:120px;border:1px solid var(--border,var(--gray-200));border-radius:10px;padding:12px;font:inherit;background:var(--surface,var(--white));color:var(--text,var(--brown))}
+/* Pair control colors against the global input and focus !important rules. */
+#ob-client-review-comment,#ob-client-review-comment:focus{background:var(--surface,var(--white,#fff))!important;color:var(--text,var(--brown,#241a15))!important;caret-color:var(--text,var(--brown,#241a15))!important;border-color:var(--border,var(--gray-200,#dfd8d0))!important}
+.ob-client-review-panel .btn{display:block;width:100%;min-height:46px;margin-top:14px;white-space:normal}
+.ob-client-review-panel .ob-review-note{color:var(--text-mid,var(--gray-400));font-size:12px;line-height:1.6}
+#ob-client-review-status{color:var(--text,var(--brown));font-size:13px;line-height:1.5;min-height:1.5em}
+@media(max-width:440px){.ob-review-rating-options{gap:6px}.ob-client-review-panel h2{font-size:23px}.ob-review-card-actions .ob-review-btn{flex:1 1 140px}}
 @media(max-width:900px){.ob-review-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.ob-public-review-grid{grid-template-columns:1fr}}
 </style>
 <script id="ownlybiz-review-manager-20260529">
@@ -62232,188 +62255,279 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   if(window.__ownlybizReviewManager20260529) return;
   window.__ownlybizReviewManager20260529 = true;
 
-  var reviewState = { reviews: [], stats: {}, filter: 'all' };
-
+  var reviewState = { reviews: [], stats: {}, filter: 'all', collectionEnabled:false, owner:null, generation:0, busy:false, loaded:false };
   function apiBase(){
-    var base = '';
-    try { base = window.BASE || BASE || window.OWNLYBIZ_API_URL || window._OB_BACKEND || ''; } catch(e) {}
-    return (base || 'https://ownlybiz-backend-production.up.railway.app').replace(/\/+$/,'');
+    return String(window.OWNLYBIZ_API_URL || window._OB_BACKEND || 'https://ownlybiz-backend-production.up.railway.app').replace(/\/+$/,'');
   }
-  function token(){ return sessionStorage.getItem('ob_t') || localStorage.getItem('ob_t') || ''; }
-  function esc(value){
-    return String(value == null ? '' : value).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});
+  function captureReviewOwner(role){
+    try {
+      var authority=window.OB_CLIENT_CONTEXT;
+      var owner=authority&&authority.capture('session-review-'+role);
+      return owner&&owner.token&&owner.principal&&owner.role===role&&authority.isCurrent(owner,{exactCredential:true})?owner:null;
+    } catch(e){return null;}
   }
-  function initials(name){
-    return String(name || 'Client').split(/\s+/).filter(Boolean).map(function(part){ return part.charAt(0); }).join('').slice(0,2).toUpperCase() || 'CL';
+  function reviewOwnerCurrent(owner){
+    try{return !!(owner&&window.OB_CLIENT_CONTEXT&&window.OB_CLIENT_CONTEXT.isCurrent(owner,{exactCredential:true}));}catch(e){return false;}
   }
-  function stars(rating){
-    var n = Math.max(0, Math.min(5, Math.round(Number(rating) || 0)));
-    return '★'.repeat(n) + '☆'.repeat(5 - n);
-  }
-  function dateLabel(ts){
-    if(!ts) return '';
-    var d = new Date(Number(ts) * 1000);
-    if(isNaN(d.getTime())) return '';
-    return d.toLocaleDateString(undefined, {month:'short', day:'numeric', year:'numeric'});
-  }
-  function toastMsg(message, kind){
-    if(typeof window.toast === 'function') window.toast(message, kind === 'err' ? 'err' : 'ok');
-  }
-  async function reviewsApi(path, opts){
-    opts = opts || {};
-    var res = await fetch(apiBase() + '/api' + path, {
-      method: opts.method || 'GET',
-      headers: {'Content-Type':'application/json','Authorization':'Bearer ' + token()},
-      body: opts.body ? JSON.stringify(opts.body) : undefined
-    });
-    var data = await res.json().catch(function(){ return {}; });
-    if(!res.ok || data.success === false) throw new Error(data.error || 'Review request failed');
-    return data;
+  function sameReviewOwner(a,b){return !!(a&&b&&a.principal===b.principal&&a.identityGeneration===b.identityGeneration&&a.credentialGeneration===b.credentialGeneration&&a.token===b.token);}
+  function staleReviewError(){var error=new Error('Your account changed. Reload this page to continue.');error.reviewStale=true;return error;}
+  function esc(value){return String(value == null ? '' : value).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
+  function initials(name){return String(name||'Client').split(/\s+/).filter(Boolean).map(function(part){return part.charAt(0);}).join('').slice(0,2).toUpperCase()||'CL';}
+  function stars(rating){var n=Math.max(0,Math.min(5,Math.round(Number(rating)||0)));return '★'.repeat(n)+'☆'.repeat(5-n);}
+  function dateLabel(ts){var d=new Date(Number(ts)*1000);return ts&&!isNaN(d.getTime())?d.toLocaleDateString(undefined,{month:'short',day:'numeric',year:'numeric'}):'';}
+  function toastMsg(message,kind){if(typeof window.toast==='function')window.toast(message,kind==='err'?'err':'ok');}
+  async function reviewsApi(path,opts){
+    opts=opts||{};
+    var owner=opts.owner||captureReviewOwner('expert');
+    if(!reviewOwnerCurrent(owner))throw staleReviewError();
+    var controller=new AbortController();
+    var abort=function(){controller.abort();};
+    if(owner.signal)owner.signal.addEventListener('abort',abort,{once:true});
+    var timeout=setTimeout(abort,12000);
+    try{
+      var res=await fetch(apiBase()+'/api'+path,{method:opts.method||'GET',signal:controller.signal,headers:{'Content-Type':'application/json','Authorization':'Bearer '+owner.token},body:opts.body?JSON.stringify(opts.body):undefined});
+      var data=await res.json();
+      if(!reviewOwnerCurrent(owner))throw staleReviewError();
+      if(!res.ok||data.success!==true)throw new Error(data.error||'Could not complete this review request. Please try again.');
+      return data;
+    }finally{clearTimeout(timeout);if(owner.signal)owner.signal.removeEventListener('abort',abort);}
   }
   function ensureManagerShell(){
-    var panel = document.getElementById('db-panel-reviews');
-    if(!panel) return null;
-    var content = panel.querySelector('.db-content') || panel;
-    if(!document.getElementById('ob-review-manager')){
-      content.innerHTML = '<div class="ob-review-manager" id="ob-review-manager"><div class="ob-review-empty">Loading reviews...</div></div>';
+    var panel=document.getElementById('db-panel-reviews');if(!panel)return null;
+    var content=panel.querySelector('.db-content')||panel;
+    if(!document.getElementById('ob-review-manager'))content.innerHTML='<div class="ob-review-manager" id="ob-review-manager"></div>';
+    var root=document.getElementById('ob-review-manager');
+    if(root&&!root._obReviewBound){
+      root._obReviewBound=true;
+      root.addEventListener('click',function(event){
+        var button=event.target.closest('[data-review-action]');if(!button||!root.contains(button))return;
+        var id=button.getAttribute('data-review-id');var action=button.getAttribute('data-review-action');
+        if(action==='reply')window.obReviewReply(id);
+        if(action==='publish')window.obReviewToggle(id,false);
+        if(action==='hide')window.obReviewToggle(id,true);
+        if(action==='edit')window.obReviewEditManual(id);
+        if(action==='delete')window.obReviewDelete(id);
+      });
     }
-    return document.getElementById('ob-review-manager');
+    return root;
   }
-  function filteredReviews(){
-    return reviewState.reviews.filter(function(r){
-      if(reviewState.filter === 'published') return Number(r.is_visible) === 1;
-      if(reviewState.filter === 'hidden') return Number(r.is_visible) !== 1;
-      if(reviewState.filter === 'manual') return r.source === 'manual';
-      if(reviewState.filter === 'verified') return r.source === 'verified_session';
-      return true;
-    });
-  }
-  function filterButton(key, label){
-    return '<button type="button" class="ob-review-filter '+(reviewState.filter === key ? 'active' : '')+'" onclick="window.obReviewSetFilter(\''+key+'\')">'+label+'</button>';
-  }
+  function approvedReview(r){return !!(r&&!r.deleted_at&&Number(r.is_visible)===1&&(r.status==null||r.status==='published'));}
+  function filteredReviews(){return reviewState.reviews.filter(function(r){
+    if(reviewState.filter==='pending')return r.status==='pending';
+    if(reviewState.filter==='published')return approvedReview(r);
+    if(reviewState.filter==='hidden')return !approvedReview(r)&&r.status!=='pending';
+    if(reviewState.filter==='manual')return r.source==='manual';
+    if(reviewState.filter==='verified')return r.source==='verified_session';
+    return true;
+  });}
+  function filterButton(key,label){return '<button type="button" class="ob-review-filter '+(reviewState.filter===key?'active':'')+'" aria-pressed="'+(reviewState.filter===key)+'" onclick="window.obReviewSetFilter(\''+key+'\')">'+label+'</button>';}
+  function reviewAction(r,action,label,danger){return '<button class="ob-review-btn '+(danger?'danger':'secondary')+'" type="button" data-review-action="'+action+'" data-review-id="'+esc(r.id)+'" '+(reviewState.busy?'disabled':'')+'>'+label+'</button>';}
   function renderManager(){
-    var root = ensureManagerShell();
-    if(!root) return;
-    var stats = reviewState.stats || {};
-    var rows = filteredReviews();
-    var summary = [
-      ['Average', stats.avg_rating ? Number(stats.avg_rating).toFixed(1) : '0.0'],
-      ['Published', stats.published || 0],
-      ['Hidden', stats.hidden || 0],
-      ['Verified', stats.verified || 0],
-      ['Manual', stats.manual || 0]
-    ].map(function(item){
-      return '<div class="ob-review-kpi"><b>'+esc(item[1])+'</b><span>'+esc(item[0])+'</span></div>';
-    }).join('');
-    var cards = rows.length ? rows.map(function(r){
-      var visible = Number(r.is_visible) === 1;
-      var manual = r.source === 'manual';
-      return '<div class="ob-review-card">'
-        + '<div class="ob-review-card-head"><div class="ob-review-person">'
-        + '<div class="ob-review-avatar">'+esc(initials(r.client_name || r.reviewer_name))+'</div>'
-        + '<div><div class="ob-review-name">'+esc(r.client_name || r.reviewer_name || 'Client')+'</div>'
-        + '<div class="ob-review-meta">'+esc(r.reviewer_title || (manual ? 'Manual testimonial' : 'Verified client'))+(r.created_at ? ' · '+esc(dateLabel(r.created_at)) : '')+'</div></div></div>'
-        + '<div class="ob-review-stars">'+stars(r.rating)+'</div></div>'
-        + (r.comment ? '<p class="ob-review-text">"'+esc(r.comment)+'"</p>' : '')
-        + (r.expert_reply ? '<div class="ob-review-reply"><strong>Your reply:</strong> '+esc(r.expert_reply)+'</div>' : '')
-        + '<div class="ob-review-badges">'
-        + '<span class="ob-review-badge '+(visible ? 'live' : 'hidden')+'">'+(visible ? 'Published' : 'Hidden')+'</span>'
-        + '<span class="ob-review-badge">'+(manual ? 'Manual testimonial' : 'Verified session')+'</span>'
-        + '</div>'
-        + '<div class="ob-review-card-actions">'
-        + '<button class="ob-review-btn secondary" type="button" onclick="window.obReviewReply(\''+esc(r.id)+'\')">'+(r.expert_reply ? 'Edit reply' : 'Reply')+'</button>'
-        + '<button class="ob-review-btn secondary" type="button" onclick="window.obReviewToggle(\''+esc(r.id)+'\','+(visible ? 'true' : 'false')+')">'+(visible ? 'Hide' : 'Publish')+'</button>'
-        + (manual ? '<button class="ob-review-btn secondary" type="button" onclick="window.obReviewEditManual(\''+esc(r.id)+'\')">Edit</button>' : '')
-        + '<button class="ob-review-btn danger" type="button" onclick="window.obReviewDelete(\''+esc(r.id)+'\')">Delete</button>'
-        + '</div></div>';
-    }).join('') : '<div class="ob-review-empty">No reviews in this view yet. Verified session reviews appear automatically after clients leave them; manual testimonials stay hidden unless you publish them.</div>';
-    root.innerHTML = '<div class="ob-review-toolbar"><div><h2 class="ob-review-title">Reviews</h2>'
-      + '<div class="ob-review-note">Manage verified session reviews and manually-entered testimonials. Manual testimonials should only be added with customer permission; verified review text cannot be edited.</div></div>'
-      + '<div class="ob-review-actions"><button class="ob-review-btn" type="button" onclick="window.obReviewAddManual()">Add manual testimonial</button><button class="ob-review-btn secondary" type="button" onclick="window.loadReviews()">Refresh</button></div></div>'
-      + '<div class="ob-review-summary">'+summary+'</div>'
-      + '<div class="ob-review-filters">'+filterButton('all','All')+filterButton('published','Published')+filterButton('hidden','Hidden')+filterButton('verified','Verified')+filterButton('manual','Manual')+'</div>'
-      + '<div class="ob-review-list">'+cards+'</div>';
+    var root=ensureManagerShell();if(!root)return;
+    if(!reviewOwnerCurrent(reviewState.owner)){root.innerHTML='<div class="ob-review-empty">Sign in as the expert to manage reviews.</div>';return;}
+    var stats=reviewState.stats||{};
+    var summary=[['Average',stats.avg_rating?Number(stats.avg_rating).toFixed(1):'0.0'],['Awaiting approval',stats.pending||0],['Published',stats.published||0],['Unpublished',stats.hidden||0],['Verified',stats.verified||0],['Manual',stats.manual||0]].map(function(item){return '<div class="ob-review-kpi"><b>'+esc(item[1])+'</b><span>'+esc(item[0])+'</span></div>';}).join('');
+    var cards=filteredReviews().map(function(r){
+      var visible=approvedReview(r),manual=r.source==='manual',pending=r.status==='pending';
+      return '<article class="ob-review-card"><div class="ob-review-card-head"><div class="ob-review-person"><div class="ob-review-avatar">'+esc(initials(r.client_name||r.reviewer_name))+'</div><div><div class="ob-review-name">'+esc(r.client_name||r.reviewer_name||'Client')+'</div><div class="ob-review-meta">'+esc(r.reviewer_title||(manual?'Manual testimonial':'Verified client'))+(r.created_at?' · '+esc(dateLabel(r.created_at)):'')+'</div></div></div><div class="ob-review-stars" aria-label="'+esc(r.rating)+' out of 5 stars">'+stars(r.rating)+'</div></div>'
+        +(r.comment?'<p class="ob-review-text">'+esc(r.comment)+'</p>':'')
+        +(r.expert_reply?'<div class="ob-review-reply"><strong>Public reply'+(visible?'':' · unpublished')+':</strong> '+esc(r.expert_reply)+'</div>':'')
+        +'<div class="ob-review-badges"><span class="ob-review-badge '+(visible?'live':'unpublished')+'">'+(pending?'Awaiting approval':visible?'Published':'Unpublished')+'</span><span class="ob-review-badge">'+(manual?'Manual testimonial':'Verified session')+'</span></div><div class="ob-review-card-actions">'
+        +reviewAction(r,'reply',r.expert_reply?'Edit public reply':'Write public reply')
+        +reviewAction(r,visible?'hide':'publish',visible?'Hide from website':'Approve for website')
+        +(pending?reviewAction(r,'hide','Keep unpublished'):'')
+        +(manual?reviewAction(r,'edit','Edit testimonial'):'')+reviewAction(r,'delete','Delete',true)+'</div></article>';
+    }).join('')||'<div class="ob-review-empty">No reviews in this view.</div>';
+    root.innerHTML='<div class="ob-review-toolbar"><div><h2 class="ob-review-title">Reviews</h2><div class="ob-review-note">Client reviews start unpublished. Approve each review before it appears on your website. Public replies appear beneath approved reviews.</div></div><div class="ob-review-actions"><button class="ob-review-btn" type="button" '+(reviewState.busy?'disabled':'')+' onclick="window.obReviewAddManual()">Add manual testimonial</button><button class="ob-review-btn secondary" type="button" '+(reviewState.busy?'disabled':'')+' onclick="window.loadReviews()">Refresh</button></div></div>'
+      +'<div class="ob-review-collection"><label for="ob-review-collection-enabled"><input id="ob-review-collection-enabled" type="checkbox" '+(reviewState.collectionEnabled?'checked':'')+' '+(!reviewState.loaded||reviewState.busy?'disabled':'')+' onchange="window.obReviewSaveCollection(this.checked)"><span><strong>Ask clients for a review after their session</strong><span class="ob-review-note">Optional for clients. The invitation follows the session summary for completed chat, voice and video sessions. Turning this off keeps existing reviews.</span></span></label></div>'
+      +'<div class="ob-review-summary">'+summary+'</div><div class="ob-review-filters">'+filterButton('all','All')+filterButton('pending','Awaiting approval')+filterButton('published','Published')+filterButton('hidden','Unpublished')+filterButton('verified','Verified')+filterButton('manual','Manual')+'</div><div class="ob-review-list">'+cards+'</div>';
   }
   async function loadReviewManager(){
-    var root = ensureManagerShell();
-    if(!root || !token()) return;
-    root.innerHTML = '<div class="ob-review-empty">Loading reviews...</div>';
-    try {
-      var data = await reviewsApi('/experts/me/reviews');
-      reviewState.reviews = data.reviews || [];
-      reviewState.stats = data.stats || {};
-      renderManager();
-    } catch(err) {
-      root.innerHTML = '<div class="ob-review-empty" style="color:#f87171;">'+esc(err.message || 'Failed to load reviews')+'</div>';
+    var root=ensureManagerShell(),owner=captureReviewOwner('expert');if(!root)return;
+    if(!owner){reviewState.owner=null;renderManager();return;}
+    if(reviewState.busy)return;
+    var generation=++reviewState.generation;reviewState.owner=owner;reviewState.loaded=false;
+    root.innerHTML='<div class="ob-review-empty" role="status">Loading reviews...</div>';
+    try{
+      var data=await reviewsApi('/experts/me/reviews',{owner:owner});
+      if(generation!==reviewState.generation||!reviewOwnerCurrent(owner))return;
+      if(!Array.isArray(data.reviews)||typeof data.collection_enabled!=='boolean')throw new Error('Review settings are unavailable. Please refresh.');
+      reviewState.reviews=data.reviews;reviewState.stats=data.stats||{};reviewState.collectionEnabled=data.collection_enabled;reviewState.loaded=true;renderManager();
+    }catch(err){if(generation===reviewState.generation&&reviewOwnerCurrent(owner))root.innerHTML='<div class="ob-review-empty" role="alert">'+esc(err.message||'Failed to load reviews')+' <button type="button" class="ob-review-btn" onclick="window.loadReviews()">Try again</button></div>';}
+  }
+  async function reviewMutation(action){
+    var owner=reviewState.owner;
+    if(reviewState.busy||!reviewState.loaded||!reviewOwnerCurrent(owner))return false;
+    reviewState.busy=true;renderManager();
+    try{await action(owner);if(!reviewOwnerCurrent(owner))return false;return true;}
+    catch(err){if(reviewOwnerCurrent(owner)&&!err.reviewStale)toastMsg(err.message||'Could not save review','err');return false;}
+    finally{if(reviewOwnerCurrent(owner)){reviewState.busy=false;renderManager();}}
+  }
+  async function refreshAfterReviewMutation(action){var ok=await reviewMutation(action);if(ok)await loadReviewManager();return ok;}
+  window.obReviewSetFilter=function(filter){reviewState.filter=filter||'all';renderManager();};
+  window.obReviewSaveCollection=function(enabled){return refreshAfterReviewMutation(async function(owner){
+    var data=await reviewsApi('/experts/me/reviews/settings',{owner:owner,method:'PUT',body:{collection_enabled:enabled===true}});
+    if(typeof data.collection_enabled!=='boolean')throw new Error('Could not confirm the review setting. Refresh before trying again.');
+    reviewState.collectionEnabled=data.collection_enabled;toastMsg(data.collection_enabled?'Review invitations enabled.':'Review invitations disabled.');
+  });};
+  window.obReviewAddManual=function(){return refreshAfterReviewMutation(async function(owner){
+    var name=prompt('Reviewer name (only with permission):');if(!name)return;
+    var title=prompt('Reviewer title or context (optional):')||'';
+    var rating=prompt('Rating, 1 to 5:','5');if(!rating)return;
+    var comment=prompt('Review text:');if(!comment)return;
+    var publish=confirm('Publish this testimonial now? OK publishes it; Cancel saves it unpublished.');
+    await reviewsApi('/experts/me/reviews',{owner:owner,method:'POST',body:{reviewer_name:name,reviewer_title:title,rating:rating,comment:comment,is_visible:publish?1:0}});
+    toastMsg(publish?'Testimonial published.':'Testimonial saved unpublished.');
+  });};
+  window.obReviewReply=function(id){return refreshAfterReviewMutation(async function(owner){
+    var r=reviewState.reviews.find(function(item){return item.id===id;});if(!r)return;
+    var reply=prompt('Public reply (shown only beneath the approved review). Leave empty to remove:',r.expert_reply||'');if(reply===null)return;
+    await reviewsApi('/experts/me/reviews/'+encodeURIComponent(id),{owner:owner,method:'PATCH',body:{expert_reply:reply}});toastMsg(reply?'Public reply saved.':'Public reply removed.');
+  });};
+  window.obReviewToggle=function(id,visible){return refreshAfterReviewMutation(async function(owner){
+    await reviewsApi('/experts/me/reviews/'+encodeURIComponent(id),{owner:owner,method:'PATCH',body:{is_visible:visible?0:1}});toastMsg(visible?'Review kept unpublished.':'Review approved for your website.');
+  });};
+  window.obReviewEditManual=function(id){return refreshAfterReviewMutation(async function(owner){
+    var r=reviewState.reviews.find(function(item){return item.id===id&&item.source==='manual';});if(!r)return;
+    var name=prompt('Reviewer name:',r.reviewer_name||r.client_name||'');if(!name)return;
+    var title=prompt('Reviewer title or context:',r.reviewer_title||'')||'';
+    var rating=prompt('Rating, 1 to 5:',r.rating||5);if(!rating)return;
+    var comment=prompt('Review text:',r.comment||'');if(!comment)return;
+    await reviewsApi('/experts/me/reviews/'+encodeURIComponent(id),{owner:owner,method:'PATCH',body:{reviewer_name:name,reviewer_title:title,rating:rating,comment:comment}});toastMsg('Testimonial updated.');
+  });};
+  window.obReviewDelete=function(id){return refreshAfterReviewMutation(async function(owner){
+    if(!confirm('Delete this review from public and dashboard views?'))return;
+    await reviewsApi('/experts/me/reviews/'+encodeURIComponent(id),{owner:owner,method:'DELETE',body:{reason:'expert_deleted'}});toastMsg('Review deleted.');
+  });};
+
+  // A review has its own identity/session owner after the live session is cleared.
+  // It never participates in settlement, transport cleanup, or payment decisions.
+  var clientReview={owner:null,sid:'',generation:0,stage:'summary',rating:0,comment:'',busy:false,exiting:false,returnUrl:'',message:''};
+  function reviewElement(id){return document.getElementById(id);}
+  function reviewReturnUrl(sess){
+    sess=sess||{};
+    var host=String(location.hostname||'').toLowerCase();
+    var platform=['ownlybiz.com','www.ownlybiz.com','localhost','127.0.0.1'].indexOf(host)>=0||/\.vercel\.app$/.test(host);
+    if(!platform)return location.origin+'/';
+    var expert=window._currentExpert||{};
+    var matches=!sess.expert_id||String(expert.id||expert.expert_id||'')===String(sess.expert_id);
+    var slug=String(sess.expert_slug||(matches&&(expert.slug||window._currentExpertSlug||window._browseExpert))||'').trim();
+    // Only an expert slug can affect this same-origin destination, never a stored URL.
+    return location.origin+(/^[a-z0-9][a-z0-9_-]{0,99}$/i.test(slug)?'/'+encodeURIComponent(slug):'/');
+  }
+  function reviewableReceipt(sess){
+    var status=String(sess&&sess.status||'').toLowerCase();
+    return !!(sess&&['ended','completed'].indexOf(status)>=0&&['chat','voice','video'].indexOf(String(sess.channel||'').toLowerCase())>=0
+      &&!sess.settlement_pending&&(Number(sess.started_at)>0||Number(sess.duration_secs)>0));
+  }
+  function clientReviewCurrent(generation){
+    var authority=window._obClientReceiptAuthorityState;
+    var active=String(window._obActiveSessId||window._sessId||'');
+    var screen=reviewElement('screen-A5'),view=reviewElement('view-5');
+    return !!(generation===clientReview.generation&&!clientReview.exiting&&reviewOwnerCurrent(clientReview.owner)
+      &&authority&&String(authority.sid)===clientReview.sid&&!authority.settlementPending&&reviewableReceipt(authority.snapshot)
+      &&(!active||active===clientReview.sid)&&screen&&screen.classList.contains('active')&&view&&view.classList.contains('active'));
+  }
+  function showReviewSummary(){
+    var summary=reviewElement('ob-client-review-summary'),panel=reviewElement('ob-client-review-panel');
+    if(summary)summary.hidden=false;
+    if(panel){panel.hidden=true;panel.innerHTML='';}
+    var button=reviewElement('ob-client-review-continue');if(button){button.disabled=false;button.textContent='Continue';}
+  }
+  function resetClientReview(){
+    clientReview={owner:null,sid:'',generation:clientReview.generation+1,stage:'summary',rating:0,comment:'',busy:false,exiting:false,returnUrl:'',message:''};
+    showReviewSummary();
+  }
+  function reviewReceiptReady(sess){
+    var owner=captureReviewOwner('client'),authority=window._obClientReceiptAuthorityState;
+    if(!owner||!authority||authority.settlementPending||!reviewableReceipt(sess)){resetClientReview();return;}
+    var sid=String(sess.id||sess.session_id||'');
+    if(!sid||String(authority.sid)!==sid){resetClientReview();return;}
+    if(sid===clientReview.sid&&sameReviewOwner(owner,clientReview.owner))return;
+    resetClientReview();clientReview.owner=owner;clientReview.sid=sid;clientReview.returnUrl=reviewReturnUrl(sess);
+  }
+  function focusReview(id){var node=reviewElement(id);if(node&&typeof node.focus==='function')node.focus();}
+  function renderClientReview(focus){
+    var panel=reviewElement('ob-client-review-panel'),summary=reviewElement('ob-client-review-summary');if(!panel||!summary)return;
+    summary.hidden=true;panel.hidden=false;
+    var stage=clientReview.stage;
+    var title=stage==='form'?'How was your session?':stage==='existing'?'Thank you for your review':stage==='loading'?'One moment':'Continue to the expert website';
+    var copy=stage==='form'?'Sharing a review is optional.':stage==='existing'?'You have already submitted a review for this session. It will appear on the expert website only if the expert approves it.':stage==='loading'?'Checking whether this expert accepts reviews.':'The review invitation is unavailable. You can return to the expert website.';
+    var form='';
+    if(stage==='form'){
+      var radios=[1,2,3,4,5].map(function(rating){return '<label class="ob-review-rating-choice"><input type="radio" name="ob-review-rating" value="'+rating+'" '+(clientReview.rating===rating?'checked':'')+' '+(clientReview.busy?'disabled':'')+' required onchange="window.obClientReviewRating(Number(this.value))"><span aria-hidden="true">'+rating+' ★</span><span class="ob-review-sr-only">'+rating+' out of 5 stars</span></label>';}).join('');
+      form='<form id="ob-client-review-form" onsubmit="return window.obClientReviewSubmit(event)"><fieldset '+(clientReview.busy?'disabled':'')+'><legend>Your rating</legend><div class="ob-review-rating-options">'+radios+'</div></fieldset>'
+        +'<label class="ob-review-comment-label" for="ob-client-review-comment">Your review <span>(optional)</span></label><textarea id="ob-client-review-comment" maxlength="2000" rows="5" '+(clientReview.busy?'disabled':'')+' aria-describedby="ob-client-review-consent ob-client-review-count" oninput="window.obClientReviewComment(this.value)">'+esc(clientReview.comment)+'</textarea><p id="ob-client-review-count" class="ob-review-note">'+clientReview.comment.length+' / 2,000 characters</p>'
+        +'<p id="ob-client-review-consent" class="ob-review-note">By submitting, you agree that your rating, review and name may appear on the expert website after approval. The expert may post a public reply beneath the approved review. Please leave out private session details or sensitive information.</p>'
+        +'<p id="ob-client-review-status" role="status" aria-live="polite">'+esc(clientReview.message)+'</p><button class="btn btn-primary" type="submit" '+(clientReview.busy?'disabled':'')+'>'+(clientReview.busy?'Submitting…':'Submit review & continue')+'</button></form>';
+    }
+    panel.innerHTML='<h2 id="ob-client-review-title" tabindex="-1">'+title+'</h2><p>'+copy+'</p>'+form
+      +(stage==='unavailable'?'<p class="ob-review-note" role="status">'+esc(clientReview.message)+'</p>':'')
+      +'<button class="btn btn-secondary ob-review-skip" type="button" '+(clientReview.busy&&stage==='form'?'disabled':'')+' onclick="window.obClientReviewSkip()">'+(stage==='form'||stage==='loading'?'Skip & return to expert website':'Return to expert website')+'</button>';
+    if(focus)focusReview('ob-client-review-title');
+  }
+  function leaveClientReview(){
+    if(clientReview.exiting||(clientReview.stage==='form'&&clientReview.busy))return false;
+    var destination=clientReview.returnUrl||reviewReturnUrl(window._obClientReceiptAuthorityState&&window._obClientReceiptAuthorityState.snapshot);
+    clientReview.exiting=true;clientReview.generation+=1;clientReview.comment='';clientReview.rating=0;
+    location.href=destination;return true;
+  }
+  async function continueClientReview(){
+    if(clientReview.busy||clientReview.exiting)return false;
+    var generation=clientReview.generation;
+    if(!clientReviewCurrent(generation))return leaveClientReview();
+    clientReview.stage='loading';clientReview.busy=true;renderClientReview(true);
+    try{
+      var data=await reviewsApi('/sessions/'+encodeURIComponent(clientReview.sid)+'/review',{owner:clientReview.owner});
+      if(!clientReviewCurrent(generation))return false;
+      if(typeof data.eligible!=='boolean'||typeof data.collection_enabled!=='boolean'||!Object.prototype.hasOwnProperty.call(data,'review'))throw new Error('Could not confirm review availability.');
+      clientReview.busy=false;
+      if(data.review){clientReview.stage='existing';renderClientReview(true);return true;}
+      if(data.collection_enabled!==true||data.eligible!==true)return leaveClientReview();
+      clientReview.stage='form';clientReview.message='';renderClientReview(true);return true;
+    }catch(err){
+      if(!clientReviewCurrent(generation))return false;
+      clientReview.busy=false;clientReview.stage='unavailable';clientReview.message='No review has been submitted.';renderClientReview(true);return false;
     }
   }
-  window.obReviewSetFilter = function(filter){
-    reviewState.filter = filter || 'all';
-    renderManager();
-  };
-  window.obReviewAddManual = async function(){
-    try {
-      var reviewerName = prompt('Reviewer name (only with permission):');
-      if(!reviewerName) return;
-      var reviewerTitle = prompt('Reviewer title or context (optional):') || '';
-      var rating = prompt('Rating, 1 to 5:', '5');
-      if(!rating) return;
-      var comment = prompt('Review text:');
-      if(!comment) return;
-      var publish = confirm('Publish this testimonial now? OK publishes it; Cancel saves it hidden.');
-      await reviewsApi('/experts/me/reviews', {method:'POST', body:{reviewer_name:reviewerName, reviewer_title:reviewerTitle, rating:rating, comment:comment, is_visible:publish ? 1 : 0}});
-      toastMsg(publish ? 'Testimonial added and published.' : 'Testimonial saved hidden.');
-      await loadReviewManager();
-    } catch(err) { toastMsg(err.message || 'Could not add review', 'err'); }
-  };
-  window.obReviewReply = async function(id){
-    var r = reviewState.reviews.find(function(item){ return item.id === id; });
-    if(!r) return;
-    try {
-      var reply = prompt('Your public reply. Leave empty to remove the reply:', r.expert_reply || '');
-      if(reply === null) return;
-      await reviewsApi('/experts/me/reviews/' + encodeURIComponent(id), {method:'PATCH', body:{expert_reply:reply}});
-      toastMsg(reply ? 'Reply saved.' : 'Reply removed.');
-      await loadReviewManager();
-    } catch(err) { toastMsg(err.message || 'Could not save reply', 'err'); }
-  };
-  window.obReviewToggle = async function(id, visible){
-    try {
-      await reviewsApi('/experts/me/reviews/' + encodeURIComponent(id), {method:'PATCH', body:{is_visible: visible ? 0 : 1}});
-      toastMsg(visible ? 'Review hidden.' : 'Review published.');
-      await loadReviewManager();
-    } catch(err) { toastMsg(err.message || 'Could not update visibility', 'err'); }
-  };
-  window.obReviewEditManual = async function(id){
-    var r = reviewState.reviews.find(function(item){ return item.id === id; });
-    if(!r) return;
-    try {
-      var reviewerName = prompt('Reviewer name:', r.reviewer_name || r.client_name || '');
-      if(!reviewerName) return;
-      var reviewerTitle = prompt('Reviewer title or context:', r.reviewer_title || '') || '';
-      var rating = prompt('Rating, 1 to 5:', r.rating || 5);
-      if(!rating) return;
-      var comment = prompt('Review text:', r.comment || '');
-      if(!comment) return;
-      await reviewsApi('/experts/me/reviews/' + encodeURIComponent(id), {method:'PATCH', body:{reviewer_name:reviewerName, reviewer_title:reviewerTitle, rating:rating, comment:comment}});
-      toastMsg('Testimonial updated.');
-      await loadReviewManager();
-    } catch(err) { toastMsg(err.message || 'Could not edit review', 'err'); }
-  };
-  window.obReviewDelete = async function(id){
-    if(!confirm('Delete this review from public and dashboard views?')) return;
-    try {
-      await reviewsApi('/experts/me/reviews/' + encodeURIComponent(id), {method:'DELETE', body:{reason:'expert_deleted'}});
-      toastMsg('Review deleted.');
-      await loadReviewManager();
-    } catch(err) { toastMsg(err.message || 'Could not delete review', 'err'); }
+  async function submitClientReview(){
+    var generation=clientReview.generation;
+    if(clientReview.busy||clientReview.stage!=='form'||!clientReviewCurrent(generation))return false;
+    var rating=clientReview.rating,comment=clientReview.comment;
+    if(!Number.isInteger(rating)||rating<1||rating>5||comment.length>2000){clientReview.message='Choose a rating from 1 to 5 and keep your review within 2,000 characters.';renderClientReview(false);focusReview('ob-client-review-status');return false;}
+    clientReview.busy=true;clientReview.message='';renderClientReview(false);
+    try{
+      var data=await reviewsApi('/sessions/'+encodeURIComponent(clientReview.sid)+'/review',{owner:clientReview.owner,method:'POST',body:{rating:rating,comment:comment}});
+      if(!clientReviewCurrent(generation))return false;
+      if(!data.review||!data.review.id||typeof data.created!=='boolean')throw new Error('Could not confirm review submission.');
+      clientReview.busy=false;return leaveClientReview();
+    }catch(err){
+      if(!clientReviewCurrent(generation))return false;
+      clientReview.busy=false;clientReview.message='We could not confirm your review was saved. Your draft is still here. Try submitting again, or skip to return to the expert website.';renderClientReview(false);return false;
+    }
+  }
+  window.obClientReviewReceiptReady=reviewReceiptReady;
+  window.obClientReviewReset=resetClientReview;
+  window.obClientReviewContinue=continueClientReview;
+  window.obClientReviewSkip=leaveClientReview;
+  window.obClientReviewRating=function(value){if(!clientReview.busy&&clientReview.stage==='form'&&clientReviewCurrent(clientReview.generation))clientReview.rating=value;};
+  window.obClientReviewComment=function(value){if(!clientReview.busy&&clientReview.stage==='form'&&clientReviewCurrent(clientReview.generation)){clientReview.comment=String(value);var count=reviewElement('ob-client-review-count');if(count)count.textContent=clientReview.comment.length+' / 2,000 characters';}};
+  window.obClientReviewSubmit=function(event){if(event&&event.preventDefault)event.preventDefault();submitClientReview();return false;};
+  function scrubReviews(){
+    reviewState={reviews:[],stats:{},filter:'all',collectionEnabled:false,owner:null,generation:reviewState.generation+1,busy:false,loaded:false};
+    resetClientReview();var root=ensureManagerShell();if(root)root.innerHTML='';
+  }
+  if(window.OB_CLIENT_CONTEXT)window.OB_CLIENT_CONTEXT.register('session-review-collection',{teardown:scrubReviews,changed:scrubReviews,credentialRotated:scrubReviews});
+  if(window.__OB_TEST_HOOKS__)window.__OB_TEST_HOOKS__.sessionReviews={
+    ready:reviewReceiptReady,reset:resetClientReview,continue:continueClientReview,submit:submitClientReview,skip:leaveClientReview,
+    state:function(){return clientReview;},managerState:function(){return reviewState;},loadManager:loadReviewManager,approved:approvedReview,returnUrl:reviewReturnUrl,renderManager:renderManager
   };
 
   function publicReviewCard(r){
     var manual = r && r.source === 'manual';
     return '<div class="ob-public-review-card">'
       + '<div style="color:var(--gold,#C49A3C);font-size:14px;">'+stars(r.rating)+'</div>'
-      + '<p>"'+esc(r.comment || '')+'"</p>'
+      + (r.comment ? '<p>'+esc(r.comment)+'</p>' : '')
       + '<div class="ob-public-review-person">'+esc(r.client_name || r.reviewer_name || 'Client')+'</div>'
       + '<div class="ob-public-review-role">'+esc((r.reviewer_title || '') + (r.reviewer_title ? ' · ' : '') + (manual ? 'Testimonial' : 'Verified session'))+'</div>'
       + (r.expert_reply ? '<div class="ob-review-reply" style="margin-top:12px;"><strong>Reply:</strong> '+esc(r.expert_reply)+'</div>' : '')
@@ -62429,7 +62543,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   function renderPublicReviews(data){
     removeDuplicateReviewPages();
     data = normalizePublicPayload(data || {});
-    var reviews = (data.reviews || []).filter(function(r){ return r && r.comment && Number(r.is_visible) !== 0; });
+    var reviews = (data.reviews || []).filter(function(r){ return r && approvedReview(r); });
     var section = document.querySelector('#view-4 .testimonials');
     var grid = document.querySelector('#view-4 .testimonials .testi-grid');
     if(section && grid){
@@ -62448,7 +62562,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     }
   }
   window.obRenderPublicReviews = renderPublicReviews;
-  var publicReviewFetchState = { key:'', promise:null, at:0 };
+  var publicReviewFetchState = { key:'', promise:null, at:0, generation:0 };
   function publicReviewStatusAllows(slug){
     slug = String(slug || '').trim().toLowerCase();
     if(!slug) return Promise.resolve(false);
@@ -62469,7 +62583,10 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     if(publicReviewFetchState.key === key && publicReviewFetchState.promise && now - publicReviewFetchState.at < 1600) return publicReviewFetchState.promise;
     publicReviewFetchState.key = key;
     publicReviewFetchState.at = now;
+    var generation = ++publicReviewFetchState.generation;
+    function currentPublicReviewRequest(){ return publicReviewFetchState.key === key && publicReviewFetchState.generation === generation; }
     publicReviewFetchState.promise = publicReviewStatusAllows(key).then(function(allowed){
+      if(!currentPublicReviewRequest()) return null;
       if(!allowed) {
         renderPublicReviews({reviews:[]});
         return null;
@@ -62477,11 +62594,11 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       return fetch(apiBase() + '/api/experts/' + encodeURIComponent(slug));
     })
       .then(function(r){ return r ? r.json() : {reviews:[]}; })
-      .then(function(data){ renderPublicReviews(data); })
-      .catch(function(){ renderPublicReviews({reviews:[]}); })
+      .then(function(data){ if(currentPublicReviewRequest()) renderPublicReviews(data); })
+      .catch(function(){ if(currentPublicReviewRequest()) renderPublicReviews({reviews:[]}); })
       .finally(function(){
         setTimeout(function(){
-          if(publicReviewFetchState.key === key) publicReviewFetchState.promise = null;
+          if(currentPublicReviewRequest()) publicReviewFetchState.promise = null;
         }, 1600);
       });
     return publicReviewFetchState.promise;
@@ -62492,7 +62609,12 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   var oldApply = window._applyExpertWebsite;
   window._applyExpertWebsite = function(data){
     var result = oldApply ? oldApply.apply(this, arguments) : undefined;
-    if(data && data.reviews) renderPublicReviews(data);
+    if(data && data.reviews) {
+      publicReviewFetchState.generation += 1;
+      publicReviewFetchState.key = String(currentSlug(data));
+      publicReviewFetchState.promise = null;
+      renderPublicReviews(data);
+    }
     else fetchPublicReviewsForSlug(currentSlug(data));
     return result;
   };

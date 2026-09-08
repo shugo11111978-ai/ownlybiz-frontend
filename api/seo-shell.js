@@ -214,6 +214,32 @@ function renderBlogReferences(post) {
   return items.length ? `<section class="ob-blog-references"><h2>Sources and further reading</h2><ul>${items.join('')}</ul></section>` : '';
 }
 
+function renderBlogImage(post, featured = false, card = false) {
+  const media = post.media;
+  const safeSources = media && Array.isArray(media.sources) ? media.sources.filter(source =>
+    source && typeof source.src === 'string' && /^\/assets\/blog\/[a-z0-9-]+\.webp$/.test(source.src) && [640, 960, 1600].includes(source.width)) : [];
+  const sources = safeSources.map(source => `${source.src} ${source.width}w`).join(', ');
+  const responsive = sources ? ` srcset="${esc(sources)}" sizes="${card ? (featured ? '(max-width: 900px) calc(100vw - 56px), 720px' : '(max-width: 640px) calc(100vw - 32px), (max-width: 900px) 45vw, 380px') : '(max-width: 800px) calc(100vw - 40px), 600px'}"` : '';
+  return `<img${card ? ' class="ob-blog-img"' : ''} src="${esc(post.image)}"${responsive} alt="${esc(post.imageAlt)}" width="${media ? 1600 : 1200}" height="${media ? 900 : 630}" loading="${featured ? 'eager' : 'lazy'}" decoding="async"${featured ? ' fetchpriority="high"' : ''}>`;
+}
+
+function renderBlogContents(post) {
+  return `<nav class="ob-blog-toc" aria-label="On this page"><h2>On this page</h2><ol>${(post.sections || []).map((section, index) => `<li><a href="#guide-section-${index + 1}">${esc(section.heading)}</a></li>`).join('')}<li><a href="#guide-faq">Frequently asked questions</a></li></ol></nav>`;
+}
+
+function renderBlogVisualSummary(summary) {
+  if (!summary || !Array.isArray(summary.columns) || !Array.isArray(summary.rows)) return '';
+  return `<div class="ob-blog-visual-summary"><table><caption>${esc(summary.title)}</caption><thead><tr>${summary.columns.map(column => `<th scope="col">${esc(column)}</th>`).join('')}</tr></thead><tbody>${summary.rows.map(row => `<tr>${row.map((cell, index) => index === 0 ? `<th scope="row">${esc(cell)}</th>` : `<td>${esc(cell)}</td>`).join('')}</tr>`).join('')}</tbody></table><p>${esc(summary.note)}</p></div>`;
+}
+
+function renderBlogProductFigure(figure) {
+  const safePath = value => typeof value === 'string' && /^\/assets\/blog\/product-[a-z0-9-]+\.(?:png|webp)$/.test(value) && !/\s/.test(value);
+  if (!figure || figure.kind !== 'product-screenshot' || !safePath(figure.src) || !Number.isInteger(figure.width) || !Number.isInteger(figure.height) || figure.width < 1 || figure.height < 1 || figure.width > 4096 || figure.height > 4096 || !['title', 'alt', 'caption'].every(key => typeof figure[key] === 'string' && figure[key].trim())) return '';
+  const portrait = figure.height > figure.width;
+  const webp = safePath(figure.webp) && figure.webp.endsWith('.webp') && figure.webp.replace(/\.webp$/, '') === figure.src.replace(/\.(?:png|webp)$/, '') ? `<source type="image/webp" srcset="${esc(figure.webp)}">` : '';
+  return `<figure class="ob-blog-product-figure${portrait ? ' ob-blog-product-portrait' : ''}" style="max-width:${figure.width}px"><picture>${webp}<img src="${esc(figure.src)}" alt="${esc(figure.alt)}" width="${figure.width}" height="${figure.height}" loading="lazy" decoding="async"></picture><figcaption><strong>${esc(figure.title)}</strong> ${esc(figure.caption)} <a href="${esc(figure.src)}" target="_blank" rel="noopener noreferrer" aria-label="${esc(`Open full-size ${figure.title} (new tab)`)}">View full size</a></figcaption></figure>`;
+}
+
 function renderBlogHub(posts) {
   if (!posts.length) return '<div class="ob-blog-loading">Ownlybiz guides are being prepared.</div>';
   const featured = posts[0];
@@ -221,7 +247,7 @@ function renderBlogHub(posts) {
   return [
     '<div class="ob-blog-hub-grid">',
       '<article class="ob-blog-featured">',
-        `<a href="${blogUrl(featured).replace('https://ownlybiz.com', '')}"><img class="ob-blog-img" src="${esc(featured.image)}" alt="${esc(featured.imageAlt)}" loading="eager"></a>`,
+        `<a href="${blogUrl(featured).replace('https://ownlybiz.com', '')}">${renderBlogImage(featured, true, true)}</a>`,
         '<div class="ob-blog-featured-body">',
           `<div class="ob-blog-kicker">${esc(featured.category)} · ${esc(featured.readTime)}</div>`,
           `<h2 class="ob-blog-title"><a href="${blogUrl(featured).replace('https://ownlybiz.com', '')}">${esc(featured.title)}</a></h2>`,
@@ -237,7 +263,7 @@ function renderBlogHub(posts) {
         '<div class="ob-blog-side-list">',
           '<span>Transparent platform fee and expert keep-rate language.</span>',
           '<span>Stripe-powered checkout with card and wallet flows where available.</span>',
-          '<span>Pay-by-minute, packages, written services, Email Center, domains, analytics, and AI draft tools.</span>',
+          '<span>Pay-by-minute, Email Center, domains, analytics and marketing draft tools, subject to account eligibility and setup.</span>',
         '</div>',
         '<a class="btn btn-primary btn-sm" href="/features">Explore Ownlybiz</a>',
       '</aside>',
@@ -245,7 +271,7 @@ function renderBlogHub(posts) {
     '<div class="ob-blog-card-grid">',
       rest.map((post) => [
         '<article class="ob-blog-card">',
-          `<a href="${blogUrl(post).replace('https://ownlybiz.com', '')}"><img class="ob-blog-img" src="${esc(post.image)}" alt="${esc(post.imageAlt)}" loading="lazy"></a>`,
+          `<a href="${blogUrl(post).replace('https://ownlybiz.com', '')}">${renderBlogImage(post, false, true)}</a>`,
           '<div class="ob-blog-card-body">',
             `<div class="ob-blog-kicker">${esc(post.category)} · ${esc(post.readTime)}</div>`,
             `<h2><a href="${blogUrl(post).replace('https://ownlybiz.com', '')}">${esc(post.title)}</a></h2>`,
@@ -263,8 +289,8 @@ function renderBlogArticle(post, posts) {
   const overlap = (item) => (item.tags || []).filter((tag) => tags.has(String(tag).toLowerCase())).length;
   const related = posts.filter((item) => item.slug !== post.slug).sort((a, b) => overlap(b) - overlap(a)).slice(0, 3);
   return [
-    '<article class="ob-blog-article">',
-      `<div class="ob-blog-article-hero"><img src="${esc(post.image)}" alt="${esc(post.imageAlt)}"></div>`,
+    post.media ? '<article class="ob-blog-article ob-blog-reading-first"><div class="ob-blog-article-top">' : '<article class="ob-blog-article">',
+      post.media ? '' : `<div class="ob-blog-article-hero"><img src="${esc(post.image)}" alt="${esc(post.imageAlt)}"></div>`,
       '<div class="ob-blog-article-head">',
         '<a class="ob-blog-back" href="/blog">← Back to all guides</a>',
         `<div class="ob-blog-kicker">${esc(post.category)} · ${esc(post.readTime)}</div>`,
@@ -272,21 +298,26 @@ function renderBlogArticle(post, posts) {
         `<p class="ob-blog-article-summary">${esc(post.summary)}</p>`,
         `<div class="ob-blog-meta"><span>${esc(post.date)}${post.dateModified && post.dateModified !== post.date ? ` · Updated ${esc(post.dateModified)}` : ''}</span><span>Ownlybiz Team</span><span>${esc(post.audience || 'Independent experts')}</span></div>`,
       '</div>',
+      post.media ? `<figure class="ob-blog-article-hero">${renderBlogImage(post, true)}<figcaption>${esc(post.media.caption)}</figcaption></figure></div>` : '',
       '<div class="ob-blog-article-body">',
         '<div class="ob-blog-prose">',
+          post.media ? `<details class="ob-blog-mobile-toc"><summary>Jump to a section</summary>${renderBlogContents(post)}</details>` : '',
           `<div class="ob-blog-takeaways"><strong>Key takeaways</strong><ul>${(post.takeaways || []).map((item) => `<li>${esc(item)}</li>`).join('')}</ul></div>`,
-          (post.sections || []).map((section) => [
-            '<section>',
+          (post.sections || []).map((section, index) => [
+            post.media ? `<section id="guide-section-${index + 1}" tabindex="-1">` : '<section>',
               `<h2>${esc(section.heading)}</h2>`,
               (section.body || []).map((p) => `<p>${esc(p)}</p>`).join(''),
               section.bullets && section.bullets.length ? `<ul>${section.bullets.map((item) => `<li>${esc(item)}</li>`).join('')}</ul>` : '',
+              section.visualSummary ? renderBlogVisualSummary(section.visualSummary) : '',
+              Array.isArray(section.productFigures) ? section.productFigures.slice(0, 2).map(renderBlogProductFigure).join('') : '',
             '</section>',
           ].join('')).join(''),
-          `<div class="ob-blog-faq"><strong>FAQ</strong>${(post.faqs || []).map((faq) => `<div class="ob-blog-faq-item"><h3>${esc(faq.question)}</h3><p>${esc(faq.answer)}</p></div>`).join('')}</div>`,
+          `<div class="ob-blog-faq"${post.media ? ' id="guide-faq" tabindex="-1"' : ''}><strong>FAQ</strong>${(post.faqs || []).map((faq) => `<div class="ob-blog-faq-item"><h3>${esc(faq.question)}</h3><p>${esc(faq.answer)}</p></div>`).join('')}</div>`,
           renderBlogReferences(post),
           '<div class="ob-blog-legal-note"><strong>Responsible use note</strong><p>Ownlybiz provides business infrastructure for independent experts. This guide is educational and operational, not legal, tax, medical, financial, therapy, or professional advice. Experts should review claims, policies, and field-specific obligations before publishing or sending campaigns.</p></div>',
         '</div>',
         '<aside class="ob-blog-aside">',
+          post.media ? renderBlogContents(post) : '',
           `<div class="ob-blog-aside-card"><h2>Ownlybiz features mentioned</h2><div class="ob-blog-feature-list">${renderBlogFeatures(post)}</div></div>`,
           `<div class="ob-blog-aside-card"><h2>Related guides</h2>${related.map((item) => `<p><a href="${blogUrl(item).replace('https://ownlybiz.com', '')}">${esc(item.title)}</a></p>`).join('')}</div>`,
         '</aside>',

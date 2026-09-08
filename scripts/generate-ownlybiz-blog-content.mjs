@@ -4,6 +4,10 @@ import zlib from 'zlib';
 import contentWave20260906 from './ownlybiz-content-wave-20260906.mjs';
 import promotionGuide20260906 from './ownlybiz-promotion-guide-20260906.mjs';
 import reviewInformedUpdates20260907 from './ownlybiz-review-informed-updates-20260907.mjs';
+import articleMedia from './ownlybiz-article-media-20260908.mjs';
+import articleClarity from './ownlybiz-article-clarity-20260908.mjs';
+import productFigures from './ownlybiz-product-figures-20260908.mjs';
+import { fileURLToPath } from 'node:url';
 
 const root = process.cwd();
 const dataDir = path.join(root, 'data');
@@ -1488,7 +1492,10 @@ const selectedSlugs = new Set([
 const selectedPosts = [...posts, ...contentWave20260906, promotionGuide20260906]
   .filter((post) => selectedSlugs.has(post.slug))
   .map((post) => ({ ...post, ...reviewInformedUpdates20260907[post.slug] }))
-  .map(normalizePost);
+  .map(articleClarity)
+  .map(productFigures)
+  .map(normalizePost)
+  .map(articleMedia);
 
 function normalizePost(post) {
   const normalized = {
@@ -1510,7 +1517,9 @@ function normalizePost(post) {
     ...(normalized.sections || []).flatMap((section) => [
       section.heading,
       ...(section.body || []),
-      ...(section.bullets || [])
+      ...(section.bullets || []),
+      ...(section.productFigures || []).flatMap(figure => [figure.title, figure.caption]),
+      ...(section.visualSummary ? [section.visualSummary.title, ...section.visualSummary.columns, ...section.visualSummary.rows.flat(), section.visualSummary.note] : [])
     ]),
     ...(normalized.faqs || []).flatMap((faq) => [faq.question, faq.answer])
   ].join(' ');
@@ -1685,6 +1694,19 @@ function clamp(v) { return Math.max(0, Math.min(255, Math.round(v))); }
 writeJson();
 const renderedImages = new Set();
 if (!contentOnly) selectedPosts.forEach((post, index) => {
+  if (post.media) {
+    // Native originals are exported separately. Never replace them with the
+    // historical procedural artwork when regenerating content or fixtures.
+    const sourceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+    for (const image of [post.image, ...post.media.sources.map(source => source.src), ...post.sections.flatMap(section => (section.productFigures || []).flatMap(figure => [figure.src, figure.webp]))]) {
+      const source = path.join(sourceRoot, image);
+      const target = path.join(root, image);
+      if (!fs.existsSync(source)) throw new Error(`Missing reviewed article export: ${image}`);
+      if (source !== target) fs.copyFileSync(source, target);
+    }
+    renderedImages.add(post.image);
+    return;
+  }
   // A later guide may reuse a deployed illustration. Preserve the original
   // guide's seed and index instead of overwriting that shared image again.
   if (renderedImages.has(post.image)) return;

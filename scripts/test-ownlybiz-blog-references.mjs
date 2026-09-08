@@ -36,13 +36,13 @@ function helpers(source, names) {
 }
 
 function server(source, withReferences) {
-  return helpers(source, ['esc', 'blogUrl', 'renderBlogTags', 'renderBlogFeatures', 'renderBlogArticle', ...(withReferences ? ['renderBlogReferences'] : [])]);
+  return helpers(source, ['esc', 'blogUrl', 'renderBlogTags', 'renderBlogFeatures', 'renderBlogArticle', ...(withReferences ? ['renderBlogReferences', 'renderBlogImage', 'renderBlogContents', 'renderBlogVisualSummary', 'renderBlogProductFigure'] : [])]);
 }
 function client(html, withReferences) {
   const scripts = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script\s*>/gi)].map(match => match[1]);
   const source = scripts.filter(code => code.includes('function obBlogEsc('));
   assert.equal(source.length, 1);
-  return helpers(source[0], ['obBlogEsc', 'obBlogDate', 'obBlogUrl', 'obBlogTags', 'obBlogFeatures', 'obBlogArticle', ...(withReferences ? ['obBlogReferences'] : [])]);
+  return helpers(source[0], ['obBlogEsc', 'obBlogDate', 'obBlogUrl', 'obBlogTags', 'obBlogFeatures', 'obBlogArticle', ...(withReferences ? ['obBlogReferences', 'obBlogImage', 'obBlogContents', 'obBlogVisualSummary', 'obBlogProductFigure'] : [])]);
 }
 
 const ssr = server(current('api/seo-shell.js'), true);

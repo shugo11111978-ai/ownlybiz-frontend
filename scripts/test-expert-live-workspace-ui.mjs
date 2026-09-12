@@ -33,7 +33,7 @@ assert.match(workspaceMarkup, /role="tablist"[^>]+aria-orientation="horizontal"/
 assert.match(livePanelMarkup, /id="expert-chat-messages"[^>]+role="log"[^>]+aria-live="polite"/, 'focused transcript is an accessible live log');
 assert.match(livePanelMarkup, /id="expert-chat-send"[^>]+aria-label="Send message to the focused client"/, 'send control has a stable accessible name');
 assert.match(livePanelMarkup, /id="live-session-notes"[^>]+maxlength="8000"[^>]+aria-labelledby="live-session-notes-label"/, 'private notes match the backend bound and visible label');
-assert.doesNotMatch(livePanelMarkup, /attach|upload/i, 'Phase 4 remains text-only without an unsafe attachment action');
+assert.match(html, /src="\/assets\/session-conversation\.js" defer/, 'private session file capability mounts separately from the existing text workspace');
 assert.match(html, /expertEndSession\(window\._obExpertRealtime&&window\._obExpertRealtime\.rtcSessionId\)/, 'media End targets the explicit RTC owner');
 assert.match(html, /@media\(max-width:768px\)[\s\S]*?#expert-chat-input\{font-size:16px!important;min-height:44px;\}/, 'mobile composer avoids zoom and preserves a touch target');
 assert.match(html, /#db-panel-live-session button:not\(\[hidden\]\)\{min-height:44px;\}/, 'visible mobile live controls have 44px touch height');

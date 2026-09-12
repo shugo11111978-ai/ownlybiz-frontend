@@ -34,7 +34,7 @@ for(const [start,end] of [
  ['  function _setupPC(startContext){','  function _sendOffer(']
 ]){if(start.includes('_setupPC'))continue;assert.equal(block(html,start,end),block(baseline,start,end),start+' remains byte-identical');}
 for(const id of ['expert-chat-input','paid-chat-input','free-chat-input'])assert.equal((html.match(new RegExp('id="'+id+'"','g'))||[]).length,1,id+' stable');
-assert.match(html,/<textarea[^>]+id="paid-chat-input"/);assert.match(html,/!e\.isComposing && e\.target && e\.target\.id === 'paid-chat-input'/);
+assert.match(html,/<textarea[^>]+id="paid-chat-input"/);assert.match(html,/!e\.isComposing && e\.keyCode !== 229 && e\.target && e\.target\.id === 'paid-chat-input'/);
 assert(!source.includes("'/message'"),'attachments never call text messages');assert(!source.includes('rtc_connected'),'attachments never signal RTC billing readiness');
 for(const [_,attrs,code] of html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)){if(/src=|application\/ld\+json|application\/json/.test(attrs)||!code.trim())continue;new vm.Script(code);}
 console.log(JSON.stringify({status:'PASS',groups:['format and size limits','per-session quota','history scroll preservation and own-send follow','identity invalidation','critical runtime source parity','stable composers and IME','mini exact credential generation adapter','inline script syntax'],providerCalls:0,hostedWrites:0}));

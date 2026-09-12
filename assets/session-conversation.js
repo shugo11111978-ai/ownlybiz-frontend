@@ -285,7 +285,7 @@
   function mediaView(screen, expert) {
     if (!screen || screen._obMediaFilesView) return;
     var launch = make('div', 'ob-files-media-launch ob-files-ui'), drawer = make('section', 'ob-files-drawer ob-files-ui'); drawer.hidden = true; drawer.setAttribute('aria-label', 'Session photos and files');
-    var launchButton = button('Photos & files', function () { drawer.hidden = !drawer.hidden; launchButton.setAttribute('aria-expanded', String(!drawer.hidden)); if (!drawer.hidden && view.store) load(view.store, true); }); launchButton.setAttribute('aria-expanded', 'false'); launch.appendChild(launchButton); launch.hidden = true;
+    var launchButton = button('Photos & files', function () { drawer.hidden = !drawer.hidden; launchButton.setAttribute('aria-expanded', String(!drawer.hidden)); if (!drawer.hidden && view.store) load(view.store, true); scheduleViewport(); }); launchButton.setAttribute('aria-expanded', 'false'); launch.appendChild(launchButton); launch.hidden = true;
     var header = make('div', 'ob-files-drawer-head'); header.appendChild(make('h3', '', 'Photos & files')); header.appendChild(button('Close', function () { drawer.hidden = true; launchButton.setAttribute('aria-expanded', 'false'); launchButton.focus({preventScroll: true}); })); drawer.appendChild(header);
     var log = make('div', 'ob-files-drawer-log'); log.setAttribute('role', 'log'); log.setAttribute('aria-live', 'polite'); drawer.appendChild(log);
     var footer = make('div', 'ob-files-drawer-footer ob-files-actions'); footer.appendChild(make('span', '', 'Share a photo or PDF')); drawer.appendChild(footer);
@@ -382,11 +382,20 @@
     if (selected && views.some(function (view) { return view.store === selected && visible(view.host); })) load(selected, false);
     watchSockets(); scheduleViewport();
   }
+  function fitMediaDrawer(screen) {
+    var view=screen&&screen._obMediaFilesView;if(!view||view.expert)return;
+    if(screen.scrollTop)screen.scrollTop=0;
+    var bounds=screen.getBoundingClientRect(),top=bounds.top+8,bottom=bounds.bottom;
+    var header=screen.querySelector('.video-timer-bar');if(visible(header))top=Math.max(top,header.getBoundingClientRect().bottom+8);
+    screen.querySelectorAll('.voice-controls,.video-controls,.voice-timer,.voice-cost,.voice-screen button[onclick*="clientEndSession"]').forEach(function(control){if(visible(control))bottom=Math.min(bottom,control.getBoundingClientRect().top-8);});
+    view.drawer.style.bottom=Math.max(0,bounds.bottom-bottom)+'px';
+    view.drawer.style.maxHeight=Math.max(0,bottom-top)+'px';
+  }
   function viewport() {
     frame = 0; var context = owner(), screen = doc.querySelector('#view-5 .phone-screen.active');
     var enabled = context && context.role === 'client' && active(context) && visible(node('view-5')) && screen && /^(screen-A3|screen-A4|screen-B3|screen-VID)$/.test(screen.id);
-    var mobile = root.matchMedia('(max-width:768px)').matches;
-    doc.querySelectorAll('.ob-conversation-screen,.ob-session-media-screen').forEach(function (el) { if (el !== screen) { setClass(el, 'ob-conversation-screen', false); setClass(el, 'ob-session-media-screen', false); } });
+    var mobile = root.matchMedia('(max-width:768px), (max-height:500px) and (pointer:coarse)').matches;
+    doc.querySelectorAll('.ob-conversation-screen,.ob-session-media-screen,.ob-media-compact').forEach(function (el) { if (el !== screen) { setClass(el, 'ob-conversation-screen', false); setClass(el, 'ob-session-media-screen', false); setClass(el, 'ob-media-compact', false); } });
     if (enabled) {
       var log = screen.querySelector('.ob-conversation-log'), logState = beforeAppend(log);
       var vv = root.visualViewport, height = vv ? vv.height : root.innerHeight, top = vv ? vv.offsetTop : 0;
@@ -396,10 +405,12 @@
       setClass(doc.body, 'ob-session-keyboard', !!(doc.activeElement && /^(TEXTAREA|INPUT)$/.test(doc.activeElement.tagName) && root.innerHeight - height > 100));
       setClass(screen, 'ob-conversation-screen', /screen-A[34]/.test(screen.id) && text((active(context) || {}).session && active(context).session.channel || 'chat') === 'chat');
       setClass(screen, 'ob-session-media-screen', /^(screen-B3|screen-VID)$/.test(screen.id));
+      setClass(screen, 'ob-media-compact', /^(screen-B3|screen-VID)$/.test(screen.id)&&height<600);
+      if(screen.classList.contains('ob-session-media-screen'))fitMediaDrawer(screen);
       if (log && logState && logState.follow) log.scrollTop = log.scrollHeight;
     } else {
       setClass(doc.documentElement, 'ob-session-viewport', false); setClass(doc.body, 'ob-session-viewport', false); setClass(doc.body, 'ob-session-keyboard', false);
-      doc.querySelectorAll('.ob-conversation-screen,.ob-session-media-screen').forEach(function (el) { setClass(el, 'ob-conversation-screen', false); setClass(el, 'ob-session-media-screen', false); });
+      doc.querySelectorAll('.ob-conversation-screen,.ob-session-media-screen,.ob-media-compact').forEach(function (el) { setClass(el, 'ob-conversation-screen', false); setClass(el, 'ob-session-media-screen', false); setClass(el, 'ob-media-compact', false); });
       if (savedPageY !== null) { var y = savedPageY; savedPageY = null; root.scrollTo(0, y); }
     }
   }

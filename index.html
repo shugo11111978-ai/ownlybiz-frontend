@@ -6643,7 +6643,7 @@ if (!window.toast) {
                 </div>
               <!-- Expert input bar -->
               <div style="padding:12px 16px;border-top:1px solid var(--gray-200);display:flex;gap:10px;align-items:center;">
-                <input type="text" id="expert-chat-input" aria-label="Message the focused client" placeholder="Message the client..." style="flex:1;border:1.5px solid var(--gray-200);border-radius:10px;padding:10px 14px;font-size:13px;font-family:var(--font-body);outline:none;" onkeydown="if(event.key==='Enter')sendExpertMsg()">
+                <textarea rows="1" id="expert-chat-input" aria-label="Message the focused client" placeholder="Message the client..." style="flex:1;border:1.5px solid var(--gray-200);border-radius:10px;padding:10px 14px;font-size:13px;font-family:var(--font-body);outline:none;" onkeydown="if(event.key==='Enter'&&!event.shiftKey&&!event.isComposing){event.preventDefault();sendExpertMsg()}"></textarea>
                 <button id="expert-chat-send" aria-label="Send message to the focused client" onclick="sendExpertMsg()" style="width:38px;height:38px;border-radius:10px;background:var(--terra);border:none;color:white;font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;">↑</button>
               </div>
               </div>
@@ -9351,8 +9351,8 @@ if (!window.toast) {
               <div class="chat-messages" id="free-chat-messages">
               </div>
               <div class="chat-input-bar">
-                <input type="text" class="chat-input" placeholder="Type your message..." id="free-chat-input">
-                <div class="chat-send" onclick="sendFreeMsg()">↑</div>
+                <textarea class="chat-input" placeholder="Type your message..." id="free-chat-input" rows="1" aria-label="Message the expert"></textarea>
+                <button type="button" class="chat-send" aria-label="Send message" onclick="sendFreeMsg()">↑</button>
               </div>
             </div>
 
@@ -9435,8 +9435,8 @@ if (!window.toast) {
               <div class="chat-messages" id="paid-chat-messages">
               </div>
               <div class="chat-input-bar">
-                <input type="text" class="chat-input" placeholder="Continue the conversation..." id="paid-chat-input">
-                <div class="chat-send" onclick="sendPaidMsg()">↑</div>
+                <textarea class="chat-input" placeholder="Message..." id="paid-chat-input" rows="1" aria-label="Message the expert"></textarea>
+                <button type="button" class="chat-send" aria-label="Send message" onclick="sendPaidMsg()">↑</button>
               </div>
             </div>
 
@@ -23007,7 +23007,10 @@ window.obClientSessionRate = obClientSessionRate;
     bub.textContent=content;
     var msgDate=obMessageDate(ts);
     if(msgDate){var tEl=document.createElement('div');tEl.style.cssText='font-size:10px;opacity:.5;margin-top:2px';tEl.textContent=msgDate.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});bub.appendChild(tEl);}
-    row.appendChild(bub);box.appendChild(row);box.scrollTop=box.scrollHeight;
+    var scrollState=window.OBSessionConversation&&window.OBSessionConversation.beforeAppend(box);
+    if(msgDate)row.setAttribute('data-ob-sent-at',String(msgDate.getTime()));
+    row.appendChild(bub);box.appendChild(row);
+    if(window.OBSessionConversation)window.OBSessionConversation.afterAppend(box,scrollState,isMine);else box.scrollTop=box.scrollHeight;
   }
   window._obAppendMsg = appendMsg;
   window.obAppendToPanel=appendMsg;
@@ -24667,6 +24670,7 @@ function loadClientSessions() {
             '<span style="font-size:13px;font-weight:600;color:var(--terra);">' + cost + '</span>' +
           '</div>' +
           '<div style="font-size:13px;color:var(--gray-400);">' + date + ' \u00b7 ' + dur + ' min \u00b7 ' + (s.channel || 'chat') + '</div>' +
+          '<button type="button" class="ob-session-files-history-link" data-ob-session-files="' + _clientSafe(s.id || '') + '">Photos &amp; files</button>' +
         '</div>';
       }).join('');
     })
@@ -29934,7 +29938,7 @@ window._handleRTCMessage=function(d){
     var inp = document.getElementById('paid-chat-input');
     if(inp && !inp._obStagingV2Enter){
       inp._obStagingV2Enter = true;
-      inp.addEventListener('keydown', function(e){ if(e.key === 'Enter' && !e.shiftKey){ e.preventDefault(); window.sendPaidMsg(); } });
+      inp.addEventListener('keydown', function(e){ if(e.key === 'Enter' && !e.shiftKey && !e.isComposing){ e.preventDefault(); window.sendPaidMsg(); } });
     }
     var btn = document.querySelector('#screen-A4 .chat-send');
     if(btn) btn.onclick = window.sendPaidMsg;
@@ -31091,8 +31095,8 @@ window._handleRTCMessage=function(d){
     setAdminExpertPauseAccess(expertId, allowed);
   }, true);
   document.addEventListener('keydown', function(e){
-    if(e.key === 'Enter' && !e.shiftKey && e.target && e.target.id === 'expert-chat-input'){ e.preventDefault(); window.sendExpertMsg(); }
-    if(e.key === 'Enter' && !e.shiftKey && e.target && e.target.id === 'paid-chat-input'){ e.preventDefault(); window.sendPaidMsg(); }
+    if(e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229 && e.target && e.target.id === 'expert-chat-input'){ e.preventDefault(); window.sendExpertMsg(); }
+    if(e.key === 'Enter' && !e.shiftKey && !e.isComposing && e.keyCode !== 229 && e.target && e.target.id === 'paid-chat-input'){ e.preventDefault(); window.sendPaidMsg(); }
   }, true);
   document.addEventListener('click', function(e){
     var btn = e.target && e.target.closest && e.target.closest('#session-request-sheet button,#session-request-overlay button');
@@ -41813,7 +41817,7 @@ body.ob-ui-dark #db-panel-live-session .live-session-action-btn.danger{
     var box = document.getElementById(panelId);
     if(!box) return;
     Array.prototype.forEach.call(box.children, function(row){
-      if(!row || row.classList.contains('ob-typing-indicator')) return;
+      if(!row || row.classList.contains('ob-typing-indicator') || row.hasAttribute('data-ob-attachment-id')) return;
       row.classList.add('ob-msg-row');
       var isExpertPanel = panelId === 'expert-chat-messages';
       var klass = row.className || '';
@@ -58978,7 +58982,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
         : '';
       return {ts:Number(sess.created_at || 0), html:'<div class="ob-client-activity-row' + (isChat ? ' is-chat' : '') + '" data-ob-session-row="1" data-session-id="' + attr(sess.id || '') + '"' + openAttrs + '>' +
         '<div class="ob-client-channel-badge" aria-hidden="true">' + channelBadge + '</div>' +
-        '<div style="flex:1;min-width:140px;"><div style="font-weight:600;font-size:13px;color:var(--brown);">' + esc(channel.charAt(0).toUpperCase() + channel.slice(1)) + ' Session</div><div style="font-size:11px;color:var(--gray-400);">' + esc(date + ' · ' + time) + '</div>' + transcriptAction + '</div>' +
+        '<div style="flex:1;min-width:140px;"><div style="font-weight:600;font-size:13px;color:var(--brown);">' + esc(channel.charAt(0).toUpperCase() + channel.slice(1)) + ' Session</div><div style="font-size:11px;color:var(--gray-400);">' + esc(date + ' · ' + time) + '</div>' + transcriptAction + '<button type="button" class="ob-session-files-history-link" data-ob-session-files="' + attr(sess.id || '') + '">Photos &amp; files</button></div>' +
         '<div style="font-size:13px;color:var(--brown);min-width:50px;text-align:center;">' + esc(duration) + '</div>' +
         '<div style="font-weight:700;font-size:13px;color:var(--terra);min-width:78px;text-align:center;">' + money(charged) + sub + '</div>' +
         '<div><span style="font-size:11px;font-weight:600;padding:3px 10px;border-radius:100px;background:' + st[1] + '20;color:' + st[1] + ';">' + esc(st[0]) + '</span></div>' +
@@ -70036,6 +70040,12 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
   function miniSuiteContextCurrent(context){
     return !!context && context.token === miniSuiteState.token && context.generation === miniSuiteState.tokenGeneration && context.principalKey === miniSuiteState.principalKey;
   }
+  window.OB_MINI_SESSION_FILES = Object.freeze({
+    capture:function(){var context=miniSuiteContext();return context.token&&isMiniSuiteRoute()?context:null;},
+    isCurrent:function(context){return isMiniSuiteRoute()&&miniSuiteContextCurrent(context);},
+    session:function(){return miniSuiteState.openSession;},
+    senderId:function(){return String(miniSuiteState.openSession&&miniSuiteState.openSession.expert_id||'');}
+  });
   function rejectMiniSuiteSocketWaiters(reason){
     var waiters = miniSuiteState.wsWaiters.splice(0,miniSuiteState.wsWaiters.length);
     waiters.forEach(function(waiter){ clearTimeout(waiter.timer); waiter.reject(new Error(reason || 'Mini suite session changed.')); });
@@ -72949,8 +72959,10 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     catch(error){if(error&&error.code==='payment_account_changed')return;var target=document.querySelector('.ob-booking-auth-error');if(target){target.textContent=friendlyError(error);target.style.display='block';}}
   };
   window.obOpenScheduledBookingSignIn=function(){
+    var modal=document.getElementById('client-login-modal');
+    if(modal)modal.style.zIndex=String(Math.max(99999,Number(modal.style.zIndex)||0));
     if(typeof window.showClientLoginModal==='function')window.showClientLoginModal();
-    else{var modal=document.getElementById('client-login-modal');if(modal)modal.style.display='flex';}
+    else if(modal)modal.style.display='flex';
     setTimeout(function(){var email=document.getElementById('clm-login-email');if(email)email.focus();},50);
   };
   async function enhanceBookingJoinOverlay(options){
@@ -74657,4 +74669,6 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
 </script>
 	<script src="/assets/session-receipt-presentation.js" defer></script>
 <script src="/assets/ownlybiz-session-receipt.js" defer></script>
+<link rel="stylesheet" href="/assets/session-conversation.css">
+<script src="/assets/session-conversation.js" defer></script>
 </html>

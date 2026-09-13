@@ -67,9 +67,51 @@ const presets = vm.runInNewContext(
 );
 assert.equal(presets.length, 4, 'four original starting points are available');
 assert.equal(new Set(presets.map((item) => item.id)).size, 4, 'each starting point has a stable unique ID');
-assert.deepEqual(new Set(presets.map((item) => item.template_id)), new Set(['ownly-practice-focus-v1', 'ownly-field-journal-v1']));
-assert.deepEqual(new Set(presets.map((item) => item.renderer_family)), new Set(['practice-focus', 'field-journal']), 'two genuinely separate renderer families exist');
+assert.equal(new Set(presets.map((item) => item.template_id)).size, 4, 'every selectable template persists its own canonical template ID');
+assert.equal(new Set(presets.map((item) => item.renderer_family)).size, 4, 'every selectable template owns an independent public renderer family');
+const expectedTemplateContracts = {
+  'practice-focus': {
+    template_id: 'ownly-practice-focus-v1',
+    renderer_family: 'practice-focus',
+    layout: 'split',
+    mode: 'light',
+    palette_id: 'warm',
+  },
+  'quiet-confidence': {
+    template_id: 'ownly-quiet-confidence-v1',
+    renderer_family: 'quiet-confidence',
+    layout: 'centered',
+    mode: 'light',
+    palette_id: 'forest',
+  },
+  'field-journal': {
+    template_id: 'ownly-field-journal-v1',
+    renderer_family: 'field-journal',
+    layout: 'editorial',
+    mode: 'light',
+    palette_id: 'forest',
+  },
+  'after-hours': {
+    template_id: 'ownly-after-hours-v1',
+    renderer_family: 'after-hours',
+    layout: 'editorial',
+    mode: 'dark',
+    palette_id: 'midnight',
+  },
+};
+assert.deepEqual(
+  Object.fromEntries(presets.map((item) => [item.id, {
+    template_id: item.template_id,
+    renderer_family: item.renderer_family,
+    layout: item.layout,
+    mode: item.mode,
+    palette_id: item.palette_id,
+  }])),
+  expectedTemplateContracts,
+  'the gallery is a four-template renderer catalog rather than four cards sharing hidden foundations',
+);
 assert(presets.every((item) => ['warm', 'ocean', 'forest', 'midnight'].includes(item.palette_id)), 'every preset uses a backend-supported palette ID');
+assert(presets.every((item) => item.tokens && Object.keys(item.tokens).sort().join(',') === 'accent,action,background,status,surface,text'), 'every template carries a complete six-token visual foundation');
 assert(presets.every((item) => item.name && item.variant && item.description.length > 45), 'every template has meaningful original copy');
 assert.equal(new Set(presets.map((item) => item.preview_image)).size, presets.length, 'every foundation has a distinct raster preview');
 for (const preset of presets) {
@@ -82,9 +124,17 @@ for (const preset of presets) {
   assert.equal(asset.subarray(-2).toString('hex'), 'ffd9', `${preset.id} preview has a JPEG end signature`);
   assert(asset.length > 100_000 && asset.length < 500_000, `${preset.id} preview has a sensible high-resolution payload`);
 }
-assert.match(styles, /ob-site-template-practice-focus/);
-assert.match(styles, /ob-site-template-field-journal/);
-assert.match(styles, /ob-site-preset-field-journal-dark/);
+for (const templateId of Object.keys(expectedTemplateContracts)) {
+  assert.match(styles, new RegExp(`#view-4\\.ob-site-template-${templateId.replaceAll('-', '\\-')}`), `${templateId} has dedicated public-site CSS`);
+}
+assert.match(styles, /ob-site-template-practice-focus \.expert-hero-inner\{[^}]*grid-template-columns:minmax/, 'Practice Focus has a complete split hero composition');
+assert.match(styles, /ob-site-template-quiet-confidence \.expert-hero-inner\{[^}]*quiet-confidence-botanicals\.png/, 'Quiet Confidence has its own centered botanical composition');
+assert.match(styles, /ob-site-template-field-journal \.service-mini\{[^}]*border-top:1px solid/, 'Field Journal has its own editorial service treatment');
+assert.match(styles, /ob-site-template-after-hours\{--ob-site-bg:#0B0908/, 'After Hours has its own high-contrast dark renderer tokens');
+assert.match(styles, /ob-site-template-after-hours \.service-mini\{[^}]*border-left:1px solid/, 'After Hours has its own editorial service treatment');
+assert.match(styles, /:is\(\.about-page,\.services-full,\.book-page,\.contact-page,#ep-reviews>\.mkt-page-inner\)/, 'template styling reaches the complete public website, not only the homepage hero');
+const botanicalAsset = fs.readFileSync(new URL('../assets/website-templates/quiet-confidence-botanicals.png', import.meta.url));
+assert.equal(botanicalAsset.subarray(1, 4).toString(), 'PNG', 'Quiet Confidence uses a real bundled botanical raster rather than a schematic placeholder');
 assert.match(styles, /\.ob-ww-template-grid\{display:grid;gap:18px;grid-template-columns:repeat\(2,minmax\(0,1fr\)\)\}/, 'normal desktop and tablet layouts use two readable template columns');
 assert.match(styles, /@container \(min-width:1320px\)\{\.ob-ww-template-grid\{grid-template-columns:repeat\(3,minmax\(0,1fr\)\)\}\}/, 'only a truly wide Website content area expands to three columns');
 assert.match(styles, /@media\(max-width:760px\)\{[\s\S]*?\.ob-ww-template-grid\{grid-template-columns:1fr\}/, 'mobile presents one large template per row');
@@ -110,11 +160,23 @@ function sourceOf(name, nextName) {
 
 const selectPresetSource = sourceOf('selectPreset', 'renderSummary');
 assert.doesNotMatch(selectPresetSource, /saveWebsiteWorkspace|requestJson|fetch\s*\(/, 'using a foundation never saves it automatically');
+assert.match(selectPresetSource, /radio\('we-site-mode',preset\.mode\);radio\('we-site-layout',preset\.layout\)/, 'using a foundation applies its complete mode and layout contract');
+assert.match(selectPresetSource, /card\.getAttribute\('data-theme'\) === preset\.palette_id/, 'using a foundation applies its canonical palette');
+assert.match(selectPresetSource, /accent:'we-color-accent',action:'we-color-action',status:'we-color-status',background:'we-color-bg',surface:'we-color-surface',text:'we-color-text'/, 'using a foundation applies all six visible design tokens');
+const inferPresetSource = sourceOf('inferPreset', 'presetById');
+const inferPreset = vm.runInNewContext(`(() => { ${inferPresetSource}; return inferPreset; })()`, Object.create(null));
+for (const [id, contract] of Object.entries(expectedTemplateContracts)) {
+  assert.equal(inferPreset(contract), id, `${id} reloads as the same selected gallery foundation`);
+}
+assert.equal(inferPreset({ template_id: 'ownly-practice-focus-v1', layout: 'centered', mode: 'light' }), 'quiet-confidence', 'legacy centered Practice Focus records upgrade to Quiet Confidence');
+assert.equal(inferPreset({ template_id: 'ownly-field-journal-v1', layout: 'editorial', mode: 'dark' }), 'after-hours', 'legacy dark Field Journal records upgrade to After Hours');
+const designForPresetSource = sourceOf('designForPreset', 'legacyDocument');
+assert.match(designForPresetSource, /template_id:preset\.template_id,renderer_family:preset\.renderer_family,mode:preset\.mode,layout:preset\.layout,palette_id:preset\.palette_id/, 'foundation selection resolves one complete canonical renderer contract');
 const templatePreviewSource = sourceOf('showTemplatePreview', 'showDraftPreview');
-assert.match(templatePreviewSource, /image\.src=item\.preview_image/, 'card Preview opens the authored high-resolution raster');
-assert.match(templatePreviewSource, /frame\.hidden=true/, 'card Preview does not show the generic draft renderer');
-assert.doesNotMatch(templatePreviewSource, /state\.|selectPreset|markDirty|saveWebsiteWorkspace|requestJson|fetch\s*\(/, 'previewing a foundation cannot select, dirty, save, or request data');
-assert.match(runtime, /design direction; your content stays yours/, 'template preview explains that the visual is a design direction');
+assert.match(templatePreviewSource, /frame\.srcdoc=previewDocumentHtml\(collectDocument\(\),item\.id\)/, 'card Preview renders the expert content through that foundation’s complete website renderer');
+assert.match(templatePreviewSource, /image\.hidden=true[\s\S]*?image\.removeAttribute\('src'\)/, 'card Preview switches away from the gallery marketing raster');
+assert.doesNotMatch(templatePreviewSource, /selectPreset|markDirty|saveWebsiteWorkspace|requestJson|fetch\s*\(/, 'previewing a foundation cannot select, dirty, save, or request data');
+assert.match(templatePreviewSource, /current content in this foundation[\s\S]*?preview only[\s\S]*?no draft changes/i, 'template preview clearly explains that it is a safe full-site preview');
 
 const normalizeBaseSource = sourceOf('normalizeBase', 'nonProductionEnvironment');
 const nonProductionSource = sourceOf('nonProductionEnvironment', 'resolveApiBase');
@@ -173,7 +235,7 @@ assert.match(runtime, /error && error\.code === 'website_revision_conflict'/, 'o
 assert.match(runtime, /clean\(error && error\.message\)/, 'other readiness and acknowledgement conflicts retain backend guidance');
 assert.doesNotMatch(collectDocumentSource, /schema_version\s*:/);
 assert.doesNotMatch(collectDocumentSource, /template_version\s*:/);
-assert.doesNotMatch(collectDocumentSource, /renderer_family\s*:/, 'server-projected design fields are not patched');
+assert.match(collectDocumentSource, /design:\{template_id:selectedTemplate,renderer_family:selectedFamily,mode:selectedMode,layout:selectedLayout,palette_id:palette,tokens:tokens\}/, 'saving carries the selected canonical template and renderer contract through the website facade');
 assert.match(collectDocumentSource, /custom_pages:mergeCustomPages/);
 assert.match(runtime, /obCollectWebsiteContentPages/, 'existing custom-page editor and plan controls remain connected');
 assert.match(runtime, /obLoadContentPagesEditor/);
@@ -210,8 +272,16 @@ assert.match(runtime, /Publish website/);
 assert.match(runtime, /var templateBusy=state\.saving \|\| state\.loading \|\| state\.compatibility/, 'foundation changes are disabled while website state is loading, saving, or read-only');
 assert.match(runtime, /\[data-template-action="use"\][\s\S]*?button\.disabled=templateBusy/, 'Use foundation controls reflect the busy/read-only state');
 assert.match(runtime, /function selectPreset\(id\)\{\s*if\(state\.loading \|\| state\.saving \|\| state\.compatibility\) return false;/, 'foundation selection also fails closed against programmatic busy-state changes');
+const applyPublicTemplateSource = sourceOf('applyPublicTemplate', 'commitDocumentLocally');
+assert.match(applyPublicTemplateSource, /view\.classList\.add\('ob-site-template-'\+item\.renderer_family,'ob-site-preset-'\+item\.id\)/, 'the public expert website applies the selected independent renderer family');
+assert.match(applyPublicTemplateSource, /enhancePublicTemplate\(profile,item\)/, 'the selected renderer enhances the complete public-site structure');
+const enhancePublicTemplateSource = sourceOf('enhancePublicTemplate', 'applyPublicTemplate');
+assert.match(enhancePublicTemplateSource, /services[\s\S]*?testimonials[\s\S]*?about/, 'the renderer maps services, proof, and story sections');
+assert.match(enhancePublicTemplateSource, /all\('\.expert-page',view\)[\s\S]*?data-ob-template-page/, 'the renderer marks every expert public page, not only the hero');
+assert.match(enhancePublicTemplateSource, /service-mini[\s\S]*?showExpertPage === 'function'[\s\S]*?showExpertPage\('services'\)/, 'homepage services remain real keyboard-accessible navigation into the website');
+assert.doesNotMatch(enhancePublicTemplateSource, /innerHTML\s*=|\.remove\s*\(/, 'template enhancement preserves the existing booking and account DOM contracts');
 assert.match(styles, /\.ob-ww-template-media:focus-visible\{outline-offset:-4px\}/, 'the image preview focus ring stays visible inside the clipped card');
-assert.match(styles, /@media\(prefers-reduced-motion:reduce\)[\s\S]*?\.ob-ww-template-preview\{transition:none\}[\s\S]*?\.ob-ww-template-media:hover \.ob-ww-template-preview\{transform:none\}/, 'template preview motion is disabled when reduced motion is requested');
+assert.match(styles, /@media\(prefers-reduced-motion:reduce\)[\s\S]*?\.ob-ww-template-preview[\s\S]*?\{transition:none\}[\s\S]*?\.ob-ww-template-media:hover \.ob-ww-template-preview[\s\S]*?\{transform:none/, 'template preview motion is disabled when reduced motion is requested');
 assert.match(styles, /\.ob-ww-template-use:hover\{background:#6f2e17;border-color:#6f2e17;color:#fff\}/, 'the primary foundation action keeps readable white text in its light-theme hover state');
 const lightThemeMatch = styles.match(/body\.ob-ui-light #view-3 #db-panel-website-editor\{([\s\S]*?)\n\}/);
 assert(lightThemeMatch, 'Website workspace defines an explicit dashboard light-theme palette');
@@ -262,10 +332,29 @@ assert.match(runtime, /iframe[^>]*sandbox=\"\"/);
 assert.match(runtime, /frame\.setAttribute\('sandbox',''\)/);
 assert.match(runtime, /frame\.srcdoc=previewDocumentHtml/);
 assert.match(runtime, /Content-Security-Policy/);
-assert.doesNotMatch(section(/function previewDocumentHtml\([\s\S]*?\n  \}/, 'scriptless draft renderer'), /<script|javascript:/i, 'the draft preview renderer contains no script execution path');
+const draftPreviewSource = sourceOf('previewDocumentHtml', 'openPreviewDialog');
+assert.doesNotMatch(draftPreviewSource, /<script|javascript:/i, 'the draft preview renderer contains no script execution path');
+for (const sectionClass of ['hero', 'story', 'services', 'proof', 'final', 'footer']) {
+  assert.match(draftPreviewSource, new RegExp(`class="${sectionClass}"`), `draft preview renders a complete ${sectionClass} section`);
+}
+assert.match(draftPreviewSource, /doc\.navigation\.home[\s\S]*?doc\.navigation\.about[\s\S]*?doc\.navigation\.services[\s\S]*?doc\.navigation\.reviews[\s\S]*?doc\.navigation\.contact/, 'draft preview renders the expert navigation labels');
+assert.match(draftPreviewSource, /doc\.services\.chat_description[\s\S]*?doc\.services\.voice_description[\s\S]*?doc\.services\.video_description/, 'draft preview renders all supported service content');
+assert.match(draftPreviewSource, /doc\.media && doc\.media\.profile_image_url/, 'draft preview uses the expert portrait when one exists');
+for (const templateId of Object.keys(expectedTemplateContracts)) {
+  assert.match(draftPreviewSource, new RegExp(templateId.replaceAll('-', '\\-')), `draft preview contains a distinct ${templateId} composition branch`);
+}
+assert.match(draftPreviewSource, /Verified client reviews appear here after completed Ownlybiz sessions/, 'draft proof content is truthful and never invents testimonials');
+const openWebsitePreviewSource = sourceOf('openWebsitePreview', 'cardSurface');
+assert.match(openWebsitePreviewSource, /state\.dirty \|\| !state\.publication\.published[\s\S]*?showDraftPreview\(\)/, 'a changed template always previews the unsaved full draft, even when the current site is published');
+const updateHeaderSource = sourceOf('updateHeader', 'markDirty');
+assert.match(updateHeaderSource, /published && !state\.dirty \? 'View live site' : 'Preview draft'/, 'the header clearly distinguishes a saved live site from an unsaved template draft');
+const organizeCardsSource = sourceOf('organizeCards', 'rememberSetting');
+assert.match(organizeCardsSource, /we-theme-grid[\s\S]*?themeCard[\s\S]*?\[themeCard,designControls\][\s\S]*?hidden=true[\s\S]*?aria-hidden/, 'the gallery is authoritative, so the obsolete palette-card chooser is not exposed as a competing template system');
+assert.match(organizeCardsSource, /ob-site-design-controls[\s\S]*?hidden=true[\s\S]*?aria-hidden/, 'the gallery is authoritative, so obsolete standalone mode/layout choices are not exposed');
+assert.doesNotMatch(organizeCardsSource, /ob-site-color-controls[\s\S]*?hidden=true/, 'experts can still tune accessible colors after choosing a foundation');
 assert.match(runtime, /exactCredential:true/, 'website requests retain exact identity fencing');
 assert.match(runtime, /Account changed while the website request was in progress/);
 assert.match(runtime, /OB_CLIENT_CONTEXT\.register\('website-workspace-v2'/, 'identity transitions scrub and reload website-private state');
 
 console.log('Website workspace v2 contract and environment-safety smoke passed.');
-console.log('Truthful IA, original templates, facade CAS, scriptless preview, Personal Assistant surfaces, plan/data preservation, and staging URL policy verified.');
+console.log('Truthful IA, four complete renderers, authoritative gallery selection, facade CAS, full scriptless preview, Personal Assistant surfaces, plan/data preservation, and staging URL policy verified.');

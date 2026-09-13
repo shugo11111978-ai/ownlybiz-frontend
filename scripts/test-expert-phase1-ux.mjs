@@ -68,7 +68,9 @@ assert.match(phase1.source,/panel === 'domain-settings' \? 'sblock-website'/,'Do
 assert.match(phase1.source,/document\.activeElement === last \|\| !drawer\.contains\(document\.activeElement\)/,'forward Tab is contained even if focus escapes');
 assert.match(phase1.source,/Replies will be sent to the email on your account\./,'support confirmation names the reply channel');
 assert.match(phase1.source,/AI help is temporarily unavailable\. This guide and navigation shortcuts still work/,'provider failure preserves deterministic help');
-assert.match(phase1.source,/credentialRotated:scrubGuidance/,'guidance scrubs on credential rotation');
+assert.match(phase1.source,/credentialRotated:resumeGuidanceForIdentity/,'credential rotation scrubs and then resumes full-expert guidance');
+assert.match(phase1.source,/function resumeGuidanceForIdentity\(current\)\{\s*scrubGuidance\(\);/,'post-login guidance always scrubs stale identity state first');
+assert.match(phase1.source,/loadAssistantBootstrap\(true,allowAutoOpen !== false\)/,'post-login guidance reloads server onboarding state with first-run auto-open enabled');
 assert.match(groupScript.source,/sequence:\+\+ownerLoadSequence/,'Group loads use a latest-request fence');
 assert.match(groupScript.source,/operation\.principal !== ownerPrincipal\(\)/,'Group loads use an exact-principal fence');
 assert.match(groupScript.source,/function captureOwnerOperation\([\s\S]*exactCredential:true/,'Group owner mutations use exact-credential lifecycle captures');

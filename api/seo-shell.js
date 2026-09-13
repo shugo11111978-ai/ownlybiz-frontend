@@ -298,7 +298,7 @@ function renderBlogArticle(post, posts) {
         `<p class="ob-blog-article-summary">${esc(post.summary)}</p>`,
         `<div class="ob-blog-meta"><span>${esc(post.date)}${post.dateModified && post.dateModified !== post.date ? ` · Updated ${esc(post.dateModified)}` : ''}</span><span>Ownlybiz Team</span><span>${esc(post.audience || 'Independent experts')}</span></div>`,
       '</div>',
-      post.media ? `<figure class="ob-blog-article-hero">${renderBlogImage(post, true)}<figcaption>${esc(post.media.caption)}</figcaption></figure></div>` : '',
+      post.media ? `<figure class="ob-blog-article-hero">${renderBlogImage(post, true)}</figure></div>` : '',
       '<div class="ob-blog-article-body">',
         '<div class="ob-blog-prose">',
           post.media ? `<details class="ob-blog-mobile-toc"><summary>Jump to a section</summary>${renderBlogContents(post)}</details>` : '',

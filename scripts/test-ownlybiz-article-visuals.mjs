@@ -9,18 +9,19 @@ import { fileURLToPath } from 'node:url';
 
 // Read-only source/asset checks. No application boot, browser, network or build.
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const baseline = 'e41ef608585d641aff3c04856f9ec0f59eca15db';
+const baseline = process.env.OWNLYBIZ_ARTICLE_VISUALS_BASELINE || '48d52cd12749b382c1c1ef1f5478f83378ed8f10';
 const require = createRequire(import.meta.url);
 const acorn = require(process.env.OWNLYBIZ_ACORN_PATH || '/Users/liranbahbut/.npm/_npx/67eb4586ca667318/node_modules/acorn/dist/acorn.js');
 const read = relative => fs.readFileSync(path.join(root, relative), 'utf8');
 const git = args => execFileSync('git', args, { cwd: root, maxBuffer: 32 * 1024 * 1024 });
 const original = relative => git(['show', `${baseline}:${relative}`]).toString('utf8');
+const legacyOriginal = relative => git(['show', `e41ef608585d641aff3c04856f9ec0f59eca15db:${relative}`]).toString('utf8');
 const html = read('index.html');
 const oldHtml = original('index.html');
 const api = read('api/seo-shell.js');
 const oldApi = original('api/seo-shell.js');
 const posts = JSON.parse(read('data/ownlybiz-blog-posts.json'));
-const oldPosts = JSON.parse(original('data/ownlybiz-blog-posts.json'));
+const oldPosts = JSON.parse(legacyOriginal('data/ownlybiz-blog-posts.json'));
 const heroPilotSlugs = new Set(['expert-business-tool-stack-vs-ownlybiz', 'pay-by-minute-sessions-guide', 'turn-social-followers-into-paid-sessions']);
 // Retain the exact original pilot exports alongside the three selected v2
 // replacements. These are approved assets even though current posts use v2.
@@ -129,7 +130,7 @@ check('SSR source outside six allowed blog renderers is byte-identical', () => {
 check('All other tracked API, assets, config and source files preserve baseline bytes', () => {
   // The root-owned QA evidence document is intentionally refreshed; no other
   // documentation or protected runtime file is exempted by that allowance.
-  const allowed = new Set(['index.html', 'api/seo-shell.js', 'data/ownlybiz-blog-posts.json', 'design-qa.md', 'scripts/generate-ownlybiz-blog-content.mjs', 'scripts/test-ownlybiz-blog-content.mjs', 'scripts/test-ownlybiz-blog-references.mjs', 'scripts/test-ownlybiz-client-seo.mjs']);
+  const allowed = new Set(['scripts/test-ownlybiz-article-visuals.mjs', 'index.html', 'api/seo-shell.js', 'data/ownlybiz-blog-posts.json', 'design-qa.md', 'scripts/generate-ownlybiz-blog-content.mjs', 'scripts/test-ownlybiz-blog-content.mjs', 'scripts/test-ownlybiz-blog-references.mjs', 'scripts/test-ownlybiz-client-seo.mjs']);
   // Historical tracked .vercel state is intentionally not copied into a clean
   // release. Its newly built routes, functions and dependencies are checked by
   // the independent clean-artifact verifier, not against stale Git output.
@@ -168,8 +169,8 @@ function makeServer(source, modern = true) {
 }
 const client = makeClient(clientSource);
 const server = makeServer(api);
-const legacyClient = makeClient(oldClientSource, false);
-const legacyServer = makeServer(oldApi, false);
+const legacyClient = makeClient(scripts(legacyOriginal('index.html')).find(match => match[2].includes('function obBlogArticle('))[2], false);
+const legacyServer = makeServer(legacyOriginal('api/seo-shell.js'), false);
 const escaped = value => String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const comparable = markup => markup.replace(/(<div class="ob-blog-meta"><span>)[^<]*(<\/span>)/g, '$1DATE$2').replace(' onclick="showMktPage(&quot;features&quot;);return false;"', '');
 const tags = (markup, tag) => [...markup.matchAll(new RegExp(`<${tag}\\b[^>]*>`, 'g'))].map(match => match[0]);
@@ -256,7 +257,8 @@ for (const post of posts) {
     for (const anchor of rendered.matchAll(/href="#([^"]+)"/g)) assert.ok(ids.includes(anchor[1]), `Missing target ${anchor[1]}`);
     assert.equal(tags(rendered, 'nav').length, 2, 'Mobile disclosure and desktop contents');
     assert.ok(rendered.includes('<summary>Jump to a section</summary>'));
-    assert.ok(rendered.includes(`<figcaption>${escaped(post.media.caption)}</figcaption>`));
+    const hero = rendered.match(/<figure class="ob-blog-article-hero">[\s\S]*?<\/figure>/)?.[0];
+    assert.ok(hero && !hero.includes('<figcaption>'));
     const productFigures = post.sections.flatMap(section => Array.isArray(section.productFigures) ? section.productFigures.slice(0, 2).filter(figure => client.obBlogProductFigure(figure)) : []);
     const articleImages = tags(rendered, 'img').map(attributes);
     assert.equal(articleImages.length, 1 + productFigures.length, 'One hero plus only the authored, valid, bounded product figures');
@@ -320,7 +322,7 @@ check('Untrusted strings cannot add markup or image attributes', () => {
   assert.equal(comparable(markup), comparable(server.renderBlogArticle(post, [post])));
   assert.equal(tags(markup, 'img').length, 1);
   assert.equal(tags(markup, 'script').length, 0);
-  assert.ok(markup.includes(`<figcaption>${escaped(payload)}</figcaption>`));
+  assert.equal(tags(markup, 'figcaption').length, 0);
   assert.ok(markup.includes(`<caption>${escaped(payload)}</caption>`));
   assert.equal(client.obBlogVisualSummary(summary), server.renderBlogVisualSummary(summary));
 });

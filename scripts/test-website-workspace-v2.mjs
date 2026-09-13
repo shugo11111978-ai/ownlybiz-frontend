@@ -51,6 +51,15 @@ assert.match(runtime, /ArrowLeft','ArrowRight','Home','End/, 'tabs support stand
 assert.match(runtime, /obPhase1OpenGuidance/, 'Personal Assistant remains available inside Website');
 assert.match(runtime, /root\.obOpenWebsiteSurface=function/, 'assistant actions can open an exact Website surface');
 assert.match(runtime, /ownlybiz:website-surface/, 'surface changes are observable by contextual guidance');
+assert.match(
+  styles,
+  /#db-panel-website-editor \.ob-website-workspace \.ob-ww-surface > \.we-tab-card\[data-we-tab\]\{display:block!important\}/,
+  'reparented Website cards do not depend on stale legacy tab state for visibility',
+);
+assert.match(runtime, /var destination=cardSurface\(card\)[\s\S]*?host\.appendChild\(card\)[\s\S]*?card\.classList\.add\('we-tab-visible'\)/, 'organizing cards restores the legacy visibility class after hydration');
+assert.match(runtime, /all\('\.ob-ww-surface'\)[\s\S]*?panel\.hidden=!on/, 'only the active new Website surface is exposed');
+assert.match(runtime, /card\.querySelector\('#we-nav-home'\)\) return 'navigation'/, 'the Menu card is routed to its visible new surface');
+assert.match(runtime, /tab === 'pages' \? 'pages' : tab === 'media' \? 'media'/, 'Pages and Media cards are routed to visible new surfaces');
 
 const presets = vm.runInNewContext(
   `(${presetCatalogSource.replace(/^var TEMPLATE_PRESETS=/, '').replace(/;$/, '')})`,
@@ -168,6 +177,46 @@ assert.match(runtime, /View live site/);
 assert.match(runtime, /Save draft/);
 assert.match(runtime, /Preview draft/);
 assert.match(runtime, /Publish website/);
+const lightThemeMatch = styles.match(/body\.ob-ui-light #view-3 #db-panel-website-editor\{([\s\S]*?)\n\}/);
+assert(lightThemeMatch, 'Website workspace defines an explicit dashboard light-theme palette');
+const lightThemeTokens = Object.fromEntries(
+  [...lightThemeMatch[1].matchAll(/--(ob-ww-(?:text|muted|card)):(#[0-9a-f]{6})/gi)].map((match) => [match[1], match[2]]),
+);
+assert.deepEqual(lightThemeTokens, {
+  'ob-ww-card': '#fffdf8',
+  'ob-ww-text': '#241a15',
+  'ob-ww-muted': '#5f554d',
+});
+function contrastRatio(foreground, background) {
+  const channels = (hex) => [1, 3, 5].map((offset) => Number.parseInt(hex.slice(offset, offset + 2), 16) / 255)
+    .map((value) => value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4);
+  const luminance = (hex) => {
+    const [r, g, b] = channels(hex);
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+  const [bright, dark] = [luminance(foreground), luminance(background)].sort((a, b) => b - a);
+  return (bright + 0.05) / (dark + 0.05);
+}
+assert(contrastRatio(lightThemeTokens['ob-ww-text'], lightThemeTokens['ob-ww-card']) >= 4.5, 'light-theme primary text meets WCAG AA on Website cards');
+assert(contrastRatio(lightThemeTokens['ob-ww-muted'], lightThemeTokens['ob-ww-card']) >= 4.5, 'light-theme secondary text meets WCAG AA on Website cards');
+assert.match(styles, /body\.ob-ui-light #view-3 #db-panel-website-editor \.ob-ww-button:not\(\.primary\)[\s\S]*?color:var\(--ob-ww-text\)/, 'secondary Website actions remain readable in light mode');
+assert.match(styles, /body\.ob-ui-light #view-3 #db-panel-website-editor \.ob-ww-status\{color:var\(--ob-ww-muted\)\}/, 'Website status copy remains readable in light mode');
+assert.match(styles, /:is\(\.ob-ww-eyebrow,\.ob-ww-template-family\)\{color:#4f6219!important\}/, 'light-mode foreground accents use readable Ownlybiz olive instead of lime');
+assert.match(
+  html,
+  /data-ob-panel="website-view" onclick="_openMyWebsite\(\)"/,
+  'the global View Website navigation keeps using the authoritative live-site opener',
+);
+assert.doesNotMatch(
+  runtime,
+  /root\._openMyWebsite\s*=/,
+  'Website workspace never replaces the global live-site opener with unloaded local draft state',
+);
+assert.match(
+  runtime,
+  /byId\('ob-ww-preview'\)\.addEventListener\('click',openWebsitePreview\)/,
+  'local draft preview remains scoped to the Website workspace Preview draft control',
+);
 assert.match(runtime, /iframe[^>]*sandbox=\"\"/);
 assert.match(runtime, /frame\.setAttribute\('sandbox',''\)/);
 assert.match(runtime, /frame\.srcdoc=previewDocumentHtml/);

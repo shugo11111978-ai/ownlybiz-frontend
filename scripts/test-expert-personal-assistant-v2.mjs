@@ -107,6 +107,14 @@ assert.match(phase1, /id=LEGACY_ASSISTANT_ACTION_ALIASES\[id\] \|\| id/, 'old ac
 assert.match(phase1, /if\(known\.panel[\s\S]*?!findDashboardNav\(known\.panel\)\) return null/);
 assert.match(phase1, /if\(known\.setting && !findSettingsNav\(known\.setting\)\) return null/);
 assert.match(phase1, /data-ob-assistant-action/);
+assert.match(phase1, /validatedAssistantAction\(next\.action_id\)/, 'the authoritative assistant next step owns its CTA');
+assert.doesNotMatch(phase1, /next\.action_id\s*\|\|\s*launchNext\.action_id/, 'a welcome step without an action cannot inherit an unrelated Launch CTA');
+assert.match(phase1, /onboardingStatus === 'not_started'\)\{ control\('Start guided setup'/, 'first-run onboarding keeps its dedicated guided-setup control');
+assert.match(
+  phase1,
+  /if\(action\.panel === 'website-view'\)[\s\S]*?root\._openMyWebsite\(\)/,
+  'assistant View Website delegates to the authoritative global live-site opener even before Website loads',
+);
 assert.doesNotMatch(phase1, /raw\.(?:href|url)|action\.(?:href|url)|location\.href\s*=\s*(?:raw|action)/, 'server-returned locations are never followed');
 assert.match(phase1, /That destination is not available for this account\. No action was taken\./, 'unknown or unavailable IDs fail closed');
 
@@ -158,6 +166,23 @@ const mergedOnboarding = mergeAssistantBootstrap(
 assert.equal(mergedOnboarding.profile.revision, 5, 'onboarding updates refresh the shared profile CAS revision');
 assert.equal(mergedOnboarding.onboarding.status, 'active');
 assert.match(phase1, /assistantBootstrap=mergeAssistantBootstrap\(assistantBootstrap,data\);\s*renderProfile\(assistantBootstrap,false\);\s*renderPracticeStatus\(assistantBootstrap\);/, 'onboarding success renders the full returned bootstrap before goal selection');
+
+const historyTimestampSource = section(
+  /function assistantHistoryTimestamp\(value\)\{[\s\S]*?\n  \}/,
+  'assistant history timestamp formatter',
+);
+const assistantHistoryTimestamp = vm.runInNewContext(
+  `(() => { const clean=(value)=>String(value==null?'':value).replace(/\\s+/g,' ').trim(); ${historyTimestampSource}; return assistantHistoryTimestamp; })()`,
+  { Date, Number },
+);
+const readableHistoryTimestamp = assistantHistoryTimestamp('1789317433');
+assert(readableHistoryTimestamp.length > 10, 'Unix seconds are expanded into a local date and time');
+assert.notEqual(readableHistoryTimestamp, '1789317433', 'raw Unix seconds are never rendered to the user');
+assert.equal(assistantHistoryTimestamp('not-a-date'), '', 'invalid history dates fail closed instead of exposing raw values');
+assert.match(phase1, /date\.textContent=assistantHistoryTimestamp\(item\.updated_at \|\| item\.created_at\)/);
+assert.match(phase1, /function refreshConversationHistoryIfOpen\(\)[\s\S]*?history && !history\.hidden \? loadConversationHistory\(true\)/, 'only an open History panel refreshes immediately');
+assert.match(phase1, /createConversation\(operation,null\)\.then\(function\(\)\{ refreshConversationHistoryIfOpen\(\)/, 'starting a new conversation refreshes an already-open History panel');
+assert.match(phase1, /if\(data && Array\.isArray\(data\.suggestions\)\) renderStarters\(starterPrompts\(data\)\);\s*refreshConversationHistoryIfOpen\(\);/, 'a completed turn refreshes an already-open History panel');
 
 assert.match(launch, /window\.ownlybizLaunchStatusSnapshot/);
 assert.match(launch, /next_step:next \? \{title:next\.title,reason:next\.copy,action_id:assistantActionForLaunch\(next\.action\)\}/);

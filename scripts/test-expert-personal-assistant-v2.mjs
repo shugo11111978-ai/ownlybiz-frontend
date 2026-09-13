@@ -125,7 +125,39 @@ assert.match(phase1, /setBackgroundInert\(false\)/);
 assert.match(phase1, /Personal Assistant said:/, 'messages receive explicit accessible speaker labels');
 assert.match(phase1, /assistantRequestController\.abort\(\)/, 'new conversations and identity teardown cancel in-flight assistant work');
 assert.match(phase1, /exactCredential:true/, 'current credential fencing remains exact');
-assert.match(phase1, /credentialRotated:scrubGuidance/);
+assert.match(phase1, /changed:resumeGuidanceForIdentity/);
+assert.match(phase1, /credentialRotated:resumeGuidanceForIdentity/);
+assert.match(phase1, /installDashboardBootstrapResume\(\)/, 'dashboard loading also resumes a post-login bootstrap');
+assert.match(phase1, /loadAssistantBootstrap\(true,allowAutoOpen !== false\)/, 'the resumed bootstrap may auto-open from authoritative onboarding state');
+
+const resumeDecisionSource = section(
+  /function identityResumeDecision\(current\)\{[\s\S]*?\n  \}/,
+  'post-login identity decision',
+);
+const identityResumeDecision = vm.runInNewContext(
+  `(${resumeDecisionSource})`,
+  {
+    clean: (value) => String(value == null ? '' : value).replace(/\s+/g, ' ').trim(),
+    supportSessionActive: () => false,
+    miniSuiteActive: () => false,
+  },
+);
+assert.equal(identityResumeDecision({ role: 'expert', token: '' }), false, 'initial tokenless boot cannot schedule private guidance');
+assert.equal(identityResumeDecision({ role: 'expert', token: 'new-expert-token' }), true, 'a later full-expert credential transition schedules guidance');
+assert.equal(identityResumeDecision({ role: 'client', token: 'client-token' }), false, 'client credentials cannot bootstrap expert guidance');
+
+const mergeBootstrapSource = section(
+  /function mergeAssistantBootstrap\(current,data\)\{[\s\S]*?\n  \}/,
+  'assistant bootstrap merge',
+);
+const mergeAssistantBootstrap = vm.runInNewContext(`(${mergeBootstrapSource})`, Object.create(null));
+const mergedOnboarding = mergeAssistantBootstrap(
+  { profile: { revision: 4, primary_goal: null }, onboarding: { revision: 4, status: 'not_started' } },
+  { profile: { revision: 5, primary_goal: null }, onboarding: { revision: 5, status: 'active' } },
+);
+assert.equal(mergedOnboarding.profile.revision, 5, 'onboarding updates refresh the shared profile CAS revision');
+assert.equal(mergedOnboarding.onboarding.status, 'active');
+assert.match(phase1, /assistantBootstrap=mergeAssistantBootstrap\(assistantBootstrap,data\);\s*renderProfile\(assistantBootstrap,false\);\s*renderPracticeStatus\(assistantBootstrap\);/, 'onboarding success renders the full returned bootstrap before goal selection');
 
 assert.match(launch, /window\.ownlybizLaunchStatusSnapshot/);
 assert.match(launch, /next_step:next \? \{title:next\.title,reason:next\.copy,action_id:assistantActionForLaunch\(next\.action\)\}/);

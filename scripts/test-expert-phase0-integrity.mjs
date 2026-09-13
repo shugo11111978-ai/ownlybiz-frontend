@@ -13,7 +13,11 @@ function scriptById(id){
 
 const shim=scriptById('ownlybiz-expert-phase0-integrity-20260913');
 assert(shim.index>html.indexOf('ownlybiz-expert-live-workspace-20260817'),'Phase 0 integrity is appended after legacy dashboard overrides');
-assert.doesNotMatch(html.slice(shim.end),/<script(?![^>]+src=)[^>]*>/i,'no later inline script can replace the Phase 0 wrappers');
+const laterInlineScripts=[...html.slice(shim.end).matchAll(/<script(?![^>]+src=)[^>]*id=["']([^"']+)["'][^>]*>/gi)].map((match)=>match[1]);
+assert.deepEqual(laterInlineScripts,['ownlybiz-website-workspace-v2-runtime'],'only the reviewed Website workspace may extend the Phase 0 wrappers');
+const websiteWorkspace=scriptById('ownlybiz-website-workspace-v2-runtime');
+assert.match(websiteWorkspace.source,/previousDb\.apply\(this,arguments\)/,'Website navigation delegates through the Phase 0 dashboard wrapper');
+assert.match(websiteWorkspace.source,/previousSettings\.apply\(this,arguments\)/,'Website settings navigation delegates through the Phase 0 settings wrapper');
 assert.match(html,/window\.OWNLYBIZ_IS_STAGING=true/,'the staging identity fence remains present');
 assert.match(shim.source,/root\.OWNLYBIZ_API_URL \|\| root\._OB_BACKEND \|\| root\.OWNLY_API \|\| ''/,'new requests honor the existing runtime API fence without a production fallback');
 assert.match(shim.source,/current_password:currentPassword,new_password:newPassword/,'password request uses the backend contract');

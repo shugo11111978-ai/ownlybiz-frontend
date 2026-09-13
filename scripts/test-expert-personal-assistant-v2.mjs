@@ -22,6 +22,10 @@ const drawer = section(
   /<aside class="ob-guidance-drawer"[\s\S]*?<\/aside>/,
   'Personal Assistant drawer',
 );
+const phase1Styles = section(
+  /<style id="ownlybiz-expert-phase1-ux-20260913-style">([\s\S]*?)<\/style>/,
+  'Phase 1 Personal Assistant styles',
+);
 const assistantActions = section(
   /var ASSISTANT_ACTIONS=\{[\s\S]*?\n  \};/,
   'closed Personal Assistant action catalog',
@@ -180,6 +184,11 @@ assert(readableHistoryTimestamp.length > 10, 'Unix seconds are expanded into a l
 assert.notEqual(readableHistoryTimestamp, '1789317433', 'raw Unix seconds are never rendered to the user');
 assert.equal(assistantHistoryTimestamp('not-a-date'), '', 'invalid history dates fail closed instead of exposing raw values');
 assert.match(phase1, /date\.textContent=assistantHistoryTimestamp\(item\.updated_at \|\| item\.created_at\)/);
+assert.match(
+  phase1Styles,
+  /\.ob-guidance-history-list small\{color:rgba\(250,247,242,\.52\);font-size:10px\}/,
+  'history timestamps remain readable at normal-text contrast and size on the dark drawer',
+);
 assert.match(phase1, /function refreshConversationHistoryIfOpen\(\)[\s\S]*?history && !history\.hidden \? loadConversationHistory\(true\)/, 'only an open History panel refreshes immediately');
 assert.match(phase1, /createConversation\(operation,null\)\.then\(function\(\)\{ refreshConversationHistoryIfOpen\(\)/, 'starting a new conversation refreshes an already-open History panel');
 assert.match(phase1, /if\(data && Array\.isArray\(data\.suggestions\)\) renderStarters\(starterPrompts\(data\)\);\s*refreshConversationHistoryIfOpen\(\);/, 'a completed turn refreshes an already-open History panel');

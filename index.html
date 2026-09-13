@@ -20604,14 +20604,96 @@ function obPublicPreloadedExpert(slug) {
   if(Array.isArray(payload.packages) && !Array.isArray(copy.packages)) copy.packages = payload.packages;
   return copy;
 }
+var obPublicRenderLifecycle = { generation:0, current:null };
+function obPublicNormalizedExpertSlug(value) {
+  value = String(value == null ? '' : value).trim().toLowerCase();
+  return /^[a-z0-9][a-z0-9-]{0,80}$/i.test(value) ? value : '';
+}
+function obPublicPayloadExpertSlug(expert, requestedSlug) {
+  expert = (expert && expert.expert) || expert || {};
+  return obPublicNormalizedExpertSlug(expert.slug || expert.user_slug || requestedSlug);
+}
+function obPublicLocationExpertSlug() {
+  var querySlug = '';
+  try { querySlug = new URLSearchParams(location.search || '').get('expert') || ''; } catch(e) {}
+  querySlug = obPublicNormalizedExpertSlug(querySlug);
+  if(querySlug) return querySlug;
+  var host = String(location.hostname || '').trim().toLowerCase();
+  var ownlybizSubdomain = host.match(/^([a-z0-9][a-z0-9-]{0,80})\.ownlybiz\.com$/i);
+  if(ownlybizSubdomain && ownlybizSubdomain[1] !== 'www') return obPublicNormalizedExpertSlug(ownlybizSubdomain[1]);
+  var path = String(location.pathname || '').replace(/^\/+|\/+$/g, '');
+  if(path === 'terms' || path === 'privacy' || path.indexOf('legal/') === 0) return '';
+  var platformHost = !host || host === 'ownlybiz.com' || host === 'www.ownlybiz.com' || host === 'localhost' || host === '127.0.0.1' || host.indexOf('vercel.app') >= 0;
+  var first = obPublicNormalizedExpertSlug(path.split('/')[0] || '');
+  if(platformHost) return first && !(window.obIsPlatformRouteRoot && window.obIsPlatformRouteRoot(first)) ? first : '';
+  return obPublicNormalizedExpertSlug(window._browseExpert || window._currentExpertSlug || (window._currentExpert && window._currentExpert.slug));
+}
+function obPublicExpertSurfaceActive() {
+  if(obPublicLocationExpertSlug()) return true;
+  var host = String(location.hostname || '').trim().toLowerCase();
+  var path = String(location.pathname || '').replace(/^\/+|\/+$/g, '');
+  var platformHost = !host || host === 'ownlybiz.com' || host === 'www.ownlybiz.com' || host === 'localhost' || host === '127.0.0.1' || host.indexOf('vercel.app') >= 0;
+  if(!platformHost && path !== 'terms' && path !== 'privacy' && path.indexOf('legal/') !== 0) return true;
+  return !!document.querySelector('#view-4.active');
+}
+function obPublicRenderIdentity() {
+  var context = window.OB_CLIENT_CONTEXT;
+  return {
+    principal:context && typeof context.principal === 'function' ? String(context.principal() || '') : '',
+    identityGeneration:context && typeof context.identityGeneration === 'function' ? Number(context.identityGeneration()) : 0,
+    credentialGeneration:context && typeof context.credentialGeneration === 'function' ? Number(context.credentialGeneration()) : 0
+  };
+}
+function obPublicExpertPayloadAccepted(expert, requestedSlug) {
+  if(!expert || !expert.name || !obPublicExpertSurfaceActive()) return false;
+  var payloadSlug = obPublicPayloadExpertSlug(expert, requestedSlug);
+  var requested = obPublicNormalizedExpertSlug(requestedSlug) || payloadSlug;
+  var routeSlug = obPublicLocationExpertSlug();
+  var activeSlug = routeSlug || obPublicNormalizedExpertSlug(window._browseExpert || window._currentExpertSlug);
+  if(payloadSlug && requested && payloadSlug !== requested) return false;
+  if(payloadSlug && activeSlug && payloadSlug !== activeSlug) return false;
+  if(typeof window.obPublicApplyAccepted === 'function' && !window.obPublicApplyAccepted(expert)) return false;
+  return !!payloadSlug;
+}
+function obBeginPublicExpertRender(expert, requestedSlug) {
+  if(!obPublicExpertPayloadAccepted(expert, requestedSlug)) return null;
+  var identity = obPublicRenderIdentity();
+  var operation = {
+    generation:++obPublicRenderLifecycle.generation,
+    slug:obPublicPayloadExpertSlug(expert, requestedSlug),
+    expert:expert,
+    principal:identity.principal,
+    identityGeneration:identity.identityGeneration,
+    credentialGeneration:identity.credentialGeneration
+  };
+  obPublicRenderLifecycle.current = operation;
+  return operation;
+}
+function obPublicExpertRenderCurrent(operation) {
+  if(!operation || operation !== obPublicRenderLifecycle.current || operation.generation !== obPublicRenderLifecycle.generation) return false;
+  if(window._currentExpert !== operation.expert || !obPublicExpertPayloadAccepted(operation.expert, operation.slug)) return false;
+  var identity = obPublicRenderIdentity();
+  return identity.principal === operation.principal && identity.identityGeneration === operation.identityGeneration && identity.credentialGeneration === operation.credentialGeneration;
+}
+function obSchedulePublicExpertStabilization(expert, operation) {
+  [0,80,260,700,1400].forEach(function(delay){
+    setTimeout(function(){
+      if(!obPublicExpertRenderCurrent(operation)) return;
+      if(typeof window.obStabilizePublicExpertExperience === 'function') window.obStabilizePublicExpertExperience(expert, operation);
+    }, delay);
+  });
+}
+window.obPublicExpertRenderCurrent = obPublicExpertRenderCurrent;
 function obApplyPublicExpertPayload(e, slug, source) {
-  if(!e || !e.name) return null;
+  var renderOperation = obBeginPublicExpertRender(e, slug);
+  if(!renderOperation) return null;
   e.chat_pm=e.rate_chat=window.OB_RATE_POLICY.ownerRate(e,'chat');
   e.voice_pm=e.rate_voice=window.OB_RATE_POLICY.ownerRate(e,'voice');
   e.video_pm=e.rate_video=window.OB_RATE_POLICY.ownerRate(e,'video');
   e.chat_free_min = e.chat_free_min || e.free_minutes || 0;
   if(source && Array.isArray(source.packages)) e.packages = source.packages;
   if(!Array.isArray(e.packages)) e.packages = [];
+  var marketplaceTransition = typeof window.obPreparePublicMarketplacePayload === 'function' ? window.obPreparePublicMarketplacePayload(e) : null;
   window._currentExpert = e;
   window._currentExpertId = e.user_id || e.id;
   window._currentExpertSlug = e.slug || slug;
@@ -20626,6 +20708,8 @@ function obApplyPublicExpertPayload(e, slug, source) {
     if(source && Array.isArray(source.reviews)) window.obRenderPublicReviews({expert:e,reviews:source.reviews});
     else if(Array.isArray(e.reviews)) window.obRenderPublicReviews({expert:e,reviews:e.reviews});
   }
+  if(typeof window.obFinalizePublicMarketplacePayload === 'function') window.obFinalizePublicMarketplacePayload(marketplaceTransition);
+  obSchedulePublicExpertStabilization(e, renderOperation);
   if(typeof window._markRouteReady === 'function') window._markRouteReady('public');
   return e;
 }
@@ -33371,11 +33455,12 @@ window._handleRTCMessage=function(d){
 				    var reserved = window.obPlatformRouteRoots || {};
 	    return q.has('expert') || !!document.querySelector('#view-4.active') || (/^[^.]+\.ownlybiz\.com$/i.test(host) && host !== 'www.ownlybiz.com') || (host && host !== 'ownlybiz.com' && host !== 'www.ownlybiz.com' && host !== 'localhost' && host !== '127.0.0.1' && host.indexOf('vercel.app') < 0) || (!!firstPath && !reserved[firstPath]);
   }
-  function publicExpertPayloadOwner(){
-    var context = window.OB_CLIENT_CONTEXT;
-    return context && typeof context.principal === 'function' ? String(context.principal() || 'public') : 'public';
-  }
-  function storeExpertPayload(data){
+	  function publicExpertPayloadOwner(){
+	    var context = window.OB_CLIENT_CONTEXT;
+	    return context && typeof context.principal === 'function' ? String(context.principal() || 'public') : 'public';
+	  }
+	  var cachedExpertApplied = false;
+	  function storeExpertPayload(data){
     if(!data || !data.name) return;
     try {
       sessionStorage.setItem('ob_last_expert_payload', JSON.stringify({
@@ -33385,7 +33470,8 @@ window._handleRTCMessage=function(d){
     } catch(e) {}
   }
   function applyCachedExpert(){
-    if(!window._applyExpertWebsite) return;
+    if(cachedExpertApplied) return;
+    if(typeof window.obApplyPublicExpertPayload !== 'function') return;
     if(!isPublicExpertRoute()) return;
     try {
       var raw = sessionStorage.getItem('ob_last_expert_payload');
@@ -33395,59 +33481,18 @@ window._handleRTCMessage=function(d){
       var data = record.expert;
       var slug = currentPublicSlug();
       if(slug && data.slug && String(data.slug) !== String(slug)) return;
-      window._currentExpert = Object.assign(window._currentExpert || {}, data);
-      window._currentExpertSlug = data.slug || window._currentExpertSlug;
-      window._applyExpertWebsite(data);
-      sanitizePlaceholders(data);
-      applyAvailability(data);
+      cachedExpertApplied = !!window.obApplyPublicExpertPayload(data, data.slug || slug, {packages:data.packages || []});
     } catch(e) {}
   }
 
-  function wrapPublicRenderers(){
-    var apply = window._applyExpertWebsite;
-    if(apply && !apply._obProductionExperienceWrapped){
-      window._applyExpertWebsite = function(data){
-        if(!isPublicExpertRoute()) return apply.apply(this, arguments);
-        var renderOwner = publicExpertPayloadOwner();
-        if(data){
-          CHANNELS.forEach(function(ch){ data[ch + '_enabled'] = enabledFlag(data[ch + '_enabled'], 1); });
-          window._currentExpert = Object.assign(window._currentExpert || {}, data);
-          storeExpertPayload(data);
-        }
-        var ret = apply.apply(this, arguments);
-        [0,80,260,700,1400].forEach(function(ms){
-          setTimeout(function(){
-            if(publicExpertPayloadOwner() !== renderOwner) return;
-            sanitizePlaceholders(data);
-            applyAvailability(data);
-          }, ms);
-        });
-        return ret;
-      };
-      window._applyExpertWebsite._obProductionExperienceWrapped = true;
-    }
-    var refresh = window._refreshPublicPage;
-    if(refresh && !refresh._obProductionExperienceWrapped){
-      window._refreshPublicPage = function(data){
-        var ret = refresh.apply(this, arguments);
-        if(data) storeExpertPayload(data);
-        sanitizePlaceholders(data);
-        applyAvailability(data);
-        return ret;
-      };
-      window._refreshPublicPage._obProductionExperienceWrapped = true;
-    }
-    var freeCopy = window.obRefreshPublicFreeMinuteCopy;
-    if(freeCopy && !freeCopy._obProductionExperienceWrapped){
-      window.obRefreshPublicFreeMinuteCopy = function(data){
-        var ret = freeCopy.apply(this, arguments);
-        sanitizePlaceholders(data);
-        applyAvailability(data);
-        return ret;
-      };
-      window.obRefreshPublicFreeMinuteCopy._obProductionExperienceWrapped = true;
-    }
-  }
+	  window.obStabilizePublicExpertExperience = function(data, operation){
+	    if(!data || !operation || typeof window.obPublicExpertRenderCurrent !== 'function' || !window.obPublicExpertRenderCurrent(operation)) return false;
+	    CHANNELS.forEach(function(ch){ data[ch + '_enabled'] = enabledFlag(data[ch + '_enabled'], 1); });
+	    storeExpertPayload(data);
+	    sanitizePlaceholders(data);
+	    applyAvailability(data);
+	    return true;
+	  };
 
   function wrapSessionEntrypoints(){
     var select = window.selectStype;
@@ -33587,7 +33632,6 @@ window._handleRTCMessage=function(d){
 
   function init(){
     installSaveHandlers();
-    wrapPublicRenderers();
     wrapSessionEntrypoints();
     wrapPaymentStatus();
     wrapLoaders();

@@ -71,10 +71,32 @@ assert.deepEqual(new Set(presets.map((item) => item.template_id)), new Set(['own
 assert.deepEqual(new Set(presets.map((item) => item.renderer_family)), new Set(['practice-focus', 'field-journal']), 'two genuinely separate renderer families exist');
 assert(presets.every((item) => ['warm', 'ocean', 'forest', 'midnight'].includes(item.palette_id)), 'every preset uses a backend-supported palette ID');
 assert(presets.every((item) => item.name && item.variant && item.description.length > 45), 'every template has meaningful original copy');
-for (const preset of presets) assert(styles.includes(`[data-preset="${preset.id}"]`) || styles.includes(`ob-site-preset-${preset.id}`), `${preset.id} has a deliberate preview or public renderer treatment`);
+assert.equal(new Set(presets.map((item) => item.preview_image)).size, presets.length, 'every foundation has a distinct raster preview');
+for (const preset of presets) {
+  assert.match(preset.preview_image, /^\/assets\/website-templates\/[a-z0-9-]+\.jpg$/, `${preset.id} uses a bundled JPEG preview`);
+  assert(preset.preview_alt && preset.preview_alt.length > 35, `${preset.id} has meaningful preview alternative text`);
+  assert(Number.isInteger(preset.preview_width) && preset.preview_width > 1200, `${preset.id} declares its raster width`);
+  assert(Number.isInteger(preset.preview_height) && preset.preview_height > 800, `${preset.id} declares its raster height`);
+  const asset = fs.readFileSync(new URL(`..${preset.preview_image}`, import.meta.url));
+  assert.equal(asset.subarray(0, 3).toString('hex'), 'ffd8ff', `${preset.id} preview has a JPEG start signature`);
+  assert.equal(asset.subarray(-2).toString('hex'), 'ffd9', `${preset.id} preview has a JPEG end signature`);
+  assert(asset.length > 100_000 && asset.length < 500_000, `${preset.id} preview has a sensible high-resolution payload`);
+}
 assert.match(styles, /ob-site-template-practice-focus/);
 assert.match(styles, /ob-site-template-field-journal/);
 assert.match(styles, /ob-site-preset-field-journal-dark/);
+assert.match(styles, /\.ob-ww-template-grid\{display:grid;gap:18px;grid-template-columns:repeat\(2,minmax\(0,1fr\)\)\}/, 'normal desktop and tablet layouts use two readable template columns');
+assert.match(styles, /@container \(min-width:1320px\)\{\.ob-ww-template-grid\{grid-template-columns:repeat\(3,minmax\(0,1fr\)\)\}\}/, 'only a truly wide Website content area expands to three columns');
+assert.match(styles, /@media\(max-width:760px\)\{[\s\S]*?\.ob-ww-template-grid\{grid-template-columns:1fr\}/, 'mobile presents one large template per row');
+assert.match(styles, /\.ob-ww-template-preview\{aspect-ratio:1586\/992;[\s\S]*?object-fit:cover/, 'raster previews keep their authored viewport shape');
+assert.match(runtime, /<article class="ob-ww-template" role="listitem"/, 'template cards use non-interactive article containers');
+assert.match(runtime, /data-template-action="preview"/, 'each template exposes a distinct Preview action');
+assert.match(runtime, /data-template-action="use"[\s\S]*?aria-pressed="false">Use foundation/, 'each template exposes an explicit selectable action');
+assert.match(runtime, /card\.setAttribute\('data-selected'[\s\S]*?use\.setAttribute\('aria-pressed'/, 'current foundation state is both visibly and semantically updated');
+assert.match(runtime, /data-template-action'\) === 'preview'\) showTemplatePreview\(presetId\)[\s\S]*?data-template-action'\) === 'use'\) selectPreset\(presetId\)/, 'only the explicit Use action selects a foundation');
+assert.match(runtime, /loading="lazy" decoding="async"/, 'template rasters use lazy decoding');
+assert.match(runtime, /width="'\+Number\(item\.preview_width[\s\S]*?height="'\+Number\(item\.preview_height/, 'template images carry fixed intrinsic dimensions');
+assert.doesNotMatch(runtime + styles, /ob-ww-mini-(?:photo|copy|action)/, 'schematic mini placeholders are completely removed');
 assert.match(runtime, /state\.selectedPreset=preset\.id/);
 assert.match(runtime, /markDirty\(\);return designForPreset/, 'template selection becomes an explicit unsaved website change');
 
@@ -85,6 +107,14 @@ function sourceOf(name, nextName) {
   assert(end > start, `${nextName} must follow ${name}`);
   return runtime.slice(start, end).trim();
 }
+
+const selectPresetSource = sourceOf('selectPreset', 'renderSummary');
+assert.doesNotMatch(selectPresetSource, /saveWebsiteWorkspace|requestJson|fetch\s*\(/, 'using a foundation never saves it automatically');
+const templatePreviewSource = sourceOf('showTemplatePreview', 'showDraftPreview');
+assert.match(templatePreviewSource, /image\.src=item\.preview_image/, 'card Preview opens the authored high-resolution raster');
+assert.match(templatePreviewSource, /frame\.hidden=true/, 'card Preview does not show the generic draft renderer');
+assert.doesNotMatch(templatePreviewSource, /state\.|selectPreset|markDirty|saveWebsiteWorkspace|requestJson|fetch\s*\(/, 'previewing a foundation cannot select, dirty, save, or request data');
+assert.match(runtime, /design direction; your content stays yours/, 'template preview explains that the visual is a design direction');
 
 const normalizeBaseSource = sourceOf('normalizeBase', 'nonProductionEnvironment');
 const nonProductionSource = sourceOf('nonProductionEnvironment', 'resolveApiBase');

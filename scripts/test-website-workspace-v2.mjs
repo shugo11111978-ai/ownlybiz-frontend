@@ -203,6 +203,11 @@ assert.match(styles, /body\.ob-ui-light #view-3 #db-panel-website-editor \.ob-ww
 assert.match(styles, /body\.ob-ui-light #view-3 #db-panel-website-editor \.ob-ww-status\{color:var\(--ob-ww-muted\)\}/, 'Website status copy remains readable in light mode');
 assert.match(styles, /:is\(\.ob-ww-eyebrow,\.ob-ww-template-family\)\{color:#4f6219!important\}/, 'light-mode foreground accents use readable Ownlybiz olive instead of lime');
 assert.match(
+  styles,
+  /\.ob-ww-surface :is\(input,textarea,select,\.settings-field-input\)::placeholder\{color:rgba\(250,247,242,\.52\)!important\}/,
+  'dark-mode Website placeholders retain normal-text contrast on dark inputs',
+);
+assert.match(
   html,
   /data-ob-panel="website-view" onclick="_openMyWebsite\(\)"/,
   'the global View Website navigation keeps using the authoritative live-site opener',

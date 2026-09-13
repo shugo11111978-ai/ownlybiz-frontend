@@ -6,6 +6,8 @@
   var stores = new Map(), views = [], sockets = new WeakSet(), downloads = new Map();
   var currentKey = '', settingsOwner = null, settings = null, settingsBusy = false;
   var savedPageY = null, frame = 0, fetchTick = 0, observer, historyView = null, historyReturnFocus = null;
+  var photoViewer = null, photoHistory = null, retiredPhotoHistory = new Map();
+  var PHOTO_HISTORY_KEY = '__obSessionPhotoViewerV1';
   var SUPPORTED = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
   var ACCEPT = '.jpg,.jpeg,.png,.webp,.pdf,image/jpeg,image/png,image/webp,application/pdf';
   function text(value) { return value == null ? '' : String(value); }
@@ -130,6 +132,7 @@
     store.draft = null;
   }
   function reset() {
+    closePhoto(false);
     closeHistory(false);
     stores.forEach(function (store) { discard(store); store.sequence++; }); stores.clear();
     downloads.forEach(function (entry) { if (entry.url) root.URL.revokeObjectURL(entry.url); if (entry.controller) entry.controller.abort(); }); downloads.clear();
@@ -183,32 +186,120 @@
     var expected = endpoint(store) + '/' + encodeURIComponent(text(file.id)) + '/content';
     if (text(file.content_path) !== expected) { if (status) status.textContent = 'This file link is unavailable.'; return; }
     var key = store.key + '|' + file.id, cached = downloads.get(key);
-    if (cached && cached.url) { if (imageNode) imageNode.src = cached.url; else saveBlob(cached.url, file.name); return; }
-    if (cached && cached.promise) { await cached.promise; if (current(store) && cached.url) { if (imageNode) imageNode.src = cached.url; else saveBlob(cached.url, file.name); } return; }
+    if (cached && cached.url) { if (imageNode && imageNode.isConnected) imageNode.src = cached.url; else if (!imageNode) saveBlob(cached.url, file.name); return; }
+    if (cached && cached.promise) { var result = await cached.promise; if (current(store) && !expire(file) && cached.url) { if (imageNode && imageNode.isConnected) imageNode.src = cached.url; else if (!imageNode) saveBlob(cached.url, file.name); } return result; }
     var controller = new AbortController(), entry = {controller: controller}; downloads.set(key, entry);
     var abort = function () { controller.abort(); }; if (store.owner.signal) store.owner.signal.addEventListener('abort', abort, {once: true});
     var timer = setTimeout(abort, 30000);
     entry.promise = (async function () {
       try {
         var response = await root.fetch(base() + expected, {headers: {'Authorization': 'Bearer ' + store.owner.token}, signal: controller.signal, cache: 'no-store'});
-        if (!response.ok) throw new Error(response.status === 410 ? 'This file has expired.' : 'Could not download. Try again.');
+        if (!response.ok) { var failure = new Error(response.status === 410 ? 'This file has expired.' : 'Could not download. Try again.'); failure.status = response.status; throw failure; }
         var blob = await response.blob(); if (!current(store)) return;
         if (expire(file)) throw new Error('This file has expired.');
         if (blob.size > 20971520 || blob.size === 0) throw new Error('This file is unavailable.');
         entry.url = root.URL.createObjectURL(blob);
         if (imageNode && imageNode.isConnected) imageNode.src = entry.url; else if (!imageNode) saveBlob(entry.url, file.name);
         if (status) status.textContent = '';
-      } catch (error) { downloads.delete(key); if (current(store) && status) status.textContent = error.message || 'Could not download. Try again.'; }
+      } catch (error) { downloads.delete(key); var problem = {error: error.message || 'Could not download. Try again.', expired: error.status === 410 || expire(file)}; if (current(store) && status) status.textContent = problem.error; return problem; }
       finally { clearTimeout(timer); if (store.owner.signal) store.owner.signal.removeEventListener('abort', abort); entry.promise = null; }
     })();
-    await entry.promise;
+    return await entry.promise;
   }
   function saveBlob(url, name) { var link = make('a'); link.href = url; link.download = text(name || 'session-file'); link.rel = 'noopener'; doc.body.appendChild(link); link.click(); link.remove(); }
+  function photoStateId(state) { return state && typeof state === 'object' ? text(state[PHOTO_HISTORY_KEY]) : ''; }
+  function samePhotoState(left, right) { try { return JSON.stringify(left) === JSON.stringify(right); } catch (_) { return false; } }
+  function retirePhotoHistory(entry) {
+    if (!entry) return;
+    retiredPhotoHistory.set(entry.id, entry);
+    if (retiredPhotoHistory.size > 20) retiredPhotoHistory.delete(retiredPhotoHistory.keys().next().value);
+  }
+  function destroyPhoto(restoreFocus) {
+    var viewer = photoViewer; if (!viewer) return;
+    photoViewer = null; clearTimeout(viewer.expiryTimer); viewer.image.removeAttribute('src'); viewer.overlay.remove();
+    viewer.background.forEach(function (item) { if (item.el.isConnected) item.el.inert = item.inert; });
+    if (restoreFocus !== false && projected(viewer.view, viewer.store) && viewer.returnFocus && viewer.returnFocus.isConnected) viewer.returnFocus.focus({preventScroll: true});
+  }
+  function closePhoto(restoreFocus) {
+    destroyPhoto(restoreFocus);
+    var entry = photoHistory; if (!entry || entry.closing) return;
+    if (root.location.href !== entry.url || photoStateId(root.history.state) !== entry.id) { retirePhotoHistory(entry); photoHistory = null; return; }
+    entry.closing = true;
+    try { root.history.back(); }
+    catch (_) { root.history.replaceState(entry.baseState, '', entry.url); retirePhotoHistory(entry); photoHistory = null; }
+  }
+  function photoPopState(event) {
+    var entry = photoHistory, arrived = photoStateId(event.state);
+    if (entry && root.location.href === entry.url && !arrived && samePhotoState(event.state, entry.baseState)) {
+      // Only consume our own same-document viewer entry, before the legacy route handlers.
+      event.stopImmediatePropagation(); photoHistory = null; retirePhotoHistory(entry); destroyPhoto(true); return;
+    }
+    if (entry) { photoHistory = null; retirePhotoHistory(entry); destroyPhoto(false); }
+    var retired = retiredPhotoHistory.get(arrived);
+    if (retired && root.location.href === retired.url) {
+      // Forward never reopens a private image or reroutes the live conversation.
+      if (ownerKey(owner()) === retired.ownerKey) event.stopImmediatePropagation();
+      root.history.replaceState(retired.baseState, '', retired.url);
+    }
+  }
+  function photoCurrent(viewer) {
+    return photoViewer === viewer && projected(viewer.view, viewer.store) && visible(viewer.view.host) && !expire(viewer.file) && viewer.store.attachments.some(function (file) { return text(file.id) === text(viewer.file.id) && !expire(file); });
+  }
+  function fitPhoto() {
+    if (!photoViewer) return;
+    var vv = root.visualViewport, style = photoViewer.overlay.style;
+    style.top = (vv ? vv.offsetTop : 0) + 'px'; style.left = (vv ? vv.offsetLeft || 0 : 0) + 'px';
+    style.width = (vv ? vv.width || root.innerWidth : root.innerWidth) + 'px'; style.height = (vv ? vv.height : root.innerHeight) + 'px';
+  }
+  async function loadPhoto(viewer, retry) {
+    if (!photoCurrent(viewer)) return;
+    viewer.status.textContent = 'Loading photo…'; viewer.retry.hidden = true; viewer.image.hidden = true;
+    if (retry) {
+      var key = viewer.store.key + '|' + viewer.file.id, cached = downloads.get(key);
+      if (cached && !cached.promise) { if (cached.url) root.URL.revokeObjectURL(cached.url); downloads.delete(key); }
+      viewer.image.removeAttribute('src');
+    }
+    var result = await download(viewer.store, viewer.file, viewer.image, viewer.status);
+    if (!photoCurrent(viewer)) return;
+    if (!viewer.image.getAttribute('src')) { viewer.status.textContent = result && result.error || 'Could not load this photo. Try again.'; viewer.retry.hidden = !!(result && result.expired); }
+  }
+  function openPhoto(view, store, file, returnFocus) {
+    if (!projected(view, store) || expire(file) || text(file.mime).indexOf('image/') !== 0 || (photoHistory && photoHistory.closing)) return;
+    if (photoViewer) destroyPhoto(false);
+    if (!photoHistory) {
+      var entry = {id: 'photo-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2), url: root.location.href, baseState: root.history.state, ownerKey: ownerKey(store.owner), closing: false};
+      var state = Object.assign({}, entry.baseState && typeof entry.baseState === 'object' ? entry.baseState : {}); state[PHOTO_HISTORY_KEY] = entry.id;
+      // Keep this synchronous in the photo click gesture, including while its private fetch is pending.
+      try { root.history.pushState(state, '', entry.url); photoHistory = entry; } catch (_) { /* The visible close control still works if history is unavailable. */ }
+    }
+    var overlay = make('div', 'ob-photo-viewer ob-files-ui'), dialog = make('section', 'ob-photo-viewer-dialog');
+    dialog.setAttribute('role', 'dialog'); dialog.setAttribute('aria-modal', 'true'); dialog.setAttribute('aria-labelledby', 'ob-photo-viewer-title');
+    var header = make('header', 'ob-photo-viewer-header');
+    var close = button(view.readonly ? '← Close photo' : view.media ? '← Back to session' : '← Back to chat', function () { closePhoto(true); }, 'ob-photo-viewer-close');
+    header.appendChild(close); var title = make('div', 'ob-photo-viewer-title', file.name); title.id = 'ob-photo-viewer-title'; header.appendChild(title); dialog.appendChild(header);
+    var body = make('div', 'ob-photo-viewer-body'), image = make('img', 'ob-photo-viewer-image'); image.alt = text(file.name); image.hidden = true; body.appendChild(image);
+    var feedback = make('div', 'ob-photo-viewer-feedback'), status = make('p', 'ob-photo-viewer-status', 'Loading photo…'); status.setAttribute('role', 'status'); feedback.appendChild(status);
+    var retry = button('Try again', function () { loadPhoto(viewer, true); }, 'ob-photo-viewer-retry'); retry.hidden = true; feedback.appendChild(retry); body.appendChild(feedback); dialog.appendChild(body); overlay.appendChild(dialog);
+    var viewer = {overlay: overlay, image: image, status: status, retry: retry, view: view, store: store, file: file, returnFocus: returnFocus || doc.activeElement, background: []}; photoViewer = viewer;
+    Array.from(doc.body.children).forEach(function (el) { if (!/^(SCRIPT|STYLE|LINK)$/.test(el.tagName)) { viewer.background.push({el: el, inert: el.inert}); el.inert = true; } });
+    doc.body.appendChild(overlay); fitPhoto();
+    image.addEventListener('load', function () { if (photoCurrent(viewer)) { image.hidden = false; status.textContent = ''; retry.hidden = true; } });
+    image.addEventListener('error', function () { if (photoCurrent(viewer)) { image.hidden = true; status.textContent = 'Could not display this photo. Try again.'; retry.hidden = false; } });
+    overlay.addEventListener('click', function (event) { if (event.target === body || event.target === overlay) closePhoto(true); });
+    overlay.addEventListener('wheel', function (event) { if (!event.ctrlKey) event.preventDefault(); }, {passive: false});
+    overlay.addEventListener('keydown', function (event) {
+      if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closePhoto(true); }
+      if (event.key === 'Tab') { var controls = retry.hidden ? [close] : [close, retry], index = controls.indexOf(doc.activeElement); if ((event.shiftKey && index <= 0) || (!event.shiftKey && (index < 0 || index === controls.length - 1))) { event.preventDefault(); controls[event.shiftKey ? controls.length - 1 : 0].focus({preventScroll: true}); } }
+    });
+    var remaining = time(file.expires_at) - Date.now(); if (remaining > 0 && remaining < 2147483647) viewer.expiryTimer = setTimeout(function () { if (photoViewer === viewer) closePhoto(false); }, remaining);
+    close.focus({preventScroll: true}); loadPhoto(viewer, false);
+  }
   function tile(view, store, file) {
     var row = make('div', 'ob-file-tile ob-msg-row'); row._obFileExpired = expire(file); row.dataset.obAttachmentId = text(file.id); row.dataset.obSentAt = text(time(file.created_at)); row.dataset.mine = String(text(file.sender_id) === ownId(store.owner));
     row.classList.add(row.dataset.mine === 'true' ? 'ob-msg-mine' : 'ob-msg-theirs');
-    var bubble = make('div', 'ob-msg-bubble'), control = button('', function () { download(store, file, null, status); });
-    control.setAttribute('aria-label', 'Download ' + text(file.name)); control.disabled = expire(file);
+    var isPhoto = text(file.mime).indexOf('image/') === 0;
+    var bubble = make('div', 'ob-msg-bubble'), control = button('', function () { if (isPhoto) openPhoto(view, store, file, control); else download(store, file, null, status); });
+    control.setAttribute('aria-label', (isPhoto ? 'View photo ' : 'Download ') + text(file.name)); control.disabled = expire(file);
     var image;
     if (text(file.mime).indexOf('image/') === 0 && !expire(file)) { image = make('img', 'ob-file-image'); image.alt = text(file.name); image.loading = 'lazy'; control.appendChild(image); }
     else control.appendChild(make('span', 'ob-file-icon', text(file.mime) === 'application/pdf' ? 'PDF' : 'PHOTO'));
@@ -294,6 +385,7 @@
   }
   function project(view, store) {
     if (view.key !== (store && store.key || '')) {
+      if (photoViewer && photoViewer.view === view) closePhoto(false);
       if (view.store && view.store.draft) discard(view.store);
       if (view.store) view.store.selectionError = '';
       view.tiles.forEach(function (el) { if (el._obFileObserver) el._obFileObserver.disconnect(); el.remove(); }); view.tiles.clear(); view.draft.hidden = true; view.pick.hidden = true;
@@ -328,6 +420,7 @@
   }
   function closeHistory(restoreFocus) {
     if (!historyView) return;
+    if (photoViewer && photoViewer.view === historyView) closePhoto(false);
     var view=historyView; historyView=null;
     view.tiles.forEach(function(tile){if(tile._obFileObserver)tile._obFileObserver.disconnect();});
     views=views.filter(function(item){return item!==view;}); view.host.remove();
@@ -380,6 +473,7 @@
       project(view, eligible ? selected : null);
     });
     if (selected && views.some(function (view) { return view.store === selected && visible(view.host); })) load(selected, false);
+    if (photoViewer && !photoCurrent(photoViewer)) closePhoto(false);
     watchSockets(); scheduleViewport();
   }
   function fitMediaDrawer(screen) {
@@ -393,6 +487,7 @@
   }
   function viewport() {
     frame = 0; var context = owner(), screen = doc.querySelector('#view-5 .phone-screen.active');
+    fitPhoto();
     var enabled = context && context.role === 'client' && active(context) && visible(node('view-5')) && screen && /^(screen-A3|screen-A4|screen-B3|screen-VID)$/.test(screen.id);
     var mobile = root.matchMedia('(max-width:768px), (max-height:500px) and (pointer:coarse)').matches;
     doc.querySelectorAll('.ob-conversation-screen,.ob-session-media-screen,.ob-media-compact').forEach(function (el) { if (el !== screen) { setClass(el, 'ob-conversation-screen', false); setClass(el, 'ob-session-media-screen', false); setClass(el, 'ob-media-compact', false); } });
@@ -416,6 +511,7 @@
   }
   function scheduleViewport() { if (!frame) frame = root.requestAnimationFrame(viewport); }
   function boot() {
+    if (!root.__obPhotoNavigationEarly) root.addEventListener('popstate', photoPopState, true);
     ['paid-chat-input', 'free-chat-input', 'expert-chat-input'].forEach(function (id) {
       var input = node(id); bindComposer(input);
       var log = node(id.replace('-input', '-messages'));
@@ -430,7 +526,7 @@
     if (root.MutationObserver) { observer = new MutationObserver(function () { scheduleViewport(); }); ['view-5', 'db-panel-live-session'].forEach(function (id) { var target = node(id); if (target) observer.observe(target, {attributes: true, attributeFilter: ['class'], subtree: true}); }); }
     sync(); fetchTick = root.setInterval(function () { if (!doc.hidden) sync(); }, 1000);
   }
-  root.OBSessionConversation = {beforeAppend: beforeAppend, afterAppend: afterAppend, handleEvent: event, refresh: sync, openHistory: openHistory};
-  if (root.__OB_TEST_HOOKS__) root.__OB_TEST_HOOKS__.sessionConversation = {validate: validate, viewForRole:viewForRole, beforeAppend: beforeAppend, afterAppend: afterAppend, ownerCurrent: ownerCurrent, active: active, reset: reset, stores: stores, get views(){return views;}, sync: sync, viewport: viewport, captureFile: captureFile, upload: upload, cancel: cancel, load: load, download: download};
+  root.OBSessionConversation = {beforeAppend: beforeAppend, afterAppend: afterAppend, handleEvent: event, refresh: sync, openHistory: openHistory, handlePhotoNavigation: photoPopState};
+  if (root.__OB_TEST_HOOKS__) root.__OB_TEST_HOOKS__.sessionConversation = {validate: validate, viewForRole:viewForRole, beforeAppend: beforeAppend, afterAppend: afterAppend, ownerCurrent: ownerCurrent, active: active, reset: reset, stores: stores, get views(){return views;}, get photoViewer(){return photoViewer;}, sync: sync, viewport: viewport, captureFile: captureFile, upload: upload, cancel: cancel, load: load, download: download, openPhoto: openPhoto, closePhoto: closePhoto};
   if (doc.readyState === 'loading') doc.addEventListener('DOMContentLoaded', boot, {once: true}); else boot();
 })(window);

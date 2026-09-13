@@ -345,7 +345,15 @@ assert(html.includes('id="ob-expert-ai-auto-send-consent"'), 'Automatic AI Chat 
 assert(html.includes("api('/ai/expert-chat/consent',{method:'PUT',body:body,token:owner.token,signal:owner.signal})"), 'Automatic AI Chat consent must use its dedicated endpoint under the exact captured expert');
 assert(html.includes('Human Reply Assistant choices do not change it.'), 'Automatic AI Chat consent must explain that human drafting settings cannot change it');
 
-assert((html.match(/ownlybiz-backend-production\.up\.railway\.app/g) || []).length > 0, 'production frontend must retain the production backend host');
-assert.equal((html.match(/victorious-wisdom-production-a6b0\.up\.railway\.app/g) || []).length, 0, 'production frontend must not reference the staging backend host');
+const isStagingBuild=/window\.OWNLYBIZ_IS_STAGING\s*=\s*true/.test(html);
+const productionHostCount=(html.match(/ownlybiz-backend-production\.up\.railway\.app/g) || []).length;
+const stagingHostCount=(html.match(/victorious-wisdom-production-a6b0\.up\.railway\.app/g) || []).length;
+if(isStagingBuild){
+  assert(stagingHostCount > 0, 'staging frontend must retain the staging backend host');
+  assert.equal(productionHostCount, 0, 'staging frontend must not reference the production backend host');
+}else{
+  assert(productionHostCount > 0, 'production frontend must retain the production backend host');
+  assert.equal(stagingHostCount, 0, 'production frontend must not reference the staging backend host');
+}
 
 console.log(`AI Control Center frontend smoke passed: ${parsedScripts}/${scriptTags.length} executable scripts parsed, feature model selects, dedicated keys, presets, advanced endpoint, usage table, and staging host boundary.`);

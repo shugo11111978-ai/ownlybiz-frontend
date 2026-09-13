@@ -16,8 +16,9 @@ assert(shim.index>html.indexOf('ownlybiz-expert-live-workspace-20260817'),'Phase
 const laterInlineScripts=[...html.slice(shim.end).matchAll(/<script(?![^>]+src=)[^>]*id=["']([^"']+)["'][^>]*>/gi)].map((match)=>match[1]);
 assert.deepEqual(laterInlineScripts,['ownlybiz-website-workspace-v2-runtime'],'only the reviewed Website workspace may extend the Phase 0 wrappers');
 const websiteWorkspace=scriptById('ownlybiz-website-workspace-v2-runtime');
-assert.match(websiteWorkspace.source,/previousDb\.apply\(this,arguments\)/,'Website navigation delegates through the Phase 0 dashboard wrapper');
-assert.match(websiteWorkspace.source,/previousSettings\.apply\(this,arguments\)/,'Website settings navigation delegates through the Phase 0 settings wrapper');
+assert.doesNotMatch(websiteWorkspace.source,/previousDb|previousSettings|\.apply\(this,arguments\)/,'Website owns no dashboard or settings wrapper chain');
+assert.match(websiteWorkspace.source,/function syncWebsitePanelLifecycle\(\)/,'Website has an explicit panel lifecycle');
+assert.match(websiteWorkspace.source,/navigationObserver\.observe\(dashboard,\{attributes:true,attributeFilter:\['class'\],childList:true,subtree:true\}\)/,'Website observes only canonical expert-dashboard state');
 assert.match(html,/window\.OWNLYBIZ_IS_STAGING=true/,'the staging identity fence remains present');
 assert.match(shim.source,/root\.OWNLYBIZ_API_URL \|\| root\._OB_BACKEND \|\| root\.OWNLY_API \|\| ''/,'new requests honor the existing runtime API fence without a production fallback');
 assert.match(shim.source,/current_password:currentPassword,new_password:newPassword/,'password request uses the backend contract');

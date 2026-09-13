@@ -19624,7 +19624,9 @@ function _stars(r){ var s=Math.round(r||0); return s>0?('\u2605'.repeat(s)+'\u26
   window.setExpertOnlineStatus = function(isOnline) {
     if(_origSOS) _origSOS.call(this, isOnline);
     var badge = document.getElementById('hero-status-badge');
-    if(badge) badge.textContent = isOnline ? '\uD83D\uDFE2 1 expert online now' : '\uD83D\uDD34 Expert is currently offline';
+    var statusText = document.getElementById('hero-status-text');
+    if(statusText) statusText.textContent = isOnline ? 'Expert is online · Available now' : 'Expert is currently offline';
+    else if(badge) badge.textContent = isOnline ? '\uD83D\uDFE2 1 expert online now' : '\uD83D\uDD34 Expert is currently offline';
   };
 })();
 
@@ -19632,36 +19634,76 @@ function _stars(r){ var s=Math.round(r||0); return s>0?('\u2605'.repeat(s)+'\u26
 function _refreshPublicPage(e) {
   if(!e || !e.name) return;
 
+  // A late response for the previous public route must not repaint the shared
+  // shell after the visitor has navigated to another expert.
+  if(typeof window.obPublicApplyAccepted === 'function' && !window.obPublicApplyAccepted(e)) return;
+
+  function publicText(value){ return String(value == null ? '' : value).trim(); }
+  var websiteContent={};
+  try { websiteContent=typeof e.website_content === 'string' ? JSON.parse(e.website_content) : (e.website_content || {}); } catch(err) {}
+  var title=publicText(e.title || websiteContent.title);
+  var bio=publicText(e.bio || websiteContent.short_intro || websiteContent.bio);
+  var aboutText=publicText(e.about_text);
+  var tagline=publicText(e.hero_tagline || websiteContent.hero_tagline);
+  var rating=Number(e.avg_rating);
+  if(!Number.isFinite(rating) || rating < 0) rating=0;
+  var rCount=Math.max(0,parseInt(e.review_count,10) || 0);
+
   // Title - 3 placements
   ['expert-hero-title','about-page-sub','booking-expert-title'].forEach(function(cls){
     document.querySelectorAll('.'+cls).forEach(function(el){
-      if(cls==='booking-expert-title') el.textContent = e.title ? (e.title+' \u00B7 '+(e.avg_rating||0).toFixed(1)+' \u2605') : el.textContent;
-      else el.textContent = e.title || el.textContent;
+      if(cls==='booking-expert-title') el.textContent=title+(title && rCount ? ' \u00B7 '+rating.toFixed(1)+' \u2605' : '');
+      else el.textContent=title;
     });
   });
 
-  // Bio - expert-about-strip and bare <p> inside ep-about
+  // The about strip is optional. Clear and collapse it when the current expert
+  // has no tagline or short bio instead of retaining the prior expert's copy.
+  var stripCopy=tagline || bio;
   document.querySelectorAll('.expert-about-strip').forEach(function(el){
-    if(!e.bio) return;
     var p = el.querySelector('p') || document.createElement('p');
-    p.textContent = e.bio;
+    p.textContent = stripCopy ? '"'+stripCopy+'"' : '';
     if(!p.parentNode) el.appendChild(p);
+    el.style.display=stripCopy ? '' : 'none';
   });
+
+  // Rebuild the biography as a complete snapshot. This also prevents stale
+  // paragraphs and credentials when a later payload intentionally clears them.
   var aboutSection = document.getElementById('ep-about');
-  if(aboutSection){
-    var bioPara = aboutSection.querySelector('p');
-    if(bioPara && e.bio) bioPara.textContent = e.bio;
+  var aboutBody=aboutSection && aboutSection.querySelector('#ew-about-bio');
+  if(aboutBody){
+    while(aboutBody.firstChild) aboutBody.removeChild(aboutBody.firstChild);
+    (aboutText ? aboutText.split(/\n\s*\n/) : []).filter(function(paragraph){ return paragraph.trim(); }).forEach(function(paragraph){
+      var p=document.createElement('p');p.textContent=paragraph.trim();aboutBody.appendChild(p);
+    });
+    var credentials=[];
+    try { credentials=Array.isArray(e.credentials) ? e.credentials : JSON.parse(e.credentials || '[]'); } catch(err) {}
+    if(!Array.isArray(credentials)) credentials=[];
+    if(credentials.length){
+      var list=document.createElement('div');list.className='creds-list';
+      credentials.forEach(function(credential){
+        credential=credential || {};
+        var row=document.createElement('div');row.className='cred-item';
+        var icon=document.createElement('div');icon.className='cred-icon';icon.textContent=publicText(credential.icon) || '•';
+        row.appendChild(icon);row.appendChild(document.createTextNode(' '+publicText(credential.text)));list.appendChild(row);
+      });
+      aboutBody.appendChild(list);
+    }
   }
 
   // Rating display
-  var rating = e.avg_rating || 0;
-  var rCount = e.review_count || 0;
   var ratingTxt = rCount > 0 ? ('\u2605\u2605\u2605\u2605\u2605 '+rating.toFixed(1)+' \u00B7 '+rCount+' reviews') : 'No reviews yet';
   var credTxt = rCount > 0 ? ('\u2B50 '+rating.toFixed(1)+' rating across '+rCount+' client reviews') : 'No reviews yet';
-  document.querySelectorAll('.expert-stars').forEach(function(el){ el.textContent = ratingTxt; });
-  document.querySelectorAll('.cred-item').forEach(function(el){
-    if(el.textContent.indexOf('rating') > -1 || el.textContent.indexOf('review') > -1) el.textContent = credTxt;
+  document.querySelectorAll('.expert-stars').forEach(function(el){
+    var reviewCount=el.querySelector('.hero-review-count');
+    if(reviewCount){
+      reviewCount.textContent=rCount > 0 ? rating.toFixed(1)+' · '+rCount+' reviews' : 'No reviews yet';
+      if(el.firstChild && el.firstChild.nodeType === 3) el.firstChild.nodeValue=rCount > 0 ? '\u2605\u2605\u2605\u2605\u2605 ' : '';
+      else el.insertBefore(document.createTextNode(rCount > 0 ? '\u2605\u2605\u2605\u2605\u2605 ' : ''),reviewCount);
+      el.setAttribute('aria-label',ratingTxt);
+    } else el.textContent=ratingTxt;
   });
+  document.querySelectorAll('.about-rating-text').forEach(function(el){ el.textContent=credTxt; });
   // ep-reviews section summary
   var epRev = document.getElementById('ep-reviews');
   if(epRev){
@@ -19675,7 +19717,9 @@ function _refreshPublicPage(e) {
   var chatPm=window.OB_RATE_POLICY.ownerRate(e,'chat');
   var voicePm=window.OB_RATE_POLICY.ownerRate(e,'voice');
   var videoPm=window.OB_RATE_POLICY.ownerRate(e,'video');
-  var freeMins = e.chat_free_min || e.free_minutes || 0;
+  var freeMinsRaw=e.chat_free_min != null ? e.chat_free_min : e.free_minutes;
+  var freeMins=Number(freeMinsRaw);
+  if(!Number.isFinite(freeMins) || freeMins < 0) freeMins=0;
   // Public website copy should show the expert's configured offer.
   // Client-specific eligibility is controlled by the session returned by the backend.
 
@@ -19718,17 +19762,20 @@ function _refreshPublicPage(e) {
 
   // hero-status-badge
   var heroBadge = document.getElementById('hero-status-badge');
-  if(heroBadge) heroBadge.textContent = e.is_online ? '\uD83D\uDFE2 1 expert online now' : '\uD83D\uDD34 Expert is currently offline';
+  var heroStatusText=document.getElementById('hero-status-text');
+  if(heroStatusText) heroStatusText.textContent=e.is_online ? 'Expert is online · Available now' : 'Expert is currently offline';
+  else if(heroBadge) heroBadge.textContent = e.is_online ? '\uD83D\uDFE2 1 expert online now' : '\uD83D\uDD34 Expert is currently offline';
 
   // nav-logo-text
   var navText = document.getElementById('nav-logo-text');
-  if(navText && e.name) navText.textContent = e.name;
+  if(navText){ navText.textContent=publicText(e.name);navText.style.display=''; }
 
   // Testimonials / reviews on public page
   var testiInner = document.querySelector('.testimonials-inner');
+  var noRevMsgs=document.querySelectorAll('.no-reviews-msg');
   if(testiInner && rCount === 0){
     testiInner.style.display = 'none';
-    var noRevMsg = document.querySelector('.no-reviews-msg');
+    var noRevMsg = noRevMsgs[0];
     if(!noRevMsg){
       var msg = document.createElement('div');
       msg.className='no-reviews-msg';
@@ -19738,13 +19785,12 @@ function _refreshPublicPage(e) {
     }
   } else if(testiInner && rCount > 0){
     testiInner.style.display='';
+    noRevMsgs.forEach(function(message){ message.remove(); });
   }
 
   // Packages on public page
-  var pkgSection = document.querySelector('.packages-section,[id*="ep-packages"]');
-  if(pkgSection && (!e.packages || e.packages.length === 0)){
-    pkgSection.style.display = 'none';
-  }
+  var packages=Array.isArray(e.packages) ? e.packages : [];
+  document.querySelectorAll('.packages-section,[id*="ep-packages"]').forEach(function(pkgSection){ pkgSection.style.display=packages.length ? '' : 'none'; });
 
   // Calendar current month
   var calLabel = document.getElementById('cal-month-label');
@@ -19977,7 +20023,14 @@ function _applyOnlineUI(on) {
   if (nl) { nl.textContent = on ? "LIVE" : "OFFLINE"; nl.style.color = on ? "rgb(34,197,94)" : "rgb(156,163,175)"; }
   // hero-status-badge on expert website
   var hero = document.getElementById("hero-status-badge");
-  if (hero) hero.textContent = on ? "\uD83D\uDFE2 1 expert online now" : "\uD83D\uDD34 Expert is currently offline";
+  var heroText = document.getElementById("hero-status-text");
+  var heroDot = hero && hero.querySelector('div');
+  if (heroText) heroText.textContent = on ? "Expert is online · Available now" : "Expert is currently offline";
+  if (heroDot) heroDot.style.background = on ? "rgb(34,197,94)" : "rgb(156,163,175)";
+  if (hero) {
+    hero.style.background = on ? "rgba(34,197,94,.12)" : "rgba(156,163,175,.12)";
+    hero.style.borderColor = on ? "rgba(34,197,94,.3)" : "rgba(156,163,175,.3)";
+  }
   // SIDEBAR: .db-online-text and .db-online-dot
   var dbTxt = document.querySelector(".db-online-text");
   var dbDot = document.querySelector(".db-online-dot");
@@ -20922,14 +20975,17 @@ setTimeout(function(){
 (function(){
   var _origRPP = window._refreshPublicPage;
   window._refreshPublicPage = function(e) {
-    // Run original first
-    if(_origRPP) _origRPP.call(this, e);
     if(!e || !e.name) return;
+    if(typeof window.obPublicApplyAccepted === 'function' && !window.obPublicApplyAccepted(e)) return;
+    // Run the complete base refresh only after the route has accepted this
+    // payload; the booking decorations below share the same authorization.
+    if(_origRPP) _origRPP.call(this, e);
 
     var chatPm=window.OB_RATE_POLICY.ownerRate(e,'chat');
     var voicePm=window.OB_RATE_POLICY.ownerRate(e,'voice');
     var videoPm=window.OB_RATE_POLICY.ownerRate(e,'video');
-    var freeMins = e.chat_free_min || e.free_minutes || 0;
+    var freeMins = Number(e.chat_free_min != null ? e.chat_free_min : e.free_minutes);
+    if(!Number.isFinite(freeMins) || freeMins < 0) freeMins=0;
   // Public website copy should show the configured offer.
   // Client-specific billing eligibility is controlled by the backend session.
     var name     = e.name || '';
@@ -20957,7 +21013,7 @@ setTimeout(function(){
 
     // #bov-connect-title ("Connecting you to [Name]...")
     var ct = document.getElementById('bov-connect-title');
-    if(ct && name) ct.textContent = 'Connecting you to '+name+'...';
+    if(ct) ct.textContent = 'Connecting you to '+name+'...';
 
     // #bov-connect-sub
     var cs = document.getElementById('bov-connect-sub');
@@ -20965,30 +21021,11 @@ setTimeout(function(){
 
     // bov-channel-name: "Chat with [Name]"
     var bcn = document.getElementById('bov-channel-name');
-    if(bcn && name) bcn.textContent = 'Chat with '+name;
+    if(bcn) bcn.textContent = 'Chat with '+name;
 
     // bov-pay-explainer: payment method guidance before the real session authorization.
     var bpe = document.getElementById('bov-pay-explainer');
-    if(bpe && name && typeof window.obSetPayPerMinuteDisclosure === 'function') window.obSetPayPerMinuteDisclosure(bpe, name);
-
-    // .expert-footer-disclaimer and .expert-footer-copy
-    document.querySelectorAll('.expert-footer-disclaimer').forEach(function(el){
-      if(el.textContent.indexOf('operates as') > -1) {
-        el.textContent = '\u2696\uFE0F '+name+' operates as an independent professional.';
-      }
-    });
-
-    // Inline text nodes with "Sarah" - swap with real name
-    if(name && name !== 'Expert') {
-      // "This is a live, on-demand session. If Expert is online..."
-      // "Expert is currently online..."
-      // "Confirmation sent to your email. Expert will see..."
-      Array.from(document.querySelectorAll('.book-permin-panel *,.bov-steps *,.booking-overlay *')).forEach(function(el){
-        if(el.children.length === 0 && el.textContent.includes('Sarah')) {
-          el.textContent = el.textContent.replace(/Expert/g, name).replace(/\bSarah\b/g, name.split(' ')[0]);
-        }
-      });
-    }
+    if(bpe && typeof window.obSetPayPerMinuteDisclosure === 'function') window.obSetPayPerMinuteDisclosure(bpe, name);
   };
 })();
 // === END v15 ===
@@ -21861,86 +21898,118 @@ window._applyExpertWebsite = function _applyExpertWebsite(data) {
   var wc = {};
   try { wc = typeof data.website_content === 'string' ? JSON.parse(data.website_content) : (data.website_content || {}); } catch(e) {}
 
+  // Treat every payload as a complete render, not a sparse DOM patch. Public
+  // expert routes reuse this shell, so a missing value must remove the previous
+  // expert's value instead of leaving it visible for the next expert.
+  function _ewText(value){ return String(value == null ? '' : value).trim(); }
+  function _ewSetText(selector, value){
+    document.querySelectorAll(selector).forEach(function(el){ el.textContent = value; });
+  }
+  function _ewShow(el, visible){ if(el) el.style.display = visible ? '' : 'none'; }
+  function _ewSetContactRow(rowId, valueId, value){
+    var row=document.getElementById(rowId),node=document.getElementById(valueId),text=_ewText(value);
+    if(node) node.textContent=text;
+    _ewShow(row,!!text);
+  }
+  var expertName=_ewText(data.name || data.display_name || wc.name);
+  var expertTitle=_ewText(data.title || wc.title);
+  var expertBio=_ewText(data.bio || wc.short_intro || wc.bio);
+  _ewSetText('.ep-expert-name,.expert-public-name,.expert-hero-name,[data-ep="name"]',expertName);
+  _ewSetText('.ep-expert-title,.expert-public-title,.expert-hero-title,.about-page-sub,.booking-expert-title,[data-ep="title"]',expertTitle);
+  _ewSetText('.ep-expert-bio,.expert-public-bio,[data-ep="bio"]',expertBio);
+  _ewSetText('.booking-expert-name',expertName);
+  var navIdentity=document.getElementById('nav-logo-text');
+  if(navIdentity){ navIdentity.textContent=expertName;navIdentity.style.display=''; }
+
   // Hero quote
   var quoteEl = document.getElementById('ew-hero-quote');
-  if (quoteEl && data.hero_tagline) quoteEl.textContent = '"' + data.hero_tagline + '"';
+  var heroTagline=_ewText(data.hero_tagline || wc.hero_tagline);
+  var stripCopy=heroTagline || expertBio;
+  if (quoteEl) quoteEl.textContent = stripCopy ? '"' + stripCopy + '"' : '';
+  var aboutStrip=document.querySelector('.expert-about-strip');
+  _ewShow(aboutStrip,!!stripCopy);
 
   // Hero CTA
   var ctaEl = document.getElementById('ew-hero-cta');
-  if (ctaEl && wc.hero_cta) ctaEl.textContent = '⚡ ' + wc.hero_cta;
+  var heroCta=_ewText(wc.hero_cta) || 'Start Session Now';
+  if (ctaEl) ctaEl.textContent = '⚡ ' + heroCta;
+  var bottomCta=document.getElementById('bottom-cta-btn');
+  if(bottomCta) bottomCta.textContent='⚡ ' + heroCta + ' →';
 
   // About bio
+  var aboutText=_ewText(data.about_text);
   var bioEl = document.getElementById('ew-about-bio');
-  if (bioEl && data.about_text) {
-    var paragraphs = data.about_text.split(/\n\s*\n/).filter(function(p){ return p.trim(); });
-    bioEl.innerHTML = paragraphs.map(function(p){ return '<p>' + p.trim() + '</p>'; }).join('');
+  if (bioEl) {
+    var paragraphs = aboutText ? aboutText.split(/\n\s*\n/).filter(function(p){ return p.trim(); }) : [];
+    while(bioEl.firstChild) bioEl.removeChild(bioEl.firstChild);
+    paragraphs.forEach(function(paragraph){ var node=document.createElement('p');node.textContent=paragraph.trim();bioEl.appendChild(node); });
     // Re-append credentials after bio
     var creds = [];
-    try { creds = JSON.parse(data.credentials || '[]'); } catch(e) {}
+    try { creds = Array.isArray(data.credentials) ? data.credentials : JSON.parse(data.credentials || '[]'); } catch(e) {}
+    if(!Array.isArray(creds)) creds=[];
     if (creds.length) {
-      var credsHtml = '<div class="creds-list">' + creds.map(function(c) {
-        return '<div class="cred-item"><div class="cred-icon">' + c.icon + '</div> ' + c.text + '</div>';
-      }).join('') + '</div>';
-      bioEl.insertAdjacentHTML('beforeend', credsHtml);
+      var credsList=document.createElement('div');credsList.className='creds-list';
+      creds.forEach(function(c){
+        c=c || {};var row=document.createElement('div');row.className='cred-item';var icon=document.createElement('div');icon.className='cred-icon';icon.textContent=String(c.icon || '•');row.appendChild(icon);row.appendChild(document.createTextNode(' '+String(c.text || '')));credsList.appendChild(row);
+      });
+      bioEl.appendChild(credsList);
     }
   }
 
   // Footer — update ALL footers across expert pages
-  if (data.footer_text) {
-    document.querySelectorAll('.expert-footer-logo').forEach(function(el){
-      el.textContent = data.footer_text;
-    });
-    document.querySelectorAll('.expert-footer-copy').forEach(function(el){
-      el.textContent = '© ' + new Date().getFullYear() + ' ' + data.footer_text + '.';
-    });
-  }
-  if (wc.footer_disclaimer) {
-    document.querySelectorAll('.expert-footer-disclaimer').forEach(function(el){
-      el.textContent = '⚖️ ' + wc.footer_disclaimer;
-    });
-  }
+  var footerName=_ewText(data.footer_text) || expertName;
+  _ewSetText('.expert-footer-logo',footerName);
+  _ewSetText('.expert-footer-copy','© ' + new Date().getFullYear() + (footerName ? ' ' + footerName + '.' : ''));
+  var footerDisclaimer=_ewText(wc.footer_disclaimer) || ((expertName || 'This expert')+' operates as an independent professional. Services are provided solely by the expert.');
+  document.querySelectorAll('.expert-footer-disclaimer').forEach(function(el){
+    el.textContent='⚖️ ' + footerDisclaimer;
+    _ewShow(el,true);
+  });
 
   // About page title
   var atEl = document.getElementById('ew-about-title');
-  if (atEl && !wc.about_title && data.footer_text) atEl.textContent = 'About ' + data.footer_text.split(' ')[0];
+  var aboutTitle=_ewText(wc.about_title) || (expertName ? 'About ' + expertName.split(/\s+/)[0] : 'About');
+  if (atEl) atEl.textContent=aboutTitle;
 
   // Page visibility — hide/show nav links and page panels
   var pageMap = {about:'ep-about', services:'ep-services', reviews:'ep-reviews', contact:'ep-contact'};
-  var navLabels = {about:'About', services:'Services', reviews:'Reviews', contact:'Contact'};
   var pages = wc.pages || {};
+  var activePageWasHidden=false;
   Object.keys(pageMap).forEach(function(pg){
     var pageEl = document.getElementById(pageMap[pg]);
-    if (pageEl && pages[pg] === false) pageEl.style.display = 'none';
-    if (pageEl && pages[pg] !== false) pageEl.style.display = '';
-    // Hide/show nav links
-    // Hide nav links by text content
-    document.querySelectorAll('nav a, nav div, .expert-nav a').forEach(function(link){
-      var txt = link.textContent.trim();
-      if (txt === navLabels[pg]) link.style.display = pages[pg] === false ? 'none' : '';
+    var visible=pages[pg] !== false;
+    if(pageEl){ if(!visible && pageEl.classList && pageEl.classList.contains('active')) activePageWasHidden=true;_ewShow(pageEl,visible); }
+    document.querySelectorAll('#expert-site-links a[data-ob-expert-page="'+pg+'"],#expert-site-links a[data-nav-key="'+pg+'"]').forEach(function(link){
+      var navItem=link.parentElement && link.parentElement.tagName === 'LI' ? link.parentElement : link;
+      _ewShow(navItem,visible);
     });
   });
+  if(activePageWasHidden && typeof window.showExpertPage === 'function') window.showExpertPage('home');
 
   // Contact page content
-  if (wc.contact_heading) {
-    document.querySelectorAll('#ep-contact h1, .contact-heading').forEach(function(el){ el.textContent = wc.contact_heading; });
-  }
-  if (wc.contact_desc) {
-    document.querySelectorAll('.contact-sub, .contact-description').forEach(function(el){ el.textContent = wc.contact_desc; });
+  var contactHeading=_ewText(wc.contact_heading) || 'Get in Touch';
+  var contactDescription=_ewText(wc.contact_desc);
+  _ewSetText('#ep-contact h1, .contact-heading',contactHeading);
+  _ewSetText('.contact-sub, .contact-description',contactDescription);
   // Contact page dynamic fields
-  var _clv=document.getElementById('ew-contact-location-val'),_clr=document.getElementById('ew-contact-location-row');
-  if(wc.contact_location){if(_clv)_clv.textContent=wc.contact_location;var _cm=document.getElementById('ew-contact-map-val');if(_cm)_cm.textContent='\u{1F4CD} '+wc.contact_location;}
-  else if(_clr)_clr.style.display='none';
-  var _chv=document.getElementById('ew-contact-hours-val'),_chr=document.getElementById('ew-contact-hours-row');
-  if(wc.contact_hours){if(_chv)_chv.textContent=wc.contact_hours;}else if(_chr)_chr.style.display='none';
-  var _crv=document.getElementById('ew-contact-response-val'),_crr=document.getElementById('ew-contact-response-row');
-  if(wc.contact_response){if(_crv)_crv.textContent=wc.contact_response;}else if(_crr)_crr.style.display='none';
+  _ewSetContactRow('ew-contact-location-row','ew-contact-location-val',wc.contact_location);
+  _ewSetContactRow('ew-contact-hours-row','ew-contact-hours-val',wc.contact_hours);
+  _ewSetContactRow('ew-contact-response-row','ew-contact-response-val',wc.contact_response);
+  var _cm=document.getElementById('ew-contact-map-val'),_location=_ewText(wc.contact_location);
+  if(_cm){ _cm.textContent=_location ? '📍 '+_location : '';_ewShow(_cm,!!_location); }
   var _cev=document.getElementById('ew-contact-email-val'),_cer=document.getElementById('ew-contact-email-row');
-  if(wc.contact_email){if(_cev)_cev.innerHTML='<a href="mailto:'+wc.contact_email+'" style="color:var(--terra);">'+wc.contact_email+'</a>';}
-  else if(_cer)_cer.style.display='none';
-  }
-  if (wc.contact_email) {
-    document.querySelectorAll('.contact-email-display').forEach(function(el){ el.textContent = wc.contact_email; el.href = 'mailto:' + wc.contact_email; });
-  }
+  var _safeContactEmail=String(wc.contact_email || '').trim();
+  var _validContactEmail=/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(_safeContactEmail);
+  if(_cev) while(_cev.firstChild) _cev.removeChild(_cev.firstChild);
+  if(_validContactEmail && _cev){ var _emailLink=document.createElement('a');_emailLink.href='mailto:'+_safeContactEmail;_emailLink.textContent=_safeContactEmail;_emailLink.style.color='var(--terra)';_cev.appendChild(_emailLink); }
+  _ewShow(_cer,_validContactEmail);
+  document.querySelectorAll('.contact-email-display').forEach(function(el){
+    el.textContent=_validContactEmail ? _safeContactEmail : '';
+    if(_validContactEmail) el.setAttribute('href','mailto:'+_safeContactEmail);else el.removeAttribute('href');
+    _ewShow(el,_validContactEmail);
+  });
+  var contactDisclaimer=document.querySelector('.contact-disclaimer p');
+  if(contactDisclaimer) contactDisclaimer.textContent='⚖️ '+(expertName || 'This expert')+' operates as an independent professional. All services, communications, and advice are provided solely in an independent professional capacity and are not services, statements, or representations of Ownlybiz Inc.';
 
   // Services page rates from the same authoritative policy used by booking.
   if(data){
@@ -21953,66 +22022,53 @@ window._applyExpertWebsite = function _applyExpertWebsite(data) {
       if(i===2)el.innerHTML='$'+serviceVideoRate.toFixed(2)+'<span style="font-size:14px;color:var(--gray-400)">/min</span>';
     });
     // Homepage mini service cards
+    var freeMinutes=Number(data.chat_free_min != null ? data.chat_free_min : data.free_minutes);
+    if(!Number.isFinite(freeMinutes) || freeMinutes < 0) freeMinutes=0;
     document.querySelectorAll('.service-mini-price').forEach(function(el, i){
-      if(i===0)el.textContent='$'+serviceChatRate.toFixed(2)+'/min'+(data.free_minutes?' · '+data.free_minutes+' free':'');
+      if(i===0)el.textContent='$'+serviceChatRate.toFixed(2)+'/min'+(freeMinutes?' · '+freeMinutes+' free':'');
       if(i===1)el.textContent='$'+serviceVoiceRate.toFixed(2)+'/min'+((data.voice_free_min||data.free_minutes_voice)?' · '+(data.voice_free_min||data.free_minutes_voice)+' min free':'');
       if(i===2)el.textContent='$'+serviceVideoRate.toFixed(2)+'/min'+((data.video_free_min||data.free_minutes_video)?' · '+(data.video_free_min||data.free_minutes_video)+' min free':'');
     });
     // Free minutes tag
     document.querySelectorAll('.tag-free').forEach(function(el){
-      if (data.free_minutes) el.textContent = obMinuteText(data.free_minutes,'free');
-      else el.style.display = 'none';
-    });
-    // Free minutes description
-    document.querySelectorAll('.ew-free-desc').forEach(function(el){
-      if(data.free_minutes) el.textContent = 'First ' + obMinuteText(data.free_minutes) + ' apply on the first eligible started session.';
+      if (freeMinutes){ el.textContent = obMinuteText(freeMinutes,'free');el.style.display = ''; }
+      else { el.textContent='';el.style.display = 'none'; }
     });
   }
 
   // ═══ Nav labels ═══
   var nav = wc.nav_labels || {};
   var navMap = {home:'Home',about:'About',services:'Services',reviews:'Reviews',book:'Book a Session',contact:'Contact'};
-  var marketplaceNavMode = false;
-  try {
-    var navMp = data.marketplace_public || data.marketplace || null;
-    if(typeof navMp === 'string') navMp = JSON.parse(navMp || '{}');
-    marketplaceNavMode = !!(navMp && navMp.enabled !== false && navMp.enabled !== 0 && navMp.enabled !== '0' && Array.isArray(navMp.experts) && navMp.experts.filter(function(expert){ return String(expert && expert.status || 'active') === 'active'; }).length > 1);
-  } catch(e) {}
-  if(!marketplaceNavMode) {
-    Object.keys(navMap).forEach(function(key){
-      var label = nav[key] || navMap[key];
-      document.querySelectorAll('#expert-site-links a, .expert-site-links a').forEach(function(a){
-        if(a.textContent.trim()===navMap[key] || a.getAttribute('data-nav-key')===key){
-          a.textContent = label;
-          a.setAttribute('data-nav-key', key);
-        }
-      });
-    });
-  }
+  Object.keys(navMap).forEach(function(key){
+    var label = _ewText(nav[key]) || navMap[key];
+    document.querySelectorAll('#expert-site-links a[data-ob-expert-page="'+key+'"],#expert-site-links a[data-nav-key="'+key+'"]')
+      .forEach(function(a){ a.textContent=label;a.setAttribute('data-nav-key',key); });
+  });
 
   // ═══ About page title ═══
-  if(wc.about_title){
-    var atEl = document.getElementById('ew-about-title');
-    if(atEl) atEl.textContent = wc.about_title;
-  }
+  if(atEl) atEl.textContent=aboutTitle;
 
   // ═══ Services page content ═══
-  if(wc.svc_title){
-    document.querySelectorAll('#ep-services h1, .services-page-title').forEach(function(el){ el.textContent = wc.svc_title; });
-  }
-  if(wc.svc_subtitle){
-    document.querySelectorAll('.services-full-sub, .services-page-sub').forEach(function(el){ el.textContent = wc.svc_subtitle; });
-  }
+  _ewSetText('#ep-services h1, .services-page-title',_ewText(wc.svc_title) || 'Services & Rates');
+  _ewSetText('.services-full-sub, .services-page-sub',_ewText(wc.svc_subtitle));
   // Per-service descriptions
   var svcDescs = document.querySelectorAll('.service-big-desc');
-  if(wc.svc_chat_desc && svcDescs[0]) svcDescs[0].textContent = wc.svc_chat_desc;
-  if(wc.svc_voice_desc && svcDescs[1]) svcDescs[1].textContent = wc.svc_voice_desc;
-  if(wc.svc_video_desc && svcDescs[2]) svcDescs[2].textContent = wc.svc_video_desc;
+  if(svcDescs[0]){
+    var chatDescription=_ewText(wc.svc_chat_desc);
+    svcDescs[0].textContent=chatDescription;
+    if(chatDescription && freeMinutes) svcDescs[0].appendChild(document.createTextNode(' '));
+    var freeDescription=document.createElement('span');freeDescription.className='ew-free-desc';
+    freeDescription.textContent=freeMinutes ? 'First ' + obMinuteText(freeMinutes) + ' apply on the first eligible started session.' : '';
+    freeDescription.style.display=freeMinutes ? '' : 'none';
+    svcDescs[0].appendChild(freeDescription);
+  }
+  if(svcDescs[1]) svcDescs[1].textContent=_ewText(wc.svc_voice_desc);
+  if(svcDescs[2]) svcDescs[2].textContent=_ewText(wc.svc_video_desc);
 
   // ═══ Accent color ═══
   var _presetMap = {warm:'#C4622D', ocean:'#2b6cb0', forest:'#2d8a4e', sunset:'#d35400', midnight:'#5b21b6', rose:'#be185d', slate:'#475569', charcoal:'#374151'};
   var accentColor = data.theme_color || _presetMap[data.theme_preset] || '';
-  if(accentColor){
+  if(/^#[0-9a-f]{6}$/i.test(accentColor)){
     // Generate proper color variants from hex
     function _hexToHSL(hex){
       hex=hex.replace('#','');
@@ -22047,27 +22103,33 @@ window._applyExpertWebsite = function _applyExpertWebsite(data) {
         overlay.style.setProperty('--terra-dark', terraDark);
       }
     });
+  } else {
+    var expertSite = document.getElementById('view-4');
+    [expertSite,document.getElementById('booking-overlay'),document.getElementById('bfl-overlay')].forEach(function(target){
+      if(!target) return;
+      target.style.removeProperty('--terra');
+      target.style.removeProperty('--terra-light');
+      target.style.removeProperty('--terra-dark');
+    });
   }
 
   // ═══ Images ═══
-  if(wc.profile_image){
-    // Hero photo
-    var heroImg = document.getElementById('expert-photo-img');
-    if(heroImg) window.obSetPublicExpertImage(heroImg, wc.profile_image, '#expert-photo-emoji');
-    // About page photo
-    var aboutImg = document.getElementById('ew-about-photo');
-    if(aboutImg) window.obSetPublicExpertImage(aboutImg, wc.profile_image, '#view-4 .about-photo-emoji');
-    // Any .ep-avatar elements
-    document.querySelectorAll('.ep-avatar').forEach(function(el){
-      if(el.tagName==='IMG') window.obSetPublicExpertImage(el, wc.profile_image, '');
-    });
-  }
-  if(wc.logo_image){
-    var logoImg = document.getElementById('nav-logo-img-el');
-    var logoWrap = document.getElementById('nav-logo-img');
-    if(logoImg) window.obSetPublicExpertImage(logoImg, wc.logo_image, '', { hideParentWhenMissing:true });
-    if(logoWrap && window.obPublicExpertImageUrl(wc.logo_image)){ logoWrap.style.display = ''; }
-  }
+  var profileImage=_ewText(wc.profile_image || data.avatar_url);
+  // Hero photo
+  var heroImg = document.getElementById('expert-photo-img');
+  if(heroImg){ heroImg.alt=expertName ? expertName+' portrait' : '';window.obSetPublicExpertImage(heroImg,profileImage,'#expert-photo-emoji'); }
+  // About page photo
+  var aboutImg = document.getElementById('ew-about-photo');
+  if(aboutImg){ aboutImg.alt=expertName ? expertName+' portrait' : '';window.obSetPublicExpertImage(aboutImg,profileImage,'#view-4 .about-photo-emoji'); }
+  // Any .ep-avatar elements
+  document.querySelectorAll('.ep-avatar').forEach(function(el){
+    if(el.tagName==='IMG'){ el.alt=expertName ? expertName+' portrait' : '';window.obSetPublicExpertImage(el,profileImage,''); }
+  });
+  var logoImage=_ewText(wc.logo_image);
+  var logoImg = document.getElementById('nav-logo-img-el');
+  var logoWrap = document.getElementById('nav-logo-img');
+  if(logoImg){ logoImg.alt=expertName ? expertName+' logo' : '';window.obSetPublicExpertImage(logoImg,logoImage,'',{hideParentWhenMissing:true}); }
+  if(logoWrap) _ewShow(logoWrap,!!window.obPublicExpertImageUrl(logoImage));
   var faviconUrl =
     window.obPublicExpertImageUrl(wc.favicon_image) ||
     window.obPublicExpertImageUrl(wc.logo_image) ||
@@ -22076,6 +22138,7 @@ window._applyExpertWebsite = function _applyExpertWebsite(data) {
     window.obPublicExpertImageUrl(data.avatar_url) ||
     '';
   if(faviconUrl && window.obSetExpertFavicon) window.obSetExpertFavicon(faviconUrl);
+  else if(window.obResetPlatformFavicon) window.obResetPlatformFavicon();
 }
 
 // Wire into dbNav — load editor when tab opens

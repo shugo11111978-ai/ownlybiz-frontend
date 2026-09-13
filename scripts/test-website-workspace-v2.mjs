@@ -29,6 +29,10 @@ const contentPagesRuntime = section(
   /<script id="ownlybiz-content-pages-editor-20260522">([\s\S]*?)<\/script>/,
   'Custom content pages runtime',
 );
+const publicPageNavigationRuntime = section(
+  /function showExpertPage\(page\)\{[\s\S]*?\n\}\n\n\/\/ ===== CALENDAR/,
+  'Canonical public expert page navigation',
+);
 
 assert.equal((html.match(/id="ownlybiz-website-workspace-v2-runtime"/g) || []).length, 1, 'one Website workspace runtime is installed');
 assert.equal((html.match(/id="ob-guidance-drawer"/g) || []).length, 1, 'Website reuses the single Personal Assistant drawer');
@@ -58,7 +62,23 @@ assert.match(runtime, /setAttribute\('role','tabpanel'\)/);
 assert.match(runtime, /ArrowLeft','ArrowRight','Home','End/, 'tabs support standard keyboard navigation');
 assert.match(runtime, /obPhase1OpenGuidance/, 'Personal Assistant remains available inside Website');
 assert.match(runtime, /root\.obOpenWebsiteSurface=function/, 'assistant actions can open an exact Website surface');
-assert.match(runtime, /ownlybiz:website-surface/, 'surface changes are observable by contextual guidance');
+assert.match(runtime, /ownlybiz:surface-changed/, 'surface changes use the single canonical navigation lifecycle event');
+assert.doesNotMatch(runtime, /installNavigationWrappers|__obWebsiteWorkspaceV2Original|previousApply=root\._applyExpertWebsite/, 'Website integration uses direct lifecycle ownership rather than runtime function wrapping');
+assert.match(runtime, /function syncWebsitePanelLifecycle\(\)[\s\S]*?MutationObserver\(syncWebsitePanelLifecycle\)/, 'Website entry and exit follow authoritative dashboard panel state regardless of script load order');
+assert.match(runtime, /root\.obApplyWebsiteFoundation=function\(data,operation\)[\s\S]*?obPublicExpertRenderCurrent/, 'the canonical public renderer calls one generation-fenced Website foundation lifecycle');
+assert.match(html, /function obApplyPublicExpertPayload[\s\S]*?obApplyWebsiteFoundation\(e, renderOperation\)/, 'public template application is owned directly by the canonical expert payload renderer');
+assert.match(aiWebsiteRuntime, /window\.obRenderAiPublicExtras\s*=\s*renderAiPublicExtras/, 'AI-authored public sections expose one direct renderer lifecycle hook');
+assert.match(aiWebsiteRuntime, /function renderAiPublicExtras\(data,operation\)[\s\S]*?!operation[\s\S]*?obPublicExpertRenderCurrent\(operation\)/, 'the direct AI public renderer requires a current public-expert render generation');
+assert.doesNotMatch(aiWebsiteRuntime, /window\.(?:loadWebsiteEditor|_applyExpertWebsite|adminNav|adminTabSwitch)\s*=/, 'Website AI does not monkey-patch canonical Website, public renderer, or shared admin navigation functions');
+assert.doesNotMatch(aiWebsiteRuntime, /function wireWebsiteEditor\(/, 'Website AI integration uses explicit lifecycle calls instead of a wrapper installer');
+assert.doesNotMatch(aiWebsiteRuntime, /__obAi(?:Website|Assistant)Wrapped|old(?:Nav|Tab)\.apply\(this,\s*arguments\)/, 'Website AI contains no hidden shared-navigation wrapper path');
+assert.match(aiWebsiteRuntime, /item\.onclick = function\(event\)\{ if\(event\) event\.preventDefault\(\);showAdminAiPanel\(item\); \}/, 'the AI admin destination owns a direct bounded click action');
+assert.match(aiWebsiteRuntime, /window\.obEnsureWebsiteAi\s*=\s*ensureWebsiteAi/, 'Website AI exposes one direct editor lifecycle hook');
+assert.match(runtime, /panel\.classList\.contains\('active'\)[\s\S]*?root\.obEnsureWebsiteAi\(\)/, 'the canonical Website workspace invokes the AI lifecycle after its active surface is installed');
+assert.match(publicPageNavigationRuntime, /ownlybiz:expert-page-changed[\s\S]*?pageElement:requestedPage/, 'canonical public navigation publishes a page lifecycle event after activating the page');
+assert.doesNotMatch(contentPagesRuntime, /wrapShowExpertPage|window\.showExpertPage\s*=/, 'custom pages never replace or wrap canonical public navigation');
+assert.doesNotMatch(runtime + aiWebsiteRuntime + contentPagesRuntime, /previous(?:Db|Settings|Apply|Show|Load)|\.apply\(this,\s*arguments\)/, 'the complete Website feature uses direct lifecycle hooks rather than shared-function wrapping');
+assert.match(contentPagesRuntime, /addEventListener\('ownlybiz:expert-page-changed',\s*syncPublicPageMetadata\)/, 'custom-page metadata follows the canonical public page lifecycle event');
 assert.match(
   styles,
   /#db-panel-website-editor \.ob-website-workspace \.ob-ww-surface > \.we-tab-card\[data-we-tab\]\{display:block!important\}/,
@@ -263,7 +283,7 @@ assert.equal(
 assert.match(runtime, /custom_sections:clone\(existing\.custom_sections\)/, 'AI/custom sections are retained');
 
 const mergePagesSource = sourceOf('mergeCustomPages', 'collectCredentials');
-const mergePages = vm.runInNewContext(`(() => { ${mergePagesSource}; return mergeCustomPages; })()`, Object.create(null));
+const mergePages = vm.runInNewContext(`(() => { const clean=(value)=>String(value==null?'':value).replace(/[\\u0000-\\u001f\\u007f]/g,' ').replace(/\\s+/g,' ').trim(); ${mergePagesSource}; return mergeCustomPages; })()`, Object.create(null));
 const mergedPages = mergePages(
   [{ id: 'p1', title: 'Old', untouched: 'keep', sections: [{ id: 's1', image_alt: 'Keep alt', body: 'Old' }, { id: 's2', body: 'Second' }] }],
   [{ id: 'p1', title: 'New', sections: [{ id: 's1', body: 'New' }] }],
@@ -271,6 +291,21 @@ const mergedPages = mergePages(
 assert.equal(mergedPages[0].untouched, 'keep');
 assert.equal(mergedPages[0].sections[0].image_alt, 'Keep alt');
 assert.equal(mergedPages[0].sections[1].id, 's2', 'unmodeled server page sections survive editor round-trips');
+const completeNewPage = {
+  id: 'new-page',
+  slug: 'complete-guide',
+  title: 'Complete guide',
+  sections: Array.from({ length: 8 }, (_, index) => ({
+    id: `new-section-${index + 1}`,
+    type: ['story', 'feature', 'faq', 'list', 'quote', 'gallery', 'cta', 'resource'][index],
+    title: `Section ${index + 1}`,
+    body: `Body ${index + 1}`,
+    image_alt: `Image description ${index + 1}`,
+  })),
+};
+const mergedNewPage = mergePages([], [completeNewPage])[0];
+assert.equal(mergedNewPage.sections.length, 8, 'a new or duplicated eight-section page reaches the canonical Website save payload intact');
+assert.equal(JSON.stringify(mergedNewPage), JSON.stringify(completeNewPage), 'the save boundary preserves every field on every section of a newly created page');
 
 assert.match(runtime, /state\.legacyProfile=Object\.assign\(\{\},root\._websiteData \|\| \{\},state\.legacyProfile \|\| \{\}\)/, 'facade loading preserves rates and unrelated public-renderer profile fields');
 assert.doesNotMatch(runtime, /contact_email \|\| user\.email|wc\.contact_email \|\| user\.email/, 'private account email never becomes public contact implicitly');
@@ -356,6 +391,11 @@ for (const sectionClass of ['hero', 'story', 'services', 'proof', 'final', 'foot
 assert.match(draftPreviewSource, /doc\.navigation\.home[\s\S]*?doc\.navigation\.about[\s\S]*?doc\.navigation\.services[\s\S]*?doc\.navigation\.reviews[\s\S]*?doc\.navigation\.contact/, 'draft preview renders the expert navigation labels');
 assert.match(draftPreviewSource, /doc\.services\.chat_description[\s\S]*?doc\.services\.voice_description[\s\S]*?doc\.services\.video_description/, 'draft preview renders all supported service content');
 assert.match(draftPreviewSource, /doc\.media && doc\.media\.profile_image_url/, 'draft preview uses the expert portrait when one exists');
+assert.match(draftPreviewSource, /section\.image_url[\s\S]*?section\.image_alt/, 'draft preview renders a section image with its authored alternative text');
+assert.match(draftPreviewSource, /types=\{feature:[^}]*story:[^}]*faq:[^}]*list:[^}]*quote:[^}]*gallery:[^}]*cta:[^}]*resource:/, 'draft preview recognizes every editable section type');
+assert.match(draftPreviewSource, /custom-section section-'\+type[\s\S]*?data-section-type="'\+type/, 'draft preview projects the selected section type into a distinct semantic renderer');
+assert.match(draftPreviewSource, /templates=\{content:[^}]*article:[^}]*guide:[^}]*faq:[^}]*resource:/, 'draft preview recognizes every editable custom-page template');
+assert.match(draftPreviewSource, /custom-page template-'\+template[\s\S]*?data-page-template="'\+template/, 'draft preview projects the selected page template into a distinct composition');
 for (const templateId of Object.keys(expectedTemplateContracts)) {
   assert.match(draftPreviewSource, new RegExp(templateId.replaceAll('-', '\\-')), `draft preview contains a distinct ${templateId} composition branch`);
 }
@@ -384,6 +424,8 @@ const applyAiDraftSource = sourceOf('applyAiDraft', 'statusNode');
 assert.match(applyAiDraftSource, /expectedDraftVersion[\s\S]*?state\.editVersion/, 'the canonical draft independently validates AI preview freshness');
 assert.doesNotMatch(applyAiDraftSource, /doc\.custom_pages=wc\.ai_pages\.map/, 'partial AI page output can never replace the expert’s complete page collection');
 assert.match(runtime, /editVersion:state\.editVersion/, 'the Website workspace exposes a non-content freshness token to the AI editor');
+assert.match(runtime, /design:\{template_id:'ownly-practice-focus-v1'[\s\S]*?tokens:clone\(TEMPLATE_PRESETS\[0\]\.tokens\)/, 'a new website starts from the complete Practice Focus foundation, including its exact colors');
+assert.match(runtime, /keepsExpertColors=currentDesign\.template_id === preset\.template_id/, 'custom colors stay with the exact selected foundation and cannot leak between foundations that share a palette family');
 
 console.log('Website workspace v2 contract and environment-safety smoke passed.');
 console.log('Truthful IA, four complete renderers, authoritative gallery selection, facade CAS, full scriptless preview, Personal Assistant surfaces, plan/data preservation, and staging URL policy verified.');

@@ -116,9 +116,14 @@ assert.doesNotMatch(phase1, /next\.action_id\s*\|\|\s*launchNext\.action_id/, 'a
 assert.match(phase1, /onboardingStatus === 'not_started'\)\{ control\('Start guided setup'/, 'first-run onboarding keeps its dedicated guided-setup control');
 assert.match(
   phase1,
-  /if\(action\.panel === 'website-view'\)[\s\S]*?root\._openMyWebsite\(\)/,
-  'assistant View Website delegates to the authoritative global live-site opener even before Website loads',
+  /if\(action\.panel === 'website-view'\)\{\s*return openAssistantWebsite\(\);/,
+  'assistant View Website uses its exact-account fenced live-site opener',
 );
+assert.doesNotMatch(phase1, /root\._openMyWebsite\(\)/, 'assistant navigation never delegates to legacy mutable slug state');
+assert.match(phase1, /function assistantWebsiteCacheKey\(operation\)[\s\S]*?operation\.principal[\s\S]*?operation\.identityGeneration[\s\S]*?operation\.credentialGeneration/);
+assert.match(phase1, /assistantWebsiteSlugCache=Object\.create\(null\)/, 'identity teardown clears the account-scoped website slug cache');
+assert.match(phase1, /assistantWebsiteRequestController\.abort\(\)/, 'identity teardown aborts an in-flight website lookup');
+assert.match(phase1, /if\(generation !== guidanceGeneration \|\| !identityCurrent\(operation\)[\s\S]*?assistantWebsiteSlugCache\[cacheKey\]=slug;[\s\S]*?if\(generation !== guidanceGeneration \|\| !identityCurrent\(operation\)\) return;[\s\S]*?root\.open/, 'a stale account response is rejected before cache writes and window opening');
 assert.doesNotMatch(phase1, /raw\.(?:href|url)|action\.(?:href|url)|location\.href\s*=\s*(?:raw|action)/, 'server-returned locations are never followed');
 assert.match(phase1, /That destination is not available for this account\. No action was taken\./, 'unknown or unavailable IDs fail closed');
 
@@ -139,7 +144,9 @@ assert.match(phase1, /assistantRequestController\.abort\(\)/, 'new conversations
 assert.match(phase1, /exactCredential:true/, 'current credential fencing remains exact');
 assert.match(phase1, /changed:resumeGuidanceForIdentity/);
 assert.match(phase1, /credentialRotated:resumeGuidanceForIdentity/);
-assert.match(phase1, /installDashboardBootstrapResume\(\)/, 'dashboard loading also resumes a post-login bootstrap');
+assert.doesNotMatch(phase1, /installDashboardBootstrapResume|PersonalAssistantResumeWrapped|previousDbNav=root\.dbNav|previousSettingsNav=root\.settingsNav|previousWebsiteTab=root\.weTabSwitch/, 'Personal Assistant uses direct lifecycle observation rather than wrapping dashboard functions');
+assert.match(phase1, /function synchronizeNavigationState\(source\)[\s\S]*?scheduleAssistantBootstrap\(identity,true\)/, 'authoritative dashboard state resumes a post-login bootstrap without load-order hooks');
+assert.match(phase1, /ownlybiz:surface-changed/, 'Personal Assistant follows the single canonical surface lifecycle event');
 assert.match(phase1, /loadAssistantBootstrap\(true,allowAutoOpen !== false\)/, 'the resumed bootstrap may auto-open from authoritative onboarding state');
 
 const resumeDecisionSource = section(
@@ -190,7 +197,9 @@ assert.match(
   'history timestamps remain readable at normal-text contrast and size on the dark drawer',
 );
 assert.match(phase1, /function refreshConversationHistoryIfOpen\(\)[\s\S]*?history && !history\.hidden \? loadConversationHistory\(true\)/, 'only an open History panel refreshes immediately');
-assert.match(phase1, /createConversation\(operation,null\)\.then\(function\(\)\{ refreshConversationHistoryIfOpen\(\)/, 'starting a new conversation refreshes an already-open History panel');
+assert.match(phase1, /createConversation\(operation,null\)\.then\(function\(id\)[\s\S]*?startConversationView\(id\);[\s\S]*?refreshConversationHistoryIfOpen\(\)/, 'the current conversation changes only after the new saved conversation succeeds');
+assert.match(phase1, /personal_assistant_conversation_limit_reached[\s\S]*?Delete one from History[\s\S]*?current conversation is still here/i, 'the 100-conversation boundary preserves the current chat and explains recovery');
+assert.match(phase1, /personal_assistant_turn_limit_reached[\s\S]*?input\.value=question[\s\S]*?200 saved turns/, 'the 200-turn boundary restores the unsent question and explains recovery');
 assert.match(phase1, /if\(data && Array\.isArray\(data\.suggestions\)\) renderStarters\(starterPrompts\(data\)\);\s*refreshConversationHistoryIfOpen\(\);/, 'a completed turn refreshes an already-open History panel');
 
 assert.match(launch, /window\.ownlybizLaunchStatusSnapshot/);

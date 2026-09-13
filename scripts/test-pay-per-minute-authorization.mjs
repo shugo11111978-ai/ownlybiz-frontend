@@ -40,12 +40,12 @@ assert(publicExpertHelpersStart >= 0 && publicExpertHelpersStart < publicExpertL
 const publicExpertHelpersSource = html.slice(publicExpertHelpersStart, publicExpertLoaderStart);
 const publicExpertLoaderSource = html.slice(publicExpertLoaderStart, publicExpertLoaderEnd);
 const storedPublicExpertCacheStart = html.indexOf('function publicExpertPayloadOwner()');
-const storedPublicExpertCacheEnd = html.indexOf('function wrapPublicRenderers()', storedPublicExpertCacheStart);
+const storedPublicExpertCacheEnd = html.indexOf('function wrapSessionEntrypoints()', storedPublicExpertCacheStart);
 assert(storedPublicExpertCacheStart >= 0 && storedPublicExpertCacheEnd > storedPublicExpertCacheStart,
   'principal-owned stored public-expert cache is installed');
 const storedPublicExpertCacheSource = html.slice(storedPublicExpertCacheStart, storedPublicExpertCacheEnd);
-assert(html.includes('if(publicExpertPayloadOwner() !== renderOwner) return;'),
-  'delayed public-expert render callbacks are fenced to their originating principal');
+assert(html.includes('if(!obPublicExpertRenderCurrent(operation)) return;'),
+  'delayed public-expert render callbacks are fenced by the canonical render operation');
 const stagingAuthKeyStart = html.indexOf('function authKey(input, init)');
 const stagingAuthKeyEnd = html.indexOf('function readUrl(input)', stagingAuthKeyStart);
 assert(stagingAuthKeyStart >= 0 && stagingAuthKeyEnd > stagingAuthKeyStart,

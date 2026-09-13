@@ -29,7 +29,7 @@ assert.equal(hooks.viewForRole({expert:true,media:true,host:{closest:()=>({})},l
 function block(input,start,end){const i=input.indexOf(start),j=input.indexOf(end,i);assert(i>=0&&j>i,start);return input.slice(i,j);}
 for(const [start,end] of [
  ['  function applyClientSessionUi(sess){','  function syncClientSession(sid){'],
- ['  window.clientEndSession = function(){','  function bindExpertChatControls(){'],
+ ['  window.clientEndSession = function(){','  function stopExpertTimerKeepDisplay(){'],
  ["  var KEY = 'ob_chat_outbox_v2';",'<\/script>'],
  ['  function _setupPC(startContext){','  function _sendOffer(']
 ]){if(start.includes('_setupPC'))continue;assert.equal(block(html,start,end),block(baseline,start,end),start+' remains byte-identical');}

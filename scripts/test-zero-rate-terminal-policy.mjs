@@ -169,8 +169,10 @@ assert.equal(bflStripeLoads, 0);
 const terminal = ['cancelled', 'ended', 'completed', 'failed', 'expired', 'declined', 'no_show'];
 assert.deepEqual(Array.from(statuses.terminalStatuses), terminal,
   'the exact backend terminal vocabulary is shared');
-assert.equal(statuses.isTerminal('canceled'), false,
-  'one-l canceled is not silently promoted into the backend contract');
+assert.equal(statuses.normalize('canceled'), 'cancelled',
+  'one-l canceled is normalized once into the canonical backend vocabulary');
+assert.equal(statuses.isTerminal('canceled'), true,
+  'one-l canceled is terminal everywhere through the shared policy');
 
 const nonWsSurfaces = ['poll', 'get', 'reload', 'end-response', 'end-reconcile', 'scheduled-join'];
 for (const source of nonWsSurfaces) {

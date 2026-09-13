@@ -83,8 +83,8 @@ contrastCheck('Light disabled state', '6f6259', 'eee4da');
 contrastCheck('Expert Email Center light status', '245b26', 'eef7e6');
 contrastCheck('Expert Email Center light provider link', '803615', 'fffdf8');
 
-check('production backend constant remains present', html.includes('https://ownlybiz-backend-production.up.railway.app'));
-check('staging backend is not introduced into production', !html.includes('https://victorious-wisdom-production-a6b0.up.railway.app'));
+check('staging backend constant remains present', html.includes('https://victorious-wisdom-production-a6b0.up.railway.app'));
+check('production backend is not introduced into staging', !html.includes('https://ownlybiz-backend-production.up.railway.app'));
 
 if (failures.length) {
   console.error(`Dashboard theme-system smoke failed (${failures.length}):`);

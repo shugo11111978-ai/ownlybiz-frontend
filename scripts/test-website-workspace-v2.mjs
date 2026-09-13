@@ -207,6 +207,11 @@ assert.match(runtime, /View live site/);
 assert.match(runtime, /Save draft/);
 assert.match(runtime, /Preview draft/);
 assert.match(runtime, /Publish website/);
+assert.match(runtime, /var templateBusy=state\.saving \|\| state\.loading \|\| state\.compatibility/, 'foundation changes are disabled while website state is loading, saving, or read-only');
+assert.match(runtime, /\[data-template-action="use"\][\s\S]*?button\.disabled=templateBusy/, 'Use foundation controls reflect the busy/read-only state');
+assert.match(runtime, /function selectPreset\(id\)\{\s*if\(state\.loading \|\| state\.saving \|\| state\.compatibility\) return false;/, 'foundation selection also fails closed against programmatic busy-state changes');
+assert.match(styles, /\.ob-ww-template-media:focus-visible\{outline-offset:-4px\}/, 'the image preview focus ring stays visible inside the clipped card');
+assert.match(styles, /@media\(prefers-reduced-motion:reduce\)[\s\S]*?\.ob-ww-template-preview\{transition:none\}[\s\S]*?\.ob-ww-template-media:hover \.ob-ww-template-preview\{transform:none\}/, 'template preview motion is disabled when reduced motion is requested');
 const lightThemeMatch = styles.match(/body\.ob-ui-light #view-3 #db-panel-website-editor\{([\s\S]*?)\n\}/);
 assert(lightThemeMatch, 'Website workspace defines an explicit dashboard light-theme palette');
 const lightThemeTokens = Object.fromEntries(

@@ -144,7 +144,11 @@ function galleryMarkup() {
 }
 
 function assistantShell() {
-  return `<div id="view-3" class="view-panel active">${assistantMarkup}</div>`;
+  return `<div id="view-3" class="view-panel active">
+    <header class="db-topbar"><button id="assistant-entry" class="ob-guidance-topbar-button" type="button">Personal Assistant</button></header>
+    <section class="ob-settings-home-card"><button id="assistant-settings-action" type="button">Ask Personal Assistant</button></section>
+    ${assistantMarkup}
+  </div>`;
 }
 
 function lightSidebarMarkup() {
@@ -389,6 +393,15 @@ try {
       measurements.push({...await measureText(page,'#sidebar-default',{label:`${sidebarPrefix}.hover-item`}),surface:sidebarPrefix,state:'hover'});
       await keyboardFocus(page,'#sidebar-active');
       measurements.push({...await measureIndicator(page,'#sidebar-active',{label:`${sidebarPrefix}.active-focus`,focus:true,minimumWidth:2}),surface:sidebarPrefix,state:'focus'});
+    }
+
+    for(const mode of ['light','dark']){
+      await install(page,`ob-ui-${mode}`,assistantShell());
+      const entryPrefix=`personal-assistant-entry.${mode}.${viewport.name}`;
+      await keyboardFocus(page,'#assistant-entry');
+      measurements.push({...await measureIndicator(page,'#assistant-entry',{label:`${entryPrefix}.topbar-focus`,focus:true,minimumWidth:2}),surface:entryPrefix,state:'focus'});
+      await keyboardFocus(page,'#assistant-settings-action');
+      measurements.push({...await measureIndicator(page,'#assistant-settings-action',{label:`${entryPrefix}.settings-focus`,focus:true,minimumWidth:2}),surface:entryPrefix,state:'focus'});
     }
 
     await install(page,'ob-ui-dark',assistantShell());

@@ -91,6 +91,56 @@ try {
   });
   await page.waitForSelector('#db-panel-website-editor.active', { state: 'visible', timeout: 30_000 });
   await page.waitForSelector('[data-ob-website-surface="design"]', { state: 'visible', timeout: 30_000 });
+
+  const sidebar = await page.evaluate(() => {
+    const sales = document.querySelector('[data-ob-nav-group="sales"]');
+    const practice = document.querySelector('[data-ob-nav-group="practice"]');
+    const rates = document.querySelector('[data-ob-panel="pricing"]');
+    return {
+      ratesParentGroup: rates?.closest('[data-ob-nav-group]')?.getAttribute('data-ob-nav-group') || '',
+      salesPanels: Array.from(sales?.querySelectorAll('[data-ob-panel]') || []).map(node => node.getAttribute('data-ob-panel')),
+      practicePanels: Array.from(practice?.querySelectorAll('[data-ob-panel]') || []).map(node => node.getAttribute('data-ob-panel')),
+    };
+  });
+  assert.equal(sidebar.ratesParentGroup, 'sales', 'Services & Rates belongs to Sales');
+  assert.equal(sidebar.salesPanels[0], 'pricing', 'Services & Rates is the first Sales destination');
+  assert(!sidebar.practicePanels.includes('pricing'), 'Services & Rates is not duplicated under Practice');
+
+  const themeToggle = page.locator('#view-3 [data-ob-ui-theme-toggle]').first();
+  await themeToggle.waitFor({ state: 'visible', timeout: 10_000 });
+  if (await page.evaluate(() => document.body.classList.contains('ob-ui-dark'))) await themeToggle.click();
+  await page.waitForFunction(() => document.body.classList.contains('ob-ui-light'));
+  const lightTheme = await page.evaluate(() => {
+    const nav = document.querySelector('#view-3 .db-sidebar');
+    const navItem = document.querySelector('#view-3 .db-nav-item');
+    const style = nav ? getComputedStyle(nav) : null;
+    return {
+      bodyLight: document.body.classList.contains('ob-ui-light'),
+      sidebarBackground: style?.getPropertyValue('--db-sidebar-bg').trim() || '',
+      sidebarText: style?.getPropertyValue('--db-sidebar-text').trim() || '',
+      navColor: navItem ? getComputedStyle(navItem).color : '',
+    };
+  });
+  assert(lightTheme.bodyLight, 'dashboard light mode is active');
+  assert.match(lightTheme.sidebarBackground, /FFFDF8|F4EDE3/i, 'light mode owns the sidebar background');
+  assert.equal(lightTheme.sidebarText.toUpperCase(), '#241A15', 'light mode owns readable sidebar text');
+  assert(!/rgb\(250,\s*247,\s*242\)/.test(lightTheme.navColor), 'light sidebar navigation does not retain dark-theme white text');
+
+  await page.locator('[data-ob-website-surface="pages"]').click();
+  await page.waitForSelector('#ob-content-pages-card', { state: 'visible', timeout: 20_000 });
+  const pageEntitlement = await page.evaluate(() => ({
+    lockedDisplay: getComputedStyle(document.getElementById('ob-cp-locked')).display,
+    managerDisplay: getComputedStyle(document.getElementById('ob-cp-manager')).display,
+    count: document.getElementById('ob-cp-count')?.textContent?.trim() || '',
+    limit: document.getElementById('ob-cp-limit')?.textContent?.trim() || '',
+    addDisabled: Boolean(document.getElementById('ob-cp-add-btn')?.disabled),
+  }));
+  assert.equal(pageEntitlement.lockedDisplay, 'none', 'Content Pages is unlocked');
+  assert.notEqual(pageEntitlement.managerDisplay, 'none', 'Content Pages manager is available');
+  assert.equal(pageEntitlement.count, '7 pages', 'the staging expert retains all seven Content Pages');
+  assert.equal(pageEntitlement.limit, 'Pro limit: 8', 'the staging expert has the Pro Content Pages limit');
+  assert.equal(pageEntitlement.addDisabled, false, 'the remaining Pro Content Page slot can be used');
+
   await page.locator('[data-ob-website-surface="design"]').click();
   await page.waitForSelector('.ob-ww-template-grid', { state: 'visible', timeout: 20_000 });
   await page.waitForFunction(() => {
@@ -119,6 +169,25 @@ try {
   assert(desktop.surfaceCount >= 7, 'the complete Website workspace navigation is present');
   assert(desktop.documentOverflow <= 1, 'desktop Website workspace has no horizontal document overflow');
 
+  const designOwnership = await page.evaluate(() => {
+    const visible = node => Boolean(node && !node.hidden && node.getAttribute('aria-hidden') !== 'true' && node.getClientRects().length);
+    const colorControls = document.getElementById('ob-site-color-controls');
+    return {
+      hiddenLegacyCards: ['we-legacy-accent-card', 'ob-site-design-controls'].every(id => !visible(document.getElementById(id))),
+      hiddenLegacyThemeGrid: !visible(document.getElementById('we-theme-grid')),
+      expressiveFields: ['we-color-accent', 'we-color-action', 'we-color-status'].filter(id => visible(document.getElementById(id))),
+      structuralFields: ['we-color-bg', 'we-color-surface', 'we-color-text'].filter(id => visible(document.getElementById(id))),
+      ownershipCopy: colorControls?.textContent || '',
+      designError: document.getElementById('ob-ww-design-error')?.textContent?.trim() || '',
+    };
+  });
+  assert(designOwnership.hiddenLegacyCards, 'legacy design cards do not conflict with foundations');
+  assert(designOwnership.hiddenLegacyThemeGrid, 'legacy theme presets do not conflict with foundations');
+  assert.deepEqual(designOwnership.expressiveFields.sort(), ['we-color-accent', 'we-color-action', 'we-color-status'].sort(), 'only expressive foundation colors remain editable');
+  assert.deepEqual(designOwnership.structuralFields, [], 'foundation-owned background, cards, and text controls are not exposed');
+  assert.match(designOwnership.ownershipCopy, /foundation owns its structure|foundation-owned roles/i, 'the UI explains foundation ownership');
+  assert(!/4\.5:1|page background and cards/i.test(designOwnership.designError), 'the obsolete conflicting contrast warning is gone');
+
   await page.screenshot({ path: `${screenshotDirectory}/website-design-desktop.png`, fullPage: true });
 
   const alternate = await page.locator('.ob-ww-template').evaluateAll((cards, selectedPreset) => {
@@ -142,6 +211,80 @@ try {
     return selected?.dataset.preset === savedPreset && !/unsaved changes/i.test(status?.textContent || '');
   }, desktop.selectedPreset, { timeout: 20_000 });
 
+  const previewResults = [];
+  const presetIds = await page.locator('.ob-ww-template').evaluateAll(cards => cards.map(card => card.dataset.preset));
+  for (const presetId of presetIds) {
+    await page.locator(`.ob-ww-template[data-preset="${presetId}"] [data-template-action="preview"]`).last().click();
+    await page.waitForSelector('#ob-ww-preview-dialog[open]', { state: 'visible', timeout: 10_000 });
+    await page.waitForFunction(() => {
+      const frame = document.getElementById('ob-ww-preview-frame');
+      return Boolean(frame?.src.startsWith('blob:') && frame.contentDocument?.readyState === 'complete' && (frame.contentDocument.body?.innerText || '').trim().length > 300);
+    }, null, { timeout: 15_000 });
+    const preview = await page.evaluate(async currentPreset => {
+      const frame = document.getElementById('ob-ww-preview-frame');
+      const select = document.getElementById('ob-ww-preview-page');
+      const pages = Array.from(select.options).map(option => option.value);
+      const inspected = [];
+      for (const target of pages) {
+        select.value = target;
+        select.dispatchEvent(new Event('change', { bubbles: true }));
+        await new Promise(resolve => setTimeout(resolve, 40));
+        const doc = frame.contentDocument;
+        const section = doc?.getElementById(target);
+        inspected.push({ target, found: Boolean(section), textLength: (section?.innerText || '').trim().length });
+      }
+      select.value = 'about';
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+      await new Promise(resolve => setTimeout(resolve, 40));
+      const servicesLink = frame.contentDocument?.querySelector('a[href="#services"]');
+      servicesLink?.click();
+      await new Promise(resolve => setTimeout(resolve, 40));
+      return {
+        preset: currentPreset,
+        source: frame.getAttribute('src') || '',
+        hasSrcdoc: frame.hasAttribute('srcdoc'),
+        sandbox: frame.getAttribute('sandbox') || '',
+        scripts: frame.contentDocument?.querySelectorAll('script').length || 0,
+        pageCount: pages.length,
+        pages: inspected,
+        internalLinkHash: frame.contentWindow?.location.hash || '',
+        bodyTextLength: (frame.contentDocument?.body?.innerText || '').trim().length,
+      };
+    }, presetId);
+    previewResults.push(preview);
+    assert(preview.source.startsWith('blob:'), `${presetId} uses an isolated preview document`);
+    assert.equal(preview.hasSrcdoc, false, `${presetId} does not use fragile srcdoc navigation`);
+    assert.equal(preview.sandbox, 'allow-same-origin', `${presetId} preview permits navigation without scripts`);
+    assert.equal(preview.scripts, 0, `${presetId} preview is scriptless`);
+    assert(preview.pageCount >= 6, `${presetId} exposes the complete core page set`);
+    assert(preview.pages.every(item => item.found && item.textLength > 0), `${presetId} every selectable page remains rendered`);
+    assert.equal(preview.internalLinkHash, '#services', `${presetId} internal navigation remains usable`);
+    assert(preview.bodyTextLength > 300, `${presetId} preview never turns blank or black`);
+    await page.locator('#ob-ww-close-preview').click();
+    await page.waitForFunction(() => document.getElementById('ob-ww-preview-frame')?.getAttribute('src') === 'about:blank');
+  }
+
+  await page.locator('[data-ob-website-surface="media"]').click();
+  await page.waitForSelector('#ob-ww-media-inventory', { state: 'visible', timeout: 10_000 });
+  const media = await page.evaluate(() => {
+    const workspace = window.OBWebsiteWorkspace?.state?.() || {};
+    const fixedInputs = ['profile', 'logo', 'favicon', 'social', 'about', 'services', 'reviews', 'contact'].filter(name => document.getElementById(`we-img-${name}`));
+    const countText = document.getElementById('ob-ww-media-count')?.textContent || '';
+    return {
+      fixedInputs,
+      uploadCards: document.querySelectorAll('.ob-ww-upload-item').length,
+      inventoryItems: document.querySelectorAll('.ob-ww-media-item').length,
+      countText: countText.trim(),
+      workspaceReady: Boolean(workspace.revision),
+    };
+  });
+  assert.equal(media.fixedInputs.length, 8, 'all eight fixed website media roles have real inputs');
+  assert.equal(media.uploadCards, 8, 'all eight fixed media placements are visible');
+  assert(media.workspaceReady, 'media inventory is backed by the authoritative website document');
+  assert.equal(Number.parseInt(media.countText, 10) || 0, media.inventoryItems, 'media inventory count includes every rendered asset');
+
+  await page.locator('[data-ob-website-surface="design"]').click();
+
   await page.locator('#ob-ww-assistant').click();
   await page.waitForSelector('#ob-guidance-drawer', { state: 'visible', timeout: 10_000 });
   const assistant = await page.evaluate(async () => {
@@ -154,15 +297,29 @@ try {
       open: Boolean(drawer && !drawer.hidden && drawer.getBoundingClientRect().width),
       personalized: /website|design|template/i.test(`${title?.textContent || ''} ${drawer?.textContent || ''}`),
       inputEnabled: Boolean(input && !input.disabled),
+      role: drawer?.getAttribute('role') || '',
+      ariaModal: drawer?.getAttribute('aria-modal'),
+      backdropVisible: Boolean(document.getElementById('ob-guidance-backdrop') && getComputedStyle(document.getElementById('ob-guidance-backdrop')).display !== 'none'),
+      dashboardInert: Boolean(document.querySelector('#view-3 .dashboard-layout')?.inert),
+      dashboardAriaHidden: document.querySelector('#view-3 .dashboard-layout')?.getAttribute('aria-hidden') || '',
       timerElapsed: performance.now() - before,
     };
   });
   assert(assistant.open, 'Personal Assistant opens inside Website');
   assert(assistant.personalized, 'Personal Assistant provides Website-aware guidance');
   assert(assistant.inputEnabled, 'Personal Assistant remains interactive');
+  assert.equal(assistant.role, 'complementary', 'Personal Assistant is a supporting side rail');
+  assert.equal(assistant.ariaModal, null, 'Personal Assistant is not modal');
+  assert.equal(assistant.backdropVisible, false, 'Personal Assistant does not darken the dashboard');
+  assert.equal(assistant.dashboardInert, false, 'dashboard remains interactive with Personal Assistant open');
+  assert.equal(assistant.dashboardAriaHidden, '', 'dashboard remains available to assistive technology');
   assert(assistant.timerElapsed < 1_500, 'Personal Assistant does not trap the browser event loop');
+  await page.locator('[data-ob-website-surface="pages"]').click();
+  await page.waitForSelector('#ob-ww-surface-pages:not([hidden])', { state: 'visible', timeout: 10_000 });
+  assert.equal(await page.locator('#ob-guidance-drawer').isVisible(), true, 'dashboard navigation works while Personal Assistant stays open');
   await page.screenshot({ path: `${screenshotDirectory}/website-personal-assistant.png`, fullPage: true });
   await page.locator('#ob-guidance-close').click();
+  await page.locator('[data-ob-website-surface="design"]').click();
 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.waitForTimeout(150);
@@ -187,6 +344,11 @@ try {
     testedDraftPreset: alternate,
     galleryCards: desktop.cardCount,
     workspaceSurfaces: desktop.surfaceCount,
+    contentPages: pageEntitlement,
+    previewResults,
+    media,
+    lightTheme,
+    assistant,
     blockedStateChangingRequests: [...new Set(blockedMutations)],
     screenshots: screenshotDirectory,
   }));

@@ -39,10 +39,10 @@ const dashboardHtml = `<!doctype html><html><head></head><body>
         <section class="db-tab-panel" id="db-panel-pricing"><h1>Services &amp; rates</h1></section>
         <section class="db-tab-panel active" id="db-panel-website-editor">
           <h1>Website</h1>
-          <nav id="we-tabs" aria-label="Website workspace">
-            <button type="button" data-ob-website-surface="overview">Overview</button>
-            <button type="button" class="active" aria-current="page" data-ob-website-surface="design">Design &amp; templates</button>
-            <button type="button" data-ob-website-surface="pages">Pages</button>
+          <nav id="we-tabs" role="tablist" aria-label="Website workspace">
+            <button type="button" role="tab" aria-selected="false" data-ob-website-surface="overview">Overview</button>
+            <button type="button" role="tab" class="active" aria-selected="true" aria-current="page" data-ob-website-surface="design">Design &amp; templates</button>
+            <button type="button" role="tab" aria-selected="false" data-ob-website-surface="pages">Pages</button>
           </nav>
         </section>
         <section class="db-tab-panel" id="db-panel-payments"><h1>Payments</h1></section>

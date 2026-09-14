@@ -22,7 +22,16 @@ assert.match(websiteWorkspace.source,/function deactivateWebsiteWorkspace\(\)/,'
 assert.match(websiteWorkspace.source,/root\.addEventListener\('ownlybiz:before-dashboard-panel-change'/,'Website owns the canonical cancellable leave boundary');
 assert.match(websiteWorkspace.source,/root\.addEventListener\('ownlybiz:dashboard-panel-changed'/,'Website follows the canonical dashboard navigation event');
 assert.doesNotMatch(websiteWorkspace.source,/MutationObserver/,'Website lifecycle never polls or observes dashboard markup');
-assert.match(html,/window\.OWNLYBIZ_IS_STAGING=true/,'the staging identity fence remains present');
+const stagingIdentity=/window\.OWNLYBIZ_IS_STAGING\s*=\s*true/.test(html);
+const productionIdentity=/window\.OWNLYBIZ_IS_STAGING\s*=\s*false/.test(html);
+assert.notEqual(stagingIdentity,productionIdentity,'exactly one explicit environment identity fence remains present');
+if(stagingIdentity){
+  assert.match(html,/https:\/\/victorious-wisdom-production-a6b0\.up\.railway\.app/,'staging runtime retains its configured backend');
+  assert.doesNotMatch(html,/https:\/\/ownlybiz-backend-production\.up\.railway\.app/,'staging runtime does not contain the production backend');
+}else{
+  assert.match(html,/https:\/\/ownlybiz-backend-production\.up\.railway\.app/,'production runtime retains its configured backend');
+  assert.doesNotMatch(html,/https:\/\/victorious-wisdom-production-a6b0\.up\.railway\.app/,'production runtime does not contain the staging backend');
+}
 assert.match(shim.source,/root\.OWNLYBIZ_API_URL \|\| root\._OB_BACKEND \|\| root\.OWNLY_API \|\| ''/,'new requests honor the existing runtime API fence without a production fallback');
 assert.match(shim.source,/current_password:currentPassword,new_password:newPassword/,'password request uses the backend contract');
 assert.doesNotMatch(shim.source,/old_password:/,'password request never uses the obsolete key');

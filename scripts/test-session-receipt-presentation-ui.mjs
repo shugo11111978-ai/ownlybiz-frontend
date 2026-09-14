@@ -8,7 +8,8 @@ const { chromium } = require(process.env.OWNLYBIZ_PLAYWRIGHT_PATH || 'playwright
 const html = fs.readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 const controller = fs.readFileSync(new URL('../assets/ownlybiz-session-receipt.js', import.meta.url), 'utf8');
 const presentation = fs.readFileSync(new URL('../assets/session-receipt-presentation.js', import.meta.url), 'utf8');
-const styles = [...html.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style>/gi)].map(match => match[1]).join('\n')
+const documentMarkup = html.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '');
+const styles = [...documentMarkup.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style>/gi)].map(match => match[1]).join('\n')
   + fs.readFileSync(new URL('../assets/session-receipt.css', import.meta.url), 'utf8');
 const output = process.env.OWNLYBIZ_RECEIPT_QA_DIR;
 if (output) fs.mkdirSync(output, { recursive: true });

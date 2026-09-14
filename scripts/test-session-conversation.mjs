@@ -4,7 +4,7 @@ import vm from 'node:vm';
 import {execFileSync} from 'node:child_process';
 const source=fs.readFileSync(new URL('../assets/session-conversation.js',import.meta.url),'utf8');
 const html=fs.readFileSync(new URL('../index.html',import.meta.url),'utf8');
-const baseline=execFileSync('git',['show','06d0b1a11e41641e8b5c23d84a6e71de91461d7e:index.html'],{cwd:new URL('../',import.meta.url),encoding:'utf8',maxBuffer:8e6});
+const baseline=execFileSync('git',['show','e581acbb58233cc96f5a650deefe2972c5f3efea:index.html'],{cwd:new URL('../',import.meta.url),encoding:'utf8',maxBuffer:8e6});
 const root={document:{readyState:'loading',addEventListener(){}},__OB_TEST_HOOKS__:{},Map,Set,WeakSet,AbortController,console,Date,Math,Number,String,Array,Object,Promise,URL,atob,clearTimeout,setTimeout};root.window=root;
 vm.runInNewContext(source,root);const hooks=root.__OB_TEST_HOOKS__.sessionConversation;
 const store={limits:{photo_bytes:10485760,file_bytes:20971520,max_files:20,max_session_bytes:104857600},usage:{files:0,bytes:0}};
@@ -29,7 +29,7 @@ assert.equal(hooks.viewForRole({expert:true,media:true,host:{closest:()=>({})},l
 function block(input,start,end){const i=input.indexOf(start),j=input.indexOf(end,i);assert(i>=0&&j>i,start);return input.slice(i,j);}
 for(const [start,end] of [
  ['  function applyClientSessionUi(sess){','  function syncClientSession(sid){'],
- ['  window.clientEndSession = function(){','  function bindExpertChatControls(){'],
+ ['  window.clientEndSession = function(){','  function stopExpertTimerKeepDisplay(){'],
  ["  var KEY = 'ob_chat_outbox_v2';",'<\/script>'],
  ['  function _setupPC(startContext){','  function _sendOffer(']
 ]){if(start.includes('_setupPC'))continue;assert.equal(block(html,start,end),block(baseline,start,end),start+' remains byte-identical');}

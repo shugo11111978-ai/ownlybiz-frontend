@@ -260,28 +260,6 @@ try {
     const editorPanel = document.getElementById('db-panel-website-editor');
     editorPanel.classList.add('active');
 
-    const appearance = document.createElement('div');
-    appearance.id = 'ob-site-design-controls';
-    appearance.className = 'db-card we-tab-card';
-    appearance.dataset.weTab = 'design';
-    appearance.innerHTML = `
-      <label><input type="radio" name="we-site-mode" value="light" checked>Light</label>
-      <label><input type="radio" name="we-site-mode" value="dark">Dark</label>
-      <label><input type="radio" name="we-site-layout" value="split" checked>Split</label>
-      <label><input type="radio" name="we-site-layout" value="centered">Centered</label>
-      <label><input type="radio" name="we-site-layout" value="editorial">Editorial</label>`;
-    const colors = document.createElement('div');
-    colors.id = 'ob-site-color-controls';
-    colors.className = 'db-card we-tab-card';
-    colors.dataset.weTab = 'design';
-    colors.innerHTML = `
-      <input type="color" id="we-color-accent" value="#c4622d">
-      <input type="color" id="we-color-action" value="#c8ff3d">
-      <input type="color" id="we-color-status" value="#637653">`;
-    const themeGrid = document.getElementById('we-theme-grid');
-    const themeCard = themeGrid.closest('.db-card');
-    themeCard.after(appearance, colors);
-
     const customPage = document.createElement('div');
     customPage.className = 'expert-page ob-ai-custom-page';
     customPage.id = 'ep-ai-decision-guide';
@@ -297,8 +275,6 @@ try {
     window.obIsMiniSuiteRoute = () => false;
     window.obPublicApplyAccepted = () => true;
     window.obPublicExpertRenderCurrent = () => true;
-    window.obEnsureWebsiteDesignControls = () => {};
-    window.obGetWebsiteDesignTokens = () => { throw new Error('obsolete six-control design reader must not run'); };
     window.__editorCustomPages = [];
     window.obLoadContentPagesEditor = content => {
       window.__editorCustomPages = clone(content.ai_pages || []);
@@ -449,10 +425,71 @@ try {
     state: window.OBWebsiteWorkspace.state(),
     snapshot: window.__foundationSnapshot(),
     gets: window.__websiteGets,
+    currentFoundation: {
+      disabled: document.querySelector('.ob-ww-template[data-preset="practice-focus"] [data-template-action="use"]')?.disabled,
+      text: document.querySelector('.ob-ww-template[data-preset="practice-focus"] [data-template-action="use"]')?.textContent,
+      label: document.querySelector('.ob-ww-template[data-preset="practice-focus"] [data-template-action="use"]')?.getAttribute('aria-label'),
+    },
+    designOwnership: {
+      legacyThemeCount: document.querySelectorAll('#we-theme-grid,.we-legacy-accent-card,#ob-site-design-controls').length,
+      unsafeStructuralInputCount: document.querySelectorAll('[name="we-site-mode"],[name="we-site-layout"],#we-color-bg,#we-color-surface,#we-color-text').length,
+      colorRoleCount: document.querySelectorAll('#ob-site-color-controls input[type="color"]').length,
+      colorControlsVisible: getComputedStyle(document.getElementById('ob-site-color-controls')).display,
+    },
   }));
   assert.equal(initialState.gets, 1, 'initial Website hydration uses one authoritative GET');
   assert.equal(initialState.state.selectedPreset, 'practice-focus');
   assertPublicFoundation(initialState.snapshot, 'practice-focus', 'initial Practice Focus hydration');
+  assert.deepEqual(
+    initialState.currentFoundation,
+    { disabled: true, text: 'Current foundation', label: 'Practice Focus is the current foundation' },
+    'the selected foundation is clearly labelled and cannot be re-applied',
+  );
+  assert.deepEqual(
+    initialState.designOwnership,
+    {
+      legacyThemeCount: 0,
+      unsafeStructuralInputCount: 0,
+      colorRoleCount: 3,
+      colorControlsVisible: 'block',
+    },
+    'obsolete structural controls are absent while the three supported role-color controls remain visible',
+  );
+
+  const sameFoundationNoop = await page.evaluate(() => {
+    const hooks = window.__OB_TEST_HOOKS__.websiteWorkspaceV2;
+    const colors = ['accent', 'action', 'status'].map(key => document.getElementById(`we-color-${key}`));
+    const originals = colors.map(input => input.value);
+    ['#7A2F18', '#225C39', '#435F35'].forEach((value, index) => { colors[index].value = value; });
+    const before = window.OBWebsiteWorkspace.state();
+    const result = hooks.selectPreset('practice-focus');
+    const after = window.OBWebsiteWorkspace.state();
+    const values = colors.map(input => input.value.toUpperCase());
+    originals.forEach((value, index) => { colors[index].value = value; });
+    const button = document.querySelector('.ob-ww-template[data-preset="practice-focus"] [data-template-action="use"]');
+    return {
+      before,
+      after,
+      values,
+      resultTokens: result.design?.tokens || result.tokens,
+      disabled: button.disabled,
+      text: button.textContent,
+    };
+  });
+  assert.deepEqual(sameFoundationNoop.values, ['#7A2F18', '#225C39', '#435F35'], 'reselecting the current foundation never resets custom role colors');
+  assert.deepEqual(
+    sameFoundationNoop.resultTokens && {
+      accent: sameFoundationNoop.resultTokens.accent.toUpperCase(),
+      action: sameFoundationNoop.resultTokens.action.toUpperCase(),
+      status: sameFoundationNoop.resultTokens.status.toUpperCase(),
+    },
+    { accent: '#7A2F18', action: '#225C39', status: '#435F35' },
+    'the current-foundation no-op returns the preserved custom role colors',
+  );
+  assert.equal(sameFoundationNoop.after.dirty, sameFoundationNoop.before.dirty, 'reselecting the current foundation does not mark the draft dirty');
+  assert.equal(sameFoundationNoop.after.editVersion, sameFoundationNoop.before.editVersion, 'reselecting the current foundation does not create an edit revision');
+  assert.equal(sameFoundationNoop.disabled, true, 'the current foundation stays disabled after the guarded no-op');
+  assert.equal(sameFoundationNoop.text, 'Current foundation', 'the current foundation label stays truthful after the guarded no-op');
 
   const designAndMedia = await page.evaluate(() => {
     const hooks = window.__OB_TEST_HOOKS__.websiteWorkspaceV2;
@@ -486,6 +523,27 @@ try {
   for (const label of ['Profile photo', 'Social share image', 'About page image', 'Services page image', 'Reviews page image', 'Contact page image', 'The decision method', 'Choose with confidence']) {
     assert.match(designAndMedia.inventoryText, new RegExp(label, 'i'), `Media inventory names ${label}`);
   }
+
+  const fallbackTargets = await page.evaluate(() => {
+    const hooks = window.__OB_TEST_HOOKS__.websiteWorkspaceV2;
+    const documentValue = hooks.collectDocument();
+    documentValue.core_pages.contact.enabled = false;
+    documentValue.custom_sections.push(
+      { id: 'fallback-disabled-core', type: 'cta', heading: 'Disabled core target', cta_label: 'Core fallback', cta_page: 'contact' },
+      { id: 'fallback-missing-custom', type: 'cta', heading: 'Missing custom target', cta_label: 'Custom fallback', cta_page: 'missing-resource' },
+    );
+    const preview = new DOMParser().parseFromString(hooks.previewDocumentHtml(documentValue, 'practice-focus'), 'text/html');
+    return Object.fromEntries(
+      [...preview.querySelectorAll('a')]
+        .filter(anchor => /fallback/i.test(anchor.textContent || ''))
+        .map(anchor => [anchor.textContent.trim(), anchor.getAttribute('href')]),
+    );
+  });
+  assert.deepEqual(
+    fallbackTargets,
+    { 'Core fallback': '#book', 'Custom fallback': '#book' },
+    'preview CTAs fall back to booking when a disabled core page or missing custom page is targeted',
+  );
 
   outboundRequests.length = 0;
   await page.evaluate(() => document.getElementById('ob-ww-preview').click());
@@ -544,7 +602,9 @@ try {
 
   await previewFrame.locator('a[href="#services"]').first().click();
   await previewFrame.waitForFunction(() => location.hash === '#services');
+  await page.waitForFunction(() => document.getElementById('ob-ww-preview-page')?.value === 'services');
   assert.match(previewFrame.url(), /^blob:[^#]+#services$/, 'internal preview navigation remains on the blob document instead of routing the dashboard');
+  assert.equal(await page.locator('#ob-ww-preview-page').inputValue(), 'services', 'internal preview navigation keeps the page explorer synchronized');
   assert((await previewFrame.locator('body').innerText()).length > 300, 'internal navigation never produces a black or blank iframe');
 
   await page.selectOption('#ob-ww-preview-page', 'custom-decision-guide');
@@ -633,6 +693,62 @@ try {
     expectedBaseRevision = `revision-${index + 1}`;
   }
 
+  const deletionDraft = await page.evaluate(() => {
+    const hooks = window.__OB_TEST_HOOKS__.websiteWorkspaceV2;
+    const pages = JSON.parse(JSON.stringify(window.__editorCustomPages));
+    const guide = pages.find(pageValue => pageValue.id === 'page-decision-guide');
+    guide.sections = guide.sections.filter(section => section.id !== 'guide-method');
+    guide.sections.find(section => section.id === 'guide-hero').body = 'Start with the clearest question.';
+    window.__editorCustomPages = pages;
+    const cleared = hooks.clearMediaSlot('contact_image_url');
+    const collected = hooks.collectDocument();
+    const clearButton = document.querySelector('[data-ob-media-clear="contact_image_url"]');
+    return {
+      cleared,
+      dirty: window.OBWebsiteWorkspace.state().dirty,
+      media: collected.media.contact_image_url,
+      sectionIds: collected.custom_pages[0].sections.map(section => section.id),
+      hero: collected.custom_pages[0].sections.find(section => section.id === 'guide-hero'),
+      clearDisabled: clearButton.disabled,
+    };
+  });
+  assert.equal(deletionDraft.cleared, true, 'an assigned fixed media placement can be cleared');
+  assert.equal(deletionDraft.dirty, true, 'clearing fixed media marks the website draft dirty');
+  assert.equal(deletionDraft.media, '', 'collection intentionally preserves a cleared fixed media placement as an empty string');
+  assert.deepEqual(deletionDraft.sectionIds, ['guide-hero', 'guide-action'], 'a deliberately removed Content Page section stays absent during collection');
+  assert.equal(deletionDraft.hero.body, 'Start with the clearest question.', 'retained Content Page section edits are collected');
+  assert.equal(deletionDraft.hero.image_alt, 'A decision map laid out beside a notebook', 'unknown fields on retained Content Page sections survive collection');
+  assert.equal(deletionDraft.clearDisabled, true, 'a cleared media placement cannot be redundantly cleared');
+
+  const deletionSaved = await page.evaluate(() => window.OBWebsiteWorkspace.save());
+  assert.equal(deletionSaved, true, 'the media clear and Content Page deletion save through the canonical Website PATCH');
+  const deletionPatch = await page.evaluate(() => JSON.parse(JSON.stringify(window.__websitePatches.at(-1))));
+  assert.equal(deletionPatch.base_revision, 'revision-4', 'the persistence regression save uses the latest authoritative revision');
+  assert.equal(deletionPatch.changes.media.contact_image_url, '', 'the intentional media clear is present in the authoritative PATCH');
+  assert.deepEqual(deletionPatch.changes.custom_pages[0].sections.map(section => section.id), ['guide-hero', 'guide-action'], 'the authoritative PATCH does not resurrect a removed Content Page section');
+  assert.equal(deletionPatch.changes.custom_pages[0].sections[0].image_alt, 'A decision map laid out beside a notebook', 'the authoritative PATCH preserves retained-section fields it did not edit');
+
+  const deletionReload = await page.evaluate(async () => {
+    await window.OBWebsiteWorkspace.load(true);
+    const hooks = window.__OB_TEST_HOOKS__.websiteWorkspaceV2;
+    const collected = hooks.collectDocument();
+    return {
+      state: window.OBWebsiteWorkspace.state(),
+      media: collected.media.contact_image_url,
+      sectionIds: collected.custom_pages[0].sections.map(section => section.id),
+      hero: collected.custom_pages[0].sections.find(section => section.id === 'guide-hero'),
+      inventoryCount: document.querySelectorAll('#ob-ww-media-inventory .ob-ww-media-item').length,
+      clearDisabled: document.querySelector('[data-ob-media-clear="contact_image_url"]')?.disabled,
+    };
+  });
+  assert.equal(deletionReload.state.revision, 'revision-5', 'the persistence regression reload adopts the fifth revision');
+  assert.equal(deletionReload.state.dirty, false, 'the persistence regression reload is clean');
+  assert.equal(deletionReload.media, '', 'an intentionally cleared fixed media placement remains empty after reload');
+  assert.deepEqual(deletionReload.sectionIds, ['guide-hero', 'guide-action'], 'the removed Content Page section remains absent after reload');
+  assert.equal(deletionReload.hero.image_alt, 'A decision map laid out beside a notebook', 'retained-section unknown fields remain after reload');
+  assert.equal(deletionReload.inventoryCount, 9, 'the media inventory reflects the cleared fixed placement without dropping richer template assets');
+  assert.equal(deletionReload.clearDisabled, true, 'the clear action remains disabled for an empty placement after reload');
+
   const actionResult = await page.evaluate(() => {
     document.getElementById('hero-primary-btn').click();
     document.getElementById('hero-book-later-btn').click();
@@ -662,8 +778,8 @@ try {
   assert.deepEqual(actionResult.actions.accountTabs, ['sessions'], 'client account tabs still execute');
   assert.deepEqual(actionResult.actions.routes, ['account', 'services'], 'account navigation and enhanced service navigation both execute');
   assert.equal(actionResult.routesAddedByService, 1, 'repeated foundation transitions bind the service action exactly once');
-  assert.equal(actionResult.patchCount, 4, 'each of the four foundations completes one save contract');
-  assert.equal(actionResult.getCount, 5, 'initial hydration and all four reloads complete');
+  assert.equal(actionResult.patchCount, 5, 'the four foundation saves and persistence regression save complete');
+  assert.equal(actionResult.getCount, 6, 'initial hydration, four foundation reloads, and the persistence regression reload complete');
 
   console.log(JSON.stringify({
     status: 'PASS',

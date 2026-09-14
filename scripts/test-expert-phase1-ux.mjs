@@ -43,7 +43,7 @@ assert.equal((html.match(/class="db-nav-group-toggle"/g)||[]).length,6,'all prod
 assert.match(html,/<nav class="db-nav" aria-label="Expert dashboard">/,'dashboard navigation has a landmark');
 assert.doesNotMatch(html,/<div class="db-nav-item active"/,'static dashboard destinations use buttons');
 assert.match(html,/id="db-nav-live"[^>]+data-ob-panel="live-session"/,'Go Live preserves its canonical panel');
-assert.match(html,/data-ob-panel="domain-settings"[^>]+obPhase1OpenSetting\('sblock-website'\)/,'Domains uses the real website settings destination');
+assert.match(html,/data-ob-panel="domain-settings"[^>]+OBWebsiteWorkspace[^>]+open\('domains'\)/,'Domains opens the canonical Website domain surface directly');
 assert.doesNotMatch(html,/data-ob-panel="packages"/,'retired Packages is not exposed');
 assert.match(routing.source,/DASH_PANELS = \{[^}]*'group-sessions':1[^}]*marketplace:1/,'dynamic entitled panels are canonical routes');
 assert.doesNotMatch(routing.source,/DASH_PANELS = \{[^}]*packages:/,'Packages is not a routable dashboard panel');
@@ -66,10 +66,16 @@ assert.match(phase1Style.source,/#0B0908|#141110/,'Ownlybiz warm-dark palette is
 assert.match(phase1Style.source,/#C8FF3D/,'lime is the primary action/readiness cue');
 assert.match(centralThemeStyle.source,/#view-3 \.db-sidebar,[\s\S]*?body\.ob-ui-light #view-3 \.db-sidebar\{[\s\S]*?--db-sidebar-bg:linear-gradient\(180deg,#FFFDF8 0%,#F4EDE3 100%\)[\s\S]*?--db-sidebar-active:#F7DDD2[\s\S]*?--db-sidebar-active-text:#6F2E17/,'the central theme owner defines the complete light sidebar palette');
 assert.match(centralThemeStyle.source,/body\.ob-ui-dark #view-3 \.db-sidebar\{[\s\S]*?--db-sidebar-bg:[\s\S]*?--db-sidebar-text:#FAF7F2/,'the same central owner defines the dark sidebar palette');
+assert.match(centralThemeStyle.source,/#view-3\{[^}]*--db-dashboard-focus:#8A3A1D;--db-guidance-focus:#C8FF3D/, 'the central theme owner defines contextual dashboard and dark-assistant focus tokens');
+assert.match(centralThemeStyle.source,/body\.ob-ui-dark #view-3\{--db-dashboard-focus:#C8FF3D;/, 'dark dashboard focus uses a high-contrast semantic token');
+assert.match(centralThemeStyle.source,/--db-sidebar-focus:#8A3A1D/, 'light sidebar focus is opaque enough to meet non-text contrast');
+assert.match(centralThemeStyle.source,/--db-sidebar-focus:#C8FF3D/, 'dark sidebar focus is opaque enough to meet non-text contrast');
 assert.match(phase1Style.source,/#view-3 \.db-sidebar\{[\s\S]*?background:var\(--db-sidebar-bg\)!important[\s\S]*?color:var\(--db-sidebar-text\)!important/,'the Phase 1 sidebar consumes semantic theme tokens once');
 assert.match(phase1Style.source,/#view-3 \.db-nav-item\.active\{[\s\S]*?background:var\(--db-sidebar-active\)!important[\s\S]*?color:var\(--db-sidebar-active-text\)!important/,'active navigation consumes the semantic sidebar state tokens');
 assert.match(phase1Style.source,/#view-3 \.db-sidebar-logo \.mkt-logo::after\{background:var\(--db-sidebar-icon-bg\)!important\}/,'the Ownlybiz logo cutout follows the semantic sidebar surface');
 assert.doesNotMatch(phase1Style.source,/body\.ob-ui-light #view-3 \.db-sidebar/,'Phase 1 does not install a late mode-specific sidebar override');
+assert.match(phase1Style.source,/\.ob-guidance-topbar-button:focus-visible,[\s\S]*?\.ob-settings-home-card button:focus-visible\{[\s\S]*?var\(--db-dashboard-focus\)/, 'dashboard assistant entry points use the current dashboard theme focus token');
+assert.match(phase1Style.source,/\.ob-guidance-drawer :where\(button,input,textarea,select,summary\):focus-visible\{[\s\S]*?var\(--db-guidance-focus\)/, 'the always-dark assistant rail uses its own high-contrast focus token');
 assert.match(phase1Style.source,/\.icon\[data-ob-outline-icon\]::before\{content:none!important\}/,'real outline icons suppress legacy placeholder glyphs');
 assert.match(groupScript.source,/data-ob-outline-icon[\s\S]{0,420}<span>Group Sessions<\/span>/,'Group Sessions uses the existing outline-icon treatment');
 assert.match(marketplaceScript.source,/data-ob-outline-icon[\s\S]{0,420}<span>Marketplace<\/span>/,'Marketplace uses the existing outline-icon treatment');

@@ -18,10 +18,14 @@ const styles = section(
   /<style id="ownlybiz-website-workspace-v2-style">([\s\S]*?)<\/style>/,
   'Website workspace v2 styles',
 );
+const editorStart = html.indexOf('<div class="db-tab-panel" id="db-panel-website-editor">');
+const editorEnd = html.indexOf('<aside class="ob-guidance-drawer"', editorStart);
+assert(editorStart >= 0 && editorEnd > editorStart, 'source-native Website editor markup must exist');
+const editorMarkup = html.slice(editorStart, editorEnd);
 const surfaceCatalogSource = section(/var SURFACES=\{[\s\S]*?\n  \};/, 'Website surface catalog');
 const presetCatalogSource = section(/var TEMPLATE_PRESETS=\[[\s\S]*?\n  \];/, 'Website template catalog');
 const mediaSlotCatalogSource = section(/var MEDIA_SLOTS=\[[\s\S]*?\n  \];/, 'Website media role catalog');
-const collectDocumentSource = runtime.slice(runtime.indexOf('function collectDocument()'), runtime.indexOf('function compatibilityPayload('));
+const collectDocumentSource = runtime.slice(runtime.indexOf('function collectDocument()'), runtime.indexOf('function applyAiDraft('));
 const aiWebsiteRuntime = section(
   /<script id="ob-ai-website-editor-20260517">([\s\S]*?)<\/script>/,
   'AI website editor runtime',
@@ -36,11 +40,12 @@ const publicPageNavigationRuntime = section(
 );
 
 assert.equal((html.match(/id="ownlybiz-website-workspace-v2-runtime"/g) || []).length, 1, 'one Website workspace runtime is installed');
+assert.equal((editorMarkup.match(/<header class="ob-ww-header">/g) || []).length, 1, 'the Website header is source-native and unique');
 assert.equal((html.match(/id="ob-guidance-drawer"/g) || []).length, 1, 'Website reuses the single Personal Assistant drawer');
 assert.doesNotMatch(runtime + styles, /kajabi/i, 'Website workspace contains no competitor naming or copied template labels');
 assert.doesNotMatch(runtime, /victorious-wisdom|railway\.app|https:\/\/[^'"\s]+ownlybiz\.com/i, 'Website persistence and preview runtime contains no hard-coded production endpoint');
 assert.doesNotMatch(runtime, /\b(?:Blog|Funnels?|A\/B|Template marketplace)\b/i, 'unsupported suite features are not presented');
-assert.match(runtime, /Domain purchase and transfer are not offered here/, 'the domain boundary is honest rather than a fake feature');
+assert.match(editorMarkup, /Domain purchase and transfer are not offered here/, 'the domain boundary is honest rather than a fake feature');
 
 const surfaces = vm.runInNewContext(
   `(${surfaceCatalogSource.replace(/^var SURFACES=/, '').replace(/;$/, '')})`,
@@ -55,17 +60,21 @@ assert.deepEqual(
   Object.values(surfaces).map((item) => item.label),
   ['Overview', 'Design & templates', 'Pages', 'Menu', 'Media', 'Domains', 'Search & analytics'],
 );
-for (const surface of Object.keys(surfaces)) {
-  assert(runtime.includes(`data-ob-website-surface=\"'+name+'\"`) || runtime.includes(`website.'+name`), `${surface} participates in contextual surface routing`);
+const expectedSurfaces = Object.keys(surfaces);
+const staticTabs = [...editorMarkup.matchAll(/<button\b[^>]*\brole="tab"[^>]*\bdata-ob-website-surface="([^"]+)"/g)].map((match) => match[1]);
+const staticPanels = [...editorMarkup.matchAll(/<section class="ob-ww-surface"[^>]*\bdata-ob-surface="([^"]+)"[^>]*\brole="tabpanel"/g)].map((match) => match[1]);
+assert.deepEqual(staticTabs, expectedSurfaces, 'the source owns exactly one accessible tab for every Website surface');
+assert.deepEqual(staticPanels, expectedSurfaces, 'the source owns exactly one accessible panel for every Website surface');
+for (const surface of expectedSurfaces) {
+  assert.match(editorMarkup, new RegExp(`aria-controls="ob-ww-surface-${surface}"[\\s\\S]*?data-ob-website-surface="${surface}"`), `${surface} has a source-native tab target`);
+  assert.match(editorMarkup, new RegExp(`id="ob-ww-surface-${surface}"[\\s\\S]*?data-ob-surface="${surface}"[\\s\\S]*?role="tabpanel"`), `${surface} has a source-native tab panel`);
 }
-assert.match(runtime, /setAttribute\('role','tablist'\)/);
-assert.match(runtime, /setAttribute\('role','tabpanel'\)/);
 assert.match(runtime, /ArrowLeft','ArrowRight','Home','End/, 'tabs support standard keyboard navigation');
 assert.match(runtime, /obPhase1OpenGuidance/, 'Personal Assistant remains available inside Website');
-assert.match(runtime, /root\.obOpenWebsiteSurface=function/, 'assistant actions can open an exact Website surface');
+assert.match(runtime, /root\.OBWebsiteWorkspace=Object\.freeze\(\{open:openWebsiteSurface,load:loadWebsiteWorkspace,save:saveWebsiteWorkspace,preview:openWebsitePreview/, 'the canonical Website API exposes exact surface, load, save, and preview actions');
 assert.match(runtime, /ownlybiz:surface-changed/, 'surface changes use the single canonical navigation lifecycle event');
 assert.doesNotMatch(runtime, /installNavigationWrappers|__obWebsiteWorkspaceV2Original|previousApply=root\._applyExpertWebsite/, 'Website integration uses direct lifecycle ownership rather than runtime function wrapping');
-assert.match(runtime, /function syncWebsitePanelLifecycle\(\)[\s\S]*?MutationObserver\(syncWebsitePanelLifecycle\)/, 'Website entry and exit follow authoritative dashboard panel state regardless of script load order');
+assert.match(runtime, /ownlybiz:before-dashboard-panel-change[\s\S]*?ownlybiz:dashboard-panel-changed[\s\S]*?activateWebsiteWorkspace\(\)/, 'Website entry and exit follow authoritative dashboard navigation events');
 assert.match(runtime, /root\.obApplyWebsiteFoundation=function\(data,operation\)[\s\S]*?obPublicExpertRenderCurrent/, 'the canonical public renderer calls one generation-fenced Website foundation lifecycle');
 assert.match(html, /function obApplyPublicExpertPayload[\s\S]*?obApplyWebsiteFoundation\(e, renderOperation\)/, 'public template application is owned directly by the canonical expert payload renderer');
 assert.match(aiWebsiteRuntime, /window\.obRenderAiPublicExtras\s*=\s*renderAiPublicExtras/, 'AI-authored public sections expose one direct renderer lifecycle hook');
@@ -80,15 +89,14 @@ assert.match(publicPageNavigationRuntime, /ownlybiz:expert-page-changed[\s\S]*?p
 assert.doesNotMatch(contentPagesRuntime, /wrapShowExpertPage|window\.showExpertPage\s*=/, 'custom pages never replace or wrap canonical public navigation');
 assert.doesNotMatch(runtime + aiWebsiteRuntime + contentPagesRuntime, /previous(?:Db|Settings|Apply|Show|Load)|\.apply\(this,\s*arguments\)/, 'the complete Website feature uses direct lifecycle hooks rather than shared-function wrapping');
 assert.match(contentPagesRuntime, /addEventListener\('ownlybiz:expert-page-changed',\s*syncPublicPageMetadata\)/, 'custom-page metadata follows the canonical public page lifecycle event');
-assert.match(
-  styles,
-  /#db-panel-website-editor \.ob-website-workspace \.ob-ww-surface > \.we-tab-card\[data-we-tab\]\{display:block!important\}/,
-  'reparented Website cards do not depend on stale legacy tab state for visibility',
-);
-assert.match(runtime, /var destination=cardSurface\(card\)[\s\S]*?host\.appendChild\(card\)[\s\S]*?card\.classList\.add\('we-tab-visible'\)/, 'organizing cards restores the legacy visibility class after hydration');
 assert.match(runtime, /all\('\.ob-ww-surface'\)[\s\S]*?panel\.hidden=!on/, 'only the active new Website surface is exposed');
-assert.match(runtime, /card\.querySelector\('#we-nav-home'\)\) return 'navigation'/, 'the Menu card is routed to its visible new surface');
-assert.match(runtime, /tab === 'pages' \? 'pages' : tab === 'media' \? 'media'/, 'Pages and Media cards are routed to visible new surfaces');
+assert.match(editorMarkup, /id="ob-ww-surface-navigation"[\s\S]*?id="we-nav-home"/, 'the Menu controls are authored in their canonical surface');
+assert.match(editorMarkup, /id="ob-ww-surface-domains"[\s\S]*?id="sblock-website"/, 'domain controls are authored in the Website workspace');
+assert.match(editorMarkup, /id="ob-ww-surface-seo"[\s\S]*?id="sblock-seo"/, 'search and analytics controls are authored in the Website workspace');
+assert.doesNotMatch(editorMarkup, /\bwe-tab-card\b|\bdata-we-tab=/, 'the editor contains no legacy tab cards awaiting runtime organization');
+assert.doesNotMatch(runtime, /\b(?:weTabSwitch|loadWebsiteEditor|saveWebsiteContent|obOpenWebsiteSurface|cardSurface|organizeCards|installWorkspace|syncWebsitePanelLifecycle)\b|MutationObserver|setInterval\s*\(/, 'the source-native workspace has no legacy facade, reparenting, observer, polling, or installer path');
+assert.doesNotMatch(runtime, /insertAdjacentHTML|createElement\(['"]section['"]\)|appendChild\(card\)/, 'the runtime never constructs or reparents Website surfaces');
+assert.doesNotMatch(runtime, /\[(?:180|500|700|1600|3200)(?:,\d+)+\]\.forEach/, 'the workspace has no delayed installation retry schedule');
 
 const presets = vm.runInNewContext(
   `(${presetCatalogSource.replace(/^var TEMPLATE_PRESETS=/, '').replace(/;$/, '')})`,
@@ -167,13 +175,17 @@ assert.match(styles, /\.ob-ww-template-grid\{display:grid;gap:18px;grid-template
 assert.match(styles, /@container \(min-width:1320px\)\{\.ob-ww-template-grid\{grid-template-columns:repeat\(3,minmax\(0,1fr\)\)\}\}/, 'only a truly wide Website content area expands to three columns');
 assert.match(styles, /@media\(max-width:760px\)\{[\s\S]*?\.ob-ww-template-grid\{grid-template-columns:1fr\}/, 'mobile presents one large template per row');
 assert.match(styles, /\.ob-ww-template-preview\{aspect-ratio:1586\/992;[\s\S]*?object-fit:cover/, 'raster previews keep their authored viewport shape');
-assert.match(runtime, /<article class="ob-ww-template" role="listitem"/, 'template cards use non-interactive article containers');
-assert.match(runtime, /data-template-action="preview"/, 'each template exposes a distinct Preview action');
-assert.match(runtime, /data-template-action="use"[\s\S]*?aria-pressed="false">Use foundation/, 'each template exposes an explicit selectable action');
+assert.equal((editorMarkup.match(/<article class="ob-ww-template" role="listitem"/g) || []).length, 4, 'four template cards are authored as non-interactive article containers');
+for (const preset of presets) {
+  assert.match(editorMarkup, new RegExp(`data-preset="${preset.id}"`), `${preset.id} has one source-native template card`);
+}
+assert.equal((editorMarkup.match(/data-template-action="use"/g) || []).length, 4, 'each static template exposes one explicit selectable action');
+assert.match(editorMarkup, /data-template-action="preview"/, 'each template exposes a distinct Preview action');
+assert.match(editorMarkup, /data-template-action="use"[\s\S]*?aria-pressed="false">Use foundation/, 'each template exposes an explicit selectable action');
 assert.match(runtime, /card\.setAttribute\('data-selected'[\s\S]*?use\.setAttribute\('aria-pressed'/, 'current foundation state is both visibly and semantically updated');
 assert.match(runtime, /data-template-action'\) === 'preview'\) showTemplatePreview\(presetId\)[\s\S]*?data-template-action'\) === 'use'\) selectPreset\(presetId\)/, 'only the explicit Use action selects a foundation');
-assert.match(runtime, /loading="lazy" decoding="async"/, 'template rasters use lazy decoding');
-assert.match(runtime, /width="'\+Number\(item\.preview_width[\s\S]*?height="'\+Number\(item\.preview_height/, 'template images carry fixed intrinsic dimensions');
+assert.equal((editorMarkup.match(/loading="lazy" decoding="async"/g) || []).length, 4, 'all source-native template rasters use lazy decoding');
+assert.equal((editorMarkup.match(/<img class="ob-ww-template-preview"[^>]*\bwidth="\d+" height="\d+"/g) || []).length, 4, 'all source-native template images carry fixed intrinsic dimensions');
 assert.doesNotMatch(runtime + styles, /ob-ww-mini-(?:photo|copy|action)/, 'schematic mini placeholders are completely removed');
 assert.match(runtime, /state\.selectedPreset=preset\.id/);
 assert.match(runtime, /markDirty\(\);return designForPreset/, 'template selection becomes an explicit unsaved website change');
@@ -192,6 +204,7 @@ assert.deepEqual(
 );
 assert.equal(new Set(mediaSlots.map((item) => item.input)).size, 8, 'every fixed media role has its own upload input');
 assert.equal(new Set(mediaSlots.map((item) => item.preview)).size, 8, 'every fixed media role has its own visible preview');
+assert.equal((editorMarkup.match(/<button[^>]+data-ob-media-clear="[a-z_]+"[^>]*>Remove image<\/button>/g) || []).length, 8, 'every fixed media role has an accessible explicit Remove action');
 
 function sourceOf(name, nextName) {
   const start = runtime.indexOf(`function ${name}(`);
@@ -204,8 +217,13 @@ function sourceOf(name, nextName) {
 const selectPresetSource = sourceOf('selectPreset', 'renderSummary');
 assert.doesNotMatch(selectPresetSource, /saveWebsiteWorkspace|requestJson|fetch\s*\(/, 'using a foundation never saves it automatically');
 assert.doesNotMatch(selectPresetSource, /we-site-mode|we-site-layout|we-theme-card|we-color-bg|we-color-surface|we-color-text/, 'foundation selection never coordinates obsolete or structurally unsafe controls');
-assert.match(selectPresetSource, /\['accent','action','status'\][\s\S]*?setValue\('we-color-'\+key,palette\[key\]\)/, 'using a foundation exposes only the safe brand, action, and status roles');
 assert.match(selectPresetSource, /renderDesignValidation\(\)/, 'using a foundation refreshes validation and the visible locked-role design map');
+assert.match(selectPresetSource, /if\(preset\.id === state\.selectedPreset\)\{[\s\S]*?return designForPreset[\s\S]*?\}[\s\S]*?state\.selectedPreset=preset\.id/, 'reselecting the current foundation exits before any state, color, or dirty mutation');
+const foundationRoleColorsSource = sourceOf('setFoundationRoleColors', 'restoreFoundationColors');
+assert.match(foundationRoleColorsSource, /\['accent','action','status'\][\s\S]*?setValue\('we-color-'\+key,palette\[key\]\)/, 'foundation changes expose only the safe brand, action, and status roles');
+const syncTemplateUseActionsSource = sourceOf('syncTemplateUseActions', 'updateTemplateSelection');
+assert.match(syncTemplateUseActionsSource, /use\.disabled=!!unavailable \|\| selected/, 'the current foundation action is disabled as well as busy/read-only actions');
+assert.match(syncTemplateUseActionsSource, /use\.textContent=selected \? 'Current foundation' : 'Use foundation'/, 'the current foundation action is unambiguous');
 const inferPresetSource = sourceOf('inferPreset', 'presetById');
 const inferPreset = vm.runInNewContext(`(() => { ${inferPresetSource}; return inferPreset; })()`, Object.create(null));
 for (const [id, contract] of Object.entries(expectedTemplateContracts)) {
@@ -226,10 +244,10 @@ assert.doesNotMatch(templatePreviewSource, /selectPreset|markDirty|saveWebsiteWo
 assert.match(templatePreviewSource, /current content in this foundation[\s\S]*?preview only[\s\S]*?no draft changes/i, 'template preview clearly explains that it is a safe full-site preview');
 assert.doesNotMatch(runtime, /\.srcdoc\s*=/, 'preview never lets hash navigation resolve against the embedding dashboard URL');
 assert.match(runtime, /URL\.createObjectURL\(new root\.Blob\(/, 'preview uses a real isolated document URL that remains navigable');
-assert.match(runtime, /URL\.revokeObjectURL\(state\.previewUrl\)/, 'replaced and closed previews release their document URL');
+assert.match(runtime, /URL\.revokeObjectURL\(previousUrl\)/, 'replaced and closed previews release their prior document URL after detaching listeners');
 assert.match(runtime, /frame\.src=state\.previewUrl\+'#'/, 'preview page changes stay within the generated website document');
-assert.match(runtime, /ob-ww-preview-page/, 'the preview provides an explicit page explorer');
-assert.match(runtime, /data-ob-preview-device/, 'the preview provides responsive desktop, tablet, and phone explorers');
+assert.match(editorMarkup, /id="ob-ww-preview-page"/, 'the source-native preview dialog provides an explicit page explorer');
+assert.equal((editorMarkup.match(/data-ob-preview-device="(?:desktop|tablet|phone)"/g) || []).length, 3, 'the source-native preview dialog provides desktop, tablet, and phone explorers');
 
 const normalizeBaseSource = sourceOf('normalizeBase', 'nonProductionEnvironment');
 const nonProductionSource = sourceOf('nonProductionEnvironment', 'resolveApiBase');
@@ -295,6 +313,10 @@ assert.match(collectDocumentSource, /selectedMode=preset\.mode,selectedLayout=pr
 assert.doesNotMatch(collectDocumentSource, /we-site-mode|we-site-layout|we-theme-card/, 'hidden legacy design controls cannot race or corrupt a foundation save');
 assert.match(collectDocumentSource, /custom_pages:mergeCustomPages/);
 assert.match(collectDocumentSource, /MEDIA_SLOTS[\s\S]*?media\[slot\.key\]/, 'all eight fixed media roles are collected through one canonical catalog');
+const previewImageSource = sourceOf('previewImage', 'safeMediaThumbnail');
+assert.match(previewImageSource, /data-ob-media-cleared[\s\S]*?return ''/, 'an explicit fixed-media removal persists an empty string instead of restoring the prior URL');
+const clearMediaSource = sourceOf('clearMediaSlot', 'credentialRow');
+assert.match(clearMediaSource, /setImagePreview\(slot\.preview,''[\s\S]*?data-ob-media-cleared[\s\S]*?website-media-changed/, 'fixed-media removal updates the preview and canonical draft lifecycle');
 assert.match(runtime, /obCollectWebsiteContentPages/, 'existing custom-page editor and plan controls remain connected');
 assert.match(runtime, /obLoadContentPagesEditor/);
 assert.match(runtime, /custom_page_limit|custom_pages_limit/, 'facade capabilities continue driving the existing custom-page plan gate');
@@ -309,21 +331,26 @@ assert.equal(
   'nested facade custom-page capability preserves the expert plan and cap',
 );
 assert.match(runtime, /custom_sections:clone\(existing\.custom_sections\)/, 'AI/custom sections are retained');
-const renderMediaLibrarySource = sourceOf('renderMediaLibrary', 'compatibilityPayload');
+const renderMediaLibrarySource = sourceOf('renderMediaLibrary', 'collectDocument');
 assert.match(renderMediaLibrarySource, /MEDIA_SLOTS/, 'the media inventory includes every fixed semantic media role');
 assert.match(renderMediaLibrarySource, /custom_sections[\s\S]*?image_url/, 'the media inventory includes images attached to homepage sections');
 assert.match(renderMediaLibrarySource, /custom_pages[\s\S]*?header_image_url[\s\S]*?sections[\s\S]*?image_url/, 'the media inventory includes custom-page header and section images');
 assert.match(renderMediaLibrarySource, /ob-ww-media-inventory/, 'the complete template-aware inventory renders into the Media surface');
 
 const mergePagesSource = sourceOf('mergeCustomPages', 'collectCredentials');
-const mergePages = vm.runInNewContext(`(() => { const clean=(value)=>String(value==null?'':value).replace(/[\\u0000-\\u001f\\u007f]/g,' ').replace(/\\s+/g,' ').trim(); ${mergePagesSource}; return mergeCustomPages; })()`, Object.create(null));
+const mergePages = vm.runInNewContext(`(() => { const clean=(value)=>String(value==null?'':value).replace(/[\\u0000-\\u001f\\u007f]/g,' ').replace(/\\s+/g,' ').trim(); const own=(value,key)=>!!value&&Object.prototype.hasOwnProperty.call(value,key); ${mergePagesSource}; return mergeCustomPages; })()`, Object.create(null));
 const mergedPages = mergePages(
   [{ id: 'p1', title: 'Old', untouched: 'keep', sections: [{ id: 's1', image_alt: 'Keep alt', body: 'Old' }, { id: 's2', body: 'Second' }] }],
   [{ id: 'p1', title: 'New', sections: [{ id: 's1', body: 'New' }] }],
 );
 assert.equal(mergedPages[0].untouched, 'keep');
 assert.equal(mergedPages[0].sections[0].image_alt, 'Keep alt');
-assert.equal(mergedPages[0].sections[1].id, 's2', 'unmodeled server page sections survive editor round-trips');
+assert.equal(mergedPages[0].sections.length, 1, 'an intentionally deleted section is not resurrected during collection');
+const pageWithoutSectionOwnership = mergePages(
+  [{ id: 'p2', untouched: 'keep', sections: [{ id: 's3', server_only: 'preserve' }] }],
+  [{ id: 'p2', title: 'Metadata-only edit' }],
+);
+assert.equal(pageWithoutSectionOwnership[0].sections[0].server_only, 'preserve', 'sections remain untouched when an editor does not own the sections field');
 const completeNewPage = {
   id: 'new-page',
   slug: 'complete-guide',
@@ -346,9 +373,9 @@ assert.match(runtime, /Save live changes/);
 assert.match(runtime, /View live site/);
 assert.match(runtime, /Save draft/);
 assert.match(runtime, /Preview draft/);
-assert.match(runtime, /Publish website/);
+assert.match(editorMarkup, /id="ob-ww-publish"[^>]*>Publish website<\/button>/, 'the source-native header exposes the publish action');
 assert.match(runtime, /var readiness=readinessState\(\),busy=state\.saving \|\| state\.loading,templateBusy=busy \|\| !state\.writeAvailable/, 'foundation changes are disabled while website state is loading, saving, or read-only');
-assert.match(runtime, /\[data-template-action="use"\][\s\S]*?button\.disabled=templateBusy/, 'Use foundation controls reflect the busy/read-only state');
+assert.match(runtime, /syncTemplateUseActions\(templateBusy\)/, 'Use foundation controls reflect selected, busy, and read-only state through one state owner');
 assert.match(runtime, /function selectPreset\(id\)\{\s*if\(state\.loading \|\| state\.saving \|\| !state\.writeAvailable\) return false;/, 'foundation selection also fails closed against programmatic busy-state changes');
 const applyPublicTemplateSource = sourceOf('applyPublicTemplate', 'commitDocumentLocally');
 assert.match(applyPublicTemplateSource, /view\.classList\.add\('ob-site-template-'\+item\.renderer_family,'ob-site-preset-'\+item\.id\)/, 'the public expert website applies the selected independent renderer family');
@@ -412,12 +439,14 @@ assert.match(
   /byId\('ob-ww-preview'\)\.addEventListener\('click',openWebsitePreview\)/,
   'local draft preview remains scoped to the Website workspace Preview draft control',
 );
-assert.match(runtime, /iframe[^>]*sandbox=\"allow-same-origin\"/, 'the preview permits same-document fragment exploration inside its isolated blob URL');
+assert.match(editorMarkup, /<iframe[^>]*sandbox="allow-same-origin"/, 'the source-native preview permits same-document fragment exploration inside its isolated blob URL');
 assert.match(runtime, /frame\.setAttribute\('sandbox','allow-same-origin'\)/, 'both preview entry points preserve fragment navigation');
 assert.doesNotMatch(runtime, /allow-scripts/, 'the preview sandbox never enables script execution');
 assert.doesNotMatch(runtime, /frame\.srcdoc\s*=/,'preview navigation never replaces the iframe with an app-relative srcdoc document');
 assert.match(runtime, /new root\.Blob\(\[previewDocumentHtml\(doc,presetId\)\]/,'the complete scriptless website is materialized as one isolated preview document');
 assert.match(runtime, /ob-ww-preview-page'\)\.addEventListener\('change',[\s\S]*?setPreviewPage\(this\.value\)/,'the preview page picker navigates the same isolated document');
+assert.match(runtime, /previewWindow\.addEventListener\('hashchange',state\.previewHashHandler\)/, 'parent-owned hash observation synchronizes internal preview navigation without adding preview scripts');
+assert.match(runtime, /syncPreviewPageFromFrame[\s\S]*?state\.previewPage=pageId;select\.value=pageId/, 'internal preview navigation updates both canonical state and the page selector');
 assert.match(runtime, /setPreviewDevice\(button\.getAttribute\('data-ob-preview-device'\)\)/,'preview device controls update the responsive exploration stage');
 assert.match(runtime, /Content-Security-Policy[\s\S]*?default-src \\'none\\'[\s\S]*?style-src \\'unsafe-inline\\'[\s\S]*?img-src https: http: data: blob:/, 'the generated document blocks all network capabilities except explicitly rendered media');
 const draftPreviewSource = sourceOf('previewDocumentHtml', 'openPreviewDialog');
@@ -433,6 +462,7 @@ for (const mediaRole of ['logo_image_url','social_share_image_url','about_image_
 }
 assert.match(draftPreviewSource, /section\.image_url[\s\S]*?section\.image_alt/, 'draft preview renders a section image with its authored alternative text');
 assert.match(draftPreviewSource, /types=\{feature:[^}]*story:[^}]*faq:[^}]*list:[^}]*quote:[^}]*gallery:[^}]*cta:[^}]*resource:/, 'draft preview recognizes every editable section type');
+assert.match(draftPreviewSource, /previewCtaTarget[\s\S]*?return previewTargets\[target\] \? target : 'book'/, 'preview CTAs fall back to the real booking section when a core or custom target is unavailable');
 assert.match(draftPreviewSource, /custom-section section-'\+type[\s\S]*?data-section-type="'\+type/, 'draft preview projects the selected section type into a distinct semantic renderer');
 assert.match(draftPreviewSource, /templates=\{content:[^}]*article:[^}]*guide:[^}]*faq:[^}]*resource:/, 'draft preview recognizes every editable custom-page template');
 assert.match(draftPreviewSource, /custom-page template-'\+template[\s\S]*?data-page-template="'\+template/, 'draft preview projects the selected page template into a distinct composition');
@@ -440,15 +470,18 @@ for (const templateId of Object.keys(expectedTemplateContracts)) {
   assert.match(draftPreviewSource, new RegExp(templateId.replaceAll('-', '\\-')), `draft preview contains a distinct ${templateId} composition branch`);
 }
 assert.match(draftPreviewSource, /Verified client reviews appear here after completed Ownlybiz sessions/, 'draft proof content is truthful and never invents testimonials');
-const openWebsitePreviewSource = sourceOf('openWebsitePreview', 'cardSurface');
+const openWebsitePreviewSource = sourceOf('openWebsitePreview', 'surfaceStorageKey');
 assert.match(openWebsitePreviewSource, /state\.dirty \|\| !state\.publication\.published[\s\S]*?showDraftPreview\(\)/, 'a changed template always previews the unsaved full draft, even when the current site is published');
 const updateHeaderSource = sourceOf('updateHeader', 'markDirty');
 assert.match(updateHeaderSource, /published && !state\.dirty \? 'View live site' : 'Preview draft'/, 'the header clearly distinguishes a saved live site from an unsaved template draft');
-const organizeCardsSource = sourceOf('organizeCards', 'rememberSetting');
-assert.match(organizeCardsSource, /we-theme-grid[\s\S]*?we-legacy-accent-card[\s\S]*?\[themeCard,designControls,legacyAccent\][\s\S]*?hidden=true[\s\S]*?aria-hidden/, 'the gallery is authoritative, so obsolete theme, accent, and layout systems are not exposed');
-assert.match(organizeCardsSource, /ob-site-design-controls[\s\S]*?hidden=true[\s\S]*?aria-hidden/, 'the gallery is authoritative, so obsolete standalone mode/layout choices are not exposed');
-assert.doesNotMatch(organizeCardsSource, /ob-site-color-controls[\s\S]*?hidden=true/, 'experts can still tune accessible colors after choosing a foundation');
-assert.match(runtime, /data-ob-reset-foundation-colors[\s\S]*?selectPreset\(state\.selectedPreset\)/, 'experts can restore the selected foundation’s safe colors without reviving conflicting controls');
+const bindWorkspaceSource = sourceOf('bindWorkspace', 'confirmLeaveWebsite');
+assert.match(bindWorkspaceSource, /if\(state\.listenersInstalled\)\{[\s\S]*?return true; \}[\s\S]*?state\.listenersInstalled=true/, 'the source-native workspace binds its listeners exactly once');
+assert.match(bindWorkspaceSource, /byId\('ob-ww-preview'\)\.addEventListener\('click',openWebsitePreview\)[\s\S]*?byId\('ob-ww-save'\)\.addEventListener\('click',saveWebsiteWorkspace\)/, 'the static header actions bind directly to the canonical preview and save lifecycles');
+assert.doesNotMatch(bindWorkspaceSource, /MutationObserver|setInterval|insertAdjacentHTML|appendChild\(card\)/, 'binding does not poll, observe, construct, or reparent the Website interface');
+assert.doesNotMatch(editorMarkup, /we-theme-grid|we-legacy-accent-card|id="ob-site-design-controls"/, 'obsolete theme, accent, and standalone layout systems are absent from the source-native editor');
+assert.match(editorMarkup, /id="ob-site-color-controls"[\s\S]*?id="we-color-accent"[\s\S]*?id="we-color-action"[\s\S]*?id="we-color-status"/, 'experts can still tune the three accessible foundation colors');
+assert.match(runtime, /data-ob-reset-foundation-colors[\s\S]*?restoreFoundationColors\(\)/, 'experts can explicitly restore foundation colors without abusing the selected-foundation action');
+assert.match(aiWebsiteRuntime, /function availableAiCtaPage\([\s\S]*?return 'book'[\s\S]*?bindAiPublicActions[\s\S]*?availableAiCtaPage/, 'live custom-section CTAs fall back to the available booking page instead of routing to a missing page');
 assert.match(runtime, /exactCredential:true/, 'website requests retain exact identity fencing');
 assert.match(runtime, /Account changed while the website request was in progress/);
 assert.match(runtime, /OB_CLIENT_CONTEXT\.register\('website-workspace-v2'/, 'identity transitions scrub and reload website-private state');

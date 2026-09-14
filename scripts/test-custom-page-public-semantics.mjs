@@ -110,7 +110,11 @@ try {
           <main id="view-4" style="--ob-site-bg:#f7f1e8;--ob-site-surface:#fffdf8;--ob-site-text:#241a15;--ob-site-accent:#a8441e;--ob-site-status:#435f35">
             <section class="expert-page" id="ep-home"><h1>Home</h1></section>
             <ul id="expert-site-links"><li id="standard-book-link"><a href="#book">Book</a></li></ul>
+            <section class="expert-page" id="ep-about"><h1>About</h1></section>
+            <section class="expert-page" id="ep-services"><h1>Services</h1></section>
+            <section class="expert-page" id="ep-reviews"><h1>Reviews</h1></section>
             <section class="expert-page" id="ep-book"><button id="existing-book-action" type="button">Existing booking action</button></section>
+            <section class="expert-page" id="ep-contact"><h1>Contact</h1></section>
             <section class="expert-page" id="ep-account"><button id="existing-account-action" type="button">Existing account action</button></section>
           </main>
         </body></html>`,

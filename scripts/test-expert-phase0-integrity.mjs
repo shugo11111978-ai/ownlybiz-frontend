@@ -17,8 +17,11 @@ const laterInlineScripts=[...html.slice(shim.end).matchAll(/<script(?![^>]+src=)
 assert.deepEqual(laterInlineScripts,['ownlybiz-website-workspace-v2-runtime'],'only the reviewed Website workspace may extend the Phase 0 wrappers');
 const websiteWorkspace=scriptById('ownlybiz-website-workspace-v2-runtime');
 assert.doesNotMatch(websiteWorkspace.source,/previousDb|previousSettings|\.apply\(this,arguments\)/,'Website owns no dashboard or settings wrapper chain');
-assert.match(websiteWorkspace.source,/function syncWebsitePanelLifecycle\(\)/,'Website has an explicit panel lifecycle');
-assert.match(websiteWorkspace.source,/navigationObserver\.observe\(dashboard,\{attributes:true,attributeFilter:\['class'\],childList:true,subtree:true\}\)/,'Website observes only canonical expert-dashboard state');
+assert.match(websiteWorkspace.source,/function activateWebsiteWorkspace\(\)/,'Website has an explicit activation lifecycle');
+assert.match(websiteWorkspace.source,/function deactivateWebsiteWorkspace\(\)/,'Website has an explicit deactivation lifecycle');
+assert.match(websiteWorkspace.source,/root\.addEventListener\('ownlybiz:before-dashboard-panel-change'/,'Website owns the canonical cancellable leave boundary');
+assert.match(websiteWorkspace.source,/root\.addEventListener\('ownlybiz:dashboard-panel-changed'/,'Website follows the canonical dashboard navigation event');
+assert.doesNotMatch(websiteWorkspace.source,/MutationObserver/,'Website lifecycle never polls or observes dashboard markup');
 assert.match(html,/window\.OWNLYBIZ_IS_STAGING=true/,'the staging identity fence remains present');
 assert.match(shim.source,/root\.OWNLYBIZ_API_URL \|\| root\._OB_BACKEND \|\| root\.OWNLY_API \|\| ''/,'new requests honor the existing runtime API fence without a production fallback');
 assert.match(shim.source,/current_password:currentPassword,new_password:newPassword/,'password request uses the backend contract');

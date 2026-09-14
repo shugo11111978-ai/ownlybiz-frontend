@@ -12,8 +12,10 @@ function scriptById(id) {
   return match[1];
 }
 
-const drawerMatch = source.match(/  <div class="ob-guidance-backdrop"[\s\S]*?  <\/aside>/);
+const drawerMatch = source.match(/  <aside class="ob-guidance-drawer"[\s\S]*?  <\/aside>/);
 assert(drawerMatch, 'Personal Assistant drawer markup must exist');
+assert.match(drawerMatch[0],/role="complementary"/,'Personal Assistant is a complementary side rail');
+assert.doesNotMatch(drawerMatch[0],/aria-modal="true"|tabindex="-1"/,'side rail is neither modal nor an automatic focus target');
 const phase1Runtime = scriptById('ownlybiz-expert-phase1-ux-20260913');
 const drawerHtml = drawerMatch[0];
 
@@ -357,13 +359,44 @@ try {
   }));
   const responsiveOpen = await primary.evaluate(async () => {
     const trigger = document.getElementById('assistant-trigger');
+    trigger.focus();
     trigger.click();
     const immediate = !document.getElementById('ob-guidance-drawer').hidden && trigger.getAttribute('aria-expanded') === 'true';
     await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-    return { immediate, focused: document.activeElement?.id || '' };
+    return {
+      immediate,
+      focused: document.activeElement?.id || '',
+      dashboardInert: document.getElementById('view-3').hasAttribute('inert'),
+      dashboardHidden: document.getElementById('view-3').getAttribute('aria-hidden'),
+    };
   });
   assert.equal(responsiveOpen.immediate, true, 'drawer opens synchronously after a real MutationObserver delivery');
-  assert.equal(responsiveOpen.focused, 'ob-guidance-close', 'responsive open completes its focus handoff');
+  assert.equal(responsiveOpen.focused, 'assistant-trigger', 'opening the side rail keeps focus on the dashboard trigger');
+  assert.equal(responsiveOpen.dashboardInert, false, 'opening the assistant never makes the dashboard inert');
+  assert.equal(responsiveOpen.dashboardHidden, null, 'opening the assistant never hides the dashboard accessibility tree');
+  const parallelUse = await primary.evaluate(async () => {
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    const openAfterOutsideEscape = !document.getElementById('ob-guidance-drawer').hidden;
+    const payments = document.querySelector('[data-ob-panel="payments"]');
+    window.dbNav(payments, 'payments');
+    await new Promise(resolve => requestAnimationFrame(resolve));
+    const dashboardNavigated = document.getElementById('db-panel-payments').classList.contains('active');
+    const openAfterNavigation = !document.getElementById('ob-guidance-drawer').hidden;
+    document.getElementById('ob-guidance-ai-input').focus();
+    document.getElementById('ob-guidance-ai-input').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    return {
+      openAfterOutsideEscape,
+      dashboardNavigated,
+      openAfterNavigation,
+      closedAfterInsideEscape: document.getElementById('ob-guidance-drawer').hidden,
+    };
+  });
+  assert.equal(parallelUse.openAfterOutsideEscape, true, 'Escape outside the assistant is scoped away from the rail');
+  assert.equal(parallelUse.dashboardNavigated, true, 'the dashboard remains navigable while the assistant is open');
+  assert.equal(parallelUse.openAfterNavigation, true, 'dashboard work does not dismiss the assistant rail');
+  assert.equal(parallelUse.closedAfterInsideEscape, true, 'Escape from inside the assistant closes the rail');
+  await primary.evaluate(() => window.obPhase1OpenGuidance(document.getElementById('assistant-trigger')));
+  const bootstrapsAfterParallelUse = await primary.evaluate(() => window.__assistantRequests.filter(item => item.path.endsWith('/bootstrap')).length);
   await primary.waitForTimeout(120);
   const observerAfter = await primary.evaluate(() => ({
     deliveries: window.__observerDeliveries,
@@ -372,7 +405,7 @@ try {
   }));
   assert.equal(observerAfter.open, true, 'drawer stays open after observer settlement');
   assert(observerAfter.deliveries - afterDelivery.deliveries < 5, 'drawer mutations do not create a MutationObserver feedback loop');
-  assert.equal(observerAfter.bootstraps, afterDelivery.bootstraps, 'opening cached guidance does not create a bootstrap request loop');
+  assert.equal(observerAfter.bootstraps, bootstrapsAfterParallelUse, 'settled parallel dashboard use does not create a bootstrap request loop');
 
   const live = await createFixture(context, 'live-suppression', 'live');
   await live.evaluate(() => window.__loginExpert('expert-live', 'Liv'));
@@ -402,7 +435,7 @@ try {
     firstLogin: ['principal-scoped one-time auto-open', 'personalized welcome', 'Website Design context'],
     persistence: ['profile revision PATCH', 'bootstrap onboarding/profile refresh', 'onboarding revision PATCH'],
     suppression: ['active live work', 'another visible dialog'],
-    responsiveness: 'native MutationObserver delivered; drawer stayed synchronous and request-loop free',
+    responsiveness: 'native MutationObserver delivered; non-modal rail stayed synchronous, dashboard-usable, Escape-scoped, and request-loop free',
     network: 'deterministic assistant facade; all external requests blocked',
   }));
 } finally {

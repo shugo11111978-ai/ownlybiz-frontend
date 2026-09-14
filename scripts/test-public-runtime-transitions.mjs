@@ -25,6 +25,10 @@ const bookingSelector = scriptById('ob-expert-booking-selector-20260608-js');
 const publicGate = scriptById('ownlybiz-expert-funnel-high-risk-20260610');
 const marketplace = scriptById('ob-marketplace-mode-20260618');
 
+assert.match(publicGate, /function applyAcceptedPublicPayload\(data, slug, source\)/, 'public gate owns one accepted-payload entry point');
+assert.doesNotMatch(publicGate, /window\._applyExpertWebsite\(cached\)/, 'cached public payloads must not bypass the canonical render lifecycle');
+assert.equal((publicGate.match(/applyAcceptedPublicPayload\(/g) || []).length, 4, 'refresh, guarded load, and initial preload all use the canonical helper');
+
 const browser = await chromium.launch({
   headless: true,
   ...(process.env.OWNLYBIZ_CHROME_PATH ? { executablePath: process.env.OWNLYBIZ_CHROME_PATH } : {}),

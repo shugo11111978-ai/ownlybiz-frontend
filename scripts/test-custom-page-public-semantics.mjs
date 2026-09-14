@@ -22,8 +22,12 @@ function sourceRange(value, startMarker, endMarker) {
 const aiRuntime = blockById('script', 'ob-ai-website-editor-20260517');
 const textHelpers = sourceRange(aiRuntime, '  function esc(value){', '  function baseUrl(){');
 const publicRuntime = sourceRange(aiRuntime, '  function safeSlug(value){', '  window.obEnsureWebsiteAi = ensureWebsiteAi;');
-const executablePublicRuntime = `'use strict';\n${textHelpers}\n${publicRuntime}\nwindow.obRenderAiPublicExtras = renderAiPublicExtras;`;
+const replayRuntime = sourceRange(aiRuntime, '  function renderCurrentPublicExtras(){', '  function scrubExpertWebsiteAi(){');
+const publicBoot = sourceRange(aiRuntime, '  function boot(){', '  if(window.OB_CLIENT_CONTEXT');
+const executablePublicRuntime = `'use strict';\n${textHelpers}\n${publicRuntime}\n${replayRuntime}\nwindow.obRenderAiPublicExtras = renderAiPublicExtras;\nwindow.__renderCurrentPublicExtras = renderCurrentPublicExtras;`;
 const publicCss = blockById('style', 'ownlybiz-content-pages-editor-20260522-css');
+
+assert.match(publicBoot, /renderCurrentPublicExtras\(\);/, 'public Content Pages replay after their renderer registers');
 
 const sectionTypes = ['feature', 'story', 'faq', 'list', 'quote', 'gallery', 'cta', 'resource'];
 const pageTemplates = {
@@ -197,6 +201,17 @@ try {
   assert.equal(await page.evaluate(data => window.obRenderAiPublicExtras(data, window.__acceptedOperation), expert), true, 'a current refresh rerenders cleanly');
   assert.equal(await page.locator('.ob-ai-custom-page').count(), 5, 'rerender replaces pages instead of duplicating them');
   assert.equal(await page.locator('#expert-site-links [data-ai-page-link]').count(), 5, 'rerender replaces navigation instead of duplicating it');
+
+  await page.evaluate(() => {
+    history.replaceState({}, '', '/ari-lane/content-hub');
+    window.__pageCalls = [];
+    window.obPublicRenderLifecycle = { current: window.__acceptedOperation };
+  });
+  assert.equal(await page.evaluate(() => window.__renderCurrentPublicExtras()), true, 'late renderer registration replays the current public expert payload');
+  assert.equal(await page.locator('.ob-ai-custom-page').count(), 5, 'bootstrap replay restores every valid published page exactly once');
+  assert.equal(await page.locator('#expert-site-links [data-ai-page-link]').count(), 5, 'bootstrap replay restores every valid published navigation entry exactly once');
+  assert.deepEqual(await page.evaluate(() => window.__pageCalls), ['ai-content-hub'], 'bootstrap replay opens the requested Content Page deep link');
+
   await page.evaluate(() => { window.__pageCalls = []; });
   await page.locator('.ob-ai-custom-page [data-ai-section-type="cta"] [data-ob-ai-cta-page]').click();
   assert.deepEqual(await page.evaluate(() => window.__pageCalls), ['book'], 'rerender binds one CTA handler without feedback or duplicate delivery');

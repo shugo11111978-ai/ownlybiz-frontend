@@ -55916,6 +55916,14 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   window.obEnsureWebsiteAi = ensureWebsiteAi;
   window.obRenderAiPublicExtras = renderAiPublicExtras;
 
+  function renderCurrentPublicExtras(){
+    var lifecycle = window.obPublicRenderLifecycle;
+    var operation = lifecycle && lifecycle.current;
+    var expert = window._currentExpert;
+    if(!expert || !operation) return false;
+    return renderAiPublicExtras(expert, operation);
+  }
+
   function scrubExpertWebsiteAi(){
     aiGeneration += 1;
     activeAiControllers.forEach(function(controller){ try { controller.abort(); } catch(e) {} });
@@ -55937,6 +55945,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     ensureAdminAiPanel();
     ensureWebsiteAi();
     confirmAiCreditsFromUrl();
+    renderCurrentPublicExtras();
   }
   if(window.OB_CLIENT_CONTEXT && typeof window.OB_CLIENT_CONTEXT.register === 'function'){
     window.OB_CLIENT_CONTEXT.register('expert-website-ai',{teardown:scrubExpertWebsiteAi,changed:scrubExpertWebsiteAi,credentialRotated:scrubExpertWebsiteAi});
@@ -68218,6 +68227,19 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     return !!(publicGate.allowed[gateSlug] && !publicGate.blocked[gateSlug] && !publicGate.pending[gateSlug] && dataSlug === gateSlug);
   }
   window.obPublicApplyAccepted=publicApplyAccepted;
+  function applyAcceptedPublicPayload(data, slug, source){
+    var expert=(data && data.expert) || data || null;
+    var acceptedSlug=expertSlug(slug || (expert && (expert.slug || expert.user_slug)) || '');
+    if(!expert || !acceptedSlug || !publicApplyAccepted(expert)) return null;
+    if(typeof window.obApplyPublicExpertPayload === 'function'){
+      return window.obApplyPublicExpertPayload(expert, acceptedSlug, source || {expert:expert,packages:expert.packages || []});
+    }
+    window._currentExpert=expert;
+    window._currentExpertId=expert.user_id || expert.id;
+    window._currentExpertSlug=acceptedSlug;
+    if(typeof window._applyExpertWebsite === 'function') return window._applyExpertWebsite(expert);
+    return expert;
+  }
   function publicView(){
     return document.getElementById('view-4');
   }
@@ -68507,7 +68529,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
         setPublicGatePayload(slug, expert);
         if(String(expert.slug || '').toLowerCase() === slug) publicGate.allowed[slug] = true;
         if(window.obPublicSlugBackoff) window.obPublicSlugBackoff.clear('expert', slug);
-        window._currentExpert = Object.assign(window._currentExpert || {}, expert);
+        applyAcceptedPublicPayload(expert, slug, {expert:expert,packages:expert.packages || []});
         syncPublicBookingBlock(expert);
       })
       .catch(function(){});
@@ -68528,9 +68550,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
           return verifyOwnlybizSubdomain(gateSlug).then(function(ok){
             if(!ok) return null;
             var cached = getPublicGatePayload(gateSlug);
-            if(cached && typeof window._applyExpertWebsite === 'function'){
-              try { window._applyExpertWebsite(cached); } catch(e) {}
-            }
+            if(cached) applyAcceptedPublicPayload(cached, gateSlug, {expert:cached,packages:cached.packages || []});
             try {
               var loadResult = oldLoad.call(window, resolved);
               if(loadResult && typeof loadResult.catch === 'function') loadResult.catch(function(){});
@@ -68579,9 +68599,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
       window._currentExpertSlug = gateSlug;
       verifyOwnlybizSubdomain(gateSlug).then(function(ok){
         var cached = ok ? getPublicGatePayload(gateSlug) : null;
-        if(cached && typeof window._applyExpertWebsite === 'function'){
-          try { window._applyExpertWebsite(cached); } catch(e) {}
-        }
+        if(cached) applyAcceptedPublicPayload(cached, gateSlug, {expert:cached,packages:cached.packages || []});
         if(ok && typeof window.loadExpertWebsite === 'function') window.loadExpertWebsite(gateSlug);
       });
     }

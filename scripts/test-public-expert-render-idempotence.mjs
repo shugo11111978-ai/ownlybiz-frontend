@@ -23,7 +23,7 @@ function extractAfter(anchor, startMarker, endMarker) {
 
 const viewHtml = extract('<div class="view-panel" id="view-4">', '\n</div><!-- end view-4 -->');
 const refreshSource = extract('function _refreshPublicPage(e) {', '\n}\n\n// --- Hook _refreshPublicPage');
-const applySource = extract('window._applyExpertWebsite = function _applyExpertWebsite(data) {', '\n}\n\n// Wire into dbNav');
+const applySource = extract('window._applyExpertWebsite = function _applyExpertWebsite(data) {', '\n}\n\n// === END v18 ===');
 const onlineSource = extractAfter('// === OWNLYBIZ OVERRIDES v12 ===', 'function _applyOnlineUI(on) {', '\n}\n\n// 15-second live poll');
 const refreshWrapperStart = source.indexOf('(function(){\n  var _origRPP = window._refreshPublicPage;');
 const refreshWrapperClose = source.indexOf('\n})();', refreshWrapperStart);

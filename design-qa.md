@@ -8,11 +8,11 @@ Environment: staging only
 
 Stable implementation: https://ownlybiz-git-staging-shugo11111978-4289s-projects.vercel.app/dash/liran1/website-editor
 
-Immutable implementation: https://ownlybiz-hwyevc5gr-shugo11111978-4289s-projects.vercel.app
+Immutable implementation: https://ownlybiz-akygung0g-shugo11111978-4289s-projects.vercel.app
 
-Deployment: `dpl_22opEeCscvSLn28EED8w3Z6MDgMN`
+Deployment: `dpl_7cwjybCx37m92gtjouztEozNDQnP` (`READY`, preview target)
 
-Source commit: `15607371d5dda5c90830d9fa3a0210d4fb31e94e`
+Implementation commit: `0b2fa0267c97e53e3655d6612f249626b824ffc4`
 
 ## References and target state
 
@@ -33,6 +33,12 @@ The Kajabi reference and live Ownlybiz implementation were placed in the same br
 - Use foundation changes only the unsaved draft selection. Save remains a separate explicit action and applies the chosen renderer across Home, About, Services, Reviews, Book, Contact, custom pages, and account surfaces.
 - Personal Assistant remains present in both the Website header and the persistent dashboard sidebar.
 - Website management is consolidated into Overview, Design & templates, Pages, Menu, Media, Domains, and Search & analytics.
+- Services & Rates is owned by the Sales navigation group and is not duplicated under Practice.
+- Light mode applies semantic light tokens to the whole dashboard shell, including the sidebar, navigation text, borders, controls, and status treatments.
+- Personal Assistant opens as a complementary side rail: no backdrop, no `aria-modal`, no inert dashboard, and no forced dark theme.
+- Preview uses a script-free, same-origin sandboxed Blob document with fragment navigation. All standard and custom pages remain selectable inside the preview without replacing the frame or producing a black/empty view.
+- Media exposes eight stable website roles—profile, logo, favicon, social, about, services, reviews, and contact—plus the complete inventory of assets referenced by custom pages and sections.
+- Foundation-owned background, surface, text, structure, spacing, and page treatments stay internally coherent. Experts can edit the compatible accent/action/status colors or explicitly restore foundation colors; incompatible legacy design controls are absent.
 - Custom pages preserve every authored section, template, image, image alternative, CTA, destination, ordering position, and stable section identity.
 - Personal Assistant is account-personalized, feature-aware, page-aware, onboarding-aware, and identity fenced. It recommends and navigates, but does not silently change the expert's practice.
 
@@ -49,16 +55,22 @@ The Kajabi reference and live Ownlybiz implementation were placed in the same br
 | Selection clarity | Visible Current badge, selected border, synchronized `aria-pressed`, and explicit unsaved status after selection. | PASS |
 | Full-site application | Every saved foundation owns a complete responsive renderer across standard, custom, booking, and account surfaces. | PASS |
 | Personal guidance | Personalized first-login help, contextual next steps, complete Ownlybiz feature knowledge, memory consent, history fallback, and safe recovery are present. | PASS |
+| Sidebar ownership | Services & Rates resolves under Sales; Practice contains no duplicate pricing destination. | PASS |
+| Theme ownership | Light mode resolves the sidebar to a warm light gradient with dark semantic navigation text. | PASS |
+| Assistant coexistence | The assistant is a complementary rail and the Website tabs remain actionable while it is open. | PASS |
+| Preview continuity | Four foundations × 13 selectable pages rendered non-empty content; internal Services navigation remained inside each Blob preview. | PASS |
+| Media completeness | Eight fixed media roles and every in-use custom-page/section asset are represented. | PASS |
+| Control compatibility | No legacy Design Map or template-conflicting background/surface/text controls remain. | PASS |
 
-## Responsive browser evidence
+## Authenticated responsive browser evidence
 
 | Viewport | Measured result | Result |
 | --- | --- | --- |
-| 1512×805 | 1134 px gallery; two 558 px columns; all four images complete. | PASS |
-| 1800×1000 | 1322 px gallery; three 428.7 px columns; all four images complete. | PASS |
-| 390×844 | 296 px single column; 294×184 preview; two 126.5 px action columns; document width exactly 390 px. | PASS |
+| Desktop | Full Website hierarchy begins at viewport coordinate zero, with a readable light sidebar, real template previews, explicit draft/live controls, and two-column gallery. | PASS |
+| Desktop + assistant | Dashboard remains visible and interactive beside the complementary assistant rail; no backdrop or modal isolation. Pages receives page-specific actions rather than repeated domain guidance. | PASS |
+| 390 px mobile | One-column Website content, single-line compact header controls, reachable horizontal surface navigation, a scroll viewport ending above fixed mobile navigation, and no horizontal document overflow. | PASS |
 
-No horizontal document overflow was present at any checked viewport. The authenticated staging mobile capture also remained exactly within its viewport. The temporary viewport override was reset before handoff.
+No horizontal document overflow was present at any checked viewport. The authenticated staging mobile capture remained exactly within its viewport, and the temporary viewport override was reset before handoff.
 
 ## Contrast and accessibility
 
@@ -84,10 +96,16 @@ All normal text/action states tested exceed WCAG AA. Image buttons have descript
 ## Interaction verification
 
 - The deterministic browser flow saved and reloaded Practice Focus → Quiet Confidence → Field Journal → After Hours → Practice Focus. Every transition rendered all standard pages, one AI custom page, account surfaces, booking actions, and custom-page CTA behavior.
-- On the deployed staging account, After Hours was the authoritative saved foundation. Choosing Practice Focus changed only the local draft; reload restored After Hours, proving no implicit persistence.
-- Preview rendered the complete draft HTML without publishing or invoking a save endpoint.
+- On the deployed staging account, Field Journal was the authoritative saved foundation. Choosing Practice Focus changed only the local draft; reload restored Field Journal, proving no implicit persistence.
+- Preview rendered the complete draft HTML without publishing or invoking a save endpoint. Practice Focus, Quiet Confidence, Field Journal, and After Hours each rendered all 13 selectable staging pages with non-empty content.
+- Each preview used a Blob URL, had no `srcdoc`, allowed same-origin access only, contained zero scripts, and kept an internal Services link in the preview through `#services` navigation.
 - Use foundation controls were observed disabled while the initial Website request was still settling, then enabled after the authoritative state arrived.
 - Personal Assistant was visible in the Website header and the persistent sidebar, opened with the expert's name, presented onboarding-aware next steps, and retained the current Website context.
+- With Personal Assistant open, the assistant reported `role="complementary"`, `aria-modal` was absent, the backdrop was hidden, the dashboard was neither inert nor `aria-hidden`, and dashboard navigation continued to work.
+- Moving from Design & templates to Pages while the assistant remained open changed the contextual title to “Build and organize content pages” and the actions to “Add a content page” and “Preview your website”; unrelated domain guidance was absent from the page-context card.
+- The staging account reported Pro Content Pages unlocked, seven pages used of a limit of eight, and the Add Page control enabled.
+- The AI entitlement banner distinguished active Content Pages/manual editing from separately inactive AI drafting, so Pro feature entitlement and active billing were no longer conflated.
+- The Media surface exposed all eight fixed role inputs and six currently referenced inventory assets. The inventory is data-driven rather than capped at three items.
 - First-login automation opened once per expert principal, respected active-live-work and visible-dialog suppression, and persisted onboarding/profile revisions through the authoritative API lifecycle.
 - All five custom-page templates and all eight section types rendered meaningful public semantics with authored images, alternative text, responsive layout, and working CTA routing.
 - Browser console warning/error query returned an empty list in the visual review.
@@ -97,9 +115,25 @@ All normal text/action states tested exceed WCAG AA. Image buttons have descript
 - Browser isolation: a brand-new Chrome browser context with no imported cookies, storage, cache, or admin session.
 - Authentication: the context logged in only through the staging auth endpoint and asserted the returned/current role was `expert` before dashboard checks continued.
 - Read-only boundary: routing blocked every non-login `POST`, `PUT`, `PATCH`, and `DELETE`; `blockedStateChangingRequests` was empty.
-- Result: `PASS`; four gallery cards, seven Website surfaces, saved/draft/reload authority, Personal Assistant context, desktop layout, and 390 px mobile layout verified.
-- Captures: `/private/tmp/ownlybiz-staging-expert-qa/website-design-desktop.png`, `/private/tmp/ownlybiz-staging-expert-qa/website-personal-assistant.png`, and `/private/tmp/ownlybiz-staging-expert-qa/website-design-mobile.png`.
+- Account authority: `liran1s@gmail.com` resolved as expert `liran1` on Pro; Content Pages reported seven used of eight and remained editable.
+- Result: `PASS`; four gallery cards, seven Website surfaces, 52 page/foundation preview combinations, saved/draft/reload authority, eight media roles, Personal Assistant coexistence, desktop layout, and 390 px mobile layout verified.
+- Captures: `/private/tmp/ownlybiz-staging-expert-qa-20260914-final/website-design-desktop.png`, `/private/tmp/ownlybiz-staging-expert-qa-20260914-final/website-personal-assistant.png`, and `/private/tmp/ownlybiz-staging-expert-qa-20260914-final/website-design-mobile.png`.
 - Credentials were supplied through a silent process environment and were not written to source, output, screenshots, or this report.
+
+## Independent visual signoff
+
+- A second visual reviewer inspected the final desktop, mobile, and Personal Assistant captures after remediation.
+- The reviewer confirmed the empty top strip is gone, the repeated heading is resolved, AI drafting entitlement is distinct from Content Pages/manual editing, mobile header controls remain on one line, and Pages guidance is genuinely contextual.
+- The remaining authored staging page names are expert-owned test data. They were intentionally preserved because the authenticated QA boundary was read-only.
+- Verdict: `PASS`; no actionable P0, P1, or P2 product finding remains.
+
+## Release integrity
+
+- Stable staging Website route returned HTTP 200 with Vercel cache HIT and ETag `W/"546d14-I0e/svp1daSjZXR+aEL4MD8C06o"`.
+- Stable alias and immutable preview returned the same core artifact ETag, `W/"15ebf3-S+dOXPZKSKKWkeTbXRauizhHZL0"`. Their only HTML difference was Vercel's expected preview-feedback script identifying this deployment.
+- Production frontend SHA-256 remained exactly `7ea204fe1593ffe3a6a98219fecc45904ebb40b9c2712a49a62722cfc11d8411` before and after both staging alias updates.
+- Production backend remained deployment `99556104-17a4-45e0-bf2f-09b41738008a`, source `139648d76a254b25adfd8ce94cda46609d91d392`, and image `sha256:b38c02db5c15bd202e0489e7e348761484bc60039dabe7a4418c455ddd1dec85`.
+- Staging backend remained deployment `2f163f67-1278-4b50-a4e0-7409bdef3b3b`; health/readiness passed with zero recent errors and Stripe test mode.
 
 ## Iteration history
 
@@ -108,6 +142,15 @@ All normal text/action states tested exceed WCAG AA. Image buttons have descript
 3. P2: image-button focus outline could be clipped by the card edge. Fixed with an inset focus ring.
 4. P2: thumbnail zoom ignored reduced-motion preference. Fixed by removing transition and transform under reduced motion.
 5. P1: light-theme hover inherited a pale background while retaining white action text. Reproduced in Chrome, fixed with a dark terra hover, and remeasured at `10.10:1`.
+6. P1: light mode left the sidebar on dark-theme tokens. Fixed by moving the shell, navigation, border, and status colors to light semantic ownership; authenticated staging resolved the sidebar to `linear-gradient(180deg,#FFFDF8 0%,#F4EDE3 100%)` with `#241A15` text.
+7. P1: Personal Assistant behaved like a modal/darkening layer. Fixed as a nonmodal complementary rail with no overlay, inert state, or hidden dashboard; navigation remained usable while open.
+8. P1: preview navigation could replace or blank the document. Fixed with one script-free Blob document and fragment-owned page selection; 52 deployed preview combinations and internal navigation remained non-empty.
+9. P1: media management exposed only a small fixed subset. Fixed with eight semantic media roles plus a data-driven referenced-asset inventory.
+10. P1: independent design controls could contradict a selected foundation. Fixed by making structure/background/surface/text foundation-owned and exposing only compatible brand controls with an explicit restore action.
+11. P1: a legacy 50 px dashboard reserve created an empty dark strip and misaligned the assistant rail. Removed the reserve; desktop and mobile now begin at viewport coordinate zero.
+12. P1: Website Pages repeated global domain guidance in its page-context card. Added exact guidance and safe navigation/focus actions for all seven Website surfaces; Pages now prioritizes adding and previewing content.
+13. P1: Pro Content Pages and inactive AI drafting appeared contradictory. Reworded the banner to state that manual editing and Content Pages remain available while AI drafting separately requires active Pro/Scale billing.
+14. P2: mobile header labels wrapped, the Website heading repeated, and fixed navigation overlapped the scroll viewport. Added compact state-preserving labels, changed the workspace heading to “Manage your website,” and ended the mobile main viewport above navigation.
 
 No actionable P0, P1, or P2 findings remain.
 

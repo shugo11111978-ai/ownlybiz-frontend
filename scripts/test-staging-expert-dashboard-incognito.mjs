@@ -134,12 +134,15 @@ try {
     count: document.getElementById('ob-cp-count')?.textContent?.trim() || '',
     limit: document.getElementById('ob-cp-limit')?.textContent?.trim() || '',
     addDisabled: Boolean(document.getElementById('ob-cp-add-btn')?.disabled),
+    aiAccessCopy: document.getElementById('ob-ai-website-credits')?.textContent?.replace(/\s+/g, ' ').trim() || '',
   }));
   assert.equal(pageEntitlement.lockedDisplay, 'none', 'Content Pages is unlocked');
   assert.notEqual(pageEntitlement.managerDisplay, 'none', 'Content Pages manager is available');
   assert.equal(pageEntitlement.count, '7 pages', 'the staging expert retains all seven Content Pages');
   assert.equal(pageEntitlement.limit, 'Pro limit: 8', 'the staging expert has the Pro Content Pages limit');
   assert.equal(pageEntitlement.addDisabled, false, 'the remaining Pro Content Page slot can be used');
+  assert.match(pageEntitlement.aiAccessCopy, /Content Pages and manual website editing remain available/i, 'AI billing guidance does not contradict the active Content Pages entitlement');
+  assert.doesNotMatch(pageEntitlement.aiAccessCopy, /AI website tools are Pro \/ Scale only/i, 'the ambiguous legacy entitlement banner is gone');
 
   await page.locator('[data-ob-website-surface="design"]').click();
   await page.waitForSelector('.ob-ww-template-grid', { state: 'visible', timeout: 20_000 });
@@ -160,6 +163,7 @@ try {
       assistantVisible: Boolean(personalAssistant && personalAssistant.getBoundingClientRect().width),
       surfaceCount: nav ? nav.querySelectorAll('[data-ob-website-surface]').length : 0,
       documentOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      dashboardTop: document.getElementById('view-3')?.getBoundingClientRect().top ?? -1,
     };
   });
   assert.equal(desktop.cardCount, 4, 'all four complete website foundations are present');
@@ -168,6 +172,7 @@ try {
   assert(desktop.assistantVisible, 'Personal Assistant is present in Website');
   assert(desktop.surfaceCount >= 7, 'the complete Website workspace navigation is present');
   assert(desktop.documentOverflow <= 1, 'desktop Website workspace has no horizontal document overflow');
+  assert(Math.abs(desktop.dashboardTop) <= 1, 'the dashboard starts at the viewport edge without an empty top reserve strip');
 
   const designOwnership = await page.evaluate(() => {
     const visible = node => Boolean(node && !node.hidden && node.getAttribute('aria-hidden') !== 'true' && node.getClientRects().length);
@@ -317,6 +322,13 @@ try {
   await page.locator('[data-ob-website-surface="pages"]').click();
   await page.waitForSelector('#ob-ww-surface-pages:not([hidden])', { state: 'visible', timeout: 10_000 });
   assert.equal(await page.locator('#ob-guidance-drawer').isVisible(), true, 'dashboard navigation works while Personal Assistant stays open');
+  const pageGuidance = await page.evaluate(() => ({
+    title: document.getElementById('ob-guidance-context-title')?.textContent?.trim() || '',
+    actions: Array.from(document.querySelectorAll('#ob-guidance-context-actions button')).map(button => button.textContent?.trim() || ''),
+  }));
+  assert.equal(pageGuidance.title, 'Build and organize content pages', 'Personal Assistant follows the exact Website Pages surface');
+  assert(pageGuidance.actions.includes('Add a content page'), 'Website Pages guidance offers the relevant page action');
+  assert(!pageGuidance.actions.includes('Manage domains'), 'Website Pages guidance does not repeat unrelated domain guidance');
   await page.screenshot({ path: `${screenshotDirectory}/website-personal-assistant.png`, fullPage: true });
   await page.locator('#ob-guidance-close').click();
   await page.locator('[data-ob-website-surface="design"]').click();
@@ -327,9 +339,21 @@ try {
     documentWidth: document.documentElement.scrollWidth,
     viewportWidth: document.documentElement.clientWidth,
     visibleColumns: getComputedStyle(document.querySelector('.ob-ww-template-grid')).gridTemplateColumns.split(' ').length,
+    dashboardTop: document.getElementById('view-3')?.getBoundingClientRect().top ?? -1,
+    mainBottom: document.querySelector('#view-3 .db-main')?.getBoundingClientRect().bottom ?? 0,
+    bottomNavTop: document.getElementById('db-bottom-nav')?.getBoundingClientRect().top ?? 0,
+    topbarActionsFit: (() => {
+      const actions = document.querySelector('#view-3 .db-topbar-actions');
+      if (!actions) return false;
+      const bounds = actions.getBoundingClientRect();
+      return bounds.left >= 0 && bounds.right <= document.documentElement.clientWidth + 1 && actions.scrollWidth <= Math.ceil(actions.clientWidth) + 1;
+    })(),
   }));
   assert(mobile.documentWidth <= mobile.viewportWidth + 1, 'mobile Website workspace has no horizontal document overflow');
   assert.equal(mobile.visibleColumns, 1, 'mobile foundation gallery uses one readable column');
+  assert(Math.abs(mobile.dashboardTop) <= 1, 'mobile dashboard starts at the viewport edge');
+  assert(mobile.mainBottom <= mobile.bottomNavTop + 1, 'mobile dashboard content ends above the fixed navigation');
+  assert(mobile.topbarActionsFit, 'mobile header actions fit without clipping or hidden overflow');
   await page.screenshot({ path: `${screenshotDirectory}/website-design-mobile.png`, fullPage: true });
 
   const unexpectedConsole = severeConsole.filter(message => !/ERR_BLOCKED_BY_CLIENT|Failed to load resource/i.test(message));

@@ -302,7 +302,7 @@ try {
   assert.match(firstLogin.welcome, /Hi Ava\. I’m your personal assistant\./, 'welcome message is personally addressed');
   assert.match(firstLogin.welcome, /found 1 saved setup item already ready/, 'welcome recognizes confirmed setup');
   assert.equal(firstLogin.contextTitle, 'Build your expert website', 'Website context has its own guidance title');
-  assert.match(firstLogin.contextCopy, /public experience clients use/, 'Website context explains the public experience');
+  assert.match(firstLogin.contextCopy, /coherent foundation.*real content.*structural design choices/i, 'Website Design guidance explains the exact foundation workflow');
   assert(firstLogin.starters.includes('Which changes affect every page?'), 'Website Design receives its exact contextual starter');
   assert.equal(firstLogin.goalsHidden, false, 'not_started onboarding presents first-goal choices');
   assert.deepEqual(firstLogin.surfaceRequests, ['website.design'], 'bootstrap receives the exact Website Design surface');

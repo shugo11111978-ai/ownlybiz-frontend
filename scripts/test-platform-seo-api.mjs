@@ -119,6 +119,16 @@ for (const [url, host] of [['/exampleexpert/book', 'ownlybiz.com'], ['/book', 'e
   assert.doesNotMatch(page.body, /id="ob-platform-schema"/);
   assert.match(page.body, /UNCHANGED SESSION MARKUP/);
 }
+const pricedContentPage = await request('/exampleexpert', {
+  expert: {
+    ...expert,
+    website_content: {
+      ai_pages: [{ slug: 'one-dollar-reading', title: '$1 Reading', nav_label: '$1 Reading', published: true, show_in_nav: true }],
+    },
+  },
+});
+assert.match(pricedContentPage.body, /"nav_label":"\$1 Reading"/, 'expert-authored dollar copy survives public preload injection exactly');
+assert.match(pricedContentPage.body, /"title":"\$1 Reading"/, 'public preload preserves replacement-pattern text in every field');
 const redirected = await request('/exampleexpert/book', { expert: { ...expert, primary_domain: { custom_domain: 'example-expert.com' } } });
 assert.equal(redirected.code, 308);
 assert.equal(redirected.headers.Location, 'https://example-expert.com/book');

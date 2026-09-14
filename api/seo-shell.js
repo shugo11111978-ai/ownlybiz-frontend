@@ -801,7 +801,7 @@ function injectPublicExpertPreload(html, expertResult, host, onDemandResult) {
     ? `window.__OB_PRELOADED_ON_DEMAND__=${safeScriptJson(onDemandResult)};`
     : '';
   const script = `<script id="ob-public-expert-preload">${firstPaint}window.__OB_PRELOADED_EXPERT__=${safeScriptJson(payload)};${onDemand}</script>`;
-  if (/<head[^>]*>/i.test(html)) return html.replace(/<head([^>]*)>/i, `<head$1>\n${script}`);
+  if (/<head[^>]*>/i.test(html)) return html.replace(/<head([^>]*)>/i, (_match, attributes) => `<head${attributes}>\n${script}`);
   return /<\/head>/i.test(html) ? html.replace(/<\/head>/i, `${script}\n</head>`) : `${script}\n${html}`;
 }
 

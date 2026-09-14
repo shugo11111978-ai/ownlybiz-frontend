@@ -8,11 +8,11 @@ Environment: staging only
 
 Stable implementation: https://ownlybiz-git-staging-shugo11111978-4289s-projects.vercel.app/dash/liran1/website-editor
 
-Immutable implementation: https://ownlybiz-akygung0g-shugo11111978-4289s-projects.vercel.app
+Immutable implementation: https://ownlybiz-9n1d6h5z1-shugo11111978-4289s-projects.vercel.app
 
-Deployment: `dpl_7cwjybCx37m92gtjouztEozNDQnP` (`READY`, preview target)
+Deployment: `dpl_14ezFnJHa2y9WBJSU4wgnF4rn8Xd` (`READY`, preview target)
 
-Implementation commit: `0b2fa0267c97e53e3655d6612f249626b824ffc4`
+Implementation commit: `ba86dc9f1cef8ef511780b3d2305c4be80aa1e09`
 
 ## References and target state
 
@@ -127,10 +127,25 @@ All normal text/action states tested exceed WCAG AA. Image buttons have descript
 - The remaining authored staging page names are expert-owned test data. They were intentionally preserved because the authenticated QA boundary was read-only.
 - Verdict: `PASS`; no actionable P0, P1, or P2 product finding remains.
 
+## Published Content Pages release evidence
+
+- Reproduced the defect in a fresh isolated expert context: the Pro dashboard and `/api/website/me` both held seven published pages, while a cold public load had zero custom page nodes and zero custom navigation links.
+- Root cause: cached and preloaded public profiles entered the legacy core website renderer directly, bypassing the canonical public render lifecycle and Content Pages renderer.
+- Resolution: preload, cache, and refresh now share one accepted-payload entry point. It creates the existing generation- and identity-fenced lifecycle and invokes the authoritative Content Pages renderer; the legacy renderer is used only when the canonical renderer is unavailable and is never invoked as a second competing path.
+- The Content Pages runtime also replays the current accepted lifecycle operation when it registers after an early payload, covering both script-order interleavings without duplicate DOM.
+- A separate preload serialization defect removed replacement-pattern copy such as `$1`. Server injection now uses a function replacer, preserving authored page titles, labels, summaries, and body copy exactly.
+- Authenticated staging authority remained seven pages, Pro limit eight, website published, revision `sha256-v1:345f8739099962477cde22ab416f5ce9d2b1a147b558d7a587cdd24cce47ff07`.
+- Public staging now renders exactly four eligible published pages and navigation entries: Gut Health, Love Reading, `$1 Reading`, and `$1 Love Reading`. The existing safety rule continues to exclude the two profanity test pages and one untouched boilerplate page.
+- Cold `/liran1/gut-health`, direct reload, desktop click navigation, Browser Back, Home navigation, and Home reload all preserved the correct route and active page.
+- At 390×844, the hamburger exposed all four custom links; Gut Health opened, the menu closed, and direct-route reload kept Gut Health active.
+- Cold-bootstrap regression begins with a null render lifecycle and verifies accepted preload/cache application, late real-renderer replay, exact idempotent counts, hidden-navigation direct access, unpublished/placeholder exclusion, and stale-slug rejection.
+- Runtime health: zero page exceptions, zero HTTP 4xx/5xx, zero unexpected request failures, and zero unexpected console errors. The read-only boundary deliberately blocked 27 analytics pageview POSTs and no product mutation completed.
+- Evidence: `/private/tmp/ownlybiz-content-pages-repro/evidence.json`, `/private/tmp/ownlybiz-content-pages-repro/03-public-gut-health-route.png`, `/private/tmp/ownlybiz-content-pages-postdeploy-audit/audit-summary.md`, `/private/tmp/ownlybiz-content-pages-postdeploy-audit/classified-result.json`, and six independent desktop/mobile screenshots in that audit directory.
+
 ## Release integrity
 
-- Stable staging Website route returned HTTP 200 with Vercel cache HIT and ETag `W/"546d14-I0e/svp1daSjZXR+aEL4MD8C06o"`.
-- Stable alias and immutable preview returned the same core artifact ETag, `W/"15ebf3-S+dOXPZKSKKWkeTbXRauizhHZL0"`. Their only HTML difference was Vercel's expected preview-feedback script identifying this deployment.
+- Stable staging Gut Health and immutable Gut Health routes returned HTTP 200 after the final deployment. Dynamic HTML differs only by Vercel's expected preview-feedback marker.
+- Stable alias and immutable preview returned the same exported core artifact ETag, `W/"15ebf3-xdEUXSz4XhAdsgxmcQUW3B6KEaA"`, and content length `1436659` in the independent post-deploy audit.
 - Production frontend SHA-256 remained exactly `7ea204fe1593ffe3a6a98219fecc45904ebb40b9c2712a49a62722cfc11d8411` before and after both staging alias updates.
 - Production backend remained deployment `99556104-17a4-45e0-bf2f-09b41738008a`, source `139648d76a254b25adfd8ce94cda46609d91d392`, and image `sha256:b38c02db5c15bd202e0489e7e348761484bc60039dabe7a4418c455ddd1dec85`.
 - Staging backend remained deployment `2f163f67-1278-4b50-a4e0-7409bdef3b3b`; health/readiness passed with zero recent errors and Stripe test mode.
@@ -151,6 +166,8 @@ All normal text/action states tested exceed WCAG AA. Image buttons have descript
 12. P1: Website Pages repeated global domain guidance in its page-context card. Added exact guidance and safe navigation/focus actions for all seven Website surfaces; Pages now prioritizes adding and previewing content.
 13. P1: Pro Content Pages and inactive AI drafting appeared contradictory. Reworded the banner to state that manual editing and Content Pages remain available while AI drafting separately requires active Pro/Scale billing.
 14. P2: mobile header labels wrapped, the Website heading repeated, and fixed navigation overlapped the scroll viewport. Added compact state-preserving labels, changed the workspace heading to “Manage your website,” and ended the mobile main viewport above navigation.
+15. P1: published Content Pages were present in the authoritative document but absent from cold public loads because preload/cache boot bypassed the canonical render lifecycle. Routed every accepted profile through one canonical entry point and added late-renderer replay plus null-lifecycle coverage.
+16. P1: authored `$1` labels and copy were altered during server-side preload insertion by replacement-string semantics. Replaced string interpolation with a function replacer and verified exact copy in SSR and live staging.
 
 No actionable P0, P1, or P2 findings remain.
 

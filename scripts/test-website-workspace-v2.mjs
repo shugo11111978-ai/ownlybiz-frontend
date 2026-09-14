@@ -20,6 +20,7 @@ const styles = section(
 );
 const surfaceCatalogSource = section(/var SURFACES=\{[\s\S]*?\n  \};/, 'Website surface catalog');
 const presetCatalogSource = section(/var TEMPLATE_PRESETS=\[[\s\S]*?\n  \];/, 'Website template catalog');
+const mediaSlotCatalogSource = section(/var MEDIA_SLOTS=\[[\s\S]*?\n  \];/, 'Website media role catalog');
 const collectDocumentSource = runtime.slice(runtime.indexOf('function collectDocument()'), runtime.indexOf('function compatibilityPayload('));
 const aiWebsiteRuntime = section(
   /<script id="ob-ai-website-editor-20260517">([\s\S]*?)<\/script>/,
@@ -177,6 +178,21 @@ assert.doesNotMatch(runtime + styles, /ob-ww-mini-(?:photo|copy|action)/, 'schem
 assert.match(runtime, /state\.selectedPreset=preset\.id/);
 assert.match(runtime, /markDirty\(\);return designForPreset/, 'template selection becomes an explicit unsaved website change');
 
+const mediaSlots = vm.runInNewContext(
+  `(${mediaSlotCatalogSource.replace(/^var MEDIA_SLOTS=/, '').replace(/;$/, '')})`,
+  Object.create(null),
+);
+assert.deepEqual(
+  [...mediaSlots].map((item) => item.key),
+  [
+    'profile_image_url', 'logo_image_url', 'favicon_image_url', 'social_share_image_url',
+    'about_image_url', 'services_image_url', 'reviews_image_url', 'contact_image_url',
+  ],
+  'the Website media library owns all eight fixed semantic image roles',
+);
+assert.equal(new Set(mediaSlots.map((item) => item.input)).size, 8, 'every fixed media role has its own upload input');
+assert.equal(new Set(mediaSlots.map((item) => item.preview)).size, 8, 'every fixed media role has its own visible preview');
+
 function sourceOf(name, nextName) {
   const start = runtime.indexOf(`function ${name}(`);
   assert(start >= 0, `${name} must exist`);
@@ -187,9 +203,9 @@ function sourceOf(name, nextName) {
 
 const selectPresetSource = sourceOf('selectPreset', 'renderSummary');
 assert.doesNotMatch(selectPresetSource, /saveWebsiteWorkspace|requestJson|fetch\s*\(/, 'using a foundation never saves it automatically');
-assert.match(selectPresetSource, /radio\('we-site-mode',preset\.mode\);radio\('we-site-layout',preset\.layout\)/, 'using a foundation applies its complete mode and layout contract');
-assert.match(selectPresetSource, /card\.getAttribute\('data-theme'\) === preset\.palette_id/, 'using a foundation applies its canonical palette');
-assert.match(selectPresetSource, /accent:'we-color-accent',action:'we-color-action',status:'we-color-status',background:'we-color-bg',surface:'we-color-surface',text:'we-color-text'/, 'using a foundation applies all six visible design tokens');
+assert.doesNotMatch(selectPresetSource, /we-site-mode|we-site-layout|we-theme-card|we-color-bg|we-color-surface|we-color-text/, 'foundation selection never coordinates obsolete or structurally unsafe controls');
+assert.match(selectPresetSource, /\['accent','action','status'\][\s\S]*?setValue\('we-color-'\+key,palette\[key\]\)/, 'using a foundation exposes only the safe brand, action, and status roles');
+assert.match(selectPresetSource, /renderDesignValidation\(\)/, 'using a foundation refreshes validation and the visible locked-role design map');
 const inferPresetSource = sourceOf('inferPreset', 'presetById');
 const inferPreset = vm.runInNewContext(`(() => { ${inferPresetSource}; return inferPreset; })()`, Object.create(null));
 for (const [id, contract] of Object.entries(expectedTemplateContracts)) {
@@ -199,11 +215,21 @@ assert.equal(inferPreset({ template_id: 'ownly-practice-focus-v1', layout: 'cent
 assert.equal(inferPreset({ template_id: 'ownly-field-journal-v1', layout: 'editorial', mode: 'dark' }), 'after-hours', 'legacy dark Field Journal records upgrade to After Hours');
 const designForPresetSource = sourceOf('designForPreset', 'legacyDocument');
 assert.match(designForPresetSource, /template_id:preset\.template_id,renderer_family:preset\.renderer_family,mode:preset\.mode,layout:preset\.layout,palette_id:preset\.palette_id/, 'foundation selection resolves one complete canonical renderer contract');
+const designTokenInputsSource = sourceOf('designTokenInputs', 'renderFoundationStyle');
+assert.match(designTokenInputsSource, /presetById\(state\.selectedPreset\)[\s\S]*?preset\.tokens/, 'design tokens begin with the selected foundation’s complete contract');
+assert.match(designTokenInputsSource, /accent:'we-color-accent',action:'we-color-action',status:'we-color-status'/, 'experts may tune only accent, primary action, and live status roles');
+assert.doesNotMatch(designTokenInputsSource, /we-color-bg|we-color-surface|we-color-text/, 'structural background, surface, and text roles cannot drift from the renderer foundation');
 const templatePreviewSource = sourceOf('showTemplatePreview', 'showDraftPreview');
-assert.match(templatePreviewSource, /frame\.srcdoc=previewDocumentHtml\(collectDocument\(\),item\.id\)/, 'card Preview renders the expert content through that foundation’s complete website renderer');
-assert.match(templatePreviewSource, /image\.hidden=true[\s\S]*?image\.removeAttribute\('src'\)/, 'card Preview switches away from the gallery marketing raster');
+assert.match(templatePreviewSource, /installPreviewDocument\(collectDocument\(\),item\.id\)/, 'card Preview installs the expert content through that foundation’s complete explorable website renderer');
+assert.match(templatePreviewSource, /frame\.title=item\.name\+' full website preview'[\s\S]*?frame\.setAttribute\('sandbox','allow-same-origin'\)/, 'card Preview gives its scriptless, fragment-navigable website frame a specific accessible name');
 assert.doesNotMatch(templatePreviewSource, /selectPreset|markDirty|saveWebsiteWorkspace|requestJson|fetch\s*\(/, 'previewing a foundation cannot select, dirty, save, or request data');
 assert.match(templatePreviewSource, /current content in this foundation[\s\S]*?preview only[\s\S]*?no draft changes/i, 'template preview clearly explains that it is a safe full-site preview');
+assert.doesNotMatch(runtime, /\.srcdoc\s*=/, 'preview never lets hash navigation resolve against the embedding dashboard URL');
+assert.match(runtime, /URL\.createObjectURL\(new root\.Blob\(/, 'preview uses a real isolated document URL that remains navigable');
+assert.match(runtime, /URL\.revokeObjectURL\(state\.previewUrl\)/, 'replaced and closed previews release their document URL');
+assert.match(runtime, /frame\.src=state\.previewUrl\+'#'/, 'preview page changes stay within the generated website document');
+assert.match(runtime, /ob-ww-preview-page/, 'the preview provides an explicit page explorer');
+assert.match(runtime, /data-ob-preview-device/, 'the preview provides responsive desktop, tablet, and phone explorers');
 
 const normalizeBaseSource = sourceOf('normalizeBase', 'nonProductionEnvironment');
 const nonProductionSource = sourceOf('nonProductionEnvironment', 'resolveApiBase');
@@ -263,10 +289,12 @@ assert.match(runtime, /clean\(error && error\.message\)/, 'other readiness and a
 assert.doesNotMatch(collectDocumentSource, /schema_version\s*:/);
 assert.doesNotMatch(collectDocumentSource, /template_version\s*:/);
 assert.match(collectDocumentSource, /design:\{template_id:selectedTemplate,mode:selectedMode,layout:selectedLayout,palette_id:palette,tokens:tokens\}/, 'saving carries the selected canonical template through the website facade');
+assert.match(collectDocumentSource, /controls=designTokenInputs\(\),tokens=clone\(presetTokens\)[\s\S]*?\['accent','action','status'\][\s\S]*?tokens\[key\]=validHex\(controls\[key\],presetTokens\[key\]\)/, 'saving derives tokens from locked foundation structure plus three safe expert roles');
 assert.doesNotMatch(collectDocumentSource, /renderer_family\s*:/, 'renderer_family is server-projected and is never sent as an unsupported client patch field');
 assert.match(collectDocumentSource, /selectedMode=preset\.mode,selectedLayout=preset\.layout,selectedTemplate=preset\.template_id,palette=preset\.palette_id/, 'the selected foundation is the sole authority for its exact backend template contract');
 assert.doesNotMatch(collectDocumentSource, /we-site-mode|we-site-layout|we-theme-card/, 'hidden legacy design controls cannot race or corrupt a foundation save');
 assert.match(collectDocumentSource, /custom_pages:mergeCustomPages/);
+assert.match(collectDocumentSource, /MEDIA_SLOTS[\s\S]*?media\[slot\.key\]/, 'all eight fixed media roles are collected through one canonical catalog');
 assert.match(runtime, /obCollectWebsiteContentPages/, 'existing custom-page editor and plan controls remain connected');
 assert.match(runtime, /obLoadContentPagesEditor/);
 assert.match(runtime, /custom_page_limit|custom_pages_limit/, 'facade capabilities continue driving the existing custom-page plan gate');
@@ -281,6 +309,11 @@ assert.equal(
   'nested facade custom-page capability preserves the expert plan and cap',
 );
 assert.match(runtime, /custom_sections:clone\(existing\.custom_sections\)/, 'AI/custom sections are retained');
+const renderMediaLibrarySource = sourceOf('renderMediaLibrary', 'compatibilityPayload');
+assert.match(renderMediaLibrarySource, /MEDIA_SLOTS/, 'the media inventory includes every fixed semantic media role');
+assert.match(renderMediaLibrarySource, /custom_sections[\s\S]*?image_url/, 'the media inventory includes images attached to homepage sections');
+assert.match(renderMediaLibrarySource, /custom_pages[\s\S]*?header_image_url[\s\S]*?sections[\s\S]*?image_url/, 'the media inventory includes custom-page header and section images');
+assert.match(renderMediaLibrarySource, /ob-ww-media-inventory/, 'the complete template-aware inventory renders into the Media surface');
 
 const mergePagesSource = sourceOf('mergeCustomPages', 'collectCredentials');
 const mergePages = vm.runInNewContext(`(() => { const clean=(value)=>String(value==null?'':value).replace(/[\\u0000-\\u001f\\u007f]/g,' ').replace(/\\s+/g,' ').trim(); ${mergePagesSource}; return mergeCustomPages; })()`, Object.create(null));
@@ -379,10 +412,14 @@ assert.match(
   /byId\('ob-ww-preview'\)\.addEventListener\('click',openWebsitePreview\)/,
   'local draft preview remains scoped to the Website workspace Preview draft control',
 );
-assert.match(runtime, /iframe[^>]*sandbox=\"\"/);
-assert.match(runtime, /frame\.setAttribute\('sandbox',''\)/);
-assert.match(runtime, /frame\.srcdoc=previewDocumentHtml/);
-assert.match(runtime, /Content-Security-Policy/);
+assert.match(runtime, /iframe[^>]*sandbox=\"allow-same-origin\"/, 'the preview permits same-document fragment exploration inside its isolated blob URL');
+assert.match(runtime, /frame\.setAttribute\('sandbox','allow-same-origin'\)/, 'both preview entry points preserve fragment navigation');
+assert.doesNotMatch(runtime, /allow-scripts/, 'the preview sandbox never enables script execution');
+assert.doesNotMatch(runtime, /frame\.srcdoc\s*=/,'preview navigation never replaces the iframe with an app-relative srcdoc document');
+assert.match(runtime, /new root\.Blob\(\[previewDocumentHtml\(doc,presetId\)\]/,'the complete scriptless website is materialized as one isolated preview document');
+assert.match(runtime, /ob-ww-preview-page'\)\.addEventListener\('change',[\s\S]*?setPreviewPage\(this\.value\)/,'the preview page picker navigates the same isolated document');
+assert.match(runtime, /setPreviewDevice\(button\.getAttribute\('data-ob-preview-device'\)\)/,'preview device controls update the responsive exploration stage');
+assert.match(runtime, /Content-Security-Policy[\s\S]*?default-src \\'none\\'[\s\S]*?style-src \\'unsafe-inline\\'[\s\S]*?img-src https: http: data: blob:/, 'the generated document blocks all network capabilities except explicitly rendered media');
 const draftPreviewSource = sourceOf('previewDocumentHtml', 'openPreviewDialog');
 assert.doesNotMatch(draftPreviewSource, /<script|javascript:/i, 'the draft preview renderer contains no script execution path');
 for (const sectionClass of ['hero', 'story', 'services', 'proof', 'final', 'footer']) {
@@ -391,6 +428,9 @@ for (const sectionClass of ['hero', 'story', 'services', 'proof', 'final', 'foot
 assert.match(draftPreviewSource, /doc\.navigation\.home[\s\S]*?doc\.navigation\.about[\s\S]*?doc\.navigation\.services[\s\S]*?doc\.navigation\.reviews[\s\S]*?doc\.navigation\.contact/, 'draft preview renders the expert navigation labels');
 assert.match(draftPreviewSource, /doc\.services\.chat_description[\s\S]*?doc\.services\.voice_description[\s\S]*?doc\.services\.video_description/, 'draft preview renders all supported service content');
 assert.match(draftPreviewSource, /doc\.media && doc\.media\.profile_image_url/, 'draft preview uses the expert portrait when one exists');
+for (const mediaRole of ['logo_image_url','social_share_image_url','about_image_url','services_image_url','reviews_image_url','contact_image_url']) {
+  assert.match(draftPreviewSource, new RegExp(mediaRole), `draft preview consumes the ${mediaRole} semantic media role`);
+}
 assert.match(draftPreviewSource, /section\.image_url[\s\S]*?section\.image_alt/, 'draft preview renders a section image with its authored alternative text');
 assert.match(draftPreviewSource, /types=\{feature:[^}]*story:[^}]*faq:[^}]*list:[^}]*quote:[^}]*gallery:[^}]*cta:[^}]*resource:/, 'draft preview recognizes every editable section type');
 assert.match(draftPreviewSource, /custom-section section-'\+type[\s\S]*?data-section-type="'\+type/, 'draft preview projects the selected section type into a distinct semantic renderer');
@@ -405,9 +445,10 @@ assert.match(openWebsitePreviewSource, /state\.dirty \|\| !state\.publication\.p
 const updateHeaderSource = sourceOf('updateHeader', 'markDirty');
 assert.match(updateHeaderSource, /published && !state\.dirty \? 'View live site' : 'Preview draft'/, 'the header clearly distinguishes a saved live site from an unsaved template draft');
 const organizeCardsSource = sourceOf('organizeCards', 'rememberSetting');
-assert.match(organizeCardsSource, /we-theme-grid[\s\S]*?themeCard[\s\S]*?\[themeCard,designControls\][\s\S]*?hidden=true[\s\S]*?aria-hidden/, 'the gallery is authoritative, so the obsolete palette-card chooser is not exposed as a competing template system');
+assert.match(organizeCardsSource, /we-theme-grid[\s\S]*?we-legacy-accent-card[\s\S]*?\[themeCard,designControls,legacyAccent\][\s\S]*?hidden=true[\s\S]*?aria-hidden/, 'the gallery is authoritative, so obsolete theme, accent, and layout systems are not exposed');
 assert.match(organizeCardsSource, /ob-site-design-controls[\s\S]*?hidden=true[\s\S]*?aria-hidden/, 'the gallery is authoritative, so obsolete standalone mode/layout choices are not exposed');
 assert.doesNotMatch(organizeCardsSource, /ob-site-color-controls[\s\S]*?hidden=true/, 'experts can still tune accessible colors after choosing a foundation');
+assert.match(runtime, /data-ob-reset-foundation-colors[\s\S]*?selectPreset\(state\.selectedPreset\)/, 'experts can restore the selected foundation’s safe colors without reviving conflicting controls');
 assert.match(runtime, /exactCredential:true/, 'website requests retain exact identity fencing');
 assert.match(runtime, /Account changed while the website request was in progress/);
 assert.match(runtime, /OB_CLIENT_CONTEXT\.register\('website-workspace-v2'/, 'identity transitions scrub and reload website-private state');
@@ -425,7 +466,8 @@ assert.match(applyAiDraftSource, /expectedDraftVersion[\s\S]*?state\.editVersion
 assert.doesNotMatch(applyAiDraftSource, /doc\.custom_pages=wc\.ai_pages\.map/, 'partial AI page output can never replace the expert’s complete page collection');
 assert.match(runtime, /editVersion:state\.editVersion/, 'the Website workspace exposes a non-content freshness token to the AI editor');
 assert.match(runtime, /design:\{template_id:'ownly-practice-focus-v1'[\s\S]*?tokens:clone\(TEMPLATE_PRESETS\[0\]\.tokens\)/, 'a new website starts from the complete Practice Focus foundation, including its exact colors');
-assert.match(runtime, /keepsExpertColors=currentDesign\.template_id === preset\.template_id/, 'custom colors stay with the exact selected foundation and cannot leak between foundations that share a palette family');
+assert.match(designForPresetSource, /if\(currentDesign\.template_id === preset\.template_id\)[\s\S]*?\['accent','action','status'\]/, 'safe custom roles stay with the exact selected foundation and cannot leak between foundations that share a palette family');
+assert.doesNotMatch(designForPresetSource, /\['background','surface','text'\]|background.*currentDesign|surface.*currentDesign|text.*currentDesign/, 'structural colors are never inherited from an editable or different foundation');
 
 console.log('Website workspace v2 contract and environment-safety smoke passed.');
-console.log('Truthful IA, four complete renderers, authoritative gallery selection, facade CAS, full scriptless preview, Personal Assistant surfaces, plan/data preservation, and staging URL policy verified.');
+console.log('Truthful IA, four complete renderers, locked structural design roles, eight-role media inventory, navigable isolated preview, Personal Assistant surfaces, plan/data preservation, and staging URL policy verified.');

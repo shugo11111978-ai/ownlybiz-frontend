@@ -137,8 +137,9 @@ assert.doesNotMatch(phase1, /completed_step_id|mark_complete|website_published\s
 assert.match(phase1, /status === 'not_started'/, 'server onboarding state controls the first-run invitation');
 assert.match(phase1, /liveWorkActive\(\) \|\| otherDialogOpen\(\)/, 'live work and other dialogs suppress automatic opening');
 assert.match(phase1, /ob_personal_assistant_auto_open_v2_/, 'automatic opening is presentation-scoped and one-time per session/principal');
-assert.match(phase1, /setBackgroundInert\(true\)/);
-assert.match(phase1, /setBackgroundInert\(false\)/);
+assert.doesNotMatch(phase1, /setBackgroundInert|\.inert\s*=|setAttribute\(['"]inert/, 'the complementary side rail never disables the dashboard');
+assert.match(phase1, /document\.body\.classList\.add\('ob-guidance-open'\)/, 'opening the assistant uses only the non-blocking rail layout state');
+assert.match(phase1, /document\.body\.classList\.remove\('ob-guidance-open'\)/, 'closing the assistant removes only its rail layout state');
 assert.match(phase1, /Personal Assistant said:/, 'messages receive explicit accessible speaker labels');
 assert.match(phase1, /assistantRequestController\.abort\(\)/, 'new conversations and identity teardown cancel in-flight assistant work');
 assert.match(phase1, /exactCredential:true/, 'current credential fencing remains exact');

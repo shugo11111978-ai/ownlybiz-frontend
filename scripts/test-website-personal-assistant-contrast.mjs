@@ -18,7 +18,7 @@ function sourceRange(startMarker, endMarker) {
 }
 
 const assistantMarkup = sourceRange(
-  '<div class="ob-guidance-backdrop" id="ob-guidance-backdrop"',
+  '<aside class="ob-guidance-drawer" id="ob-guidance-drawer"',
   '</aside>',
 );
 
@@ -145,6 +145,25 @@ function galleryMarkup() {
 
 function assistantShell() {
   return `<div id="view-3" class="view-panel active">${assistantMarkup}</div>`;
+}
+
+function lightSidebarMarkup() {
+  return `<div id="view-3" class="view-panel active">
+    <aside class="db-sidebar">
+      <div class="db-sidebar-logo"><span id="sidebar-brand" class="mkt-logo">Ownlybiz</span></div>
+      <section class="db-expert-info"><strong id="sidebar-expert" class="db-expert-name">Ari Lane</strong><span id="sidebar-role" class="db-expert-role">Decision coach</span><span id="sidebar-online" class="db-online-text">Online</span></section>
+      <nav class="db-nav" aria-label="Expert dashboard">
+        <section class="db-nav-group">
+          <button id="sidebar-group" class="db-nav-group-toggle" type="button"><span>Sales</span><span class="db-nav-group-state">Hide</span></button>
+          <div class="db-nav-group-items">
+            <button id="sidebar-default" class="db-nav-item" type="button"><span class="icon" aria-hidden="true"></span><span>Payments &amp; payouts</span></button>
+            <button id="sidebar-active" class="db-nav-item active" type="button"><span class="icon" aria-hidden="true"></span><span>Services &amp; Rates</span></button>
+          </div>
+        </section>
+      </nav>
+      <div class="db-nav-utility"><button id="sidebar-utility" class="db-nav-utility-item" type="button">Personal Assistant</button><span id="sidebar-note" class="db-nav-utility-note">Available here</span></div>
+    </aside>
+  </div>`;
 }
 
 function publicMarkup(id, foundation) {
@@ -352,10 +371,29 @@ try {
       measurements.push({...await measureIndicator(page,'#contrast-gallery-preview',{label:`${prefix}.focus-ring`,focus:true,minimumWidth:2}),surface:prefix,state:'focus'});
     }
 
+    if(viewport.name === 'desktop'){
+      await install(page,'ob-ui-light',lightSidebarMarkup());
+      const sidebarPrefix='dashboard-sidebar.light.desktop';
+      for(const [label,selector] of [
+        ['brand','#sidebar-brand'],
+        ['expert-name','#sidebar-expert'],
+        ['expert-role','#sidebar-role'],
+        ['online-status','#sidebar-online'],
+        ['group-label','#sidebar-group'],
+        ['default-item','#sidebar-default'],
+        ['active-item','#sidebar-active'],
+        ['utility-action','#sidebar-utility'],
+        ['utility-note','#sidebar-note'],
+      ]) measurements.push({...await measureText(page,selector,{label:`${sidebarPrefix}.${label}`}),surface:sidebarPrefix});
+      await page.locator('#sidebar-default').hover();
+      measurements.push({...await measureText(page,'#sidebar-default',{label:`${sidebarPrefix}.hover-item`}),surface:sidebarPrefix,state:'hover'});
+      await keyboardFocus(page,'#sidebar-active');
+      measurements.push({...await measureIndicator(page,'#sidebar-active',{label:`${sidebarPrefix}.active-focus`,focus:true,minimumWidth:2}),surface:sidebarPrefix,state:'focus'});
+    }
+
     await install(page,'ob-ui-dark',assistantShell());
     await page.evaluate(()=>{
       const drawer=document.getElementById('ob-guidance-drawer');drawer.hidden=false;
-      document.getElementById('ob-guidance-backdrop').hidden=false;
       document.getElementById('ob-guidance-practice').setAttribute('aria-busy','false');
       document.getElementById('ob-guidance-practice-actions').innerHTML='<button type="button">Review services and rates</button><button type="button">Set availability</button>';
       document.getElementById('ob-guidance-starters').innerHTML='<button type="button">What should I do next?</button>';

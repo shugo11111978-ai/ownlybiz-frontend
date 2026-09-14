@@ -12,6 +12,12 @@ function scriptById(id) {
   return match[1];
 }
 
+function styleById(id) {
+  const match = source.match(new RegExp(`<style id=["']${id}["'][^>]*>([\\s\\S]*?)<\\/style>`));
+  assert(match, `Missing style: ${id}`);
+  return match[1];
+}
+
 function sourceRange(startMarker, endMarker) {
   const start = source.indexOf(startMarker);
   const end = source.indexOf(endMarker, start);
@@ -28,6 +34,7 @@ const publicHtml = sourceRange(
   '\n</div><!-- end view-4 -->',
 ) + '\n</div><!-- end view-4 -->';
 const websiteRuntime = scriptById('ownlybiz-website-workspace-v2-runtime');
+const websiteStyles = styleById('ownlybiz-website-workspace-v2-style');
 
 const templateContracts = {
   'practice-focus': {
@@ -116,7 +123,7 @@ const initialDocument = {
     reviews: 'Client stories', book: 'Book Ari', contact: 'Contact',
   },
   custom_sections: [
-    { id: 'home-method', type: 'feature', heading: 'The decision method', body: 'Notice, test, decide.' },
+    { id: 'home-method', type: 'feature', heading: 'The decision method', body: 'Notice, test, decide.', image_url: 'https://images.example.test/home-method.jpg', image_alt: 'A decision framework on a desk' },
     { id: 'home-proof', type: 'proof', heading: 'Trusted by operators', body: 'Specific, calm, useful.' },
   ],
   custom_pages: [
@@ -143,9 +150,23 @@ const initialDocument = {
     mode: templateContracts['practice-focus'].mode,
     layout: templateContracts['practice-focus'].layout,
     palette_id: templateContracts['practice-focus'].palette_id,
-    tokens: templateContracts['practice-focus'].tokens,
+    tokens: {
+      ...templateContracts['practice-focus'].tokens,
+      background: '#FFFFFF',
+      surface: '#000000',
+      text: '#FFFFFF',
+    },
   },
-  media: { profile_image_url: '', logo_image_url: '', favicon_image_url: '' },
+  media: {
+    profile_image_url: 'https://images.example.test/profile.jpg',
+    logo_image_url: 'https://images.example.test/logo.png',
+    favicon_image_url: 'https://images.example.test/favicon.png',
+    social_share_image_url: 'https://images.example.test/social-share.jpg',
+    about_image_url: 'https://images.example.test/about.jpg',
+    services_image_url: 'https://images.example.test/services.jpg',
+    reviews_image_url: 'https://images.example.test/reviews.jpg',
+    contact_image_url: 'https://images.example.test/contact.jpg',
+  },
   seo: {
     title: 'Ari Lane — decision coach',
     description: 'Decision coaching for founders and leaders.',
@@ -212,12 +233,13 @@ const browser = await chromium.launch({
 
 try {
   const context = await browser.newContext();
+  const outboundRequests = [];
   await context.route('**/*', route => {
     if (route.request().isNavigationRequest() && route.request().url() === 'http://localhost/') {
       return route.fulfill({
         status: 200,
         contentType: 'text/html',
-        body: `<!doctype html><html><head></head><body>
+        body: `<!doctype html><html><head><style>${websiteStyles}</style></head><body>
           <div class="view-panel active" id="view-3">
             <h1 id="db-page-title"></h1>
             <button class="db-nav-item" data-ob-panel="website-editor" type="button">Website</button>
@@ -227,6 +249,7 @@ try {
         </body></html>`,
       });
     }
+    outboundRequests.push({ url: route.request().url(), type: route.request().resourceType() });
     return route.abort();
   });
 
@@ -254,10 +277,7 @@ try {
     colors.innerHTML = `
       <input type="color" id="we-color-accent" value="#c4622d">
       <input type="color" id="we-color-action" value="#c8ff3d">
-      <input type="color" id="we-color-status" value="#637653">
-      <input type="color" id="we-color-bg" value="#f7f1e8">
-      <input type="color" id="we-color-surface" value="#fffdf8">
-      <input type="color" id="we-color-text" value="#241a15">`;
+      <input type="color" id="we-color-status" value="#637653">`;
     const themeGrid = document.getElementById('we-theme-grid');
     const themeCard = themeGrid.closest('.db-card');
     themeCard.after(appearance, colors);
@@ -278,10 +298,7 @@ try {
     window.obPublicApplyAccepted = () => true;
     window.obPublicExpertRenderCurrent = () => true;
     window.obEnsureWebsiteDesignControls = () => {};
-    window.obGetWebsiteDesignTokens = () => Object.fromEntries([
-      ['accent', 'we-color-accent'], ['action', 'we-color-action'], ['status', 'we-color-status'],
-      ['background', 'we-color-bg'], ['surface', 'we-color-surface'], ['text', 'we-color-text'],
-    ].map(([name, id]) => [name, document.getElementById(id).value]));
+    window.obGetWebsiteDesignTokens = () => { throw new Error('obsolete six-control design reader must not run'); };
     window.__editorCustomPages = [];
     window.obLoadContentPagesEditor = content => {
       window.__editorCustomPages = clone(content.ai_pages || []);
@@ -437,18 +454,69 @@ try {
   assert.equal(initialState.state.selectedPreset, 'practice-focus');
   assertPublicFoundation(initialState.snapshot, 'practice-focus', 'initial Practice Focus hydration');
 
+  const designAndMedia = await page.evaluate(() => {
+    const hooks = window.__OB_TEST_HOOKS__.websiteWorkspaceV2;
+    const initial = hooks.collectDocument();
+    document.getElementById('we-color-accent').value = '#7A2F18';
+    document.getElementById('we-color-action').value = '#225C39';
+    document.getElementById('we-color-status').value = '#435F35';
+    const customized = hooks.collectDocument();
+    document.getElementById('we-color-accent').value = '#C4622D';
+    document.getElementById('we-color-action').value = '#C8FF3D';
+    document.getElementById('we-color-status').value = '#637653';
+    return {
+      initial,
+      customized,
+      inventoryCount: document.querySelectorAll('#ob-ww-media-inventory .ob-ww-media-item').length,
+      inventoryText: document.getElementById('ob-ww-media-inventory')?.textContent || '',
+      countText: document.getElementById('ob-ww-media-count')?.textContent || '',
+    };
+  });
+  assertFoundationDocument(designAndMedia.initial, 'practice-focus', 'initial normalized foundation');
+  assert.deepEqual(
+    upperTokens(designAndMedia.customized.design.tokens),
+    {
+      ...templateContracts['practice-focus'].tokens,
+      accent: '#7A2F18', action: '#225C39', status: '#435F35',
+    },
+    'only accent, action, and status can vary while background, surface, and text remain foundation-owned',
+  );
+  assert.equal(designAndMedia.inventoryCount, 10, 'Media inventories eight fixed roles plus homepage and Content Page section media');
+  assert.equal(designAndMedia.countText, '10 assets in use', 'Media reports the complete number of assets in use');
+  for (const label of ['Profile photo', 'Social share image', 'About page image', 'Services page image', 'Reviews page image', 'Contact page image', 'The decision method', 'Choose with confidence']) {
+    assert.match(designAndMedia.inventoryText, new RegExp(label, 'i'), `Media inventory names ${label}`);
+  }
+
+  outboundRequests.length = 0;
   await page.evaluate(() => document.getElementById('ob-ww-preview').click());
-  await page.waitForTimeout(250);
-  const previewSource = await page.locator('#ob-ww-preview-frame').getAttribute('srcdoc');
-  assert(previewSource, 'scriptless preview writes a complete isolated HTML document');
-  const previewPage = await context.newPage();
-  await previewPage.setContent(previewSource, { waitUntil: 'domcontentloaded' });
-  const customPreview = await previewPage.evaluate(() => {
-    const preview = document;
-    const customPage = preview.querySelector('.custom-page[data-page-template="guide"]');
+  await page.waitForFunction(() => {
+    const frame = document.getElementById('ob-ww-preview-frame');
+    const picker = document.getElementById('ob-ww-preview-page');
+    return frame?.getAttribute('src')?.startsWith('blob:') && picker?.options.length >= 7;
+  });
+  const previewFrameElement = await page.locator('#ob-ww-preview-frame').elementHandle();
+  const previewFrame = await previewFrameElement.contentFrame();
+  await previewFrame.waitForLoadState('domcontentloaded');
+  const previewSecurity = await page.locator('#ob-ww-preview-frame').evaluate(frame => ({
+    sandbox: frame.getAttribute('sandbox'),
+    srcdoc: frame.hasAttribute('srcdoc'),
+  }));
+  assert.equal(previewSecurity.sandbox, 'allow-same-origin', 'preview enables fragment navigation without enabling scripts');
+  assert.equal(previewSecurity.srcdoc, false, 'preview never falls back to dashboard-relative srcdoc navigation');
+  assert.equal(await previewFrame.locator('script').count(), 0, 'the generated website contains no executable script');
+  assert.match(
+    await previewFrame.locator('meta[http-equiv="Content-Security-Policy"]').getAttribute('content'),
+    /default-src 'none'; style-src 'unsafe-inline'; img-src https: http: data: blob:/,
+    'the generated website permits only inline styling and explicit media requests',
+  );
+  const initialPreviewUrl = previewFrame.url();
+  assert.match(initialPreviewUrl, /^blob:[^#]+#home$/, 'scriptless preview loads as a real isolated website document');
+  const customPreview = await previewFrame.evaluate(() => {
+    const customPage = document.querySelector('.custom-page[data-page-template="guide"]');
     const feature = customPage?.querySelector('[data-section-type="feature"]');
     const image = feature?.querySelector('img');
     return {
+      bodyText: document.body.textContent.trim(),
       pageClass: customPage?.className || '',
       sectionClass: feature?.className || '',
       heading: feature?.querySelector('h3')?.textContent || '',
@@ -456,13 +524,45 @@ try {
       imageSrc: image?.getAttribute('src') || '',
     };
   });
+  assert(customPreview.bodyText.length > 300, 'the initial preview is visibly populated rather than black or blank');
   assert.match(customPreview.pageClass, /template-guide/, 'scriptless preview visibly composes the saved Guide page template');
   assert.match(customPreview.sectionClass, /section-feature/, 'scriptless preview visibly renders the saved Feature section type');
   assert.equal(customPreview.heading, 'Choose with confidence', 'scriptless preview supports the canonical heading alias');
   assert.equal(customPreview.imageAlt, 'A decision map laid out beside a notebook', 'scriptless preview uses the authored section image description');
   assert.equal(customPreview.imageSrc, 'https://images.example.test/decision-guide.jpg', 'scriptless preview renders the saved section image');
-  await previewPage.close();
+
+  const pageChoices = await page.locator('#ob-ww-preview-page option').evaluateAll(options => options.map(option => ({ value: option.value, label: option.textContent })));
+  assert.deepEqual(
+    pageChoices.map(choice => choice.value),
+    ['home', 'about', 'services', 'reviews', 'book', 'contact', 'custom-decision-guide'],
+    'the page explorer exposes every enabled standard page and the complete custom page',
+  );
+  await page.selectOption('#ob-ww-preview-page', 'about');
+  await page.waitForFunction(() => document.getElementById('ob-ww-preview-frame')?.getAttribute('src')?.endsWith('#about'));
+  assert.match(previewFrame.url(), /^blob:[^#]+#about$/, 'page-picker navigation remains inside the same isolated website document');
+  assert.match(await previewFrame.locator('#about').innerText(), /About Ari[\s\S]*complete expert story/i, 'another standard preview page remains rendered and readable');
+
+  await previewFrame.locator('a[href="#services"]').first().click();
+  await previewFrame.waitForFunction(() => location.hash === '#services');
+  assert.match(previewFrame.url(), /^blob:[^#]+#services$/, 'internal preview navigation remains on the blob document instead of routing the dashboard');
+  assert((await previewFrame.locator('body').innerText()).length > 300, 'internal navigation never produces a black or blank iframe');
+
+  await page.selectOption('#ob-ww-preview-page', 'custom-decision-guide');
+  await page.waitForFunction(() => document.getElementById('ob-ww-preview-frame')?.getAttribute('src')?.endsWith('#custom-decision-guide'));
+  assert.match(await previewFrame.locator('#custom-decision-guide').innerText(), /Decision guide[\s\S]*Choose with confidence/i, 'the explicit page explorer reaches custom Content Pages');
+  assert.equal(
+    outboundRequests.filter(request => request.type !== 'image' || new URL(request.url).hostname !== 'images.example.test').length,
+    0,
+    'preview exploration leaks no document, script, font, fetch, or unexpected third-party request',
+  );
+
+  for (const device of ['tablet', 'phone', 'desktop']) {
+    await page.locator(`[data-ob-preview-device="${device}"]`).click();
+    assert.equal(await page.locator('#ob-ww-preview-stage').getAttribute('data-device'), device, `${device} preview mode updates the responsive stage`);
+    assert.equal(await page.locator(`[data-ob-preview-device="${device}"]`).getAttribute('aria-pressed'), 'true', `${device} preview mode exposes its selected state`);
+  }
   await page.evaluate(() => document.getElementById('ob-ww-close-preview').click());
+  assert.equal(await page.locator('#ob-ww-preview-frame').getAttribute('src'), 'about:blank', 'closing preview releases the isolated document from the iframe');
 
   const transitionOrder = ['quiet-confidence', 'field-journal', 'after-hours', 'practice-focus'];
   const verifiedStages = ['initial:practice-focus'];

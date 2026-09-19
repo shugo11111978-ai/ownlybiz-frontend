@@ -4,6 +4,7 @@ const publicSite = require('../lib/expert-public');
 const expertRender = require('../lib/expert-render');
 
 const BACKEND = (process.env.OWNLYBIZ_API_URL || process.env.OWNLY_API || 'https://ownlybiz-backend-production.up.railway.app').replace(/\/+$/, '');
+const STAGING_NOINDEX_HOST = 'ownlybiz-git-staging-shugo11111978-4289s-projects.vercel.app';
 const INDEX_PATH = path.join(process.cwd(), 'index.html');
 const PLATFORM_INDEX_PATH = path.join(process.cwd(), 'data', 'ownlybiz-platform.html');
 const EXPERT_INDEX_PATH = path.join(process.cwd(), 'data', 'ownlybiz-expert.html');
@@ -1537,6 +1538,8 @@ function whiteLabelExpertShell(html) {
 
 module.exports = async function handler(req, res) {
   const host = publicSite.hostFromReq(req);
+  const stagingNoindex = process.env.VERCEL_ENV === 'preview' || host === STAGING_NOINDEX_HOST;
+  if (stagingNoindex) res.setHeader('X-Robots-Tag', 'noindex,nofollow');
   if (isLegacyCpanelPath(req)) {
     res.setHeader('Location', `https://${host || 'ownlybiz.com'}/`);
     res.setHeader('Cache-Control', 'public, s-maxage=3600, stale-while-revalidate=86400');
@@ -1560,9 +1563,10 @@ module.exports = async function handler(req, res) {
   function failPublic(status) {
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.setHeader('Cache-Control', 'no-store');
-    res.setHeader('X-Robots-Tag', 'noindex,follow');
+    res.setHeader('X-Robots-Tag', stagingNoindex ? 'noindex,nofollow' : 'noindex,follow');
     if (status === 503) res.setHeader('Retry-After', '30');
-    res.status(status).send(expertRender.expertErrorHtml(status));
+    const html = expertRender.expertErrorHtml(status);
+    res.status(status).send(stagingNoindex ? setMeta(html, 'name', 'robots', 'noindex,nofollow') : html);
   }
   try { decodeURIComponent(pathOnly(req)); } catch (_) { failPublic(404); return; }
   if (/%(?:2f|5c|00)/i.test(pathOnly(req))) { failPublic(404); return; }
@@ -1623,7 +1627,7 @@ module.exports = async function handler(req, res) {
     const canonicalFor = page => siteOrigin.replace(/\/+$/, '') + page.canonicalPath;
     const expertCanonical = canonicalFor(expertPage);
     const sensitiveQuery = [...new URLSearchParams(queryOnly(req)).keys()].some(key => !/^(?:utm_[a-z0-9_]+|gclid|dclid|fbclid|msclkid|gbraid|wbraid|expert|full)$/i.test(key));
-    const robotsValue = !publicSite.allowIndexing(expert) || sensitiveQuery
+    const robotsValue = stagingNoindex || !publicSite.allowIndexing(expert) || sensitiveQuery
       ? 'noindex,nofollow'
       : hostedOwnlybizCopy && !primaryDomain
         ? 'noindex,follow,max-image-preview:large'
@@ -1724,6 +1728,12 @@ module.exports = async function handler(req, res) {
   const hasPrivateQuery = [...new URLSearchParams(queryOnly(req)).keys()].some(key => !/^(?:utm_[a-z0-9_]+|gclid|dclid|fbclid|msclkid|gbraid|wbraid|expert|full)$/i.test(key));
   const privateDelivery = hasPrivateQuery || req.headers && (req.headers.authorization || req.headers.cookie) || (!isExpert && !knownPlatformPublic && statusCode === 200);
   if (privateDelivery) {
+    html = setMeta(html, 'name', 'robots', 'noindex,nofollow');
+    res.setHeader('X-Robots-Tag', 'noindex,nofollow');
+  }
+  // Apply last: public legal/blog SEO and expert hydration must not re-enable
+  // indexing on staging/preview. Production deployments on other hosts retain their policy.
+  if (stagingNoindex) {
     html = setMeta(html, 'name', 'robots', 'noindex,nofollow');
     res.setHeader('X-Robots-Tag', 'noindex,nofollow');
   }

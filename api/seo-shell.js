@@ -1,9 +1,12 @@
 const fs = require('fs');
 const path = require('path');
+const publicSite = require('../lib/expert-public');
+const expertRender = require('../lib/expert-render');
 
 const BACKEND = (process.env.OWNLYBIZ_API_URL || process.env.OWNLY_API || 'https://ownlybiz-backend-production.up.railway.app').replace(/\/+$/, '');
 const INDEX_PATH = path.join(process.cwd(), 'index.html');
 const PLATFORM_INDEX_PATH = path.join(process.cwd(), 'data', 'ownlybiz-platform.html');
+const EXPERT_INDEX_PATH = path.join(process.cwd(), 'data', 'ownlybiz-expert.html');
 const PLATFORM_LEGAL_PATH = path.join(process.cwd(), 'data', 'ownlybiz-platform-legal.json');
 const BLOG_POSTS_PATH = path.join(process.cwd(), 'data', 'ownlybiz-blog-posts.json');
 const RESERVED = new Set([
@@ -15,16 +18,14 @@ const RESERVED = new Set([
   'terms', 'legal', 'privacy', 'reset', 'reset-password', 'stripe', 'verify',
   'verify-email', 'wallet',
 ]);
-const CUSTOM_DOMAIN_SLUG_FALLBACKS = {
-  'lunapsychics.com': 'liranprodtest',
-  'www.lunapsychics.com': 'liranprodtest',
-};
+const expertResolver = publicSite.createExpertResolver({ backend: BACKEND });
 const PUBLIC_FIRST_PAINT_SLUGS = publicSlugSet(process.env.OB_PUBLIC_EXPERT_FIRST_PAINT_SLUGS);
 const PUBLIC_LITE_EXPERT_SLUGS = publicSlugSet(process.env.OB_PUBLIC_EXPERT_LITE_SLUGS);
 
 let cachedIndex = null;
 let cachedBlogPosts = null;
 let cachedPlatformIndex = null;
+let cachedExpertIndex = null;
 let cachedPlatformLegal = null;
 let cachedPlatformSeo = null;
 let pendingPlatformSeo = null;
@@ -47,6 +48,14 @@ function readPlatformIndex() {
     // Local source-only checks and older builds retain the original shell.
     return readIndex();
   }
+}
+
+function readExpertIndex() {
+  if (!cachedExpertIndex || process.env.NODE_ENV !== 'production') {
+    cachedExpertIndex = fs.readFileSync(EXPERT_INDEX_PATH, 'utf8');
+    if (!cachedExpertIndex.includes('data-ob-expert-delivery="1"')) throw new Error('Expert delivery artifact is invalid');
+  }
+  return cachedExpertIndex;
 }
 
 function readPlatformLegal() {
@@ -647,21 +656,7 @@ async function fetchCachedPublicOnDemand(slug) {
 }
 
 async function resolveExpert(req, host) {
-  const route = routeFromRequest(req, host);
-  let slug = route.slug;
-
-  if (!slug && route.kind === 'custom-domain') {
-    const lookup = await fetchJson(`${BACKEND}/api/domains/lookup?domain=${encodeURIComponent(host)}`);
-    slug = clean(lookup && lookup.slug) || CUSTOM_DOMAIN_SLUG_FALLBACKS[host] || '';
-  }
-  if (!slug) return null;
-
-  const profileUrl = `${BACKEND}/api/experts/${encodeURIComponent(slug)}`;
-  const profileTtl = publicFirstPaintEnabled(slug) ? 300000 : 30000;
-  const profile = await fetchCachedPublicExpert(profileUrl, 1800, profileTtl);
-  const expert = profile && (profile.expert || profile);
-  if (!expert || !(expert.name || expert.slug)) return { slug, route: { ...route, slug } };
-  return { slug, route: { ...route, slug }, expert, profile };
+  return expertResolver.resolve(req, host);
 }
 
 function expertTitle(expert) {
@@ -770,10 +765,7 @@ const PUBLIC_EXPERT_PRELOAD_FIELDS = [
 ];
 
 function publicExpertPreloadData(expert, profile) {
-  const preloaded = {};
-  for (const field of PUBLIC_EXPERT_PRELOAD_FIELDS) {
-    if (expert[field] !== undefined) preloaded[field] = expert[field];
-  }
+  const preloaded = publicSite.publicExpertProjection(expert);
   if (Array.isArray(profile.packages) && !Array.isArray(preloaded.packages)) {
     preloaded.packages = profile.packages;
   }
@@ -794,13 +786,14 @@ function injectPublicExpertPreload(html, expertResult, host, onDemandResult) {
     routeKind: expertResult && expertResult.route && expertResult.route.kind || '',
     expert: preloadedExpert,
   };
-  const firstPaint = publicFirstPaintEnabled(payload.slug)
+  const delivery = html.includes('data-ob-expert-delivery="1"');
+  const firstPaint = delivery || publicFirstPaintEnabled(payload.slug)
     ? `window.__OB_PUBLIC_FIRST_PAINT__={slug:${safeScriptJson(payload.slug)}};`
     : '';
   const onDemand = onDemandResult
     ? `window.__OB_PRELOADED_ON_DEMAND__=${safeScriptJson(onDemandResult)};`
     : '';
-  const script = `<script id="ob-public-expert-preload">${firstPaint}window.__OB_PRELOADED_EXPERT__=${safeScriptJson(payload)};${onDemand}</script>`;
+  const script = `<script id="ob-public-expert-preload">${delivery ? 'window.__OB_EXPERT_DELIVERY__=true;' : ''}${firstPaint}window.__OB_PRELOADED_EXPERT__=${safeScriptJson(payload)};${onDemand}</script>`;
   if (/<head[^>]*>/i.test(html)) return html.replace(/<head([^>]*)>/i, (_match, attributes) => `<head${attributes}>\n${script}`);
   return /<\/head>/i.test(html) ? html.replace(/<\/head>/i, `${script}\n</head>`) : `${script}\n${html}`;
 }
@@ -1543,7 +1536,7 @@ function whiteLabelExpertShell(html) {
 }
 
 module.exports = async function handler(req, res) {
-  const host = hostFromReq(req);
+  const host = publicSite.hostFromReq(req);
   if (isLegacyCpanelPath(req)) {
     res.setHeader('Location', `https://${host || 'ownlybiz.com'}/`);
     res.setHeader('Cache-Control', 'public, s-maxage=3600, stale-while-revalidate=86400');
@@ -1551,7 +1544,35 @@ module.exports = async function handler(req, res) {
     return;
   }
 
+  // The complete application remains available at its established utility
+  // routes. Neither tenant lookup nor public-page validation gates callbacks,
+  // authentication, dashboards, group rooms, or session deep links.
+  if (publicSite.isUtilityRequest(req, host) && !(publicPlatformRequest(req, host) && (knownPublicPlatformPath(pathOnly(req)) || invalidPublicPlatformPath(pathOnly(req))))) {
+    let html = readIndex();
+    html = setMeta(html, 'name', 'robots', 'noindex,nofollow');
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('X-Robots-Tag', 'noindex,nofollow');
+    res.status(200).send(html);
+    return;
+  }
+
+  function failPublic(status) {
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('X-Robots-Tag', 'noindex,follow');
+    if (status === 503) res.setHeader('Retry-After', '30');
+    res.status(status).send(expertRender.expertErrorHtml(status));
+  }
+  try { decodeURIComponent(pathOnly(req)); } catch (_) { failPublic(404); return; }
+  if (/%(?:2f|5c|00)/i.test(pathOnly(req))) { failPublic(404); return; }
+
   const expertResult = await resolveExpert(req, host);
+  if (expertResult.state === 'unavailable') { failPublic(503); return; }
+  if (expertResult.state === 'not_found') {
+    failPublic(expertResult.slug === 'liranprodtest' || expertResult.route && expertResult.route.slug === 'liranprodtest' ? 410 : 404);
+    return;
+  }
   const expert = expertResult && expertResult.expert;
   const route = expertResult && expertResult.route;
   const isExpert = !!expert;
@@ -1566,26 +1587,16 @@ module.exports = async function handler(req, res) {
     return;
   }
 
+  const expertPage = isExpert ? publicSite.publicPageForRequest(req, route, expert) : null;
+  if (isExpert && expertPage.kind === 'not_found') { failPublic(404); return; }
+
   if (isExpert && expert) {
     const primaryDomain = primaryDomainFromExpert(expert);
     if (shouldRedirectToPrimary(host, route, primaryDomain)) {
       const location = `https://${primaryDomain}${pathForPrimaryDomain(req, route)}${queryOnly(req)}`;
       res.setHeader('Location', location);
-      res.setHeader('Cache-Control', 'public, s-maxage=300, stale-while-revalidate=3600');
+      res.setHeader('Cache-Control', queryOnly(req) ? 'no-store' : 'public, s-maxage=300, stale-while-revalidate=3600');
       res.status(308).end();
-      return;
-    }
-  }
-
-  if (isExpert && expert && publicLiteEnabled(expert.slug || expertResult.slug) && !queryFlag(req, 'full')) {
-    const preloadOnDemand = await fetchCachedPublicOnDemand(expert.slug || expertResult.slug);
-    const html = renderPublicLitePage(expertResult, req, host, preloadOnDemand);
-    if (html) {
-      res.setHeader('Content-Type', 'text/html; charset=utf-8');
-      res.setHeader('Cache-Control', 'no-store');
-      res.setHeader('X-Robots-Tag', 'noindex,follow');
-      res.setHeader('X-Ownlybiz-Public-Lite', clean(expert.slug || expertResult.slug));
-      res.status(200).send(html);
       return;
     }
   }
@@ -1599,35 +1610,43 @@ module.exports = async function handler(req, res) {
     res.status(308).end();
     return;
   }
-  let html = knownPlatformPublic ? readPlatformIndex() : readIndex();
+  let html;
+  try { html = isExpert ? readExpertIndex() : knownPlatformPublic ? readPlatformIndex() : readIndex(); }
+  catch (_) { failPublic(503); return; }
   let statusCode = 200;
   if (isExpert) {
-    const preloadOnDemand = publicFirstPaintEnabled(clean(expert && (expert.slug || expertResult.slug)))
-      && publicFirstPaintPage(req, route) === 'book'
-      ? await fetchCachedPublicOnDemand(expert.slug || expertResult.slug)
-      : null;
-    html = whiteLabelExpertShell(html);
+    const preloadOnDemand = expert.on_demand_public || null;
     html = injectPublicExpertPreload(html, expertResult, host, preloadOnDemand);
-    html = injectPublicFirstPaintShell(html, expertResult, req, preloadOnDemand);
-    const primaryDomain = primaryDomainFromExpert(expert);
-    const hostedOwnlybizCopy = route && (route.kind === 'subdomain' || route.kind === 'platform-path');
-    const expertCanonical = primaryDomain
-      ? `https://${primaryDomain}${pathForPrimaryDomain(req, route)}`
-      : canonical;
-    const explicitNoindex = expert && expert.allow_indexing !== undefined && expert.allow_indexing !== null
-      && ['0', 'false', 'no', 'off'].includes(String(expert.allow_indexing).toLowerCase());
-    const robotsValue = explicitNoindex
+    const primaryDomain = publicSite.primaryDomainFromExpert(expert);
+    const hostedOwnlybizCopy = route && (route.kind === 'subdomain' || route.kind === 'platform-path' || route.kind === 'query');
+    const siteOrigin = publicSite.publicOrigin(expert, host);
+    const canonicalFor = page => siteOrigin.replace(/\/+$/, '') + page.canonicalPath;
+    const expertCanonical = canonicalFor(expertPage);
+    const sensitiveQuery = [...new URLSearchParams(queryOnly(req)).keys()].some(key => !/^(?:utm_[a-z0-9_]+|gclid|dclid|fbclid|msclkid|gbraid|wbraid|expert|full)$/i.test(key));
+    const robotsValue = !publicSite.allowIndexing(expert) || sensitiveQuery
       ? 'noindex,nofollow'
       : hostedOwnlybizCopy && !primaryDomain
         ? 'noindex,follow,max-image-preview:large'
         : 'index,follow,max-image-preview:large,max-snippet:-1,max-video-preview:-1';
+    const seo = expertRender.expertSeo(expert, expertPage, expertCanonical, siteOrigin);
     html = injectSeo(html, {
-      title: expertTitle(expert),
-      description: expertDescription(expert),
+      title: seo.title,
+      description: seo.description,
       canonical: expertCanonical,
       robots: robotsValue,
-      image: whiteLabelAssetUrl(expert && (expert.og_image_url || expert.logo_url || expert.avatar_url), origin),
+      image: whiteLabelAssetUrl(seo.image, origin),
     });
+    html = injectJsonLd(html, seo.schema, 'ob-expert-schema');
+    const pages = publicSite.publishedPublicPages(expert).map(page => ({...page, path:(route.kind === 'platform-path' || route.kind === 'query' ? '/' + expertResult.slug : '') + page.canonicalPath}));
+    const metadata = {slug:expertResult.slug,robots:robotsValue,pages:pages.map(page => {
+      const canonical = canonicalFor(page);
+      const seo = expertRender.expertSeo(expert,page,canonical,siteOrigin);
+      return {page:page.page,path:page.path,queryPath:route.kind === 'query' ? page.canonicalPath : undefined,canonical,title:seo.title,description:seo.description,schema:seo.schema};
+    })};
+    html = html.replace(/<head([^>]*)>/i, (_match, attributes) => `<head${attributes}>\n<script id="ob-expert-site-metadata">window.__OB_EXPERT_SITE__=${safeScriptJson(metadata)};</script>`);
+    html = addHtmlClass(html, 'ob-public-first-paint');
+    const firstPaint = expertRender.renderExpertFirstPaint(expertResult, expertPage, pages);
+    html = html.replace(/<body([^>]*)>/i, (_match, attributes) => `<body${attributes}>\n${firstPaint}`);
     html = setFavicon(html, expertFaviconUrl(expert, req, host, origin));
     res.setHeader('X-Robots-Tag', robotsValue);
   } else if (platformPublic && invalidPublicPlatformPath(publicPath)) {
@@ -1702,6 +1721,12 @@ module.exports = async function handler(req, res) {
   }
 
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
-  res.setHeader('Cache-Control', 'public, s-maxage=300, stale-while-revalidate=3600');
+  const hasPrivateQuery = [...new URLSearchParams(queryOnly(req)).keys()].some(key => !/^(?:utm_[a-z0-9_]+|gclid|dclid|fbclid|msclkid|gbraid|wbraid|expert|full)$/i.test(key));
+  const privateDelivery = hasPrivateQuery || req.headers && (req.headers.authorization || req.headers.cookie) || (!isExpert && !knownPlatformPublic && statusCode === 200);
+  if (privateDelivery) {
+    html = setMeta(html, 'name', 'robots', 'noindex,nofollow');
+    res.setHeader('X-Robots-Tag', 'noindex,nofollow');
+  }
+  res.setHeader('Cache-Control', privateDelivery || expertResult.stale || statusCode !== 200 ? 'no-store' : 'public, s-maxage=30, stale-while-revalidate=60');
   res.status(statusCode).send(html);
 };

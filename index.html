@@ -4969,6 +4969,18 @@ body{font-feature-settings:"ss01","cv11";background:
     function ready(){
       var view = document.getElementById('view-4');
       var expert = window._currentExpert || {};
+      if(window.__OB_EXPERT_DELIVERY__){
+        if(document.querySelector('#view-5.active')) return true;
+        var requestedPage = shell.dataset.page || 'home';
+        var currentPath=(location.pathname || '/').replace(/\/+$/,'') || '/';
+        var sitePages=window.__OB_EXPERT_SITE__ && window.__OB_EXPERT_SITE__.pages || [];
+        var currentPage=sitePages.find(function(item){return (item.path.replace(/\/+$/,'') || '/') === currentPath;});
+        if(currentPage) requestedPage=currentPage.page;
+        else if(/\/account\/?$/.test(location.pathname || '') && typeof window.getClientToken === 'function' && window.getClientToken()) requestedPage='account';
+        var requestedRoot = document.getElementById('ep-' + requestedPage);
+        if(requestedPage === 'experts' || requestedPage === 'expert-profile') requestedRoot = document.querySelector('#view-4 .expert-page.active');
+        return !!(view && view.classList.contains('active') && expert.slug === shell.dataset.slug && requestedRoot && requestedRoot.classList.contains('active') && !window._customDomainPending);
+      }
       var name = String(expert.name || expert.display_name || '').trim();
       var bodyText = String(document.body && document.body.innerText || '');
       var bookRoot = document.querySelector('#view-4 #ep-book');
@@ -11430,6 +11442,17 @@ function clientSignupPkg(){
 }
 // ===== END NEW JS =====
 function switchView(n){
+  // Public expert delivery retains inert platform containers for startup
+  // compatibility. Enter the complete application through its real URL.
+  if(window.__OB_EXPERT_DELIVERY__ && [2,3,6,7].indexOf(Number(n)) >= 0){
+    var destination = Number(n) === 2 ? '/signup' : Number(n) === 6 ? '/admin' : Number(n) === 7 ? '/connectors' : '';
+    if(!destination){
+      var dashboardSlug = window._myExpertSlug || window._dashSlug || '';
+      destination = /^[a-z0-9][a-z0-9-]{1,62}$/i.test(dashboardSlug) ? '/dash/' + encodeURIComponent(dashboardSlug) : '/login';
+    }
+    window.location.assign(destination);
+    return;
+  }
   if(n===3){ /* removed auto-popup demo trigger */ }
   document.querySelectorAll('.view-panel').forEach(p=>p.classList.remove('active'));
   document.querySelectorAll('.view-btn').forEach(b=>b.classList.remove('active'));
@@ -13358,6 +13381,11 @@ window.obApplyMarketingSeo = function(page) {
 
 // Close mobile menus when a nav link is clicked
 function showMktPage(page) {
+  if(window.__OB_EXPERT_DELIVERY__ && page !== 'home'){
+    var platformPage = String(page || 'login').replace(/[^a-z0-9-]/g,'');
+    window.location.assign(platformPage === 'login' ? '/login' : 'https://ownlybiz.com/' + platformPage);
+    return;
+  }
   document.querySelectorAll('.mkt-page').forEach(p=>p.classList.remove('active'));
   var el = document.getElementById('mkt-page-'+page);
   if(el) el.classList.add('active');
@@ -16223,6 +16251,7 @@ async function savePaymentConfig() {
      VIEW 1 — MARKETING SITE
   ══════════════════════════════════════════════════════ */
   async function loadMarketing() {
+    if(window.__OB_EXPERT_DELIVERY__) return;
     try {
       const [s, fe] = await Promise.all([api('GET','/marketing/stats'), api('GET','/marketing/featured-experts')]);
       // live stat badge
@@ -21474,6 +21503,8 @@ window._applyExpertWebsite = function _applyExpertWebsite(data) {
   if (ctaEl) ctaEl.textContent = '⚡ ' + heroCta;
   var bottomCta=document.getElementById('bottom-cta-btn');
   if(bottomCta) bottomCta.textContent='⚡ ' + heroCta + ' →';
+  _ewSetText('.ob-template-final-title',_ewText(wc.final_cta_title) || 'Book a session');
+  _ewSetText('.ob-template-final-copy',_ewText(wc.final_cta_description) || (expertName ? 'Choose a session with ' + expertName + '.' : 'Choose a session.'));
 
   // About bio
   var aboutText=_ewText(data.about_text);
@@ -21829,6 +21860,7 @@ window._applyExpertWebsite = function _applyExpertWebsite(data) {
   }
 
   function obLoadSettings(){
+    if(window.__OB_EXPERT_DELIVERY__) return;
     fetch(BASE+'/api/admin/settings/popup-settings').then(function(r){return r.json();}).then(function(s){
       if(!popupEnabled(s.popup_enabled)){return;}
       if(s.popup_headline) document.getElementById('ob-headline-txt').textContent=s.popup_headline;
@@ -34185,6 +34217,7 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
 	    };
 	  }
 	  function applyPlatformSeo(seo){
+	    if(window.__OB_EXPERT_DELIVERY__) return;
 	    if(new URLSearchParams(location.search || '').has('expert')) return;
 	    if(seo && Object.keys(seo).length) window._obPlatformSeoConfig = seo;
 	    var settings = platformSeoDefaults(window._obPlatformSeoConfig || seo);
@@ -34230,6 +34263,7 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
     return (window._currentExpert && window._currentExpert.slug) || window._currentExpertSlug || window._browseExpert || '';
   }
 	  function isExpertRoute(){
+	    if(window.__OB_EXPERT_DELIVERY__) return true;
 	    var host = (location.hostname || '').toLowerCase();
 	    var path = (location.pathname || '').replace(/^\/+|\/+$/g, '');
 	    var firstPath = path.split('/').filter(Boolean)[0] || '';
@@ -34269,17 +34303,29 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
 	    data = data || window._currentExpert || {};
     var title = expertTitle(data);
     var description = expertDescription(data);
+    var site = window.__OB_EXPERT_SITE__;
+    if(site && String(site.slug || '') !== String(data.slug || '')) site = null;
+    var pathNow = (location.pathname || '/').replace(/\/(?:home|index\.html)\/?$/,'/').replace(/\/+$/,'') || '/';
+    var querySelectedSite = site && new URLSearchParams(location.search || '').get('expert') === site.slug;
+    var sitePage = site && site.pages && site.pages.find(function(page){ return (page.path.replace(/\/+$/,'') || '/') === pathNow || (querySelectedSite && page.queryPath !== undefined && (page.queryPath.replace(/\/+$/,'') || '/') === pathNow); });
+    if(sitePage){ title=sitePage.title;description=sitePage.description; }
     document.title = title;
     setMeta('description', description);
     var allow = data.allow_indexing;
     var noindex = allow !== undefined && allow !== null && ['0','false','no','off'].includes(String(allow).toLowerCase());
-    setMeta('robots', noindex ? 'noindex,nofollow' : 'index,follow');
+    setMeta('robots', site ? (sitePage ? site.robots : 'noindex,nofollow') : noindex ? 'noindex,nofollow' : 'index,follow');
     setProp('og:title', title);
     setProp('og:description', description);
     setProp('og:type', 'website');
     if(data.og_image_url || data.logo_url || data.avatar_url) setProp('og:image', data.og_image_url || data.logo_url || data.avatar_url);
     setMeta('twitter:card', (data.og_image_url || data.logo_url || data.avatar_url) ? 'summary_large_image' : 'summary');
-    setCanonical(location.origin + (location.pathname || '/'));
+    var canonical = sitePage ? sitePage.canonical : location.origin + (location.pathname || '/');
+    setCanonical(canonical);
+    setProp('og:url',canonical);
+    setMeta('twitter:title',title);
+    setMeta('twitter:description',description);
+    if(sitePage && sitePage.schema) setJsonLd('ob-expert-schema',sitePage.schema);
+    else if(site){ var publicSchema=document.getElementById('ob-expert-schema');if(publicSchema) publicSchema.remove(); }
     loadGa4(data.ga4_id, 'expert');
   }
   window.obApplyExpertSeo = applyExpertSeo;
@@ -34410,7 +34456,7 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
     setTimeout(function(){ trackPageview({path:'/admin#'+String(adminTarget.id || adminTarget.textContent || 'panel').trim().toLowerCase().replace(/[^a-z0-9]+/g,'-')}); },80);
   });
 
-	  if(isExpertRoute()){
+	  if(isExpertRoute() && !window.__OB_EXPERT_SITE__){
     document.title = 'Independent Expert - Book a private session';
     setMeta('description', 'Book private chat, voice, or video sessions with this independent expert.');
   }
@@ -34704,8 +34750,8 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
   if(window._obUrlRouting20260426Lean) return;
   window._obUrlRouting20260426Lean = true;
 
-  var EXPERT_PAGES = {home:'', about:'about', services:'services', reviews:'reviews', book:'book', contact:'contact'};
-  var EXPERT_SEGMENTS = {about:'about', services:'services', reviews:'reviews', book:'book', contact:'contact'};
+  var EXPERT_PAGES = {home:'', about:'about', services:'services', reviews:'reviews', book:'book', contact:'contact', account:'account'};
+  var EXPERT_SEGMENTS = {about:'about', services:'services', reviews:'reviews', book:'book', contact:'contact', account:'account'};
   var MKT_TO_PATH = {home:'/', how:'/how', features:'/features', pricing:'/pricing', experts:'/experts', blog:'/blog', login:'/login', signup:'/signup', contact:'/contact'};
   var PATH_TO_MKT = {'':'home', how:'how', features:'features', pricing:'pricing', experts:'experts', blog:'blog', login:'login', signup:'signup', contact:'contact'};
   var DASH_PANELS = {overview:1, messages:1, 'live-session':1, sessions:1, bookings:1, 'on-demand':1, 'group-sessions':1, clients:1, reviews:1, 'contact-inbox':1, analytics:1, pricing:1, payments:1, marketplace:1, 'website-editor':1, 'email-center':1, settings:1};
@@ -34771,6 +34817,7 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
   function cleanSlug(value){
     value = clean(value);
     if(!value || value === 'expert-slug' || value.indexOf('/') >= 0) return '';
+    if(window.__OB_EXPERT_DELIVERY__ && window.__OB_EXPERT_SITE__ && window.__OB_EXPERT_SITE__.slug === value && /^[a-z0-9][a-z0-9-]{1,62}$/i.test(value)) return value;
     if(RESERVED_ROOTS[value]) return '';
     return value;
   }
@@ -34868,6 +34915,9 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
     var current = (location.pathname || '/') + (location.search || '');
     if(current === path) return;
     history[replace ? 'replaceState' : 'pushState']({obRoute:true}, '', path);
+    // The page-change event fires before this URL commit. Synchronize again
+    // after navigation so expert canonicals and schema describe the new page.
+    if(window.__OB_EXPERT_SITE__ && typeof window.obApplyExpertSeo === 'function') window.obApplyExpertSeo(window._currentExpert || {});
     track(path);
     syncNavHrefs();
   }
@@ -35242,6 +35292,8 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
 	      var oldShowExpert = window.showExpertPage;
 	      window.showExpertPage = function(page){
 	        var ret = oldShowExpert.apply(this, arguments);
+	        var activatedPage=document.getElementById('ep-' + page);
+	        if(!activatedPage || !activatedPage.classList.contains('active')) return ret;
 	        var initialExpertPage = clean(window._obInitialExpertRouteGuardPage || window._obInitialExpertRoutePage || '');
 	        if(clean(page || 'home') === 'home' && initialExpertPage && initialExpertPage !== 'home' && Date.now() - Number(window._obInitialExpertRouteAt || 0) < 8000) return ret;
 	        if(initialExpertPage && clean(page || '') === initialExpertPage) window._obInitialExpertRoutePage = '';
@@ -40412,6 +40464,7 @@ body.ob-conversion-overlay-open .privacy-consent.active{
 	  }
   function publicExpertSlug(value){
     if(window.obIsMiniSuiteRoute && window.obIsMiniSuiteRoute()) return '';
+    if(window.__OB_EXPERT_DELIVERY__ && window.__OB_EXPERT_SITE__ && new URLSearchParams(location.search || '').get('expert') === window.__OB_EXPERT_SITE__.slug) return window.__OB_EXPERT_SITE__.slug;
     var expertPages = ['home','about','services','reviews','book','contact','account'];
     var reserved = window.obPlatformRouteRoots || {};
     var hostName = (location.hostname || '').toLowerCase();
@@ -55652,7 +55705,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   }
 
   function safeSlug(value){
-    var slug = clean(value).toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,52);
+    var slug = clean(value).toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,64);
     return slug || '';
   }
   function safeImage(url){
@@ -56750,9 +56803,9 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     var expertSlug=String(expert && (expert.slug || expert.user_slug) || '').trim().toLowerCase();
     if(expert && (!activeSlug || !expertSlug || activeSlug === expertSlug) && typeof window.obApplyExpertSeoAndAnalytics === 'function') window.obApplyExpertSeoAndAnalytics(expert,{track:false});
     var el = page.indexOf('ai-') === 0 ? (detail.pageElement || document.getElementById('ep-' + page)) : null;
-    if(el && el.dataset.metaTitle) document.title = el.dataset.metaTitle;
+    if(el && el.dataset.metaTitle && !window.__OB_EXPERT_SITE__) document.title = el.dataset.metaTitle;
     var desc = document.querySelector('meta[name="description"]');
-    if(desc && el && el.dataset.metaDescription) desc.setAttribute('content', el.dataset.metaDescription);
+    if(desc && el && el.dataset.metaDescription && !window.__OB_EXPERT_SITE__) desc.setAttribute('content', el.dataset.metaDescription);
     if(expert && typeof window.obTrackPageview === 'function') window.obTrackPageview({expert_slug:expert.slug || expertSlug,page_type:page.indexOf('ai-') === 0 ? 'expert-custom-page' : 'expert'});
     return !!(expert || el);
   }
@@ -65945,6 +65998,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
 	  function validSlug(value){
 	    value = String(value || '').trim();
 	    if(!value || value === 'expert-slug' || value.indexOf('/') >= 0) return '';
+	    if(window.__OB_EXPERT_DELIVERY__ && window.__OB_EXPERT_SITE__ && window.__OB_EXPERT_SITE__.slug === value && /^[a-z0-9][a-z0-9-]{1,62}$/i.test(value)) return value;
 	    if(RESERVED[value] || EXPERT_PAGES[value]) return '';
 	    return /^[a-z0-9][a-z0-9-]{1,62}$/i.test(value) ? value : '';
 	  }
@@ -65977,7 +66031,8 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
 	    if(!first) return 'home';
 	    if(EXPERT_PAGES[first]) return first;
 	    if(RESERVED[first]) return 'home';
-	    var pageSlug = validSlug(first);
+	    // Content-page slugs allow 64 characters; tenant DNS slugs remain 63.
+	    var pageSlug = /^[a-z0-9][a-z0-9-]{0,63}$/i.test(first) ? first : '';
 	    return pageSlug ? 'ai-' + pageSlug : 'home';
 	  }
 	  function trustedSlug(value){
@@ -66052,6 +66107,10 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
 	    if(typeof window.obMarketplaceSiteEnabled === 'function' && window.obMarketplaceSiteEnabled() && typeof window.obMarketplaceApplyRoute === 'function') {
 	      try { window.obMarketplaceApplyRoute(); return; } catch(e) {}
 	    }
+	    // Initial route retries must not reset booking choices or close a menu
+	    // after the requested public page is already active.
+	    var activePage=document.querySelector('#view-4 .expert-page.active');
+	    if(window.__OB_EXPERT_DELIVERY__ && activePage && activePage.id === 'ep-' + page) return;
 	    try { window.showExpertPage(page); } catch(e) {}
 	  }
 	  function scheduleRequestedPage(){
@@ -68226,6 +68285,8 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     var hostSlug = ownlybizSubdomainSlug();
     if(hostSlug) return hostSlug;
     if(!platformPathHost()) return '';
+    var selected = new URLSearchParams(location.search || '').get('expert');
+    if(window.__OB_EXPERT_DELIVERY__ && window.__OB_EXPERT_SITE__ && selected === window.__OB_EXPERT_SITE__.slug) return expertSlug(selected);
     var first = String(location.pathname || '').replace(/^\/+/, '').split('/')[0] || '';
 	    return window.obIsPlatformRouteRoot(first) ? '' : expertSlug(first);
   }
@@ -69627,6 +69688,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
 		    reinforceMarketplacePage(page, {closeMenu:false, scroll:false});
 		    schedulePublicSync();
 		    try { history.pushState({obRoute:true}, '', marketplacePath(page)); } catch(e) {}
+		    if(window.__OB_EXPERT_SITE__ && typeof window.obApplyExpertSeo === 'function') window.obApplyExpertSeo(window._currentExpert || {});
 		  };
 		  function marketplaceRouteParts(){
 		    var parts = String(location.pathname || '').replace(/^\/+|\/+$/g,'').split('/').filter(Boolean);
@@ -69826,6 +69888,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
 	    window.__obMarketplaceOpeningProfile = true;
 	    applySelectedMini(id);
 	    try { history.pushState({obRoute:true}, '', marketplaceProfilePath(id)); } catch(e) {}
+	    if(window.__OB_EXPERT_SITE__ && typeof window.obApplyExpertSeo === 'function') window.obApplyExpertSeo(window._currentExpert || {});
 	    renderMarketplaceHome();
 	    schedulePublicSync();
 	    activateMarketplacePage('home', {closeMenu:false, scroll:false});
@@ -69838,6 +69901,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
 	    state.publicView = 'grid';
 	    restoreOwnerForSite();
 	    try { history.pushState({obRoute:true}, '', marketplacePath('home')); } catch(e) {}
+	    if(window.__OB_EXPERT_SITE__ && typeof window.obApplyExpertSeo === 'function') window.obApplyExpertSeo(window._currentExpert || {});
 	    renderPublicPicker();
 	    renderMarketplaceHome();
 	    schedulePublicSync();
@@ -70081,6 +70145,8 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     var sub = host.match(/^([^.]+)\.ownlybiz\.com$/);
     if(sub && sub[1] && sub[1] !== 'www') return clean(sub[1]);
     if(host && host !== 'ownlybiz.com' && host !== 'www.ownlybiz.com' && host !== 'localhost' && host !== '127.0.0.1' && host.indexOf('vercel.app') < 0) return '';
+    var selected = new URLSearchParams(location.search || '').get('expert');
+    if(window.__OB_EXPERT_DELIVERY__ && window.__OB_EXPERT_SITE__ && selected === window.__OB_EXPERT_SITE__.slug) return clean(selected);
     var first = clean((location.pathname || '').replace(/^\/+/, '').split('/')[0] || '');
     return first && !(window.obIsPlatformRouteRoot && window.obIsPlatformRouteRoot(first)) ? first : '';
   }

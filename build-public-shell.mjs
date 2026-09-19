@@ -3,10 +3,12 @@ import path from 'node:path';
 import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
+import { buildExpertShell } from './lib/build-expert-shell.mjs';
 
 // Delivery-only build: never minify, reorder, defer, or remove application code.
 // seo-shell.js selects this artifact only for public Ownlybiz marketing routes.
-// Expert sites and account/payment/session routes keep the original index.html.
+// Expert public routes receive a separate artifact with content-free platform
+// scaffolds. Account/payment/session utility routes keep the original index.
 const root = path.dirname(fileURLToPath(import.meta.url));
 const source = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
 const check = process.argv.includes('--check');
@@ -28,6 +30,18 @@ let html = source.replace(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi, (tag, at
   scripts.push({ index, resource, bytes: Buffer.byteLength(code), sha256, attributes: attrs });
   return `<script${attrs} src="/${resource}"></script>`;
 });
+const expertBuild = buildExpertShell(html);
+files.set('data/ownlybiz-expert.html', expertBuild.html);
+files.set('data/ownlybiz-expert-build.json', JSON.stringify({
+  version: 1,
+  sourceSha256: digest(source),
+  sourceBytes: Buffer.byteLength(source),
+  htmlSha256: digest(expertBuild.html),
+  htmlBytes: Buffer.byteLength(expertBuild.html),
+  scripts,
+  scaffolds: expertBuild.scaffolds,
+  neutralSlots: expertBuild.neutralSlots,
+}, null, 2) + '\n');
 
 // Build-only extraction of existing approved legal copy. No evaluation in the
 // HTTP handler, no new legal wording, and no dependency on a running backend.
@@ -58,6 +72,10 @@ const rebuilt = html.replace(/<script\b([^>]*?) src="\/(assets\/ownlybiz-public\
 const originalScripts = [...source.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi)].map(m => [m[1], m[2]]);
 const rebuiltScripts = [...rebuilt.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi)].map(m => [m[1], m[2]]);
 if (JSON.stringify(originalScripts) !== JSON.stringify(rebuiltScripts)) throw new Error('Script preservation gate failed');
+const expertRebuilt = expertBuild.html.replace(/<script\b([^>]*?) src="\/(assets\/ownlybiz-public\/[a-f0-9]{64}\.js)"><\/script>/g,
+  (_, attrs, resource) => `<script${attrs}>${files.get(resource)}</script>`);
+const expertScripts = [...expertRebuilt.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi)].map(m => [m[1], m[2]]);
+if (JSON.stringify(originalScripts) !== JSON.stringify(expertScripts)) throw new Error('Expert script preservation gate failed');
 if (Buffer.byteLength(html) >= 1_800_000) throw new Error('Public HTML exceeds conservative crawler budget');
 files.set('data/ownlybiz-platform.html', html);
 const manifest = { version: 1, sourceSha256: digest(source), sourceBytes: Buffer.byteLength(source), htmlSha256: digest(html), htmlBytes: Buffer.byteLength(html), scripts, legalSha256: digest(files.get('data/ownlybiz-platform-legal.json')) };
@@ -137,4 +155,4 @@ for (const [relative, contents] of files) {
     fs.writeFileSync(target, contents);
   }
 }
-console.log(JSON.stringify({ status: check ? 'VERIFIED' : 'BUILT', sourceBytes: manifest.sourceBytes, publicHtmlBytes: manifest.htmlBytes, externalScripts: scripts.length, publicExportFiles: publicFiles.size, scriptPreservation: 'PASS', legalCopyPreservation: 'PASS', publicExportPreservation: 'PASS' }));
+console.log(JSON.stringify({ status: check ? 'VERIFIED' : 'BUILT', sourceBytes: manifest.sourceBytes, publicHtmlBytes: manifest.htmlBytes, expertHtmlBytes: Buffer.byteLength(expertBuild.html), externalScripts: scripts.length, publicExportFiles: publicFiles.size, scriptPreservation: 'PASS', expertScriptPreservation: 'PASS', legalCopyPreservation: 'PASS', publicExportPreservation: 'PASS' }));

@@ -27,7 +27,7 @@ execFileSync(process.execPath, ['build-public-shell.mjs', '--check'], { cwd: roo
 // Isolated negative/idempotency tests operate only inside this owned temp dir.
 const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'ownlybiz-static-export-test-'));
 try {
-  for (const relative of ['build-public-shell.mjs', 'index.html', 'favicon.svg', 'robots.txt', 'sitemap.xml', '_redirects', 'data/ownlybiz-blog-posts.json', 'assets', '.well-known']) {
+  for (const relative of ['build-public-shell.mjs', 'lib/build-expert-shell.mjs', 'index.html', 'favicon.svg', 'robots.txt', 'sitemap.xml', '_redirects', 'data/ownlybiz-blog-posts.json', 'assets', '.well-known']) {
     const target = path.join(fixture, relative);
     fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.cpSync(path.join(root, relative), target, { recursive: true });
@@ -80,7 +80,7 @@ if (process.argv.includes('--vercel')) {
   assert.deepEqual(walk(builtStatic).sort(), files, 'Vercel static output contains exactly the clean public export');
   for (const relative of files) assert.ok(fs.readFileSync(path.join(builtStatic, relative)).equals(fs.readFileSync(path.join(root, 'public', relative))), `Vercel static bytes preserved: ${relative}`);
   const functionsDirectory = path.join(root, '.vercel/output/functions');
-  for (const relative of ['index.html', 'data/ownlybiz-platform.html', 'data/ownlybiz-platform-legal.json', 'data/ownlybiz-blog-posts.json']) {
+  for (const relative of ['index.html', 'data/ownlybiz-platform.html', 'data/ownlybiz-expert.html', 'data/ownlybiz-platform-legal.json', 'data/ownlybiz-blog-posts.json']) {
     assert.ok(fs.readFileSync(path.join(functionsDirectory, 'api/seo-shell.func', relative)).equals(fs.readFileSync(path.join(root, relative))), `SEO function private dependency preserved: ${relative}`);
   }
   for (const relative of ['api/llms.func/api/llms.js', 'api/sitemap.func/api/sitemap.js', 'api/seo-shell.func/api/seo-shell.js']) {

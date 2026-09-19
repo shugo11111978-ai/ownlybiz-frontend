@@ -22,6 +22,7 @@ function createHandler(file, options = {}) {
     [path.join(root, 'index.html'), raw],
     [path.join(root, 'data', 'ownlybiz-blog-posts.json'), JSON.stringify(posts)],
     [path.join(root, 'data', 'ownlybiz-platform-legal.json'), JSON.stringify(docs)],
+    [path.join(root, 'data', 'ownlybiz-expert.html'), raw.replace('<html lang="en">', '<html lang="en" data-ob-expert-delivery="1">').replace('id="raw-shell"', 'id="expert-shell"')],
   ]);
   if (!options.missingCompact) files.set(path.join(root, 'data', 'ownlybiz-platform.html'), compact);
   if (options.missingLegal) files.delete(path.join(root, 'data', 'ownlybiz-platform-legal.json'));
@@ -29,6 +30,11 @@ function createHandler(file, options = {}) {
     module: { exports: {} },
     require(name) {
       if (name === 'path') return path;
+      if (name.startsWith('../lib/')) {
+        const dependency = { ...context, module: { exports: {} } };
+        vm.runInNewContext(readFileSync(path.join(root, 'api', name + '.js'), 'utf8'), dependency, { filename: name });
+        return dependency.module.exports;
+      }
       assert.equal(name, 'fs');
       return { readFileSync(filename) { if (options.actualFiles) return readFileSync(filename, 'utf8'); if (!files.has(filename)) throw new Error('Missing fixture'); return files.get(filename); } };
     },
@@ -43,8 +49,8 @@ function createHandler(file, options = {}) {
         if (options.configTimeout) return new Promise((resolve, reject) => init.signal.addEventListener('abort', () => reject(new Error('aborted'))));
         return { ok: true, json: async () => ({ private_unrelated: 'MUST_NOT_LEAK', seo: options.configAbsent ? null : { ...publicSeo, ...options.seo, private_unrelated: 'MUST_NOT_LEAK' } }) };
       }
-      if (options.expert && String(url).includes('/api/domains/lookup')) return { ok: true, json: async () => ({ slug: options.expert.slug }) };
-      return { ok: !!options.expert, json: async () => options.expert };
+      if (options.expert && String(url).includes('/api/domains/lookup')) return { ok: true, status: 200, json: async () => ({ slug: options.expert.slug }) };
+      return { ok: !!options.expert, status: options.expert ? 200 : 404, json: async () => options.expert };
     },
   };
   vm.runInNewContext(readFileSync(path.join(root, file), 'utf8'), context, { filename: file });
@@ -92,7 +98,7 @@ assert.equal(postRequest.code, 200, 'new canonical redirect only applies to GET/
 assert.match(postRequest.body, /id="raw-shell"/);
 assert.equal(postRequest.calls.length, 0, 'non-GET/HEAD requests keep original delivery without SEO config lookup');
 
-for (const url of ['/signup', '/login', '/checkout', '/billing', '/session/test', '/dash/test', '/admin', '/reset-password', '/pricing?session_id=callback', '/?expert=missingexpert', '/?token=callback', '/?checkout_session_id=callback', '/?unknown=1']) {
+for (const url of ['/signup', '/login', '/checkout', '/billing', '/session/test', '/dash/test', '/admin', '/reset-password', '/pricing?session_id=callback', '/?token=callback', '/?checkout_session_id=callback', '/?unknown=1']) {
  for (const host of ['ownlybiz.com', 'www.ownlybiz.com']) {
   const page = await request(url, { host });
   assert.equal(page.code, 200, `${url} keeps original status`);
@@ -108,17 +114,66 @@ for (const url of ['/pricing?UTM_SOURCE=case', '/pricing?state=auth', '/pricing?
   assert.ok(page.calls.every((url) => !url.endsWith('/api/config')));
 }
 const missingExpert = await request('/potential-expert-slug');
-assert.equal(missingExpert.code, 200, 'failed expert lookup is not converted into an SEO 404');
-assert.match(missingExpert.body, /id="raw-shell"/);
+assert.equal(missingExpert.code, 404, 'definitively missing expert has a real 404');
+assert.doesNotMatch(missingExpert.body, /id="raw-shell"/);
+assert.equal((await request('/?expert=missingexpert')).code, 404);
 
-const expert = { slug: 'exampleexpert', name: 'Independent Expert', title: 'Consultant' };
+const expert = { slug: 'exampleexpert', name: 'Independent Expert', title: 'Consultant', website_published: 1 };
 for (const [url, host] of [['/exampleexpert/book', 'ownlybiz.com'], ['/book', 'exampleexpert.ownlybiz.com'], ['/book', 'example-expert.com'], ['/?expert=exampleexpert', 'ownlybiz.com']]) {
   const page = await request(url, { host, expert });
   assert.equal(page.code, 200);
-  assert.match(page.body, /id="raw-shell"/);
+  assert.match(page.body, /id="expert-shell"/);
   assert.doesNotMatch(page.body, /id="ob-platform-schema"/);
   assert.match(page.body, /UNCHANGED SESSION MARKUP/);
 }
+function expertMetadata(html) {
+  const script=html.match(/<script id="ob-expert-site-metadata">window\.__OB_EXPERT_SITE__=([\s\S]*?);<\/script>/);
+  assert.ok(script,'expert metadata payload present');
+  return JSON.parse(script[1]);
+}
+const queryExpert={...expert,website_content:{ai_pages:[{slug:'guide',title:'A published guide',meta_title:'Custom Guide | Independent Expert',published:true,sections:[{title:'Useful advice',body:'A complete authored explanation.'}]}]}};
+for(const queryPath of ['/','/about','/guide']) {
+  const page=await request(`${queryPath}?expert=exampleexpert`,{expert:queryExpert});
+  assert.equal(page.code,200,'query tenant public route remains supported');
+  assert.equal(page.headers.Location,undefined,'query selection is not redirected');
+  const metadata=expertMetadata(page.body);
+  for(const path of ['/','/about','/book','/guide']) {
+    assert.ok(page.body.includes(`href="/exampleexpert${path}"`),`query SSR preserves tenant link: ${path}`);
+    const descriptor=metadata.pages.find(item=>item.path===`/exampleexpert${path}`);
+    assert.ok(descriptor,`hydrated query route metadata prefix: ${path}`);
+    assert.equal(descriptor.canonical,`https://ownlybiz.com/exampleexpert${path}`);
+  }
+}
+const queryCallback=await request('/book?expert=exampleexpert&checkout_session_id=callback',{expert:queryExpert});
+assert.equal(queryCallback.code,200);
+assert.equal(queryCallback.headers.Location,undefined,'payment callback query is not redirected or stripped');
+assert.equal(queryCallback.headers['Cache-Control'],'no-store');
+assert.match(queryCallback.headers['X-Robots-Tag'],/noindex/);
+assert.match(queryCallback.body,/data-page="book"/);
+const metadataFromQuery=expertMetadata((await request('/about?expert=exampleexpert',{expert:queryExpert})).body);
+const runtimeSource=readFileSync(path.join(root,'index.html'),'utf8');
+const applySeoSource=runtimeSource.slice(runtimeSource.indexOf('function applyExpertSeo(data){'),runtimeSource.indexOf('window.obApplyExpertSeo = applyExpertSeo;'));
+assert.ok(applySeoSource.startsWith('function applyExpertSeo(data){'),'actual runtime metadata function found');
+function runtimeExpertSeo(pathname,search) {
+  const output={};
+  const context={URLSearchParams,isExpertRoute:()=>true,location:{pathname,search,origin:'https://ownlybiz.com'},window:{__OB_EXPERT_SITE__:metadataFromQuery},document:{title:'',getElementById:()=>({remove(){output.schemaRemoved=true;}})},expertTitle:()=> 'Fallback identity',expertDescription:()=> 'Fallback description',setMeta:(key,value)=>{output[key]=value;},setProp:(key,value)=>{output[key]=value;},setCanonical:value=>{output.canonical=value;},setJsonLd:(_id,value)=>{output.schema=value;},loadGa4:()=>{}};
+  vm.runInNewContext(applySeoSource+'\nthis.apply=applyExpertSeo;',context);
+  context.apply(queryExpert);
+  return {...output,title:context.document.title};
+}
+for(const [pathname,search,pageKey] of [['/about','?expert=exampleexpert','about'],['/guide','?expert=exampleexpert','ai-guide'],['/exampleexpert/about','','about'],['/exampleexpert/guide','','ai-guide']]) {
+  const metadata=runtimeExpertSeo(pathname,search);
+  const expected=metadataFromQuery.pages.find(page=>page.page===pageKey);
+  assert.equal(metadata.title,expected.title,'initial query and post-navigation title parity');
+  assert.equal(metadata.description,expected.description);
+  assert.equal(metadata.canonical,expected.canonical);
+  assert.equal(metadata['og:url'],expected.canonical);
+  assert.deepEqual(JSON.parse(JSON.stringify(metadata.schema)),expected.schema);
+}
+const wrongQueryTenant=runtimeExpertSeo('/about','?expert=anotherexpert');
+assert.equal(wrongQueryTenant.title,'Fallback identity','query fallback cannot borrow metadata for a different tenant');
+assert.match(wrongQueryTenant.robots,/noindex/);
+assert.equal(wrongQueryTenant.schemaRemoved,true);
 const pricedContentPage = await request('/exampleexpert', {
   expert: {
     ...expert,
@@ -170,7 +225,7 @@ for (const pathname of ['/', '/how', '/features', '/pricing', '/experts', '/cont
 assert.match(sitemap.body, /<lastmod>2026-09-06<\/lastmod>/);
 assert.doesNotMatch(sitemap.body, /not-a-date|2026-02-31|<lastmod>2026-04-26/);
 assert.equal((sitemap.body.match(/<lastmod>/g) || []).length, 1, 'no invented request-day or stale platform dates');
-const expertSitemap = await request('/sitemap.xml', { host: 'example-expert.com' }, 'api/sitemap.js');
+const expertSitemap = await request('/sitemap.xml', { host: 'example-expert.com', expert }, 'api/sitemap.js');
 assert.match(expertSitemap.body, /<loc>https:\/\/example-expert.com\/<\/loc>/);
 assert.doesNotMatch(expertSitemap.body, /<loc>https:\/\/ownlybiz.com/);
 

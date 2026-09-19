@@ -1,15 +1,13 @@
 const fs = require('fs');
 const path = require('path');
+const { createExpertResolver, hostFromReq, isPlatformHost, publicOrigin, publishedPublicPages, allowIndexing } = require('../lib/expert-public');
+const resolver = createExpertResolver();
 
 const BLOG_POSTS_PATH = path.join(process.cwd(), 'data', 'ownlybiz-blog-posts.json');
-// Freeze only the already-deployed guide labels/URLs outside the Ownlybiz host.
-// Platform editorial updates must not alter independent experts' llms responses.
-const LEGACY_GUIDES_PATH = path.join(process.cwd(), 'data', 'ownlybiz-legacy-llms-guides.json');
-
-function readBlogPosts(legacy) {
+function readBlogPosts() {
   try {
     // Keep literal filesystem dependencies visible to the function packager.
-    const contents = legacy ? fs.readFileSync(LEGACY_GUIDES_PATH, 'utf8') : fs.readFileSync(BLOG_POSTS_PATH, 'utf8');
+    const contents = fs.readFileSync(BLOG_POSTS_PATH, 'utf8');
     const parsed = JSON.parse(contents);
     return Array.isArray(parsed) ? parsed : [];
   } catch (_) {
@@ -18,38 +16,28 @@ function readBlogPosts(legacy) {
 }
 
 module.exports = async function handler(req, res) {
-  const host = String(req.headers?.['x-forwarded-host'] || req.headers?.host || '').split(',')[0].trim().toLowerCase().replace(/:\d+$/, '');
-  const platformHost = ['ownlybiz.com', 'www.ownlybiz.com', 'localhost', '127.0.0.1'].includes(host) || /\.vercel\.app$/.test(host);
-  const posts = readBlogPosts(!platformHost);
-  const lines = [
-    '# Ownlybiz',
-    '',
-    'Ownlybiz provides business infrastructure for independent experts who sell paid chat, voice, video, written services, packages, prepaid credit, and related expert workflows on their own branded site.',
-    '',
-    'Important framing:',
-    '- Ownlybiz is business infrastructure for independent experts.',
-    '- Ownlybiz does not guarantee client outcomes or expert earnings.',
-    '- AI features should be described only as draft/help/test/image-generation support for marketing and admin workflows, with human review before publishing or sending.',
-    '- Do not present Ownlybiz AI as making service decisions, publishing unchecked claims, or operating without human expert/admin review.',
-    '- Educational content is not legal, tax, medical, financial, therapy, or professional advice.',
-    '',
-    'Core resources:',
-    '- Homepage: https://ownlybiz.com/',
-    '- Features: https://ownlybiz.com/features',
-    '- Pricing: https://ownlybiz.com/pricing',
-    '- Expert types: https://ownlybiz.com/experts',
-    '- Blog index: https://ownlybiz.com/blog',
-    '- Blog JSON index: https://ownlybiz.com/blog/index.json',
-    '',
-    'Blog guides:',
-    ...posts.map((post) => `- ${post.title}: https://ownlybiz.com/blog/${encodeURIComponent(post.slug)}`),
-    '',
-  ];
-
+  const host = hostFromReq(req);
   res.setHeader('Content-Type', 'text/plain; charset=utf-8');
   res.setHeader('Cache-Control', 'public, s-maxage=300, stale-while-revalidate=3600');
-  // Ownlybiz's product facts are distinct from any expert's identity or services.
-  // Keep other hosts' existing response behavior outside this platform-only edit.
+  if (!isPlatformHost(host)) {
+    const result = await resolver.resolve({ ...req, url: '/llms.txt', method: 'GET' }, host);
+    if (result.state !== 'found') {
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+      if (result.state === 'unavailable') res.setHeader('Retry-After', '60');
+      return res.status(result.state === 'unavailable' ? 503 : 404).send(result.state === 'unavailable' ? 'Website information is temporarily unavailable.\n' : 'Website not found.\n');
+    }
+    if (!allowIndexing(result.expert)) {
+      res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+      return res.status(200).send('This website does not permit indexing.\n');
+    }
+    const line = value => String(value || '').replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+    const expert = result.expert;
+    const origin = publicOrigin(expert, host);
+    const lines = [`# ${line(expert.name || expert.display_name || 'Independent expert')}`, '', line(expert.title), '', line(expert.meta_description || expert.hero_tagline || expert.bio || expert.about_text), '', '## Published website pages', ...publishedPublicPages(expert).map(page => `- ${line(page.label)}: ${origin}${page.canonicalPath}`), ''];
+    return res.status(200).send(lines.join('\n'));
+  }
+  const posts = readBlogPosts();
   const platformLines = [
     '# Ownlybiz', '',
     'Ownlybiz is software infrastructure for independent professionals to publish branded expert websites, offer paid chat, voice, video and written services, manage clients, and use booking and email tools. Feature availability depends on account eligibility, plan, configuration and required approvals.', '',
@@ -75,5 +63,5 @@ module.exports = async function handler(req, res) {
     ...posts.map((post) => `- ${post.title}: https://ownlybiz.com/blog/${encodeURIComponent(post.slug)}`), '',
     'Guides are educational product and operational information, not regulated professional advice. Consult the current pricing, eligibility and policy pages for the applicable terms.', '',
   ];
-  res.status(200).send((platformHost ? platformLines : lines).join('\n'));
+  res.status(200).send(platformLines.join('\n'));
 };

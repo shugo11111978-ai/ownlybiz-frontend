@@ -1,12 +1,7 @@
 const fs = require('fs');
 const path = require('path');
-
-const PLATFORM_HOSTS = new Set([
-  'ownlybiz.com',
-  'www.ownlybiz.com',
-  'localhost',
-  '127.0.0.1',
-]);
+const { createExpertResolver, hostFromReq, isPlatformHost, publicOrigin, publishedPublicPages, allowIndexing } = require('../lib/expert-public');
+const resolver = createExpertResolver();
 
 const BLOG_POSTS_PATH = path.join(process.cwd(), 'data', 'ownlybiz-blog-posts.json');
 
@@ -37,18 +32,6 @@ function readBlogPosts() {
     }
   }
   return cachedBlogPosts;
-}
-
-function hostFromReq(req) {
-  return String(req.headers['x-forwarded-host'] || req.headers.host || '')
-    .split(',')[0]
-    .trim()
-    .toLowerCase()
-    .replace(/:\d+$/, '');
-}
-
-function isPlatformHost(host) {
-  return !host || PLATFORM_HOSTS.has(host) || host.endsWith('.vercel.app');
 }
 
 function esc(value) {
@@ -88,17 +71,26 @@ function contentDate(value) {
 
 module.exports = async function handler(req, res) {
   const host = hostFromReq(req);
+  res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+  res.setHeader('Cache-Control', 'public, s-maxage=300, stale-while-revalidate=3600');
+  if (!isPlatformHost(host)) {
+    const result = await resolver.resolve({ ...req, url: '/sitemap.xml', method: 'GET' }, host);
+    if (result.state !== 'found') {
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+      if (result.state === 'unavailable') res.setHeader('Retry-After', '60');
+      return res.status(result.state === 'unavailable' ? 503 : 404).send(renderSitemap([]));
+    }
+    const origin = publicOrigin(result.expert, host);
+    const urls = allowIndexing(result.expert) ? publishedPublicPages(result.expert).map(page => [`${origin}${page.canonicalPath}`, '', page.page === 'home' ? 'weekly' : 'monthly', page.page === 'home' ? '1.0' : '0.7']) : [];
+    if (!allowIndexing(result.expert)) res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+    return res.status(200).send(renderSitemap(urls));
+  }
   const blogUrls = readBlogPosts().map((post) => [
     `https://ownlybiz.com/blog/${encodeURIComponent(post.slug)}`,
     contentDate(post.dateModified) || contentDate(post.date),
     'monthly',
     '0.75',
   ]);
-  const urls = isPlatformHost(host)
-    ? [...PLATFORM_URLS, ...blogUrls]
-    : [[`https://${host}/`, new Date().toISOString().slice(0, 10), 'weekly', '1.0']];
-
-  res.setHeader('Content-Type', 'application/xml; charset=utf-8');
-  res.setHeader('Cache-Control', 'public, s-maxage=300, stale-while-revalidate=3600');
-  res.status(200).send(renderSitemap(urls));
+  res.status(200).send(renderSitemap([...PLATFORM_URLS, ...blogUrls]));
 };

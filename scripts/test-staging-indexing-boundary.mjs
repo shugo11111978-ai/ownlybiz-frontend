@@ -204,12 +204,13 @@ for (const pathname of ['/book', '/about', '/guide']) {
   assert.equal(output.canonical, `https://lunapsychics.com${pathname}`, 'primary-domain canonical remains unchanged');
   cases++;
 }
-// Only the four approved robots setters may differ in the shared application.
-const beforeLines = runtime.split('\n');
-const afterLines = currentRuntime.split('\n');
+// Only the four approved robots setters may differ inside these exact SEO
+// writers. Unrelated application changes have their own regression/parity gates.
+const beforeLines = clientHelpers(runtime).split('\n');
+const afterLines = clientHelpers(currentRuntime).split('\n');
 assert.equal(afterLines.length, beforeLines.length);
 const changedLines = afterLines.flatMap((line, index) => line === beforeLines[index] ? [] : [index]);
-assert.equal(changedLines.length, 4, 'exactly four application lines change');
+assert.equal(changedLines.length, 4, 'exactly four SEO-writer robots lines change');
 for (const index of changedLines) {
   assert.match(beforeLines[index], /(?:setMeta\('robots'|meta\('name','robots'|metaByName\('robots')/);
   assert.ok(afterLines[index].includes("window.OWNLYBIZ_IS_STAGING === true"));

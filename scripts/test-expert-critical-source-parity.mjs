@@ -14,9 +14,19 @@ function walk(node,fn,parent){if(!node||typeof node!=='object')return;fn(node,pa
 function name(node){if(!node)return '';if(node.type==='Identifier')return node.name;if(node.type==='Literal')return String(node.value);if(node.type==='MemberExpression')return name(node.object)+'.'+name(node.property);return '';}
 function criticalFunctions(list){const result=new Map();for(const script of list){if(/\bsrc\s*=/.test(script.attrs)||(/\btype\s*=/.test(script.attrs)&&!/type=["'](?:text|application)\/javascript/i.test(script.attrs)))continue;const seen=new Map();const ast=acorn.parse(script.code,{ecmaVersion:'latest',sourceType:'script',allowReturnOutsideFunction:true});walk(ast,(node,parent)=>{if(!/^(FunctionDeclaration|FunctionExpression|ArrowFunctionExpression)$/.test(node.type))return;let label=name(node.id);if(!label&&parent?.type==='VariableDeclarator')label=name(parent.id);if(!label&&parent?.type==='AssignmentExpression')label=name(parent.left);if(!label&&parent?.type==='Property')label=name(parent.key);const count=seen.get(label)||0;seen.set(label,count+1);if(/payment|checkout|billing|refund|session|settle|stripe|authoriz|capture|credit|receipt|booking|client.*login|client.*token/i.test(label))result.set(`${script.index}:${label}:${count}`,script.code.slice(node.start,node.end));});}return result;}
 const before=criticalFunctions(oldScripts),after=criticalFunctions(newScripts);
-assert(before.size>100);assert.deepEqual([...after.keys()],[...before.keys()]);
+assert(before.size>100);
+// This public-route ownership helper is new, not a changed financial/session
+// implementation. Its extracted-source regression suite exercises its boundary.
+// Keep every original critical key/body and every dedicated block pinned below.
+const guardId='ownlybiz-public-domain-shell-guard-20260614';
+const guard=newScripts.find(script=>script.id===guardId);
+assert(guard);
+const allowedAddition=guard.index+':captureClientSurface:0';
+const addedCriticalFunctions=[...after.keys()].filter(key=>!before.has(key));
+assert.deepEqual(addedCriticalFunctions,[allowedAddition],'Only the reviewed public-route ownership helper may be added');
+assert.deepEqual([...after.keys()].filter(key=>key!==allowedAddition),[...before.keys()]);
 for(const [key,code] of before)assert.equal(after.get(key),code,'Critical function changed: '+key);
 const criticalId=/payment|checkout|billing|refund|session|settle|stripe|authoriz|receipt|credit|group|sfu/i;
 let dedicatedScripts=0;
 for(const script of oldScripts){if(criticalId.test(script.id)||['ownlybiz-on-demand-readings-20260607','ob-expert-booking-selector-20260608-js','ownlybiz-service-pause-ui-20260526'].includes(script.id)){assert.deepEqual(newScripts[script.index],script,'Critical script changed: '+script.id);dedicatedScripts++;}}
-console.log(JSON.stringify({status:'PASS',baseline,criticalFunctions:before.size,dedicatedScripts,inlineScriptSyntax:'PASS',networkRequests:0}));
+console.log(JSON.stringify({status:'PASS',baseline,criticalFunctions:before.size,dedicatedScripts,addedCriticalFunctions:addedCriticalFunctions.map(key=>({key,scriptId:guardId,regression:'scripts/test-client-session-route-priority.mjs'})),inlineScriptSyntax:'PASS',networkRequests:0}));

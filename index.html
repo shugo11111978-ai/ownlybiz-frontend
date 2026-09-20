@@ -18122,12 +18122,12 @@ async function savePaymentConfig() {
     if(_qe){window._browseExpert=_qe;window._isSubdomain=true;}
     if(window._isSubdomain){
       // Subdomain mode: always show expert site, hide marketing nav
-      if(typeof switchView==='function') switchView(4);
+      if(typeof switchView==='function' && !(window.obClientSurfaceOwnsRoute && window.obClientSurfaceOwnsRoute())) switchView(4);
       if(!window._customDomainPending) loadExpertWebsite(window._browseExpert);
     } else {
       loadMarketing();
       if(window._browseExpert && window._browseExpert !== 'expert-slug'){
-        if(typeof switchView==='function') switchView(4);
+        if(typeof switchView==='function' && !(window.obClientSurfaceOwnsRoute && window.obClientSurfaceOwnsRoute())) switchView(4);
       }
       if(!window._customDomainPending && window._browseExpert && window._browseExpert !== 'expert-slug' && String(window._browseExpert).indexOf('/') < 0) {
         loadExpertWebsite(window._browseExpert);
@@ -18518,6 +18518,7 @@ async function savePaymentConfig() {
 	      window._browseExpert = slug;
 	      if(['home','about','services','reviews','book','contact'].indexOf(page) >= 0) window._pendingExpertPage = page;
 	      setTimeout(function() {
+	        if(window.obClientSurfaceOwnsRoute && window.obClientSurfaceOwnsRoute()) return;
 	        if (typeof switchView === 'function') switchView(4);
 	        if (window.OwnlyAPI && window.OwnlyAPI.loadExpertWebsite) window.OwnlyAPI.loadExpertWebsite(slug);
 	      }, 100);
@@ -21554,7 +21555,8 @@ window._applyExpertWebsite = function _applyExpertWebsite(data) {
       _ewShow(navItem,visible);
     });
   });
-  if(activePageWasHidden && typeof window.showExpertPage === 'function') window.showExpertPage('home');
+  if(activePageWasHidden && typeof window.showExpertPage === 'function'
+    && !(window.obClientSurfaceOwnsRoute && window.obClientSurfaceOwnsRoute())) window.showExpertPage('home');
 
   // Contact page content
   var contactHeading=_ewText(wc.contact_heading) || 'Get in Touch';
@@ -35090,7 +35092,8 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
     lastExpertLoadAt = now;
     window.loadExpertWebsite(slug);
   }
-  function applyExpertRoute(route){
+  function applyExpertRoute(route, explicitNavigation){
+    if(!explicitNavigation && window.obClientSurfaceOwnsRoute && window.obClientSurfaceOwnsRoute()) return;
     if(route.slug){
       window._browseExpert = route.slug;
       window._currentExpertSlug = route.slug;
@@ -35207,7 +35210,7 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
     }
     if(typeof window._markRouteReady === 'function') window._markRouteReady();
   }
-  function applyRoute(){
+  function applyRoute(event){
     var route = parseRoute();
     if(!route) return;
     var generation=++routeApplicationGeneration;
@@ -35223,7 +35226,7 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
       else if(route.type === 'mini-suite') {
         if(typeof window._markRouteReady === 'function') window._markRouteReady('mini-suite');
       }
-      else if(route.type === 'expert') applyExpertRoute(route);
+      else if(route.type === 'expert') applyExpertRoute(route, !!(event && (event.type === 'popstate' || event.obExplicitNavigation)));
       else if(route.type === 'marketing') applyMarketingRoute(route);
     } finally {
       applyingRoute = false;
@@ -35272,7 +35275,7 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
     var current = (location.pathname || '/') + (location.search || '');
     if(current !== path) history.pushState({obRoute:true}, '', path);
     track(path);
-    applyRoute();
+    applyRoute({obExplicitNavigation:true});
     return true;
   }
   function installWrappers(){
@@ -66092,6 +66095,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
 	    return lookupPromise;
 	  }
 	  function showRequestedPage(){
+	    if(window.obClientSurfaceOwnsRoute && window.obClientSurfaceOwnsRoute()) return;
 	    var page = setPendingPage();
 	    if(!page || typeof window.showExpertPage !== 'function') return;
 	    if(page.indexOf('ai-') === 0 && !document.getElementById('ep-' + page)) return;
@@ -68842,8 +68846,65 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     var e = window._currentExpert || {};
     return !!((e.slug || e.name || e.display_name || e.user_id || e.id) && !window._customDomainPending);
   }
+  // Public boot/profile retries may decorate this route, but may not take it
+  // away from a canonical client lifecycle surface already opened on it.
+  var clientSurfaceOwner = null;
+  function surfaceRoute(){ return String(location.pathname || '/') + String(location.search || ''); }
+  function surfaceSnapshotMatches(snapshot, owner){
+    return !!snapshot && String(snapshot.id || snapshot.session_id || snapshot.sessionId || '') === owner.sessionId
+      && String(snapshot.client_id || '') === owner.clientId && String(snapshot.expert_id || '') === owner.expertId;
+  }
+  function captureClientSurface(){
+    clientSurfaceOwner = null;
+    var authority = window.OB_CLIENT_CONTEXT;
+    var view = document.getElementById('view-5');
+    var snapshot = window._obClientSessionSnapshot;
+    var sid = String(window._obActiveSessId || window._sessId || '');
+    if(!authority || !view || !view.classList.contains('active') || !snapshot || !sid) return;
+    try {
+      var context = authority.capture('client-live-surface');
+      var principal = JSON.parse(context.principal || 'null');
+      var expert = window._currentExpert || {};
+      var expertId = String(expert.user_id || expert.id || window._currentExpertId || '');
+      var owner = {context:context, sessionId:sid, clientId:String(principal && principal[0] || ''), expertId:expertId, route:surfaceRoute()};
+      if(!context.token || context.role !== 'client' || !Array.isArray(principal) || principal[1] !== 'client'
+        || !owner.clientId || !expertId || !authority.isCurrent(context)
+        || (window.obIsExpiredAuthToken && window.obIsExpiredAuthToken(authority.token()))
+        || !surfaceSnapshotMatches(snapshot, owner) || !/^(chat|voice|video)$/.test(String(snapshot.channel || ''))
+        || !/^(pending|active)$/.test(String(snapshot.status || ''))) return;
+      clientSurfaceOwner = owner;
+    } catch(e) {}
+  }
+  function ownsClientSurface(){
+    var owner = clientSurfaceOwner, authority = window.OB_CLIENT_CONTEXT;
+    var view = document.getElementById('view-5');
+    if(!owner || !authority || !view || !view.classList.contains('active') || owner.route !== surfaceRoute()) return false;
+    try {
+      if(!authority.token() || !authority.isCurrent(owner.context)
+        || (window.obIsExpiredAuthToken && window.obIsExpiredAuthToken(authority.token()))) return false;
+      var expert = window._currentExpert || {};
+      if(String(expert.user_id || expert.id || window._currentExpertId || '') !== owner.expertId) return false;
+      var snapshot = window._obClientSessionSnapshot;
+      var activeSid = String(window._obActiveSessId || window._sessId || '');
+      var screen = document.querySelector('#view-5 .phone-screen.active');
+      if(screen && screen.id === 'screen-A5'){
+        var receipt = window._obClientReceiptAuthorityState;
+        return !!receipt && receipt.sid === owner.sessionId && surfaceSnapshotMatches(receipt.snapshot, owner)
+          && /^(settling|ended|completed|cancelled|failed|expired|declined|no_show)$/.test(String(receipt.snapshot.status || ''));
+      }
+      return activeSid === owner.sessionId && surfaceSnapshotMatches(snapshot, owner)
+        && /^(pending|active|settling)$/.test(String(snapshot.status || ''))
+        && (!window._obClientEndingSid || String(window._obClientEndingSid) === owner.sessionId)
+        && !window._obSessionHasEnded;
+    } catch(e) { return false; }
+  }
+  window.obClientSurfaceOwnsRoute = ownsClientSurface;
+  if(window.OB_CLIENT_CONTEXT) window.OB_CLIENT_CONTEXT.register('client-public-route-surface', {
+    teardown:function(){ clientSurfaceOwner = null; }
+  });
   function forceExpertSurface(){
     if(!publicExpertHost()) return;
+    if(ownsClientSurface()) return;
     document.documentElement.classList.add('ob-public-shell-guard');
     var slug = preloadedPublicSlug();
     if(slug && !hasExpertPayload() && typeof window.loadExpertWebsite === 'function'){
@@ -68862,7 +68923,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
   function holdOrRelease(){
     if(!publicExpertHost()) return;
     forceExpertSurface();
-    if(hasExpertPayload()){
+    if(hasExpertPayload() || ownsClientSurface()){
       document.documentElement.classList.remove('ob-public-loading');
       if(!document.documentElement.classList.contains('ob-dashboard-loading') && !document.documentElement.classList.contains('ob-admin-loading')) {
         document.documentElement.classList.remove('ob-route-loading');
@@ -68892,7 +68953,11 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
         holdOrRelease();
         n = 4;
       }
-      return priorSwitchView.call(this, n);
+      var keepOwner = Number(n) === 5 && ownsClientSurface();
+      if(Number(n) !== 5) clientSurfaceOwner = null;
+      var result = priorSwitchView.call(this, n);
+      if(Number(n) === 5 && !keepOwner) captureClientSurface();
+      return result;
     };
     window.switchView.__obPublicDomainShellGuard = true;
   }

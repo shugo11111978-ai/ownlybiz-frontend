@@ -139,7 +139,12 @@ class FakeElement {
   removeAttribute(name) { this.attributes.delete(name); if(name.startsWith('data-')) delete this.dataset[dataKey(name)]; }
   addEventListener(type, listener) { if(!this.listeners.has(type)) this.listeners.set(type, []); this.listeners.get(type).push(listener); }
   dispatchEvent(event) { event.target ||= this; for(const listener of this.listeners.get(event.type) || []) listener.call(this, event); return !event.defaultPrevented; }
-  focus() { if(this.ownerDocument) this.ownerDocument.activeElement = this; }
+  focus(options) {
+    if(this.ownerDocument) {
+      this.ownerDocument.activeElement = this;
+      if(!options || options.preventScroll !== true) this.ownerDocument.focusScrolls.push(this);
+    }
+  }
   querySelectorAll(selector) { return queryAll(this, selector, false); }
   querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
   scrollIntoView() { this.scrolledIntoView = true; }
@@ -163,6 +168,7 @@ class FakeDocument {
     this.body = new FakeElement('body', this);
     this.documentElement.appendChild(this.body);
     this.activeElement = this.body;
+    this.focusScrolls = [];
     this.readyState = 'complete';
     this.hidden = false;
     this.listeners = new Map();
@@ -347,6 +353,18 @@ root.obExpertWorkspaceSetMediaStatus('A','Trying to reconnect…','attention');
 assert.match(dom.document.getElementById('ob-expert-live-media-status').textContent,/Trying to reconnect/,'media-owner recovery status renders while B remains focused');
 assert.equal(owner.focusedRoomId,'B');
 
+// A selected room tab can retain keyboard focus while the expert scrolls up to
+// watch the video. Background snapshots must not scroll that tab back into view.
+const videoFocus = createWorkspaceHarness({rooms:{A:room('A','Alice','video')}});
+videoFocus.owner.rtcSessionId='A';
+videoFocus.hooks.render('rtc_focus');
+videoFocus.dom.document.querySelector('[data-ob-workspace-session="A"]').focus();
+const videoFocusScrolls=videoFocus.dom.document.focusScrolls.length;
+for(const reason of ['snapshot','media_status','message']) videoFocus.hooks.render(reason);
+assert.equal(videoFocus.dom.document.activeElement.getAttribute('data-ob-workspace-session'),'A','passive updates preserve selected room keyboard focus');
+assert.equal(videoFocus.dom.document.focusScrolls.length,videoFocusScrolls,'passive room updates do not request browser scrolling away from the video');
+assert.equal(videoFocus.owner.rtcSessionId,'A','preserving viewport leaves the media session owner intact');
+
 const pending = {
   P1:{session:{id:'P1',client_name:'Later Client',channel:'video',created_at:100,request_expires_at:220}},
   P2:{session:{id:'P2',client_name:'First Client',channel:'voice',created_at:90,request_expires_at:150}},
@@ -364,6 +382,12 @@ assert.equal(dom.announcer.textContent,'New voice request from First Client. Rev
 root.obExpertWorkspacePendingDialogClosed();
 assert.equal(dom.document.activeElement,input,'unsolicited close or expiry leaves the active composer caret untouched');
 let p1Review=dom.document.querySelector('[data-ob-pending-session="P1"][data-ob-pending-action="review"]');
+p1Review.focus();
+const pendingFocusScrolls=dom.document.focusScrolls.length;
+root.obRenderExpertLiveWorkspace('pending_updated');
+p1Review=dom.document.querySelector('[data-ob-pending-session="P1"][data-ob-pending-action="review"]');
+assert.equal(dom.document.activeElement,p1Review,'pending refresh preserves the existing action focus');
+assert.equal(dom.document.focusScrolls.length,pendingFocusScrolls,'pending refresh does not scroll the expert away from the video');
 root.__OB_TEST_HOOKS__.expertLiveWorkspace.reviewPending('P1',p1Review);h.runTimers();
 assert.equal(dom.sheet.dataset.sessionId,'P1');
 assert.equal(dom.document.activeElement,dom.document.getElementById('req-accept-btn'),'explicit Review owns initial dialog focus');

@@ -1647,7 +1647,9 @@ module.exports = async function handler(req, res) {
       const seo = expertRender.expertSeo(expert,page,canonical,siteOrigin);
       return {page:page.page,path:page.path,queryPath:route.kind === 'query' ? page.canonicalPath : undefined,canonical,title:seo.title,description:seo.description,schema:seo.schema};
     })};
-    html = html.replace(/<head([^>]*)>/i, (_match, attributes) => `<head${attributes}>\n<script id="ob-expert-site-metadata">window.__OB_EXPERT_SITE__=${safeScriptJson(metadata)};</script>`);
+    // Mark the JS handoff before any body can paint. Scriptless visitors retain
+    // the readable server page; failed/slow application loads also recover it.
+    html = html.replace(/<head([^>]*)>/i, (_match, attributes) => `<head${attributes}>\n<script id="ob-expert-site-metadata">window.__OB_EXPERT_SITE__=${safeScriptJson(metadata)};document.documentElement.classList.add('ob-public-hydrating');window.__obPublicHydrationTimeout=setTimeout(function(){document.documentElement.classList.remove('ob-public-hydrating');},8000);</script>`);
     html = addHtmlClass(html, 'ob-public-first-paint');
     const firstPaint = expertRender.renderExpertFirstPaint(expertResult, expertPage, pages);
     html = html.replace(/<body([^>]*)>/i, (_match, attributes) => `<body${attributes}>\n${firstPaint}`);

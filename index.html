@@ -4967,6 +4967,9 @@ body{font-feature-settings:"ss01","cv11";background:
     shell.dataset.obWaiting = '1';
     var attempts = 0;
     function ready(){
+      // Later parser-ordered scripts finish the authored layout and routing.
+      // Do not reveal an intermediate template while they are still loading.
+      if(document.readyState === 'loading') return false;
       var view = document.getElementById('view-4');
       var expert = window._currentExpert || {};
       if(window.__OB_EXPERT_DELIVERY__){
@@ -4994,11 +4997,12 @@ body{font-feature-settings:"ss01","cv11";background:
     }
     function remove(){
       shell.dataset.obRemoving = '1';
-      shell.classList.add('is-hiding');
-      setTimeout(function(){
+      requestAnimationFrame(function(){
         if(shell && shell.parentNode) shell.parentNode.removeChild(shell);
         document.documentElement.classList.remove('ob-public-first-paint');
-      }, 180);
+        document.documentElement.classList.remove('ob-public-hydrating');
+        clearTimeout(window.__obPublicHydrationTimeout);
+      });
     }
     function wait(){
       if(ready()) remove();
@@ -5023,6 +5027,13 @@ body{font-feature-settings:"ss01","cv11";background:
   }
   function shouldHoldPublicReady(kind){
     return routeKind==='public' && (kind==='public' || !kind) && !publicFirstPaint && !hasPublicExpertPayload() && !window._obAllowPublicShellReady;
+  }
+  var dashboardFirstPaintReleased = false;
+  function shouldHoldDashboardReady(kind){
+    if(routeKind !== 'dashboard' || dashboardFirstPaintReleased || (kind && kind !== 'dashboard')) return false;
+    // A real auth redirect must reveal login, not wait for dashboard data.
+    if(!/^\/dash(?:\/|$)/.test(location.pathname || '')) return false;
+    return document.readyState === 'loading' || typeof window.obDashboardFirstPaintReady !== 'function' || !window.obDashboardFirstPaintReady();
   }
   if(routeKind){
     if(publicFirstPaint) {
@@ -5050,6 +5061,11 @@ body{font-feature-settings:"ss01","cv11";background:
     if(kind) document.documentElement.classList.add('ob-'+kind+'-loading');
   };
   window._markRouteReady=function(kind){
+    if(shouldHoldDashboardReady(kind)){
+      document.documentElement.classList.add('ob-route-loading');
+      document.documentElement.classList.add('ob-dashboard-loading');
+      return;
+    }
     if(shouldHoldPublicReady(kind)){
       document.documentElement.classList.add('ob-public-shell-guard');
       document.documentElement.classList.add('ob-route-loading');
@@ -5057,6 +5073,7 @@ body{font-feature-settings:"ss01","cv11";background:
       if(document.body) document.body.classList.remove('ownly-ready');
       return;
     }
+    if(routeKind === 'dashboard' && (!kind || kind === 'dashboard')) dashboardFirstPaintReleased = true;
     ['public','dashboard','admin'].forEach(function(name){
       if(!kind || kind===name) document.documentElement.classList.remove('ob-'+name+'-loading');
     });
@@ -5070,6 +5087,7 @@ body{font-feature-settings:"ss01","cv11";background:
     if(routeKind==='public' && publicFirstPaint && hasPublicExpertPayload() && window.__obReleasePublicFirstPaintShell) window.__obReleasePublicFirstPaintShell();
   };
   window.obRouteReady=function(kind){ if(window._markRouteReady) window._markRouteReady(kind); };
+  if(routeKind === 'dashboard') document.addEventListener('DOMContentLoaded', function(){ window._markRouteReady('dashboard'); });
   setTimeout(function(){ if(window.obRouteReady) window.obRouteReady(routeKind); }, routeKind ? 8000 : 1800);
 })();
 </script>
@@ -16635,6 +16653,7 @@ async function savePaymentConfig() {
 
   async function loadExpertDashboardForAdmin(expertId) {
   loadExpertPricing();
+    var firstPaint = window.OB_DASHBOARD_FIRST_PAINT && window.OB_DASHBOARD_FIRST_PAINT.capture();
     var name = window._adminViewingExpertName || 'Expert';
     var slug = window._adminViewingExpertSlug;
     _showAdminViewBanner(name);
@@ -16647,6 +16666,7 @@ async function savePaymentConfig() {
       _renderSessionsList($('sessions-full-list'), dash.recent_sessions||[]);
       _renderOverviewMsgs(dash.recent_sessions||[]);
       _renderBarChart($('revenue-chart'), (dash.monthly_revenue||[]).slice(-7), 'revenue');
+      if(window.OB_DASHBOARD_FIRST_PAINT) window.OB_DASHBOARD_FIRST_PAINT.settle(firstPaint,'overview');
     } catch(err) {
       if (typeof toast === 'function') toast('Could not load expert dashboard: ' + (err.message||'unknown'), 'err');
       var pan = document.querySelector('#view-3 .db-tab-panel[id="db-panel-overview"]') || document.querySelector('#view-3 .db-tab-panel');
@@ -16654,6 +16674,7 @@ async function savePaymentConfig() {
         var slugLink = '<p style="margin-top:12px;"><button onclick="var s=window._adminViewingExpertSlug;if(s){window._browseExpert=s;switchView(4);if(window.OwnlyAPI&&window.OwnlyAPI.loadExpertWebsite) window.OwnlyAPI.loadExpertWebsite(s);}" style="color:var(--terra);text-decoration:underline;background:none;border:none;cursor:pointer;">View public page →</button></p>';
         pan.innerHTML = '<div class="db-content" style="padding:24px;"><div style="text-align:center;color:rgba(246,241,233,.6);">Dashboard data for this expert is not available.</div>'+slugLink+'</div>';
       }
+      if(window.OB_DASHBOARD_FIRST_PAINT) window.OB_DASHBOARD_FIRST_PAINT.settle(firstPaint,'overview',true);
     }
   }
 
@@ -18741,6 +18762,7 @@ function loadSettings() {
     fetch('https://ownlybiz-backend-production.up.railway.app/api/auth/me', { headers: hdrs }).then(function(r){ return r.json(); }).catch(function(){ return {}; }),
     fetch('https://ownlybiz-backend-production.up.railway.app/api/experts/me/dashboard', { headers: hdrs }).then(function(r){ return r.json(); }).catch(function(){ return {}; })
   ]).then(function(results) {
+    if(firstPaint && window.OB_DASHBOARD_FIRST_PAINT.capture() !== firstPaint) return;
     var me = results[0].user || results[0];
     var ep = results[1].profile || results[1].expert || {};
     var merged = Object.assign({}, me, ep);
@@ -19000,10 +19022,11 @@ function _getMySlug() {
 function loadSettings() {
   var tok = sessionStorage.getItem("ob_t");
   if (!tok) return;
+  var firstPaint = window.OB_DASHBOARD_FIRST_PAINT && window.OB_DASHBOARD_FIRST_PAINT.capture();
   var hdrs = { "Authorization": "Bearer " + tok };
-  Promise.all([
-    fetch("https://ownlybiz-backend-production.up.railway.app/api/auth/me", { headers: hdrs }).then(function(r){ return r.json(); }).catch(function(){ return {}; }),
-    fetch("https://ownlybiz-backend-production.up.railway.app/api/experts/me/dashboard", { headers: hdrs }).then(function(r){ return r.json(); }).catch(function(){ return {}; })
+  return Promise.all([
+    fetch("https://ownlybiz-backend-production.up.railway.app/api/auth/me", { headers: hdrs, signal:window.OB_DASHBOARD_FIRST_PAINT.requestSignal() }).then(function(r){ if(!r.ok) throw new Error('Profile unavailable'); return r.json(); }),
+    fetch("https://ownlybiz-backend-production.up.railway.app/api/experts/me/dashboard", { headers: hdrs, signal:window.OB_DASHBOARD_FIRST_PAINT.requestSignal() }).then(function(r){ if(!r.ok) throw new Error('Dashboard unavailable'); return r.json(); })
   ]).then(function(results) {
     var me = results[0].user || results[0];
     var ep = results[1].profile || results[1].expert || {};
@@ -19015,6 +19038,9 @@ function loadSettings() {
     }
     _applyProfile(merged);
     loadExpertPricing();
+    if(window.OB_DASHBOARD_FIRST_PAINT) window.OB_DASHBOARD_FIRST_PAINT.settle(firstPaint,'profile');
+  }).catch(function(){
+    if(window.OB_DASHBOARD_FIRST_PAINT) window.OB_DASHBOARD_FIRST_PAINT.settle(firstPaint,'profile',true);
   });
 }
 
@@ -19758,11 +19784,13 @@ function loadReviews(){
   function _patchedLED(){
     var tok = sessionStorage.getItem('ob_t');
     if(!tok) return;
+    var firstPaint = window.OB_DASHBOARD_FIRST_PAINT && window.OB_DASHBOARD_FIRST_PAINT.capture();
     _fixDashboardDate();
-    fetch('https://ownlybiz-backend-production.up.railway.app/api/experts/me/dashboard',{headers:{'Authorization':'Bearer '+tok}})
-      .then(function(r){return r.json();})
+    return fetch('https://ownlybiz-backend-production.up.railway.app/api/experts/me/dashboard',{headers:{'Authorization':'Bearer '+tok},signal:window.OB_DASHBOARD_FIRST_PAINT.requestSignal()})
+      .then(function(r){if(!r.ok) throw new Error('Dashboard unavailable');return r.json();})
       .then(function(d){
         // KPI cards (already done by original, but ensure)
+        if(firstPaint && window.OB_DASHBOARD_FIRST_PAINT.capture() !== firstPaint) return;
         var vals = document.querySelectorAll('.kpi-value');
         var s = d.stats||{};
         if(vals[0]) vals[0].textContent = _fmtMoney(s.total_earnings||0); // dollar-valued Ownlybiz accounting, after recorded refunds
@@ -19773,7 +19801,11 @@ function loadReviews(){
         _renderRevenueChart(d.monthly_revenue||[]);
         // Recent sessions
         _renderRecentSessions(d.recent_sessions||[]);
-      }).catch(function(){});
+        if(window.OB_DASHBOARD_FIRST_PAINT) window.OB_DASHBOARD_FIRST_PAINT.settle(firstPaint,'overview');
+        return d;
+      }).catch(function(){
+        if(window.OB_DASHBOARD_FIRST_PAINT) window.OB_DASHBOARD_FIRST_PAINT.settle(firstPaint,'overview',true);
+      });
   }
   if(_origLED) {
     window.loadExpertDashboard = _patchedLED;
@@ -19908,14 +19940,16 @@ function _adminPath(suffix) {
     if(!_isAdminCtx()) { if(_origLS) _origLS.call(this); return; }
     var tok = sessionStorage.getItem('ob_t');
     if(!tok) return;
+    var firstPaint = window.OB_DASHBOARD_FIRST_PAINT && window.OB_DASHBOARD_FIRST_PAINT.capture();
     var id = window._adminViewingExpertId;
     var slug = window._adminViewingExpertSlug;
     // Fix date
     _fixDashboardDate && _fixDashboardDate();
     Promise.all([
-      fetch(_adminPath('/profile'), {headers:{'Authorization':'Bearer '+tok}}).then(function(r){return r.json();}),
-      fetch('https://ownlybiz-backend-production.up.railway.app/api/experts/'+slug).then(function(r){return r.json();}),
+      fetch(_adminPath('/profile'), {headers:{'Authorization':'Bearer '+tok},signal:window.OB_DASHBOARD_FIRST_PAINT.requestSignal()}).then(function(r){if(!r.ok) throw new Error('Profile unavailable');return r.json();}),
+      fetch('https://ownlybiz-backend-production.up.railway.app/api/experts/'+slug,{signal:window.OB_DASHBOARD_FIRST_PAINT.requestSignal()}).then(function(r){if(!r.ok) throw new Error('Expert unavailable');return r.json();}),
     ]).then(function(results){
+      if(firstPaint && window.OB_DASHBOARD_FIRST_PAINT.capture() !== firstPaint) return;
       var pr = results[0];
       var pub = results[1];
       var profile = pr.profile || {};
@@ -19941,7 +19975,11 @@ function _adminPath(suffix) {
       });
       // Load pricing
       if(typeof loadExpertPricing === 'function') loadExpertPricing();
-    }).catch(function(e){ console.error('loadSettings admin error', e); });
+      if(window.OB_DASHBOARD_FIRST_PAINT) window.OB_DASHBOARD_FIRST_PAINT.settle(firstPaint,'profile');
+    }).catch(function(e){
+      console.error('loadSettings admin error', e);
+      if(window.OB_DASHBOARD_FIRST_PAINT) window.OB_DASHBOARD_FIRST_PAINT.settle(firstPaint,'profile',true);
+    });
   };
 })();
 
@@ -21037,12 +21075,65 @@ function _openMyWebsite() {
 // - Expert login redirects to /dash/[their-slug]
 
 // \u2500\u2500\u2500 Core: loadDashboard(slug) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+// Initial dashboard visibility follows the real profile/data projection.
+(function(){
+  var current = null;
+  function routeSlug(){
+    var match = (location.pathname || '').match(/^\/dash\/([^/?#]+)/);
+    try { return match ? decodeURIComponent(match[1]) : ''; } catch(e) { return ''; }
+  }
+  function owns(state){
+    return !!(state && state === current && state.slug === routeSlug() && state.token === sessionStorage.getItem('ob_t'));
+  }
+  function showError(){
+    var main = document.querySelector('#view-3 .db-main');
+    if(!main || document.getElementById('ob-dashboard-load-error')) return;
+    var notice = document.createElement('div');
+    notice.id = 'ob-dashboard-load-error';
+    notice.setAttribute('role','status');
+    notice.style.cssText = 'margin:16px 24px;padding:14px 16px;border:1px solid var(--coral,#ff6b47);border-radius:10px;color:var(--text);';
+    notice.textContent = 'Some dashboard information could not load. Refresh to try again.';
+    main.insertBefore(notice,main.firstChild);
+  }
+  window.OB_DASHBOARD_FIRST_PAINT = {
+    requestSignal:function(){
+      var controller = new AbortController();
+      setTimeout(function(){ controller.abort(); },12000);
+      return controller.signal;
+    },
+    begin:function(slug){
+      var token = sessionStorage.getItem('ob_t');
+      if(!current || current.slug !== slug || current.token !== token) current = {slug:slug,token:token,profile:false,overview:false};
+      return current;
+    },
+    capture:function(){ return owns(current) ? current : null; },
+    settle:function(state,part,failed){
+      if(!owns(state)) return false;
+      if(part === 'all') { state.profile = true; state.overview = true; }
+      else if(part === 'profile' || part === 'overview') state[part] = true;
+      if(failed) showError();
+      if(typeof window._markRouteReady === 'function') window._markRouteReady('dashboard');
+      return true;
+    }
+  };
+  window.obDashboardFirstPaintReady = function(){
+    if(typeof window.obDashboardRoutePanelReady !== 'function') return false;
+    var panel = window.obDashboardRoutePanelReady();
+    var user = {};
+    try { user = JSON.parse(sessionStorage.getItem('ob_u') || '{}'); } catch(e) {}
+    if(user.role === 'admin') return !!panel;
+    if(!owns(current) || !current.profile) return false;
+    return !!(panel && (panel !== 'overview' || current.overview));
+  };
+})();
+
 // THE single function for all dashboard loading. Clears all previous context.
 window.loadDashboard = function(slug) {
   if(!slug) return;
   var tok = sessionStorage.getItem('ob_t');
   var u = {};
   try { u = JSON.parse(sessionStorage.getItem('ob_u')||'{}'); } catch(e){}
+  var firstPaint = window.OB_DASHBOARD_FIRST_PAINT.begin(slug);
 
 	  // If not logged in at all - go to login
 		  if(!tok) {
@@ -21067,11 +21158,13 @@ window.loadDashboard = function(slug) {
     window._adminViewingExpertName = '';
     window._myExpertSlug = null;
     fetch('https://ownlybiz-backend-production.up.railway.app/api/admin/experts/by-slug/'+slug, {
-      headers: {'Authorization':'Bearer '+tok}
-    }).then(function(r){return r.json();})
+      headers: {'Authorization':'Bearer '+tok},signal:window.OB_DASHBOARD_FIRST_PAINT.requestSignal()
+    }).then(function(r){if(!r.ok) throw new Error('Expert unavailable');return r.json();})
       .then(function(d){
+        if(window.OB_DASHBOARD_FIRST_PAINT.capture() !== firstPaint) return;
         if(d.error || !d.expert) {
           if(typeof toast==='function') toast('Expert not found: '+slug,'err');
+          window.OB_DASHBOARD_FIRST_PAINT.settle(firstPaint,'all',true);
           return;
         }
         var e = d.expert;
@@ -21093,7 +21186,9 @@ window.loadDashboard = function(slug) {
         if(typeof loadClients === 'function') loadClients();
         if(typeof loadExpertDashboardForAdmin === 'function') loadExpertDashboardForAdmin(e.id);
       }).catch(function(err){
+        if(window.OB_DASHBOARD_FIRST_PAINT.capture() !== firstPaint) return;
         if(typeof toast==='function') toast('Load failed','err');
+        window.OB_DASHBOARD_FIRST_PAINT.settle(firstPaint,'all',true);
       });
 
   } else if(u.role === 'expert') {
@@ -21104,9 +21199,10 @@ window.loadDashboard = function(slug) {
     window._adminViewingExpertName = '';
     // Load their own slug from /me/dashboard to verify
     fetch('https://ownlybiz-backend-production.up.railway.app/api/experts/me/dashboard', {
-      headers: {'Authorization':'Bearer '+tok}
-    }).then(function(r){return r.json();})
+      headers: {'Authorization':'Bearer '+tok},signal:window.OB_DASHBOARD_FIRST_PAINT.requestSignal()
+    }).then(function(r){if(!r.ok) throw new Error('Dashboard unavailable');return r.json();})
       .then(function(d){
+        if(window.OB_DASHBOARD_FIRST_PAINT.capture() !== firstPaint) return;
         var mySlug = d.profile && d.profile.slug ? d.profile.slug : null;
         window._myExpertSlug = mySlug;
         if(mySlug && mySlug !== slug) {
@@ -21121,8 +21217,10 @@ window.loadDashboard = function(slug) {
         if(typeof loadClients === 'function') loadClients();
         if(window.OwnlyAPI && window.OwnlyAPI.loadExpertDashboard) window.OwnlyAPI.loadExpertDashboard();
       }).catch(function(){
+        if(window.OB_DASHBOARD_FIRST_PAINT.capture() !== firstPaint) return;
         if(typeof switchView === 'function') switchView(3);
         if(typeof loadSettings === 'function') loadSettings();
+        window.OB_DASHBOARD_FIRST_PAINT.settle(firstPaint,'all',true);
       });
   } else {
     // Client or unknown - redirect to home
@@ -21275,30 +21373,6 @@ function _openMyWebsite() {
     if(_origRPP18) _origRPP18.call(this, e);
     // Reveal body AFTER real data is painted - eliminates Expert flash
     if(typeof window._markRouteReady === 'function') window._markRouteReady('public');
-  };
-})();
-
-// loadSettings also reveals body (for dashboard paths where _refreshPublicPage doesn't run)
-(function(){
-  var _origLS18 = window.loadSettings;
-  window.loadSettings = function() {
-    if(_origLS18) _origLS18.call(this);
-    // Reveal after settings load (dashboard case)
-    setTimeout(function(){
-      if(typeof window._markRouteReady === 'function') window._markRouteReady('dashboard');
-    }, 1200);
-  };
-})();
-
-// loadDashboard also reveals body (for /dash/slug paths)
-(function(){
-  var _origLD18 = window.loadDashboard;
-  window.loadDashboard = function(slug) {
-    if(_origLD18) _origLD18.call(this, slug);
-    // Fallback reveal after data has a chance to paint in case no other trigger fires
-    setTimeout(function(){
-      if(typeof window._markRouteReady === 'function') window._markRouteReady('dashboard');
-    }, 1600);
   };
 })();
 
@@ -26403,12 +26477,6 @@ window._handleRTCMessage=function(d){
   window.loadSettings=function(){
     if(_origLoadSettingsPlan) _origLoadSettingsPlan.apply(this, arguments);
     setTimeout(loadPlan, 350);
-    setTimeout(function(){ if(typeof window._markRouteReady === 'function') window._markRouteReady('dashboard'); else routeReady(); }, 1500);
-  };
-  var _origLoadDashboardStaging=window.loadDashboard;
-  window.loadDashboard=function(slug){
-    if(_origLoadDashboardStaging) _origLoadDashboardStaging.apply(this, arguments);
-    setTimeout(function(){ if(typeof window._markRouteReady === 'function') window._markRouteReady('dashboard'); else routeReady(); }, 2400);
   };
   var _origSaveSettingsPlan=window.saveSettingsBlock;
   window.saveSettingsBlock=function(section){
@@ -34989,6 +35057,17 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
 	    var active = document.querySelector('.db-tab-panel.active[id^="db-panel-"]');
 	    return active ? active.id.replace('db-panel-', '') : '';
 	  }
+      window.obDashboardRoutePanelReady = function(){
+        var route = parseRoute();
+        if(!route || route.type !== 'dash' || !document.querySelector('#view-3.active')) return '';
+        var panel = canonicalDashboardPanel(route.panel);
+        var target = document.getElementById('db-panel-' + panel);
+        if(panel === 'pricing'){
+          var shared = document.getElementById('db-panel-payments');
+          if(shared && shared.classList.contains('active') && shared.classList.contains('show-pricing')) return panel;
+        }
+        return target && target.classList.contains('active') ? panel : '';
+      };
 	  function dashboardPanelReady(panel,nav){
 	    if(panel !== 'group-sessions' && panel !== 'marketplace') return true;
 	    return !!(nav && !nav.hidden && (!nav.style || nav.style.display !== 'none') && document.getElementById('db-panel-'+panel));
@@ -35003,7 +35082,10 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
 	    if(nav.getAttribute && nav.getAttribute('data-ob-route-applied') === '1') return true;
 	    if(nav.setAttribute) nav.setAttribute('data-ob-route-applied','1');
 	    setTimeout(function(){
-	      if(dashboardLocationHasPanel(panel) && dashboardPanelReady(panel,nav) && typeof window.dbNav === 'function') window.dbNav(nav,panel);
+	      if(dashboardLocationHasPanel(panel) && dashboardPanelReady(panel,nav) && typeof window.dbNav === 'function') {
+            window.dbNav(nav,panel);
+            if(typeof window._markRouteReady === 'function') window._markRouteReady('dashboard');
+          }
 	    },0);
 	    return true;
 	  }
@@ -35015,6 +35097,7 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
 	    try { history.replaceState({obRoute:true},'',next); } catch(e) { return false; }
 	    var overview=findByOnclick('.db-nav-item','overview');
 	    if(overview && typeof window.dbNav === 'function') window.dbNav(overview,'overview');
+        if(typeof window._markRouteReady === 'function') window._markRouteReady('dashboard');
 	    return true;
 	  }
 	  window.obApplyEntitledDashboardRoute=applyEntitledDashboardRoute;
@@ -35173,6 +35256,7 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
 	      } finally {
 	        applyingRoute=wasApplyingRoute;
 	      }
+          if(typeof window._markRouteReady === 'function') window._markRouteReady('dashboard');
 	    }, 80);
 	  }
   function applyAdminRoute(route){
@@ -75711,7 +75795,8 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     var cursorSid=rovingSid&&owner.roomsById[rovingSid]&&!owner.roomsById[rovingSid].terminal?rovingSid:(selected&&owner.roomsById[selected]&&!owner.roomsById[selected].terminal?selected:firstInteractive);var cursorTab=Array.prototype.slice.call(list.querySelectorAll('[data-ob-workspace-session]')).find(function(node){return node.getAttribute('data-ob-workspace-session')===cursorSid;});if(cursorTab)cursorTab.tabIndex=0;
     setHidden(empty,ids.length>0);
     if(pane){pane.hidden=!(selected||owner.rtcSessionId);if(selected){pane.setAttribute('aria-labelledby',tabId(selected));pane.removeAttribute('aria-label');}else{pane.removeAttribute('aria-labelledby');pane.setAttribute('aria-label','Focused live session');}}
-    if(activeSid){var replacement=Array.prototype.slice.call(list.querySelectorAll('[data-ob-workspace-session]')).find(function(node){return node.getAttribute('data-ob-workspace-session')===activeSid&&node.getAttribute('aria-disabled')!=='true';});var focusTarget=replacement||cursorTab||byId('ob-expert-live-workspace-title');if(focusTarget&&focusTarget.focus)focusTarget.focus();}
+    // Realtime refresh preserves keyboard focus without moving the video viewport.
+    if(activeSid){var replacement=Array.prototype.slice.call(list.querySelectorAll('[data-ob-workspace-session]')).find(function(node){return node.getAttribute('data-ob-workspace-session')===activeSid&&node.getAttribute('aria-disabled')!=='true';});var focusTarget=replacement||cursorTab||byId('ob-expert-live-workspace-title');if(focusTarget&&focusTarget.focus)focusTarget.focus({preventScroll:true});}
   }
   function choosePending(sid){
     sid=text(sid);var owner=runtime();var request=owner&&owner.pendingRequestsById&&owner.pendingRequestsById[sid];if(!request)return null;
@@ -75762,7 +75847,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
       var actions=make('div','ob-expert-live-pending-actions');var review=make('button','',ui.busy?'Working…':'Review');review.type='button';review.disabled=!!ui.busy;review.setAttribute('data-ob-pending-session',sid);review.setAttribute('data-ob-pending-action','review');review.setAttribute('aria-label','Review '+ch+' request from '+name);review.addEventListener('click',function(){reviewPending(sid,review);});actions.appendChild(review);
       var decline=make('button','','Decline');decline.type='button';decline.disabled=!!ui.busy;decline.setAttribute('data-ob-pending-session',sid);decline.setAttribute('data-ob-pending-action','decline');decline.setAttribute('aria-label','Decline '+ch+' request from '+name);decline.addEventListener('click',function(){if(root.confirm&&!root.confirm('Decline the '+ch+' request from '+name+'?'))return;if(typeof root.declineSessionRequest==='function')root.declineSessionRequest(sid);});actions.appendChild(decline);card.appendChild(actions);list.appendChild(card);
     });
-    if(activeSid&&activeAction){var replacement=Array.prototype.slice.call(list.querySelectorAll('[data-ob-pending-session]')).find(function(node){return node.getAttribute('data-ob-pending-session')===activeSid&&node.getAttribute('data-ob-pending-action')===activeAction;});if(replacement&&replacement.focus)replacement.focus();}
+    if(activeSid&&activeAction){var replacement=Array.prototype.slice.call(list.querySelectorAll('[data-ob-pending-session]')).find(function(node){return node.getAttribute('data-ob-pending-session')===activeSid&&node.getAttribute('data-ob-pending-action')===activeAction;});if(replacement&&replacement.focus)replacement.focus({preventScroll:true});}
   }
   function hydrateMediaMetadata(owner,sid){
     var room=owner&&owner.roomsById&&owner.roomsById[sid];if(!owner||!sid||(room&&room.session)||mediaHydrate[sid])return;

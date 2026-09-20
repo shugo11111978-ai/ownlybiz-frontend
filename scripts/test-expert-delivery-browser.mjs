@@ -163,8 +163,8 @@ const render = serverHandler();
 const stripeStub = `window.Stripe=function(){return {elements:function(){return {create:function(type){var handlers={},node;return {on:function(name,fn){handlers[name]=fn;},mount:function(target){var parent=typeof target==='string'?document.querySelector(target):target;node=document.createElement('div');node.setAttribute('data-offline-stripe',type);node.textContent='Offline payment field';parent&&parent.appendChild(node);if(handlers.ready)handlers.ready({availablePaymentMethods:null});},unmount:function(){node&&node.remove();},destroy:function(){node&&node.remove();},focus:function(){},update:function(){}};}};},confirmCardPayment:function(){throw new Error('Payment confirmation forbidden by offline fixture');},confirmCardSetup:function(){throw new Error('Payment confirmation forbidden by offline fixture');},confirmSetup:function(){throw new Error('Payment confirmation forbidden by offline fixture');}};};`;
 const installedChrome = process.env.OWNLYBIZ_CHROME_PATH || (fs.existsSync('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome') ? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' : '');
 const browser = await playwright.chromium.launch({ headless: true, args: ['--host-resolver-rules=MAP * ~NOTFOUND', '--proxy-server=http://127.0.0.1:9'], ...(installedChrome ? { executablePath: installedChrome } : {}) });
-async function contextFor(viewport) {
-  const context = await browser.newContext({ viewport, serviceWorkers: 'block', ignoreHTTPSErrors: true });
+async function contextFor(viewport, options = {}) {
+  const context = await browser.newContext({ viewport, serviceWorkers: 'block', ignoreHTTPSErrors: true, ...options });
   await context.routeWebSocket('**/*', socket => { records.sockets++; socket.close(); });
   await context.route('**/*', async route => {
     const request = route.request(), url = new URL(request.url()), method = request.method();
@@ -249,6 +249,97 @@ try {
       const coldMetadata = new Map();
       diagnosticErrors = errors;
       page.on('pageerror', error => errors.push(error.message));
+      if (caseOnly === 'dashboard-startup') await runCase(`${item.slug}/${viewport.name}/dashboard-startup`, async () => {
+        const expertUser = { id: item.expert.id, name: item.name, slug: item.slug, role: 'expert', email: 'expert@example.test' };
+        const expertToken = `${Buffer.from('{"alg":"none"}').toString('base64url')}.${Buffer.from(JSON.stringify({ sub: expertUser.id, role: 'expert', exp: 4102444800 })).toString('base64url')}.fixture`;
+        await page.addInitScript(({ expertUser, expertToken }) => {
+          sessionStorage.setItem('ob_u', JSON.stringify(expertUser));
+          sessionStorage.setItem('ob_t', expertToken);
+        }, { expertUser, expertToken });
+        let release;
+        let gate;
+        await context.route('**/api/auth/me', async route => route.fulfill({ json: { success: true, user: expertUser }, headers: { 'access-control-allow-origin': '*' } }));
+        await context.route('**/api/experts/me/dashboard', async route => {
+          await gate;
+          await route.fulfill({ json: { success: true, profile: item.expert, stats: {}, monthly_revenue: [], recent_sessions: [] }, headers: { 'access-control-allow-origin': '*' } });
+        });
+        for (const panel of ['overview', 'live-session']) {
+          gate = new Promise(resolve => { release = resolve; });
+          try {
+            await page.goto(`https://ownlybiz.com/dash/${item.slug}/${panel}`, { waitUntil: 'domcontentloaded' });
+            await page.locator(`#db-panel-${panel}.active`).waitFor({ state: 'attached' });
+            // Legacy timer/other-page ready calls must not expose empty data.
+            await page.evaluate(() => window._markRouteReady());
+            assert.equal(await page.evaluate(() => document.documentElement.classList.contains('ob-dashboard-loading')), true);
+            assert.equal(await page.locator('body').evaluate(node => getComputedStyle(node).opacity), '0');
+          } finally { release(); }
+          await page.waitForFunction(() => !document.documentElement.classList.contains('ob-dashboard-loading') && getComputedStyle(document.body).opacity === '1');
+          assert.equal(await page.locator(`#db-panel-${panel}`).isVisible(), true, 'Intended dashboard panel is visible after data projection');
+          assert.equal(await page.evaluate(() => window.obDashboardFirstPaintReady()), true);
+          await page.screenshot({ path: path.join(output, `${item.slug}-${viewport.name}-dashboard-${panel}.png`) });
+        }
+        assert.deepEqual(errors, [], 'No uncaught dashboard startup exceptions');
+        return { delayedDataProtected: true, panels: ['overview', 'live-session'], actualProductionWrites: 0 };
+      });
+      if (caseOnly === 'visual-startup') await runCase(`${item.slug}/${viewport.name}/visual-startup`, async () => {
+        // Pause a real parser-ordered body script to observe first paint before
+        // the authored application is ready, without replacing any runtime code.
+        const response = await render(new URL(pageUrl(item, '/')));
+        const body = response.body.slice(response.body.indexOf('<body'));
+        const heldScript = body.match(/<script[^>]+src="(\/assets\/ownlybiz-public\/[^\"]+)"/)?.[1];
+        assert.ok(heldScript, 'A body application script is available for delayed-load testing');
+        let release;
+        const gate = new Promise(resolve => { release = resolve; });
+        const hold = async route => { await gate; await route.fallback(); };
+        await context.route('**' + heldScript, hold);
+        const navigation = page.goto(pageUrl(item, '/'), { waitUntil: 'domcontentloaded', timeout: 30000 });
+        try {
+          await page.locator('#ob-public-first-paint-shell').waitFor({ state: 'attached' });
+          assert.equal(await page.locator('#ob-public-first-paint-shell h1').isVisible(), false, 'No generic fallback portrait/layout during JS startup');
+          assert.equal(await page.locator('.ob-first-paint-loading').isVisible(), true, 'A themed loading status is visible');
+          await page.screenshot({ path: path.join(output, `${item.slug}-${viewport.name}-startup.png`) });
+          // Observe the real bounded failure fallback; do not replace app state
+          // or application timers to make the handoff pass.
+          await page.locator('#ob-public-first-paint-shell h1').waitFor({ state: 'visible', timeout: 10000 });
+          assert.equal(await page.locator('.ob-first-paint-loading').isVisible(), false, 'Failed startup never leaves a permanent loading screen');
+        } finally { release(); }
+        await navigation;
+        await context.unroute('**' + heldScript, hold);
+        await ready(page, item, 'home');
+        assert.equal(await page.locator('#ob-public-first-paint-shell').count(), 0, 'Authored page replaces server fallback atomically');
+
+        await page.addInitScript(() => {
+          window.__startupFrames = [];
+          function sample() {
+            const heading = document.querySelector('#ob-public-first-paint-shell h1');
+            const visible = !!(heading && heading.getClientRects().length && getComputedStyle(heading).visibility !== 'hidden' && Number(getComputedStyle(document.body).opacity) > 0);
+            window.__startupFrames.push({ fallbackVisible: visible, hydrating: document.documentElement.classList.contains('ob-public-hydrating') });
+            if (window.__startupFrames.length < 600) requestAnimationFrame(sample);
+          }
+          requestAnimationFrame(sample);
+        });
+        await page.reload({ waitUntil: 'domcontentloaded' });
+        await ready(page, item, 'home');
+        assert.equal(await page.evaluate(() => window.__startupFrames.some(frame => frame.fallbackVisible)), false, 'Refresh never paints the generic fallback');
+        await Promise.all([
+          page.waitForNavigation({ waitUntil: 'domcontentloaded' }),
+          page.evaluate(() => window.obClientReviewSkip()),
+        ]);
+        await ready(page, item, 'home');
+        assert.equal(await page.evaluate(() => window.__startupFrames.some(frame => frame.fallbackVisible)), false, 'Skip-review return never paints the generic fallback');
+        await page.screenshot({ path: path.join(output, `${item.slug}-${viewport.name}-returned-home.png`), fullPage: true });
+
+        const scriptless = await contextFor({ width: viewport.width, height: viewport.height }, { javaScriptEnabled: false });
+        try {
+          const noScriptPage = await scriptless.newPage();
+          await noScriptPage.goto(pageUrl(item, '/'), { waitUntil: 'domcontentloaded' });
+          assert.equal(await noScriptPage.locator('#ob-public-first-paint-shell h1').isVisible(), true, 'Scriptless visitors retain real expert content');
+          assert.equal(await noScriptPage.locator('body').evaluate(node => getComputedStyle(node).opacity), '1');
+          assert.equal(await noScriptPage.locator('.ob-first-paint-loading').isVisible(), false);
+        } finally { await scriptless.close(); }
+        assert.deepEqual(errors, [], 'No uncaught startup exceptions');
+        return { delayedStartup: true, failureFallback: true, refresh: true, skipReviewReturn: true, scriptlessContent: true, realSessionsCreated: 0 };
+      });
       const routes = quick ? ['/', '/about', '/book', '/my-method'] : ['/', '/about', '/services', '/reviews', '/book', '/contact', '/my-method', '/private-guide', '/' + longCustomSlug, '/new-page'];
       if (item.marketplace) routes.push('/experts', '/experts/mini-fixture-one');
       for (const pathname of routeOnly ? routeOnly.split(',').map(route => route === 'long64' ? '/' + longCustomSlug : route) : routes) {

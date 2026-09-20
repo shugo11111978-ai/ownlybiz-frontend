@@ -68848,7 +68848,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
   }
   // Public boot/profile retries may decorate this route, but may not take it
   // away from a canonical client lifecycle surface already opened on it.
-  var clientSurfaceOwner = null;
+  var clientSurfaceOwner = null, prepSurfaceOwner = null, prepLaunchDepth = 0;
   function surfaceRoute(){ return String(location.pathname || '/') + String(location.search || ''); }
   function surfaceSnapshotMatches(snapshot, owner){
     return !!snapshot && String(snapshot.id || snapshot.session_id || snapshot.sessionId || '') === owner.sessionId
@@ -68856,6 +68856,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
   }
   function captureClientSurface(){
     clientSurfaceOwner = null;
+    if(prepSurfaceOwner && window._obSessionHasEnded) return;
     var authority = window.OB_CLIENT_CONTEXT;
     var view = document.getElementById('view-5');
     var snapshot = window._obClientSessionSnapshot;
@@ -68875,7 +68876,54 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
       clientSurfaceOwner = owner;
     } catch(e) {}
   }
+  function prepSurfaceContext(){
+    var authority = window.OB_CLIENT_CONTEXT;
+    if(!authority) return null;
+    try {
+      var context = authority.capture('client-pre-session-surface');
+      var principal = JSON.parse(context.principal || 'null');
+      var expert = window._currentExpert || {};
+      var expertId = String(expert.user_id || expert.id || '');
+      var channel = String(window.selectedChannel && window.selectedChannel.id || '');
+      var beginChannel = String(window._obPendingChannel || window.currentBookChannel || 'chat');
+      if(!context.token || context.role !== 'client' || !Array.isArray(principal) || principal[1] !== 'client'
+        || !principal[0] || !expertId || !authority.isCurrent(context)
+        || (window.obIsExpiredAuthToken && window.obIsExpiredAuthToken(authority.token()))
+        || (window._currentExpertId && String(window._currentExpertId) !== expertId)
+        || !/^(chat|voice|video)$/.test(channel) || channel !== beginChannel) return null;
+      return {context:context, clientId:String(principal[0]), expertId:expertId, channel:channel, route:surfaceRoute()};
+    } catch(e) { return null; }
+  }
+  function ownsPrepSurface(){
+    var owner = prepSurfaceOwner, current = prepSurfaceContext();
+    var view = document.getElementById('view-5');
+    var screen = document.querySelector('#view-5 .phone-screen.active');
+    if(!owner || !current || !view || !view.classList.contains('active') || !screen || screen.id !== 'screen-PRESESS'
+      || !window.OB_CLIENT_CONTEXT.isCurrent(owner.context) || owner.clientId !== current.clientId
+      || owner.expertId !== current.expertId || owner.channel !== current.channel || owner.route !== current.route
+      || !/^(A3|A4)$/.test(String(window._pendingSessionScreen || ''))){ prepSurfaceOwner = null; return false; }
+    var ids = [window._obActiveSessId, window._sessId, window._obPendingSessId, window._pendingSid].filter(Boolean).map(String);
+    if(!ids.length) return true;
+    var snapshot = window._obClientSessionSnapshot;
+    var receipt = window._obClientReceiptAuthorityState;
+    var priorTerminalReceipt = !!receipt && !!receipt.sid && String(receipt.sid) !== ids[0]
+      && surfaceSnapshotMatches(receipt.snapshot, {sessionId:String(receipt.sid), clientId:owner.clientId, expertId:owner.expertId})
+      && /^(ended|completed|cancelled|failed|expired|declined|no_show)$/.test(String(receipt.snapshot.status || ''))
+      && String(snapshot && snapshot.status || '') === 'pending';
+    var matches = ids.every(function(id){ return id === ids[0]; })
+      && surfaceSnapshotMatches(snapshot, {sessionId:ids[0], clientId:owner.clientId, expertId:owner.expertId})
+      && String(snapshot.channel || '') === owner.channel && /^(pending|active)$/.test(String(snapshot.status || ''))
+      && (!window._obSessionHasEnded || priorTerminalReceipt) && !window._obClientEndingSid;
+    if(!matches) prepSurfaceOwner = null;
+    return matches;
+  }
   function ownsClientSurface(){
+    if(!clientSurfaceOwner && ownsPrepSurface()){
+      // A canonical response upgrades the prep selection; a bare sid never does.
+      captureClientSurface();
+      if(clientSurfaceOwner) prepSurfaceOwner = null;
+      else return true;
+    }
     var owner = clientSurfaceOwner, authority = window.OB_CLIENT_CONTEXT;
     var view = document.getElementById('view-5');
     if(!owner || !authority || !view || !view.classList.contains('active') || owner.route !== surfaceRoute()) return false;
@@ -68900,8 +68948,26 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
   }
   window.obClientSurfaceOwnsRoute = ownsClientSurface;
   if(window.OB_CLIENT_CONTEXT) window.OB_CLIENT_CONTEXT.register('client-public-route-surface', {
-    teardown:function(){ clientSurfaceOwner = null; }
+    teardown:function(){ clientSurfaceOwner = null; prepSurfaceOwner = null; }
   });
+  var priorLaunchSession = window._launchSession;
+  if(typeof priorLaunchSession === 'function' && !priorLaunchSession.__obPublicDomainShellGuard){
+    window._launchSession = function(){
+      var owner = prepSurfaceContext();
+      prepSurfaceOwner = null;
+      var result;
+      prepLaunchDepth++;
+      try { result = priorLaunchSession.apply(this, arguments); }
+      finally { prepLaunchDepth--; }
+      // The normal launch selects view 5 before PRESESS. Claim only after both
+      // original UI operations complete, without bypassing Begin/payment gates.
+      prepSurfaceOwner = owner;
+      if(!ownsPrepSurface()) prepSurfaceOwner = null;
+      else clientSurfaceOwner = null;
+      return result;
+    };
+    window._launchSession.__obPublicDomainShellGuard = true;
+  }
   function forceExpertSurface(){
     if(!publicExpertHost()) return;
     if(ownsClientSurface()) return;
@@ -68954,9 +69020,13 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
         n = 4;
       }
       var keepOwner = Number(n) === 5 && ownsClientSurface();
-      if(Number(n) !== 5) clientSurfaceOwner = null;
+      var keepCanonicalOwner = keepOwner && !!clientSurfaceOwner;
+      if(Number(n) !== 5){ clientSurfaceOwner = null; prepSurfaceOwner = null; }
       var result = priorSwitchView.call(this, n);
-      if(Number(n) === 5 && !keepOwner) captureClientSurface();
+      if(Number(n) === 5 && !keepCanonicalOwner && !prepLaunchDepth){
+        captureClientSurface();
+        if(clientSurfaceOwner || !keepOwner) prepSurfaceOwner = null;
+      }
       return result;
     };
     window.switchView.__obPublicDomainShellGuard = true;

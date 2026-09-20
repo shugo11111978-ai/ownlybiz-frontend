@@ -7,6 +7,7 @@ const expert={slug:'fixture-one',name:'Expert One',title:'Independent advisor',w
 const pages=publishedPublicPages(expert);
 const result={slug:expert.slug,expert,profile:{reviews:[]}};
 const home=renderExpertFirstPaint(result,pages[0],pages);
+assert.doesNotMatch(home,/ob-first-paint-loading|Loading Expert One/);
 assert.match(home,/Authored home section/);assert.match(home,/href="\/my-method">Read my approach/);
 assert.doesNotMatch(home,/PRIVATE DRAFT|href="\/reviews"/);
 const custom=renderExpertFirstPaint(result,pages.find(page=>page.page==='ai-my-method'),pages);

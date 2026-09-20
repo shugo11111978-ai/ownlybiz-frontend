@@ -296,7 +296,7 @@ try {
         try {
           await page.locator('#ob-public-first-paint-shell').waitFor({ state: 'attached' });
           assert.equal(await page.locator('#ob-public-first-paint-shell h1').isVisible(), false, 'No generic fallback portrait/layout during JS startup');
-          assert.equal(await page.locator('.ob-first-paint-loading').isVisible(), true, 'A themed loading status is visible');
+          assert.equal(await page.locator('.ob-first-paint-loading').count(), 0, 'No loading notification is rendered');
           await page.screenshot({ path: path.join(output, `${item.slug}-${viewport.name}-startup.png`) });
           // Observe the real bounded failure fallback; do not replace app state
           // or application timers to make the handoff pass.

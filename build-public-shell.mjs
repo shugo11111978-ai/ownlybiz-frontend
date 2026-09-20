@@ -31,13 +31,27 @@ let html = source.replace(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi, (tag, at
   return `<script${attrs} src="/${resource}"></script>`;
 });
 const expertBuild = buildExpertShell(html);
-files.set('data/ownlybiz-expert.html', expertBuild.html);
+// Expert pages execute every extracted classic script in parser order. Advertise
+// those immutable resources at the start of the head so the browser can fetch
+// them while it continues receiving the document; the script nodes themselves
+// remain byte-for-byte unchanged and execute only at their original positions.
+const expertPreloadHrefs = scripts.map(entry => `/${entry.resource}`);
+const expertPreloadMarkup = expertPreloadHrefs.map(href => `<link rel="preload" as="script" href="${href}">`).join('\n');
+const expertHead = expertBuild.html.match(/<head\b[^>]*>/i);
+if (!expertHead) throw new Error('Expert shell head boundary missing');
+const expertHtml = expertBuild.html.slice(0, expertHead.index + expertHead[0].length) +
+  `\n${expertPreloadMarkup}` + expertBuild.html.slice(expertHead.index + expertHead[0].length);
+const deliveredExpertPreloadHrefs = [...expertHtml.matchAll(/<link rel="preload" as="script" href="(\/assets\/ownlybiz-public\/[a-f0-9]{64}\.js)">/g)].map(match => match[1]);
+if (JSON.stringify(deliveredExpertPreloadHrefs) !== JSON.stringify(expertPreloadHrefs)) throw new Error('Expert script preload URL/order gate failed');
+const expertHeadPrefix = `${expertHead[0]}\n${expertPreloadMarkup}`;
+if (expertHtml.slice(expertHead.index, expertHead.index + expertHeadPrefix.length) !== expertHeadPrefix) throw new Error('Expert script preloads must immediately follow the head opening tag');
+files.set('data/ownlybiz-expert.html', expertHtml);
 files.set('data/ownlybiz-expert-build.json', JSON.stringify({
   version: 1,
   sourceSha256: digest(source),
   sourceBytes: Buffer.byteLength(source),
-  htmlSha256: digest(expertBuild.html),
-  htmlBytes: Buffer.byteLength(expertBuild.html),
+  htmlSha256: digest(expertHtml),
+  htmlBytes: Buffer.byteLength(expertHtml),
   scripts,
   scaffolds: expertBuild.scaffolds,
   neutralSlots: expertBuild.neutralSlots,
@@ -72,7 +86,7 @@ const rebuilt = html.replace(/<script\b([^>]*?) src="\/(assets\/ownlybiz-public\
 const originalScripts = [...source.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi)].map(m => [m[1], m[2]]);
 const rebuiltScripts = [...rebuilt.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi)].map(m => [m[1], m[2]]);
 if (JSON.stringify(originalScripts) !== JSON.stringify(rebuiltScripts)) throw new Error('Script preservation gate failed');
-const expertRebuilt = expertBuild.html.replace(/<script\b([^>]*?) src="\/(assets\/ownlybiz-public\/[a-f0-9]{64}\.js)"><\/script>/g,
+const expertRebuilt = expertHtml.replace(/<script\b([^>]*?) src="\/(assets\/ownlybiz-public\/[a-f0-9]{64}\.js)"><\/script>/g,
   (_, attrs, resource) => `<script${attrs}>${files.get(resource)}</script>`);
 const expertScripts = [...expertRebuilt.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi)].map(m => [m[1], m[2]]);
 if (JSON.stringify(originalScripts) !== JSON.stringify(expertScripts)) throw new Error('Expert script preservation gate failed');
@@ -155,4 +169,4 @@ for (const [relative, contents] of files) {
     fs.writeFileSync(target, contents);
   }
 }
-console.log(JSON.stringify({ status: check ? 'VERIFIED' : 'BUILT', sourceBytes: manifest.sourceBytes, publicHtmlBytes: manifest.htmlBytes, expertHtmlBytes: Buffer.byteLength(expertBuild.html), externalScripts: scripts.length, publicExportFiles: publicFiles.size, scriptPreservation: 'PASS', expertScriptPreservation: 'PASS', legalCopyPreservation: 'PASS', publicExportPreservation: 'PASS' }));
+console.log(JSON.stringify({ status: check ? 'VERIFIED' : 'BUILT', sourceBytes: manifest.sourceBytes, publicHtmlBytes: manifest.htmlBytes, expertHtmlBytes: Buffer.byteLength(expertHtml), externalScripts: scripts.length, expertScriptPreloads: deliveredExpertPreloadHrefs.length, publicExportFiles: publicFiles.size, scriptPreservation: 'PASS', expertScriptPreservation: 'PASS', expertScriptPreloadOrder: 'PASS', legalCopyPreservation: 'PASS', publicExportPreservation: 'PASS' }));

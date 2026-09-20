@@ -3516,6 +3516,26 @@ function trackedPrewarmStream(label, channel = 'video') {
 }
 
 function attachClientPrewarmCard(harness, id, channel) {
+  // A real readiness click is made inside the selected client pre-session
+  // surface, with an expert and channel chosen before native permissions open.
+  const view = new FakeElement('div');
+  view.id = 'view-5';
+  view.classList.add('view-panel');
+  const screen = new FakeElement('div');
+  screen.id = 'screen-PRESESS';
+  screen.classList.add('phone-screen');
+  view.appendChild(screen);
+  harness.body.appendChild(view);
+  function select() {
+    view.classList.add('active');
+    screen.classList.add('active');
+    harness.sandbox.selectedChannel = { id: channel };
+    harness.sandbox._obPendingChannel = channel;
+    harness.sandbox.currentBookChannel = channel;
+    harness.sandbox._currentExpert = { id: 'prewarm-expert', user_id: 'prewarm-expert' };
+    harness.sandbox._currentExpertId = 'prewarm-expert';
+  }
+  select();
   const card = new FakeElement('div');
   card.id = id;
   card.setAttribute('data-ob-media-channel', channel);
@@ -3525,8 +3545,14 @@ function attachClientPrewarmCard(harness, id, channel) {
   button.textContent = 'Enable before session';
   card.appendChild(status);
   card.appendChild(button);
-  harness.body.appendChild(card);
-  return { card, status, button };
+  screen.appendChild(card);
+  for (const node of [view, screen, card]) {
+    Object.defineProperty(node, 'isConnected', { get() { return !!this.closest('html'); } });
+    Object.defineProperty(node, 'parentElement', { get() { return this.parentNode; } });
+    node.getBoundingClientRect = () => ({ width: 300, height: 100 });
+    node.getClientRects = () => [node.getBoundingClientRect()];
+  }
+  return { card, status, button, select };
 }
 
 function attachExpertPrewarmCard(harness) {
@@ -3572,7 +3598,7 @@ async function assertInstalledClientPrewarmLogoutIsolation(channel) {
   const mediaQueue = [clientA.stream, clientB.stream];
   let mediaRequests = 0;
   const harness = createHarness({ session: { ob_t: clientAToken } });
-  attachClientPrewarmCard(harness, testName, channel);
+  const prewarmFixture = attachClientPrewarmCard(harness, testName, channel);
   installRolePrewarmOwner(harness, async () => {
     const stream = mediaQueue[mediaRequests];
     mediaRequests += 1;
@@ -3588,6 +3614,8 @@ async function assertInstalledClientPrewarmLogoutIsolation(channel) {
   assert.equal(harness.sandbox._obRtcPrewarmedStream, clientA.stream, `${testName} publishes the shared reference to client A only`);
 
   await changeAuth(harness, null);
+  assert.equal(harness.document.getElementById('screen-PRESESS').classList.contains('active'), false,
+    `${testName} logout removes the selected pre-session surface before client B enters`);
   assert(clientA.tracks.every((track) => track.stopCalls === 1 && track.readyState === 'ended'),
     `${testName} logout stops each client A prewarm track exactly once`);
   assert.equal(harness.sandbox._obClientMediaReadyStream, null, `${testName} logout clears the client prewarm global`);
@@ -3601,6 +3629,7 @@ async function assertInstalledClientPrewarmLogoutIsolation(channel) {
     `${testName} client logout leaves expert tracks live`);
 
   await changeAuth(harness, clientBToken);
+  prewarmFixture.select(); // Client B deliberately selects its own pre-session after teardown.
   assert.equal(await harness.sandbox.obEnableClientMedia(testName), true,
     `${testName} client B obtains a new pre-session stream`);
   assert.equal(harness.sandbox._obClientMediaReadyStream, clientB.stream,
@@ -3635,7 +3664,7 @@ async function assertPendingClientPrewarmCannotPublishIntoReplacement(channel) {
   const pendingClientA = new Promise((resolve) => { resolveClientA = resolve; });
   let mediaRequests = 0;
   const harness = createHarness({ session: { ob_t: clientAToken } });
-  attachClientPrewarmCard(harness, testName, channel);
+  const prewarmFixture = attachClientPrewarmCard(harness, testName, channel);
   installRolePrewarmOwner(harness, () => {
     mediaRequests += 1;
     return mediaRequests === 1 ? pendingClientA : Promise.resolve(clientB.stream);
@@ -3646,7 +3675,10 @@ async function assertPendingClientPrewarmCannotPublishIntoReplacement(channel) {
   await settleAsync();
   assert.equal(mediaRequests, 1, `${testName} client A permission remains pending`);
   await changeAuth(harness, null);
+  assert.equal(harness.document.getElementById('screen-PRESESS').classList.contains('active'), false,
+    `${testName} pending client A logout removes the selected pre-session surface`);
   await changeAuth(harness, clientBToken);
+  prewarmFixture.select(); // Keep the same card to retain the pending old-principal regression.
   assert.equal(await harness.sandbox.obEnableClientMedia(testName), true,
     `${testName} client B can enable a replacement while client A remains pending`);
   assert.equal(harness.sandbox._obClientMediaReadyStream, clientB.stream,

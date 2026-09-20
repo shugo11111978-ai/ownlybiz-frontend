@@ -37118,6 +37118,55 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
     var ch = (window.selectedChannel && window.selectedChannel.id) || window._obPendingChannel || window.currentBookChannel || '';
     return String(ch || '').toLowerCase();
   }
+  var clientMediaPrepGeneration = 0, clientMediaAttempt = null;
+  function clientMediaLiveStream(stream, channel){
+    if(!stream || typeof stream.getTracks !== 'function') return false;
+    var tracks = stream.getTracks();
+    if(channel === 'voice' && tracks.some(function(track){ return track.kind === 'video' && track.readyState === 'live'; })) return false;
+    return ['audio'].concat(channel === 'video' ? ['video'] : []).every(function(kind){
+      return tracks.some(function(track){ return track.kind === kind && track.readyState === 'live' && track.enabled; });
+    });
+  }
+  function clientMediaVisible(node){
+    if(!node || !node.isConnected) return false;
+    for(var current = node; current; current = current.parentElement){
+      var style = getComputedStyle(current);
+      if(current.hidden || style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse' || Number(style.opacity) === 0) return false;
+    }
+    var box = node.getBoundingClientRect();
+    return box.width > 0 && box.height > 0 && node.getClientRects().length > 0;
+  }
+  function clientMediaHasFlow(){
+    return !!(window._obActiveSessId || window._sessId || window._sid || window._obPendingSessId || window._pendingSid
+      || (window.OB_RTC && window.OB_RTC.isActive && window.OB_RTC.isActive()));
+  }
+  function clientMediaAttemptCurrent(attempt){
+    var view = document.getElementById('view-5'), screen = document.getElementById('screen-PRESESS');
+    var expert = window._currentExpert || {};
+    return !!attempt && clientMediaAttempt === attempt && attempt.generation === clientMediaPrepGeneration
+      && attempt.document === document && attempt.card === document.getElementById(attempt.cardId)
+      && attempt.card.getAttribute('data-ob-media-channel') === attempt.channel && mediaChannel() === attempt.channel
+      && attempt.route === String(location.pathname || '') + String(location.search || '')
+      && !!attempt.expertId && attempt.expertId === String(expert.user_id || expert.id || window._currentExpertId || '')
+      && (!window._currentExpertId || String(window._currentExpertId) === attempt.expertId)
+      && !!attempt.owner && mediaPrewarmOwnerCurrent(attempt.owner, 'client')
+      && !!view && view.classList.contains('active') && !!screen && screen.classList.contains('active')
+      && clientMediaVisible(view) && clientMediaVisible(screen) && clientMediaVisible(attempt.card)
+      && !clientMediaHasFlow();
+  }
+  function discardUnpublishedClientMedia(stream, attempt){
+    if(!stream || attempt.published || typeof stream.getTracks !== 'function') return;
+    // A stale native result owns only its unpublished tracks, never a shared
+    // prewarm or a stream adopted by a newer attempt/active connection.
+    var protectedStreams = [attempt.previousClient, attempt.previousRtc, attempt.previousExpert,
+      window._obClientMediaReadyStream, window._obRtcPrewarmedStream, window._obExpertMediaReadyStream].filter(Boolean);
+    if(protectedStreams.indexOf(stream) >= 0) return;
+    var protectedTracks = [];
+    protectedStreams.forEach(function(shared){ if(shared.getTracks) protectedTracks = protectedTracks.concat(shared.getTracks()); });
+    stream.getTracks().forEach(function(track){
+      if(protectedTracks.indexOf(track) < 0 && track.readyState !== 'ended') { try { track.stop(); } catch(e) {} }
+    });
+  }
   function readinessHtml(id, channel){
     var copy = channel === 'voice' ? 'Enable your microphone before joining.' : 'Enable your camera and microphone before joining.';
     var title = channel === 'voice' ? 'Microphone check' : 'Camera and microphone check';
@@ -37132,29 +37181,45 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
     var status = document.getElementById(cardId + '-status');
     var channel = (card && card.getAttribute('data-ob-media-channel')) || mediaChannel();
     var owner = captureMediaPrewarmOwner('client', {channel:channel || 'video', cardId:String(cardId || '')});
-    if(!mediaPrewarmOwnerCurrent(owner, 'client')){
-      if(status) status.textContent = 'Sign in again before enabling media.';
-      return false;
-    }
+    if(!card || (channel !== 'voice' && channel !== 'video')) return false;
+    var expert = window._currentExpert || {};
+    var attempt = {card:card, cardId:cardId, channel:channel, owner:owner, document:document,
+      generation:clientMediaPrepGeneration, route:String(location.pathname || '') + String(location.search || ''),
+      expertId:String(expert.user_id || expert.id || window._currentExpertId || ''), pending:true, published:false,
+      previousClient:window._obClientMediaReadyStream, previousRtc:window._obRtcPrewarmedStream,
+      previousExpert:window._obExpertMediaReadyStream, previousChannel:window._obClientMediaReadyChannel};
+    clientMediaAttempt = attempt;
+    if(!clientMediaAttemptCurrent(attempt)) { attempt.pending = false; return false; }
     if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+      attempt.pending = false;
       if(status) status.textContent = 'Media permissions are not available in this browser.';
       return false;
     }
+    var btn = card.querySelector('button'), stream = null;
+    if(btn) { btn.disabled = true; btn.textContent = 'Checking...'; }
     try {
       var constraints = channel === 'voice' ? {audio:true, video:false} : {audio:true, video:true};
-      var stream = await navigator.mediaDevices.getUserMedia(constraints);
-      if(!mediaPrewarmOwnerCurrent(owner, 'client')) { stopOwnedPrewarmStream(stream); return false; }
+      stream = await navigator.mediaDevices.getUserMedia(constraints);
+      if(!clientMediaAttemptCurrent(attempt)
+        || window._obClientMediaReadyStream !== attempt.previousClient || window._obRtcPrewarmedStream !== attempt.previousRtc
+        || window._obClientMediaReadyChannel !== attempt.previousChannel) { discardUnpublishedClientMedia(stream, attempt); return false; }
+      if(stream === attempt.previousClient || stream === attempt.previousRtc || stream === attempt.previousExpert) return false;
+      if(!clientMediaLiveStream(stream, channel)) throw new Error('Required media tracks are not live.');
       clearRoleMediaPrewarm('client');
       window._obClientMediaReadyStream = stream;
       window._obClientMediaReadyChannel = channel || 'video';
       window._obRtcPrewarmedStream = stream;
+      attempt.published = true;
       var registered = true;
       try {
         if(window.ExpertSfuClient && typeof window.ExpertSfuClient.setPrewarmedStream === 'function') {
           registered = window.ExpertSfuClient.setPrewarmedStream('client', stream, channel || 'video', owner) !== false;
         }
       } catch(e) { registered = false; }
-      if(!registered || !mediaPrewarmOwnerCurrent(owner, 'client')) { clearRoleMediaPrewarm('client', stream); return false; }
+      if(!registered || !clientMediaAttemptCurrent(attempt)) {
+        if(!clientMediaHasFlow()) clearRoleMediaPrewarm('client', stream);
+        return false;
+      }
       if(status) {
         status.textContent = channel === 'voice'
           ? 'Microphone ready. You will connect when the expert accepts.'
@@ -37162,13 +37227,18 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
         status.style.color = 'var(--sage)';
         status.style.fontWeight = '800';
       }
-      var btn = card && card.querySelector('button');
       if(btn) { btn.textContent = 'Enabled'; btn.disabled = true; btn.style.opacity = '.75'; }
       return true;
     } catch(e) {
-      if(!mediaPrewarmOwnerCurrent(owner, 'client')) return false;
+      discardUnpublishedClientMedia(stream, attempt);
+      if(!clientMediaAttemptCurrent(attempt)) return false;
       if(status) { status.textContent = 'Permission was not enabled. You can still join and grant access when the session starts.'; status.style.color = '#b45309'; }
       return false;
+    } finally {
+      attempt.pending = false;
+      if(clientMediaAttemptCurrent(attempt) && btn && (!attempt.published || window._obClientMediaReadyStream !== stream)) {
+        btn.disabled = false; btn.textContent = 'Enable before session'; btn.style.opacity = '1';
+      }
     }
   };
   if(window.OB_CLIENT_CONTEXT) window.OB_CLIENT_CONTEXT.register('media-prewarm', {
@@ -37188,12 +37258,20 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
     if(!begin) return;
     var existing = document.getElementById('ob-client-media-ready-presess');
     if(ch !== 'voice' && ch !== 'video') { if(existing) existing.remove(); return; }
-    if(existing) return;
+    if(existing && existing.getAttribute('data-ob-media-channel') === ch){
+      var button = existing.querySelector('button');
+      var pending = clientMediaAttempt && clientMediaAttempt.card === existing && clientMediaAttempt.pending && clientMediaAttemptCurrent(clientMediaAttempt);
+      var ready = window._obClientMediaReadyChannel === ch && clientMediaLiveStream(window._obClientMediaReadyStream, ch);
+      if(!button || !button.disabled || pending || (button.textContent === 'Enabled' && ready)) return;
+    }
+    if(existing) existing.remove();
     begin.insertAdjacentHTML('beforebegin', readinessHtml('ob-client-media-ready-presess', ch));
   }
   var oldStartSessionScreen = window._startSessionScreen;
   if(oldStartSessionScreen){
     window._startSessionScreen = function(){
+      clientMediaPrepGeneration += 1;
+      clientMediaAttempt = null;
       var ret = oldStartSessionScreen.apply(this, arguments);
       setTimeout(renderPresessionMedia, 60);
       return ret;
@@ -42380,10 +42458,6 @@ body.ob-ui-dark .ob-connection-note,
     if(paidNote && !paidNote.dataset.obPolished){
       paidNote.dataset.obPolished = '1';
       paidNote.innerHTML = '<strong>Billing starts when the session begins.</strong> You can end any time and only pay for time used.';
-    }
-    var title = document.getElementById('presess-title');
-    if(title && /Expert/i.test(title.textContent || '') && window._currentExpert && window._currentExpert.name){
-      title.textContent = title.textContent.replace('Expert', window._currentExpert.name);
     }
     var input = document.getElementById('expert-chat-input');
     if(input && (input.placeholder === 'Type your message...' || input.placeholder === 'Session ended')) input.placeholder = 'Message the client...';

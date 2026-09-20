@@ -37,10 +37,16 @@ const approvedMediaChanges=new Map([
 const approvedHeaderChanges=new Map([
   ['53:polishPreSession:0',['9c3f9b08447311e8fff544f1bda6dabb08b450295ca708fb5a2bb29e620af665','1142ae2426d9df8fa660b4237b725784cd4949d25234787500671e8b2a621314']],
 ]);
+// Display-only canonical video-rate projection; unchanged rate/billing/RTC policy.
+const approvedRateChanges=new Map([
+  ['33:applyClientSessionUi:0',['f2007e259466246f1875be5b235e482aedcf48b92b4f2e22b569a0f0cf4bae62','8fcaa53823131122636f384e6586b6f6054e88b2278218c7ccec2a6b7fa34ce2']],
+]);
+const reviewedRateInsertion="    // Display only explicit pricing from this client's canonical session, not\n    // the expert/default fallback used by provisional session UI.\n    var displayClientId = ch === 'video' ? String(myId() || '') : '';\n    var explicitSessionRate = ch === 'video' ? window.OB_RATE_POLICY.first(sess.rate_per_min, sess.ratePerMin, sess['rate_' + ch], sess[ch + '_pm']) : null;\n    setText('vid-rate-display', ch === 'video' && sessId && displayClientId\n      && String(sess.client_id || '') === displayClientId && sess.expert_id && explicitSessionRate !== null\n      ? money(rate) + '/min' : '—');\n";
 const sha=value=>createHash('sha256').update(value).digest('hex');
 for(const [key,code] of before){
   if(approvedMediaChanges.has(key))assert.deepEqual([sha(code),sha(after.get(key))],approvedMediaChanges.get(key),'Reviewed media function changed: '+key);
   else if(approvedHeaderChanges.has(key))assert.deepEqual([sha(code),sha(after.get(key))],approvedHeaderChanges.get(key),'Reviewed title function changed: '+key);
+  else if(approvedRateChanges.has(key))assert.deepEqual([sha(code),sha(after.get(key))],approvedRateChanges.get(key),'Reviewed display function changed: '+key);
   else assert.equal(after.get(key),code,'Critical function changed: '+key);
 }
 // obEnableClientMedia is NOT matched by the legacy critical-name pattern.
@@ -59,8 +65,11 @@ const removedTitleBlock="    var title = document.getElementById('presess-title'
 assert.equal(mediaBefore.split(removedTitleBlock).length,2,'Exactly one approved original title block');
 assert.equal(current.includes(removedTitleBlock),false,'Redundant title substitution must be removed');
 assert.equal(after.get('53:polishPreSession:0'),before.get('53:polishPreSession:0').replace(removedTitleBlock,''),'Only the exact four-line title deletion is approved');
-assert.equal(current.replace(newMedia,'__REVIEWED_MEDIA_REGION__'),mediaBefore.replace(oldMedia,'__REVIEWED_MEDIA_REGION__').replace(removedTitleBlock,''),'Unreviewed document change outside media region and exact title deletion');
+assert.equal(current.split(reviewedRateInsertion).length,2,'Exactly one reviewed rate projection');
+assert.equal(after.get('33:applyClientSessionUi:0').replace(reviewedRateInsertion,''),before.get('33:applyClientSessionUi:0'),'Only the exact display insertion is approved');
+const withoutRate=current.replace(reviewedRateInsertion,'').replace('id="vid-rate-display">—</div>','id="vid-rate-display">$5.00/min</div>');
+assert.equal(withoutRate.replace(newMedia,'__REVIEWED_MEDIA_REGION__'),mediaBefore.replace(oldMedia,'__REVIEWED_MEDIA_REGION__').replace(removedTitleBlock,''),'Unreviewed document change outside media region, title deletion and exact rate display');
 const criticalId=/payment|checkout|billing|refund|session|settle|stripe|authoriz|receipt|credit|group|sfu/i;
 let dedicatedScripts=0;
 for(const script of oldScripts){if(criticalId.test(script.id)||['ownlybiz-on-demand-readings-20260607','ob-expert-booking-selector-20260608-js','ownlybiz-service-pause-ui-20260526'].includes(script.id)){assert.deepEqual(newScripts[script.index],script,'Critical script changed: '+script.id);dedicatedScripts++;}}
-console.log(JSON.stringify({status:'PASS',baseline,criticalFunctions:before.size,unchangedCriticalFunctions:before.size-approvedMediaChanges.size-approvedHeaderChanges.size,approvedMediaChanges:[...approvedMediaChanges.keys()],approvedHeaderChanges:[...approvedHeaderChanges.keys()],mediaBaseline,approvedMediaRegionSha256:sha(newMedia),dedicatedScripts,addedCriticalFunctions:addedCriticalFunctions.map(key=>({key,scriptId:guardId,regression:'scripts/test-client-session-route-priority.mjs'})),inlineScriptSyntax:'PASS',networkRequests:0}));
+console.log(JSON.stringify({status:'PASS',baseline,criticalFunctions:before.size,unchangedCriticalFunctions:before.size-approvedMediaChanges.size-approvedHeaderChanges.size-approvedRateChanges.size,approvedRateChanges:[...approvedRateChanges.keys()],approvedMediaChanges:[...approvedMediaChanges.keys()],approvedHeaderChanges:[...approvedHeaderChanges.keys()],mediaBaseline,approvedMediaRegionSha256:sha(newMedia),dedicatedScripts,addedCriticalFunctions:addedCriticalFunctions.map(key=>({key,scriptId:guardId,regression:'scripts/test-client-session-route-priority.mjs'})),inlineScriptSyntax:'PASS',networkRequests:0}));

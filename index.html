@@ -8441,7 +8441,7 @@ if (!window.toast) {
               <p>Manage the public address for this website. A custom domain is optional and can be connected after publishing.</p>
               <div id="domain-live-card" class="ob-ww-summary-card">
                 <div id="domain-live-icon" aria-hidden="true">●</div>
-                <div><strong id="settings-live-domain">Loading…</strong><p id="domain-live-status"></p></div>
+                <div><strong id="settings-live-domain">Website address</strong><p id="domain-live-status">Saved domain details will appear here.</p></div>
                 <div id="domain-live-badges"></div>
               </div>
               <div class="ob-ww-domain-tabs" role="tablist" aria-label="Domain options">
@@ -8458,8 +8458,8 @@ if (!window.toast) {
                 <div class="ob-ww-inline-field"><input type="text" class="settings-field-input" id="custom-domain-input" placeholder="yourdomain.com"><button type="button" class="btn btn-primary btn-sm" id="connect-domain-btn" onclick="verifyCustomDomain()">Connect domain</button></div>
                 <p id="connect-domain-msg" role="status"></p>
                 <div id="dns-instructions-box" style="display:none"><h4>Add these DNS records at your registrar</h4><p><strong>A</strong> @ → <code>76.76.21.21</code></p><p><strong>CNAME</strong> www → <code>cname.vercel-dns.com</code></p><p>DNS propagation can take 15 minutes to 48 hours.</p></div>
-                <div id="domain-status-section" style="display:none"><h4>Verification status</h4><div id="domain-status-card">Checking status…</div><button type="button" class="ob-ww-button" onclick="checkDomainStatus()">Refresh status</button></div>
-                <div id="domain-disconnect-section" style="display:none"><button type="button" class="ob-ww-button danger" onclick="disconnectCustomDomain()">Disconnect custom domain</button></div>
+                <div id="domain-status-section" style="display:none"><h4>Verification status</h4><div id="domain-status-card" role="status" aria-live="polite"></div><button type="button" class="ob-ww-button" id="domain-refresh-status">Refresh status</button></div>
+                <div id="domain-disconnect-section" style="display:none"><button type="button" class="ob-ww-button danger" id="domain-disconnect-button" onclick="disconnectCustomDomain()">Disconnect custom domain</button></div>
               </div>
             </section>
           </section>
@@ -12798,12 +12798,10 @@ function verifyCustomDomain() {
         msg.style.color = routingIssue ? '#f59e0b' : '#16a34a';
       }
       if(typeof toast==='function')toast(routingIssue ? 'Domain saved. Routing needs Ownlybiz support.' : 'Domain connected! Configure DNS below.', routingIssue ? 'warn' : 'ok');
-      var liveDom=document.getElementById('settings-live-domain');
-      if(liveDom) liveDom.textContent=domain;
-      var dnsBox=document.getElementById('dns-instructions-box');if(dnsBox)dnsBox.style.display='block';
-      var statusSec=document.getElementById('domain-status-section');if(statusSec)statusSec.style.display='block';
-      var disconnSec=document.getElementById('domain-disconnect-section');if(disconnSec)disconnSec.style.display='block';
-      setTimeout(function(){checkDomainStatus();},1000);
+      var slugField=document.getElementById('settings-slug-input');
+      if(window.OBDomainSettings && typeof window.OBDomainSettings.replace==='function'){
+        window.OBDomainSettings.replace({slug:slugField&&slugField.value,custom_domain:domain,connection_verified:false},{message:routingIssue ? 'Domain saved. Ownlybiz support must finish routing.' : 'Domain saved. Refresh status to check DNS, routing, and SSL.'});
+      }
     } else {
       if(btn){btn.textContent='Connect Domain \u2192';}
       if(msg){msg.textContent=d.error||'Failed to connect domain';msg.style.color='#ef4444';}
@@ -12813,85 +12811,6 @@ function verifyCustomDomain() {
     if(btn){btn.disabled=false;btn.textContent='Connect Domain \u2192';}
     if(msg){msg.textContent='Network error. Try again.';msg.style.color='#ef4444';}
   });
-}
-
-function checkDomainStatus() {
-  var BASE='https://ownlybiz-backend-production.up.railway.app';
-  var tok=sessionStorage.getItem('ob_t')||localStorage.getItem('ob_t')||'';
-  if(!tok) return;
-  fetch(BASE+'/api/domains/me/status',{headers:{'Authorization':'Bearer '+tok}})
-  .then(function(r){return r.json();})
-  .then(function(d){
-    var card=document.getElementById('domain-status-card');
-    var statusSec=document.getElementById('domain-status-section');
-    var liveStatus=document.getElementById('domain-live-status');
-    var liveBadges=document.getElementById('domain-live-badges');
-    var liveIcon=document.getElementById('domain-live-icon');
-    var liveCard=document.getElementById('domain-live-card');
-    if(statusSec) statusSec.style.display='block';
-    if(!d.domain){
-      if(card) card.innerHTML='<div style="font-size:13px;color:var(--gray-400);">No custom domain connected.</div>';
-      return;
-    }
-    if(d.verified){
-      if(card){card.style.borderColor='#22c55e';card.style.background='rgba(34,197,94,.06)';card.innerHTML='<div style="display:flex;align-items:center;gap:10px;"><span style="font-size:20px;">\u2705</span><div><div style="font-weight:700;color:#166534;">Domain Active</div><div style="font-size:12px;color:#16a34a;">'+(d.message||d.domain+' is verified and serving traffic')+'</div></div></div>';}
-      if(liveStatus){liveStatus.textContent='Live \u00b7 SSL active';liveStatus.style.color='#16a34a';}
-      if(liveBadges)liveBadges.innerHTML='<span style="background:#dcfce7;color:#166534;font-size:11px;font-weight:700;padding:4px 10px;border-radius:100px;">\u2713 Verified</span><span style="background:#dcfce7;color:#166534;font-size:11px;font-weight:700;padding:4px 10px;border-radius:100px;">\uD83D\uDD12 SSL</span>';
-      if(liveIcon)liveIcon.style.background='var(--sage)';
-      if(liveCard)liveCard.style.borderColor='rgba(34,197,94,.25)';
-    } else {
-      var msg=d.message||'Waiting for DNS propagation...';
-      var vercelStatus = d.vercel_status && d.vercel_status.apex || {};
-      var routingBlocked = d.dns_ok && (vercelStatus.status === 401 || vercelStatus.status === 403 || vercelStatus.status === 404);
-      var color=routingBlocked?'#f59e0b':(d.dns_ok?'#f59e0b':'#ef4444');
-      var title = d.dns_ok ? (routingBlocked ? 'DNS Verified \u2014 Routing Setup Needed' : 'DNS Verified \u2014 Finishing SSL') : 'DNS Not Ready';
-      if(card){card.style.borderColor=color;card.style.background=d.dns_ok?'rgba(245,158,11,.06)':'rgba(239,68,68,.04)';card.innerHTML='<div style="display:flex;align-items:center;gap:10px;"><span style="font-size:20px;">'+(d.dns_ok?'\u23F3':'\u26A0\uFE0F')+'</span><div><div style="font-weight:700;color:var(--brown);">'+title+'</div><div style="font-size:12px;color:var(--gray-400);">'+msg+'</div></div></div>';}
-      if(liveStatus){liveStatus.textContent='Pending verification';liveStatus.style.color='#f59e0b';}
-      if(liveBadges)liveBadges.innerHTML='<span style="background:#fef9c3;color:#92400e;font-size:11px;font-weight:700;padding:4px 10px;border-radius:100px;">Pending</span>';
-      if(liveIcon)liveIcon.style.background='#f59e0b';
-      if(liveCard)liveCard.style.borderColor='rgba(245,158,11,.3)';
-    }
-  }).catch(function(){
-    var card=document.getElementById('domain-status-card');
-    if(card) card.innerHTML='<div style="font-size:13px;color:#ef4444;">Failed to check status. Try again.</div>';
-  });
-}
-
-function loadDomainSettings() {
-  var BASE='https://ownlybiz-backend-production.up.railway.app';
-  var tok=sessionStorage.getItem('ob_t')||localStorage.getItem('ob_t')||'';
-  if(!tok) return;
-  fetch(BASE+'/api/domains/me',{headers:{'Authorization':'Bearer '+tok}})
-  .then(function(r){return r.json();})
-  .then(function(d){
-    var liveDom=document.getElementById('settings-live-domain');
-    var liveStatus=document.getElementById('domain-live-status');
-    var liveBadges=document.getElementById('domain-live-badges');
-    var liveIcon=document.getElementById('domain-live-icon');
-    var liveCard=document.getElementById('domain-live-card');
-    var slugInp=document.getElementById('slug-input');
-    if(slugInp && d.subdomain) slugInp.value=d.subdomain;
-    if(d.custom_domain){
-      if(liveDom) liveDom.textContent=d.custom_domain;
-      if(liveStatus){liveStatus.textContent='Custom domain connected';liveStatus.style.color='var(--gray-400)';}
-      var inp=document.getElementById('custom-domain-input');
-      if(inp) inp.value=d.custom_domain;
-      var dnsBox=document.getElementById('dns-instructions-box');if(dnsBox)dnsBox.style.display='block';
-      var statusSec=document.getElementById('domain-status-section');if(statusSec)statusSec.style.display='block';
-      var disconnSec=document.getElementById('domain-disconnect-section');if(disconnSec)disconnSec.style.display='block';
-      if(typeof switchDomainTab==='function') switchDomainTab('connect');
-      checkDomainStatus();
-    } else if(d.subdomain_url){
-      if(liveDom) liveDom.textContent=d.subdomain_url;
-      if(liveStatus){liveStatus.textContent='Free subdomain active';liveStatus.style.color='#16a34a';}
-      if(liveIcon)liveIcon.style.background='var(--sage)';
-      if(liveCard)liveCard.style.borderColor='rgba(34,197,94,.25)';
-      if(liveBadges)liveBadges.innerHTML='<span style="background:#dcfce7;color:#166534;font-size:11px;font-weight:700;padding:4px 10px;border-radius:100px;">Active</span>';
-    } else {
-      if(liveDom) liveDom.textContent='No domain configured';
-      if(liveStatus){liveStatus.textContent='Set up your subdomain or connect a custom domain';liveStatus.style.color='var(--gray-400)';}
-    }
-  }).catch(function(){});
 }
 
 // ===== PHONE FUNNEL =====
@@ -13987,12 +13906,10 @@ function disconnectCustomDomain() {
   .then(function(d){
     if(d.success){
       if(typeof toast==='function')toast('Domain disconnected','ok');
-      var inp=document.getElementById('custom-domain-input');if(inp)inp.value='';
       var btn=document.getElementById('connect-domain-btn');if(btn){btn.textContent='Connect Domain \u2192';btn.style.background='';}
       var msg=document.getElementById('connect-domain-msg');if(msg)msg.textContent='';
-      var dnsBox=document.getElementById('dns-instructions-box');if(dnsBox)dnsBox.style.display='none';
-      var statusSec=document.getElementById('domain-status-section');if(statusSec)statusSec.style.display='none';
-      var disconnSec=document.getElementById('domain-disconnect-section');if(disconnSec)disconnSec.style.display='none';
+      var slugField=document.getElementById('settings-slug-input');
+      if(window.OBDomainSettings && typeof window.OBDomainSettings.replace==='function') window.OBDomainSettings.replace({slug:slugField&&slugField.value});
       loadDomainSettings();
     } else {
       if(typeof toast==='function')toast(d.error||'Failed to disconnect','err');
@@ -77827,6 +77744,10 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
   var analyticsState = {status:'loading', data:null, error:'', request:0, pending:null};
   var passwordSaving = false;
   var slugSaving = false;
+  var domainSnapshot = {slug:'',custom_domain:'',verified:false};
+  var domainGeneration = 0;
+  var domainLoadPending = null;
+  var domainStatusPending = null;
   var analyticsQueued = false;
 
   function byId(id){ return document.getElementById(id); }
@@ -78073,68 +77994,216 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
   function confirmedDomainSlug(data){
     return normalizedDomainSlug(data && (data.subdomain || data.slug) || '');
   }
-  function applyDomainSnapshot(data,forceField){
+  function firstDomainValue(data,keys){
     data=data || {};
+    for(var i=0;i<keys.length;i++){
+      if(Object.prototype.hasOwnProperty.call(data,keys[i])) return data[keys[i]];
+    }
+    return undefined;
+  }
+  function domainBoolean(data,keys){
+    var value=firstDomainValue(data,keys);
+    if(value === true || value === 1 || value === '1' || String(value).toLowerCase() === 'true') return true;
+    if(value === false || value === 0 || value === '0' || String(value).toLowerCase() === 'false') return false;
+    return false;
+  }
+  function normalizeDomainSnapshot(data){
+    data=data || {};
+    return {
+      slug:normalizedDomainSlug(firstDomainValue(data,['slug','subdomain','subdomain_slug','handle'])),
+      custom_domain:clean(firstDomainValue(data,['custom_domain','domain_custom','domain'])).toLowerCase(),
+      verified:domainBoolean(data,['connection_verified','verified','ssl_ready','ssl_enabled','custom_domain_verified','domain_ssl']),
+      message:clean(data.message)
+    };
+  }
+  function domainRestricted(){
+    if(adminViewing()) return true;
+    try { if(root.obSupportSessionActive && root.obSupportSessionActive()) return true; } catch(e) { return true; }
+    try { if(root.obIsMiniSuiteRoute && root.obIsMiniSuiteRoute()) return true; } catch(e2) { return true; }
+    return /^\/mini-suite(?:\/|$)/.test(String(root.location && root.location.pathname || ''));
+  }
+  function domainBadge(container,label,tone){
+    if(!container || !document.createElement) return;
+    var badge=document.createElement('span');
+    badge.className='ob-ww-domain-badge '+tone;
+    writeText(badge,label);
+    container.appendChild(badge);
+  }
+  function setDomainSection(id,visible){
+    var section=byId(id);
+    if(section) section.style.display=visible ? 'block' : 'none';
+  }
+  function setDomainControls(manageable,hasCustom){
+    ['settings-slug-input','settings-slug-save','custom-domain-input','connect-domain-btn','domain-disconnect-button'].forEach(function(id){
+      var control=byId(id);
+      if(control) control.disabled=!manageable;
+    });
+    var refresh=byId('domain-refresh-status');
+    if(refresh){
+      refresh.disabled=!manageable || !hasCustom || !!domainStatusPending;
+      writeText(refresh,domainStatusPending ? 'Refreshing…' : 'Refresh status');
+    }
+  }
+  function applyDomainSnapshot(data,forceField,options){
+    options=options || {};
+    var snapshot=normalizeDomainSnapshot(data);
+    domainSnapshot=snapshot;
     var field=domainSlugField();
-    var slug=confirmedDomainSlug(data);
+    var slug=snapshot.slug;
     if(field && (forceField || field.getAttribute('data-ob-slug-dirty') !== '1')){
       field.value=slug;
       field.setAttribute('data-ob-confirmed-slug',slug);
       field.removeAttribute('data-ob-slug-dirty');
     }
-    var custom=clean(data.custom_domain || '');
+    var custom=snapshot.custom_domain;
     var customInput=byId('custom-domain-input');
-    if(customInput && custom) customInput.value=custom;
+    if(customInput && (forceField || customInput.getAttribute('data-ob-domain-dirty') !== '1')){
+      customInput.value=custom;
+      customInput.setAttribute('data-ob-confirmed-domain',custom);
+      customInput.removeAttribute('data-ob-domain-dirty');
+    }
     var live=byId('settings-live-domain');
     var liveStatus=byId('domain-live-status');
-    if(custom){
+    var liveBadges=byId('domain-live-badges');
+    var liveIcon=byId('domain-live-icon');
+    var liveCard=byId('domain-live-card');
+    var statusCard=byId('domain-status-card');
+    clear(liveBadges);
+    if(options.empty){
+      if(live) writeText(live,'Website address');
+      if(liveStatus) writeText(liveStatus,'Saved domain details will appear here.');
+    } else if(custom){
       if(live) writeText(live,custom);
-      if(liveStatus) writeText(liveStatus,'Custom domain connected');
-    } else if(data.subdomain_url || slug){
-      if(live) writeText(live,clean(data.subdomain_url || slug+'.ownlybiz.com'));
-      if(liveStatus) writeText(liveStatus,'Free subdomain active');
+      if(liveStatus) writeText(liveStatus,snapshot.verified ? 'Connected · Verified · SSL active' : 'Domain added · Verification pending');
+      domainBadge(liveBadges,snapshot.verified ? 'Verified' : 'Pending',snapshot.verified ? 'is-active' : 'is-pending');
+      if(snapshot.verified) domainBadge(liveBadges,'SSL active','is-active');
+    } else if(slug){
+      if(live) writeText(live,'ownlybiz.com/'+slug);
+      if(liveStatus) writeText(liveStatus,'Ownlybiz address active');
+      domainBadge(liveBadges,'Active','is-active');
     } else {
       if(live) writeText(live,'No domain configured');
       if(liveStatus) writeText(liveStatus,'Choose an Ownlybiz URL below.');
     }
+    var tone=custom && !snapshot.verified ? '#d97706' : custom || slug ? '#16a34a' : 'var(--gray-400)';
+    if(liveIcon) liveIcon.style.color=tone;
+    if(liveStatus) liveStatus.style.color=tone;
+    if(liveCard) liveCard.style.borderColor=custom && !snapshot.verified ? 'rgba(217,119,6,.3)' : custom || slug ? 'rgba(22,163,74,.25)' : 'var(--ob-ww-line)';
+    setDomainSection('dns-instructions-box',!!custom && !snapshot.verified);
+    setDomainSection('domain-status-section',!!custom);
+    setDomainSection('domain-disconnect-section',!!custom);
+    if(statusCard){
+      var detail=options.message || snapshot.message;
+      if(options.status === 'checking') detail='Checking DNS, routing, and SSL…';
+      else if(options.status === 'error') detail=detail || 'Live verification could not be refreshed. Saved connection details are unchanged.';
+      else if(!detail && custom) detail=snapshot.verified ? 'Domain active. DNS, routing, and SSL are verified.' : 'Domain saved. Refresh status to check DNS, routing, and SSL.';
+      writeText(statusCard,detail || '');
+      statusCard.style.color=options.status === 'error' ? '#b91c1c' : snapshot.verified ? '#166534' : 'var(--ob-ww-muted)';
+    }
+    setDomainControls(options.manageable !== false && !domainRestricted() && !!token(),!!custom);
     return slug;
+  }
+  function clearDomainSnapshot(){
+    domainGeneration+=1;
+    domainLoadPending=null;
+    domainStatusPending=null;
+    applyDomainSnapshot({},true,{empty:true,manageable:false});
+    domainStatus('loading','');
+  }
+  function replaceDomainSnapshot(data,options){
+    domainGeneration+=1;
+    domainLoadPending=null;
+    domainStatusPending=null;
+    return applyDomainSnapshot(data || {},true,options || {});
   }
   function domainJson(path,options,operation){
     options=options || {};
     var headers=Object.assign({'Authorization':'Bearer '+operation.token},options.headers || {});
     return root.fetch(apiBase()+path,Object.assign({cache:'no-store'},options,{headers:headers})).then(function(response){
       return response.json().catch(function(){ return {}; }).then(function(data){
-        if(!identityCurrent(operation) || adminViewing()) throw new Error('Account changed while domain settings were loading.');
+        if(!identityCurrent(operation) || domainRestricted()) throw new Error('Account changed while domain settings were loading.');
         if(!response.ok || data.success === false) throw new Error(data.error || data.message || 'Domain request failed.');
         return data;
       });
     });
   }
   function domainAuthority(){
-    if(adminViewing()){
-      domainStatus('error','Subdomain settings are unavailable while viewing another expert.');
+    if(domainRestricted()){
+      domainStatus('error','Domain settings are unavailable in this read-only view.');
+      setDomainControls(false,!!domainSnapshot.custom_domain);
       return null;
     }
     var base=apiBase();
     var operation=captureIdentity('expert-domain-settings-phase0');
-    if(!base || !operation || !operation.token){
+    if(!base || !operation || !operation.token || operation.role && clean(operation.role).toLowerCase() !== 'expert'){
       domainStatus('error','Please sign in again to manage your subdomain.');
+      setDomainControls(false,!!domainSnapshot.custom_domain);
       return null;
     }
     return operation;
   }
   function loadDomainSettingsScoped(){
+    if(domainLoadPending) return domainLoadPending;
     var operation=domainAuthority();
     if(!operation) return Promise.resolve(false);
-    domainStatus('loading','Loading current subdomain…');
-    return domainJson('/api/domains/me',{},operation).then(function(data){
+    var generation=domainGeneration;
+    domainStatus('loading','Loading current domain settings…');
+    var pending=domainJson('/api/domains/me',{},operation).then(function(data){
+      if(generation !== domainGeneration || !identityCurrent(operation)) return false;
       var slug=applyDomainSnapshot(data,false);
       domainStatus(slug ? 'success' : 'loading',slug ? 'Current URL confirmed: ownlybiz.com/'+slug : 'No subdomain configured yet.');
       return true;
     }).catch(function(error){
+      if(generation !== domainGeneration || !identityCurrent(operation)) return false;
       domainStatus('error',error && error.message || 'Could not load domain settings.');
+      applyDomainSnapshot(domainSnapshot,false,{status:'error',message:'Saved domain details could not be refreshed.'});
       return false;
     });
+    domainLoadPending=pending;
+    return pending.then(function(result){ if(domainLoadPending === pending) domainLoadPending=null;return result; },function(error){ if(domainLoadPending === pending) domainLoadPending=null;throw error; });
+  }
+  function refreshDomainStatusScoped(){
+    if(domainStatusPending) return domainStatusPending;
+    var currentSnapshot=normalizeDomainSnapshot(domainSnapshot);
+    if(!currentSnapshot.custom_domain){
+      applyDomainSnapshot(currentSnapshot,false);
+      return Promise.resolve(false);
+    }
+    var operation=domainAuthority();
+    if(!operation) return Promise.resolve(false);
+    var generation=domainGeneration;
+    var expectedDomain=currentSnapshot.custom_domain;
+    var refreshError='';
+    var pending=domainJson('/api/domains/me/status',{},operation).then(function(data){
+      if(generation !== domainGeneration || !identityCurrent(operation)) return false;
+      var returnedDomain=clean(data && data.domain).toLowerCase();
+      if(data && data.connected === false){
+        applyDomainSnapshot({slug:currentSnapshot.slug},true);
+        return true;
+      }
+      if(returnedDomain && returnedDomain !== expectedDomain) throw new Error('The domain changed while verification was in progress.');
+      applyDomainSnapshot({
+        slug:currentSnapshot.slug,
+        custom_domain:returnedDomain || expectedDomain,
+        connection_verified:domainBoolean(data,['verified','ssl_ready']),
+        message:clean(data && data.message)
+      },false,{message:clean(data && data.message)});
+      return true;
+    }).catch(function(error){
+      if(generation !== domainGeneration || !identityCurrent(operation)) return false;
+      refreshError=error && error.message || 'Live verification could not be refreshed. Saved connection details are unchanged.';
+      applyDomainSnapshot(currentSnapshot,false,{status:'error',message:refreshError});
+      return false;
+    });
+    domainStatusPending=pending;
+    applyDomainSnapshot(currentSnapshot,false,{status:'checking'});
+    return pending.then(function(result){
+      if(domainStatusPending === pending){
+        domainStatusPending=null;
+        if(generation === domainGeneration && identityCurrent(operation)) applyDomainSnapshot(domainSnapshot,false,result ? {} : {status:'error',message:refreshError});
+      }
+      return result;
+    },function(error){ if(domainStatusPending === pending) domainStatusPending=null;throw error; });
   }
   function saveDomainSlug(){
     if(slugSaving) return Promise.resolve(false);
@@ -78171,9 +78240,15 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
   }
   function bindDomainSlugField(){
     var field=domainSlugField();
-    if(!field || field.getAttribute('data-ob-slug-bound') === '1') return;
-    field.setAttribute('data-ob-slug-bound','1');
-    field.addEventListener('input',function(){ field.setAttribute('data-ob-slug-dirty','1'); });
+    if(field && field.getAttribute('data-ob-slug-bound') !== '1'){
+      field.setAttribute('data-ob-slug-bound','1');
+      field.addEventListener('input',function(){ field.setAttribute('data-ob-slug-dirty','1'); });
+    }
+    var custom=byId('custom-domain-input');
+    if(custom && custom.getAttribute('data-ob-domain-bound') !== '1'){
+      custom.setAttribute('data-ob-domain-bound','1');
+      custom.addEventListener('input',function(){ custom.setAttribute('data-ob-domain-dirty','1'); });
+    }
   }
 
   function number(value){ var parsed=Number(value); return isFinite(parsed) ? parsed : 0; }
@@ -78471,6 +78546,13 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
   [80,250,750,1700,3500,7000,12000,24000].forEach(function(delay){
     root.setTimeout(retainSaveSettingsOwnership,delay);
   });
+  root.OBDomainSettings=Object.freeze({
+    render:applyDomainSnapshot,
+    replace:replaceDomainSnapshot,
+    load:loadDomainSettingsScoped,
+    refreshStatus:refreshDomainStatusScoped,
+    clear:clearDomainSnapshot
+  });
   root.loadDomainSettings=loadDomainSettingsScoped;
   root.saveSlug=saveDomainSlug;
   root.loadAnalytics=loadAnalytics;
@@ -78510,7 +78592,12 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
       loadAnalytics:loadAnalytics,
       validatePasswordInputs:validatePasswordInputs,
       savePassword:savePassword,
+      applyDomainSnapshot:applyDomainSnapshot,
+      replaceDomainSnapshot:replaceDomainSnapshot,
+      normalizeDomainSnapshot:normalizeDomainSnapshot,
       loadDomainSettings:loadDomainSettingsScoped,
+      refreshDomainStatus:refreshDomainStatusScoped,
+      clearDomainSnapshot:clearDomainSnapshot,
       saveDomainSlug:saveDomainSlug,
       retainSaveSettingsOwnership:retainSaveSettingsOwnership,
       phase0SaveSettingsBlock:phase0SaveSettingsBlock,
@@ -78874,6 +78961,9 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
 #domain-live-card p,#slug-status,#connect-domain-msg{color:var(--ob-ww-muted);font-size:11px;line-height:1.5;margin:4px 0 0}
 #domain-live-icon{color:var(--ob-ww-lime);font-size:18px}
 #domain-live-badges{align-items:center;display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end}
+.ob-ww-domain-badge{border-radius:999px;font-size:11px;font-weight:750;line-height:1;padding:6px 9px}
+.ob-ww-domain-badge.is-active{background:#dcfce7;color:#166534}
+.ob-ww-domain-badge.is-pending{background:#fef3c7;color:#92400e}
 #dns-instructions-box,#domain-status-section,#domain-disconnect-section{background:rgba(255,250,240,.035);border:1px solid var(--ob-ww-line);border-radius:13px;margin-top:14px;padding:15px}
 #dns-instructions-box h4,#domain-status-section h4{color:var(--ob-ww-text);font-size:13px;margin:0 0 9px}
 #dns-instructions-box p,#domain-status-card{color:var(--ob-ww-muted);font-size:11px;line-height:1.55;margin:5px 0}
@@ -79622,6 +79712,11 @@ body.ob-ui-light #view-3 #db-panel-website-editor .ob-ww-surface [style*="backgr
     });
     return copy;
   }
+  function renderDomainState(options){
+    if(!root.OBDomainSettings || typeof root.OBDomainSettings.render !== 'function') return false;
+    root.OBDomainSettings.render(state.domain || {},false,options || {});
+    return true;
+  }
   function applyWebsiteEnvelope(envelope,etag){
     envelope=envelope || {};
     var doc=normalizeDocument(envelope.document);
@@ -79636,6 +79731,7 @@ body.ob-ui-light #view-3 #db-panel-website-editor .ob-ww-surface [style*="backgr
     state.selectedPreset=inferPreset(doc.design);
     state.compatibility=false;
     recomputeAvailability();
+    renderDomainState();
   }
   function applyLegacyEnvelope(data){
     data=data || {};
@@ -79649,6 +79745,7 @@ body.ob-ui-light #view-3 #db-panel-website-editor .ob-ww-surface [style*="backgr
     state.selectedPreset=inferPreset(state.document.design);
     state.compatibility=true;
     recomputeAvailability();
+    renderDomainState();
   }
   function capabilityStatus(name){
     var item=state.capabilities && state.capabilities[name];
@@ -80352,6 +80449,8 @@ body.ob-ui-light #view-3 #db-panel-website-editor .ob-ww-surface [style*="backgr
       });
       byId('ob-ww-assistant').addEventListener('click',function(){ if(typeof root.obPhase1OpenGuidance === 'function') root.obPhase1OpenGuidance(this); });
       byId('ob-ww-preview').addEventListener('click',openWebsitePreview);byId('ob-ww-save').addEventListener('click',saveWebsiteWorkspace);byId('ob-ww-publish').addEventListener('click',publishWebsite);byId('ob-ww-unpublish').addEventListener('click',unpublishWebsite);byId('ob-ww-close-preview').addEventListener('click',closeDraftPreview);byId('ob-ww-open-analytics').addEventListener('click',openAnalytics);
+      var domainRefresh=byId('domain-refresh-status');
+      if(domainRefresh && root.OBDomainSettings && typeof root.OBDomainSettings.refreshStatus === 'function') domainRefresh.addEventListener('click',root.OBDomainSettings.refreshStatus);
       byId('ob-ww-preview-page').addEventListener('change',function(){ setPreviewPage(this.value); });
       byId('ob-ww-preview-frame').addEventListener('load',bindPreviewLocationSync);
       all('[data-ob-preview-device]',dialog).forEach(function(button){ button.addEventListener('click',function(){ setPreviewDevice(button.getAttribute('data-ob-preview-device')); }); });
@@ -80459,7 +80558,7 @@ body.ob-ui-light #view-3 #db-panel-website-editor .ob-ww-surface [style*="backgr
   };
 
   function scrub(){
-    state.generation+=1;state.loadSequence+=1;state.revision='';state.document=null;state.publication={published:false};state.domain={};state.capabilities={};state.concurrency={};state.compatibility=false;state.legacyProfile=null;state.legacyUser=null;state.loading=false;state.saving=false;state.dirty=false;state.error='';state.editVersion=0;state.writeAvailable=false;state.publishAvailable=false;state.availabilityReason='';state.principal='';state.activeSurface='overview';state.selectedPreset='practice-focus';closeDraftPreview();state.previewDevice='desktop';updateHeader();
+    state.generation+=1;state.loadSequence+=1;state.revision='';state.document=null;state.publication={published:false};state.domain={};state.capabilities={};state.concurrency={};state.compatibility=false;state.legacyProfile=null;state.legacyUser=null;state.loading=false;state.saving=false;state.dirty=false;state.error='';state.editVersion=0;state.writeAvailable=false;state.publishAvailable=false;state.availabilityReason='';state.principal='';state.activeSurface='overview';state.selectedPreset='practice-focus';closeDraftPreview();state.previewDevice='desktop';if(root.OBDomainSettings && typeof root.OBDomainSettings.clear === 'function') root.OBDomainSettings.clear();updateHeader();
   }
   function identityChanged(currentIdentity){
     scrub();

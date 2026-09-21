@@ -66,6 +66,7 @@ class FakeElement{
     this.nodeType=1;
     this.parentElement=null;
     this.firstChild=null;
+    this.children=[];
     this.classList=new FakeClassList(classes);
     this.attributes=new Map();
     this.listeners=new Map();
@@ -80,8 +81,9 @@ class FakeElement{
   hasAttribute(name){ return this.attributes.has(String(name)); }
   removeAttribute(name){ this.attributes.delete(String(name)); }
   addEventListener(name,handler){ this.listeners.set(name,handler); }
+  appendChild(node){ node.parentElement=this;this.children.push(node);this.firstChild=this.children[0]||null;return node; }
   remove(){ this.removed=true; }
-  removeChild(){ this.firstChild=null; }
+  removeChild(node){ const index=this.children.indexOf(node);if(index>=0)this.children.splice(index,1);this.firstChild=this.children[0]||null;return node; }
   closest(){ return null; }
   contains(node){ return node===this; }
   click(){ const handler=this.listeners.get('click'); if(handler)handler({target:this}); }
@@ -122,6 +124,17 @@ function makeHarness(){
   const slugStatus=new FakeElement({id:'slug-status',tagName:'span'});
   const liveDomain=new FakeElement({id:'settings-live-domain'});
   const liveDomainStatus=new FakeElement({id:'domain-live-status'});
+  const liveDomainBadges=new FakeElement({id:'domain-live-badges'});
+  const liveDomainIcon=new FakeElement({id:'domain-live-icon'});
+  const liveDomainCard=new FakeElement({id:'domain-live-card'});
+  const customDomainInput=new FakeElement({id:'custom-domain-input',tagName:'input'});
+  const connectDomainButton=new FakeElement({id:'connect-domain-btn',tagName:'button',text:'Connect domain'});
+  const domainRefreshButton=new FakeElement({id:'domain-refresh-status',tagName:'button',text:'Refresh status'});
+  const domainDisconnectButton=new FakeElement({id:'domain-disconnect-button',tagName:'button',text:'Disconnect custom domain'});
+  const dnsInstructions=new FakeElement({id:'dns-instructions-box'});
+  const domainStatusSection=new FakeElement({id:'domain-status-section'});
+  const domainStatusCard=new FakeElement({id:'domain-status-card'});
+  const domainDisconnectSection=new FakeElement({id:'domain-disconnect-section'});
   const body=new FakeElement({tagName:'body'});
   const documentElement=new FakeElement({tagName:'html'});
   const nodes={
@@ -137,10 +150,22 @@ function makeHarness(){
     'slug-status':slugStatus,
     'settings-live-domain':liveDomain,
     'domain-live-status':liveDomainStatus,
+    'domain-live-badges':liveDomainBadges,
+    'domain-live-icon':liveDomainIcon,
+    'domain-live-card':liveDomainCard,
+    'custom-domain-input':customDomainInput,
+    'connect-domain-btn':connectDomainButton,
+    'domain-refresh-status':domainRefreshButton,
+    'domain-disconnect-button':domainDisconnectButton,
+    'dns-instructions-box':dnsInstructions,
+    'domain-status-section':domainStatusSection,
+    'domain-status-card':domainStatusCard,
+    'domain-disconnect-section':domainDisconnectSection,
   };
   const document={
     body,documentElement,readyState:'complete',
     getElementById(id){ return nodes[id]||null; },
+    createElement(tagName){ return new FakeElement({tagName}); },
     querySelectorAll(selector){
       if(selector==='.db-nav-item')return nav.filter((node)=>!node.removed);
       if(selector==='.db-tab-panel')return [analyticsPanel];
@@ -264,6 +289,22 @@ assert.equal(harness.nodes['sfield-new-pass'].value,'');
 assert.equal(harness.nodes['sfield-confirm-pass'].value,'');
 assert.equal(harness.nodes['save-status-password'].textContent,'Password updated.');
 
+const envelopeRenderStart=harness.calls.length;
+hooks.applyDomainSnapshot({
+  slug:'lunapsychics',
+  custom_domain:'lunapsychics.com',
+  connection_verified:true,
+});
+assert.equal(harness.calls.length,envelopeRenderStart,'authoritative Website domain state renders without a network request');
+assert.equal(harness.nodes['settings-live-domain'].textContent,'lunapsychics.com');
+assert.equal(harness.nodes['domain-live-status'].textContent,'Connected · Verified · SSL active');
+assert.deepEqual(harness.nodes['domain-live-badges'].children.map((node)=>node.textContent),['Verified','SSL active']);
+assert.equal(harness.nodes['custom-domain-input'].value,'lunapsychics.com');
+assert.equal(harness.nodes['domain-status-section'].style.display,'block');
+assert.equal(harness.nodes['domain-disconnect-section'].style.display,'block');
+assert.equal(harness.nodes['dns-instructions-box'].style.display,'none');
+assert.match(harness.nodes['domain-status-card'].textContent,/verified/i);
+
 const domainLoadStart=harness.calls.length;
 harness.root.setFetch((url,options)=>{
   assert.equal(url,'https://staging-api.example.test/api/domains/me');
@@ -275,6 +316,62 @@ assert.equal(harness.calls.length,domainLoadStart+1);
 assert.equal(harness.nodes['settings-slug-input'].value,'current-expert');
 assert.equal(harness.nodes['settings-slug-input'].getAttribute('data-ob-confirmed-slug'),'current-expert');
 assert.match(harness.nodes['slug-status'].textContent,/Current URL confirmed/);
+assert.equal(harness.nodes['settings-live-domain'].textContent,'ownlybiz.com/current-expert');
+assert.equal(harness.nodes['custom-domain-input'].value,'','a no-custom-domain response clears a prior expert domain');
+assert.deepEqual(harness.nodes['domain-live-badges'].children.map((node)=>node.textContent),['Active']);
+assert.equal(harness.nodes['domain-status-section'].style.display,'none');
+assert.equal(harness.calls.filter((call)=>call.url.endsWith('/api/domains/me/status')).length,0,'loading saved domain settings never runs live verification');
+
+hooks.applyDomainSnapshot({subdomain:'luna',custom_domain:'lunapsychics.com',ssl_enabled:false});
+assert.equal(harness.nodes['domain-refresh-status'].disabled,false,'a newly saved custom domain enables explicit verification');
+let resolveDomainStatus;
+const statusStart=harness.calls.length;
+harness.root.setFetch((url,options)=>{
+  assert.equal(url,'https://staging-api.example.test/api/domains/me/status');
+  assert.equal(options.headers.Authorization,'Bearer token-current');
+  return new Promise((resolve)=>{ resolveDomainStatus=resolve; });
+});
+const firstStatusRefresh=harness.root.OBDomainSettings.refreshStatus();
+const secondStatusRefresh=harness.root.OBDomainSettings.refreshStatus();
+assert.equal(harness.calls.length,statusStart+1,'concurrent explicit verification clicks share one request');
+assert.equal(harness.nodes['domain-refresh-status'].disabled,true);
+assert.equal(harness.nodes['domain-status-card'].textContent,'Checking DNS, routing, and SSL…');
+resolveDomainStatus(response(200,{domain:'lunapsychics.com',verified:true,ssl_ready:true,message:'Verified <strong>without HTML</strong>'}));
+assert.equal(await firstStatusRefresh,true);
+assert.equal(await secondStatusRefresh,true);
+assert.equal(harness.nodes['settings-live-domain'].textContent,'lunapsychics.com');
+assert.equal(harness.nodes['domain-live-status'].textContent,'Connected · Verified · SSL active');
+assert.equal(harness.nodes['domain-status-card'].textContent,'Verified <strong>without HTML</strong>','server status text is never interpreted as markup');
+assert.equal(harness.nodes['domain-refresh-status'].disabled,false);
+
+const verifiedSummary=harness.nodes['domain-live-status'].textContent;
+harness.root.setFetch(()=>Promise.resolve(response(503,{error:'Verification service unavailable.'})));
+assert.equal(await harness.root.OBDomainSettings.refreshStatus(),false);
+assert.equal(harness.nodes['settings-live-domain'].textContent,'lunapsychics.com','a refresh error preserves the saved custom domain');
+assert.equal(harness.nodes['domain-live-status'].textContent,verifiedSummary,'a refresh error preserves the saved verified state');
+assert.match(harness.nodes['domain-status-card'].textContent,/unavailable/i);
+
+hooks.applyDomainSnapshot({slug:'expert-a',custom_domain:'a.example',connection_verified:false});
+let resolveStaleStatus;
+harness.root.setFetch(()=>new Promise((resolve)=>{ resolveStaleStatus=resolve; }));
+const staleStatusRefresh=harness.root.OBDomainSettings.refreshStatus();
+hooks.clearDomainSnapshot();
+hooks.applyDomainSnapshot({slug:'expert-b',custom_domain:'b.example',connection_verified:true});
+harness.root.setCredentialCurrent(false);
+resolveStaleStatus(response(200,{domain:'a.example',verified:true,message:'Expert A verified'}));
+assert.equal(await staleStatusRefresh,false);
+assert.equal(harness.nodes['settings-live-domain'].textContent,'b.example','a late prior-account response cannot replace the current expert domain');
+harness.root.setCredentialCurrent(true);
+
+hooks.applyDomainSnapshot({slug:'expert-a',custom_domain:'a.example',connection_verified:false});
+let resolveReplacedDomainStatus;
+harness.root.setFetch(()=>new Promise((resolve)=>{ resolveReplacedDomainStatus=resolve; }));
+const replacedDomainRefresh=harness.root.OBDomainSettings.refreshStatus();
+harness.root.OBDomainSettings.replace({slug:'expert-b',custom_domain:'b.example',connection_verified:false});
+resolveReplacedDomainStatus(response(200,{domain:'a.example',verified:true,message:'Late expert A result'}));
+assert.equal(await replacedDomainRefresh,false);
+assert.equal(harness.nodes['settings-live-domain'].textContent,'b.example','a same-account domain replacement invalidates an older verification request');
+assert.equal(harness.nodes['domain-live-status'].textContent,'Domain added · Verification pending');
 
 harness.nodes['settings-slug-input'].value='new-expert-slug';
 const domainSaveStart=harness.calls.length;
@@ -336,7 +433,9 @@ assert.equal(harness.analyticsPanel.style.display,'block');
 assert.equal(harness.analyticsPanel.getAttribute('data-ob-phase0-admin-unavailable'),'1');
 assert.match(hooks.analyticsState.error,/no authoritative admin-target analytics endpoint/);
 assert.equal(harness.calls.length,adminRequestStart);
+hooks.applyDomainSnapshot({slug:'target-expert',custom_domain:'target.example',connection_verified:true});
 assert.equal(await harness.root.loadDomainSettings(),false,'admin-view domain settings fail closed');
+assert.equal(await harness.root.OBDomainSettings.refreshStatus(),false,'admin-view verification fails closed');
 assert.equal(await harness.root.saveSlug(),false,'admin-view subdomain saves fail closed');
 assert.equal(harness.calls.length,adminRequestStart,'admin-view domain controls cannot act on the signed-in expert');
 delete harness.root._adminViewingExpertId;

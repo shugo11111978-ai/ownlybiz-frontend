@@ -33,6 +33,7 @@ const publicHtml = sourceRange(
   '<div class="view-panel" id="view-4">',
   '\n</div><!-- end view-4 -->',
 ) + '\n</div><!-- end view-4 -->';
+const domainRuntime = scriptById('ownlybiz-expert-phase0-integrity-20260913');
 const websiteRuntime = scriptById('ownlybiz-website-workspace-v2-runtime');
 const websiteStyles = styleById('ownlybiz-website-workspace-v2-style');
 
@@ -376,7 +377,7 @@ try {
       revision: 'revision-0',
       document: clone(documentSeed),
       publication: { published: false },
-      domain: { slug: 'ari-lane', custom_domain: '', verified: false },
+      domain: { slug: 'ari-lane', custom_domain: 'ari.example.test', connection_verified: false },
       capabilities: {
         editing: { status: 'available' },
         publication: { status: 'available' },
@@ -385,6 +386,7 @@ try {
       concurrency: { writes_enabled: true },
     };
     window.__websiteGets = 0;
+    window.__domainStatusGets = 0;
     window.__websitePatches = [];
     const response = (payload, status = 200) => ({
       ok: status >= 200 && status < 300,
@@ -395,6 +397,10 @@ try {
     window.fetch = async (url, init = {}) => {
       const parsed = new URL(String(url), location.origin);
       const method = String(init.method || 'GET').toUpperCase();
+      if (parsed.pathname === '/api/domains/me/status' && method === 'GET') {
+        window.__domainStatusGets += 1;
+        return response({ domain: 'ari.example.test', verified: true, ssl_ready: true, message: 'Domain verified and active.' });
+      }
       if (parsed.pathname !== '/api/website/me') return response({ success: false, error: 'Unexpected test request' }, 404);
       if (method === 'GET') {
         window.__websiteGets += 1;
@@ -415,6 +421,7 @@ try {
     };
   }, { documentSeed: initialDocument, contracts: templateContracts });
 
+  await page.addScriptTag({ content: domainRuntime });
   await page.addScriptTag({ content: websiteRuntime });
   await page.waitForFunction(() => {
     const state = window.OBWebsiteWorkspace?.state();
@@ -425,6 +432,13 @@ try {
     state: window.OBWebsiteWorkspace.state(),
     snapshot: window.__foundationSnapshot(),
     gets: window.__websiteGets,
+    domainStatusGets: window.__domainStatusGets,
+    domain: {
+      address: document.getElementById('settings-live-domain')?.textContent,
+      status: document.getElementById('domain-live-status')?.textContent,
+      badges: [...document.querySelectorAll('#domain-live-badges .ob-ww-domain-badge')].map(node => node.textContent),
+      customInput: document.getElementById('custom-domain-input')?.value,
+    },
     currentFoundation: {
       disabled: document.querySelector('.ob-ww-template[data-preset="practice-focus"] [data-template-action="use"]')?.disabled,
       text: document.querySelector('.ob-ww-template[data-preset="practice-focus"] [data-template-action="use"]')?.textContent,
@@ -438,6 +452,13 @@ try {
     },
   }));
   assert.equal(initialState.gets, 1, 'initial Website hydration uses one authoritative GET');
+  assert.equal(initialState.domainStatusGets, 0, 'initial Website hydration never runs live domain verification');
+  assert.deepEqual(initialState.domain, {
+    address: 'ari.example.test',
+    status: 'Domain added · Verification pending',
+    badges: ['Pending'],
+    customInput: 'ari.example.test',
+  }, 'the saved custom domain renders directly from the Website envelope without claiming verification');
   assert.equal(initialState.state.selectedPreset, 'practice-focus');
   assertPublicFoundation(initialState.snapshot, 'practice-focus', 'initial Practice Focus hydration');
   assert.deepEqual(
@@ -455,6 +476,42 @@ try {
     },
     'obsolete structural controls are absent while the three supported role-color controls remain visible',
   );
+
+  const domainOpen = await page.evaluate(() => {
+    window.__OB_TEST_HOOKS__.websiteWorkspaceV2.openSurface('domains', { silent: true, focus: false });
+    return {
+      statusGets: window.__domainStatusGets,
+      address: document.getElementById('settings-live-domain')?.textContent,
+      status: document.getElementById('domain-live-status')?.textContent,
+    };
+  });
+  assert.deepEqual(domainOpen, {
+    statusGets: 0,
+    address: 'ari.example.test',
+    status: 'Domain added · Verification pending',
+  }, 'opening Domains only renders saved state and has no verification side effect');
+
+  const explicitDomainRefresh = await page.evaluate(async () => {
+    const first = window.OBDomainSettings.refreshStatus();
+    const second = window.OBDomainSettings.refreshStatus();
+    const results = await Promise.all([first, second]);
+    window.__OB_TEST_HOOKS__.websiteWorkspaceV2.openSurface('overview', { silent: true, focus: false });
+    window.__OB_TEST_HOOKS__.websiteWorkspaceV2.openSurface('domains', { silent: true, focus: false });
+    return {
+      results,
+      statusGets: window.__domainStatusGets,
+      address: document.getElementById('settings-live-domain')?.textContent,
+      status: document.getElementById('domain-live-status')?.textContent,
+      detail: document.getElementById('domain-status-card')?.textContent,
+    };
+  });
+  assert.deepEqual(explicitDomainRefresh, {
+    results: [true, true],
+    statusGets: 1,
+    address: 'ari.example.test',
+    status: 'Connected · Verified · SSL active',
+    detail: 'Domain verified and active.',
+  }, 'explicit verification is environment-scoped, deduplicated, and remains truthful after leaving and returning');
 
   const sameFoundationNoop = await page.evaluate(() => {
     const hooks = window.__OB_TEST_HOOKS__.websiteWorkspaceV2;

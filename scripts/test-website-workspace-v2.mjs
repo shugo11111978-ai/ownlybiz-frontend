@@ -14,6 +14,10 @@ const runtime = section(
   /<script id="ownlybiz-website-workspace-v2-runtime">([\s\S]*?)<\/script>/,
   'Website workspace v2 runtime',
 );
+const domainRuntime = section(
+  /<script id="ownlybiz-expert-phase0-integrity-20260913">([\s\S]*?)<\/script>/,
+  'Canonical domain settings runtime',
+);
 const styles = section(
   /<style id="ownlybiz-website-workspace-v2-style">([\s\S]*?)<\/style>/,
   'Website workspace v2 styles',
@@ -46,6 +50,10 @@ assert.doesNotMatch(runtime + styles, /kajabi/i, 'Website workspace contains no 
 assert.doesNotMatch(runtime, /victorious-wisdom|railway\.app|https:\/\/[^'"\s]+ownlybiz\.com/i, 'Website persistence and preview runtime contains no hard-coded production endpoint');
 assert.doesNotMatch(runtime, /\b(?:Blog|Funnels?|A\/B|Template marketplace)\b/i, 'unsupported suite features are not presented');
 assert.match(editorMarkup, /Domain purchase and transfer are not offered here/, 'the domain boundary is honest rather than a fake feature');
+assert.doesNotMatch(editorMarkup, /id="settings-live-domain">Loading/, 'the authored domain summary cannot become a permanent Loading state');
+assert.match(editorMarkup, /id="domain-refresh-status"/, 'live verification has one explicit source-owned action');
+assert.doesNotMatch(editorMarkup, /onclick="checkDomainStatus\(\)"/, 'live verification is not owned by a legacy inline handler');
+assert.doesNotMatch(html, /function checkDomainStatus\(|root\.checkDomainStatus\s*=/, 'no legacy verification function or compatibility override remains');
 
 const surfaces = vm.runInNewContext(
   `(${surfaceCatalogSource.replace(/^var SURFACES=/, '').replace(/;$/, '')})`,
@@ -90,6 +98,18 @@ assert.doesNotMatch(contentPagesRuntime, /wrapShowExpertPage|window\.showExpertP
 assert.doesNotMatch(runtime + aiWebsiteRuntime + contentPagesRuntime, /previous(?:Db|Settings|Apply|Show|Load)|\.apply\(this,\s*arguments\)/, 'the complete Website feature uses direct lifecycle hooks rather than shared-function wrapping');
 assert.match(contentPagesRuntime, /addEventListener\('ownlybiz:expert-page-changed',\s*syncPublicPageMetadata\)/, 'custom-page metadata follows the canonical public page lifecycle event');
 assert.match(runtime, /all\('\.ob-ww-surface'\)[\s\S]*?panel\.hidden=!on/, 'only the active new Website surface is exposed');
+assert.match(runtime, /state\.domain=Object\.assign\(\{\},envelope\.domain \|\| \{\}\)[\s\S]*?renderDomainState\(\)/, 'the authoritative Website envelope renders its domain state directly');
+const openSurfaceSource = runtime.slice(runtime.indexOf('function openSurface('), runtime.indexOf('function openAnalytics('));
+assert.doesNotMatch(openSurfaceSource, /renderDomainState|refreshStatus|loadDomainSettings|requestJson/, 'opening Domains only changes the visible surface and cannot replay stale state or trigger a request');
+assert.match(runtime, /domainRefresh\.addEventListener\('click',root\.OBDomainSettings\.refreshStatus\)/, 'Refresh status binds directly to the canonical controller');
+assert.doesNotMatch(runtime, /\/api\/domains\/me\/status/, 'the Website surface lifecycle never performs an implicit live verification request');
+assert.match(domainRuntime, /root\.OBDomainSettings=Object\.freeze\(\{[\s\S]*?render:applyDomainSnapshot,[\s\S]*?replace:replaceDomainSnapshot,[\s\S]*?refreshStatus:refreshDomainStatusScoped,[\s\S]*?clear:clearDomainSnapshot/, 'one frozen controller owns domain rendering, mutation replacement, explicit verification, and identity cleanup');
+const domainLoadSource = domainRuntime.slice(domainRuntime.indexOf('function loadDomainSettingsScoped()'), domainRuntime.indexOf('function refreshDomainStatusScoped()'));
+assert.doesNotMatch(domainLoadSource, /\/api\/domains\/me\/status/, 'loading saved domain settings never invokes the mutating verification endpoint');
+assert.equal((domainRuntime.match(/\/api\/domains\/me\/status/g) || []).length,1,'only the explicit verification action references the status endpoint');
+assert.doesNotMatch(html, /setTimeout\(function\(\)\{checkDomainStatus\(\);\},1000\)/, 'connecting a domain does not silently trigger live verification');
+assert.match(html, /function verifyCustomDomain\(\)[\s\S]*?OBDomainSettings\.replace\(\{slug:[\s\S]*?custom_domain:domain,connection_verified:false\}/, 'a newly connected domain invalidates older requests and enters the canonical pending-state renderer without live verification');
+assert.match(html, /function disconnectCustomDomain\(\)[\s\S]*?OBDomainSettings\.replace\(\{slug:slugField&&slugField\.value\}\)/, 'disconnect invalidates older domain requests before the authoritative read-back');
 assert.match(editorMarkup, /id="ob-ww-surface-navigation"[\s\S]*?id="we-nav-home"/, 'the Menu controls are authored in their canonical surface');
 assert.match(editorMarkup, /id="ob-ww-surface-domains"[\s\S]*?id="sblock-website"/, 'domain controls are authored in the Website workspace');
 assert.match(editorMarkup, /id="ob-ww-surface-seo"[\s\S]*?id="sblock-seo"/, 'search and analytics controls are authored in the Website workspace');

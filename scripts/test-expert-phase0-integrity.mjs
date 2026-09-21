@@ -373,6 +373,36 @@ assert.equal(await replacedDomainRefresh,false);
 assert.equal(harness.nodes['settings-live-domain'].textContent,'b.example','a same-account domain replacement invalidates an older verification request');
 assert.equal(harness.nodes['domain-live-status'].textContent,'Domain added · Verification pending');
 
+hooks.applyDomainSnapshot({slug:'old-slug',custom_domain:'luna.example',connection_verified:false});
+let resolveStatusBeforeSlugSave;
+harness.root.setFetch((url,options)=>{
+  if(url.endsWith('/status')) return new Promise((resolve)=>{ resolveStatusBeforeSlugSave=resolve; });
+  if(options.method==='PUT') return Promise.resolve(response(200,{success:true,slug:'new-race-slug'}));
+  return Promise.resolve(response(200,{slug:'new-race-slug',custom_domain:'luna.example',connection_verified:false}));
+});
+const statusBeforeSlugSave=harness.root.OBDomainSettings.refreshStatus();
+harness.nodes['settings-slug-input'].value='new-race-slug';
+assert.equal(await harness.root.saveSlug(),true);
+resolveStatusBeforeSlugSave(response(200,{domain:'luna.example',verified:true,message:'Late verification result'}));
+assert.equal(await statusBeforeSlugSave,false,'a confirmed slug save invalidates an older status request');
+assert.equal(harness.nodes['settings-slug-input'].value,'new-race-slug');
+assert.equal(harness.nodes['settings-slug-input'].getAttribute('data-ob-confirmed-slug'),'new-race-slug');
+assert.equal(harness.root._currentExpert.slug,'new-race-slug');
+
+hooks.applyDomainSnapshot({slug:'confirmed-slug',custom_domain:'',connection_verified:false});
+harness.nodes['settings-slug-input'].value='unsaved-slug';
+harness.nodes['settings-slug-input'].setAttribute('data-ob-slug-dirty','1');
+harness.root.OBDomainSettings.replace({custom_domain:'luna.example',connection_verified:false,message:''},{preserveSlugDraft:true});
+assert.equal(harness.nodes['custom-domain-input'].value,'luna.example');
+assert.equal(harness.nodes['settings-slug-input'].value,'unsaved-slug','connecting a domain preserves an unrelated slug draft');
+assert.equal(harness.nodes['settings-slug-input'].getAttribute('data-ob-confirmed-slug'),'confirmed-slug');
+assert.equal(harness.nodes['settings-slug-input'].getAttribute('data-ob-slug-dirty'),'1');
+harness.root.OBDomainSettings.replace({custom_domain:'',connection_verified:false,message:''},{preserveSlugDraft:true});
+assert.equal(harness.nodes['custom-domain-input'].value,'');
+assert.equal(harness.nodes['settings-slug-input'].value,'unsaved-slug','disconnecting a domain preserves an unrelated slug draft');
+assert.equal(harness.nodes['settings-slug-input'].getAttribute('data-ob-confirmed-slug'),'confirmed-slug');
+assert.equal(harness.nodes['settings-slug-input'].getAttribute('data-ob-slug-dirty'),'1');
+
 harness.nodes['settings-slug-input'].value='new-expert-slug';
 const domainSaveStart=harness.calls.length;
 harness.root.setFetch((url,options)=>{

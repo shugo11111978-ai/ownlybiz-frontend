@@ -108,8 +108,11 @@ const domainLoadSource = domainRuntime.slice(domainRuntime.indexOf('function loa
 assert.doesNotMatch(domainLoadSource, /\/api\/domains\/me\/status/, 'loading saved domain settings never invokes the mutating verification endpoint');
 assert.equal((domainRuntime.match(/\/api\/domains\/me\/status/g) || []).length,1,'only the explicit verification action references the status endpoint');
 assert.doesNotMatch(html, /setTimeout\(function\(\)\{checkDomainStatus\(\);\},1000\)/, 'connecting a domain does not silently trigger live verification');
-assert.match(html, /function verifyCustomDomain\(\)[\s\S]*?OBDomainSettings\.replace\(\{slug:[\s\S]*?custom_domain:domain,connection_verified:false\}/, 'a newly connected domain invalidates older requests and enters the canonical pending-state renderer without live verification');
-assert.match(html, /function disconnectCustomDomain\(\)[\s\S]*?OBDomainSettings\.replace\(\{slug:slugField&&slugField\.value\}\)/, 'disconnect invalidates older domain requests before the authoritative read-back');
+const connectDomainSource=html.slice(html.indexOf('function verifyCustomDomain()'),html.indexOf('// ===== PHONE FUNNEL ====='));
+const disconnectDomainSource=html.slice(html.indexOf('function disconnectCustomDomain()'),html.indexOf('function saveSlug()'));
+assert.match(connectDomainSource, /OBDomainSettings\.replace\(\{custom_domain:domain,connection_verified:false,message:''\},\{preserveSlugDraft:true/, 'a newly connected domain invalidates older requests while preserving an unrelated slug draft');
+assert.match(disconnectDomainSource, /OBDomainSettings\.replace\(\{custom_domain:'',connection_verified:false,message:''\},\{preserveSlugDraft:true\}\)/, 'disconnect invalidates older domain requests while preserving an unrelated slug draft');
+assert.doesNotMatch(connectDomainSource+disconnectDomainSource, /settings-slug-input|slugField/, 'custom-domain mutations never confirm the live value of the independent slug input');
 assert.match(editorMarkup, /id="ob-ww-surface-navigation"[\s\S]*?id="we-nav-home"/, 'the Menu controls are authored in their canonical surface');
 assert.match(editorMarkup, /id="ob-ww-surface-domains"[\s\S]*?id="sblock-website"/, 'domain controls are authored in the Website workspace');
 assert.match(editorMarkup, /id="ob-ww-surface-seo"[\s\S]*?id="sblock-seo"/, 'search and analytics controls are authored in the Website workspace');

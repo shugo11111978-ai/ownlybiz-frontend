@@ -66648,8 +66648,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
 	    expertSaveStatus:'',
 	    expertSaveOperation:null,
 	    expertSaveOperationSequence:0,
-	    confirmingCheckout:false,
-	    confirmedCheckout:'',
+	    checkoutConfirmation:null,
 	    adminCardRequest:null
 	  };
   var adminInstallTimer = null;
@@ -66747,7 +66746,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     var requestToken = Object.prototype.hasOwnProperty.call(opts,'token') ? String(opts.token || '') : token();
     if(requestToken) h.Authorization = 'Bearer ' + requestToken;
     return fetch(base() + path, {method:opts.method || 'GET', headers:h, body:opts.body ? JSON.stringify(opts.body) : undefined, signal:opts.signal})
-      .then(function(r){ return r.json().catch(function(){ return {}; }).then(function(d){ if(!r.ok){ var err = new Error(d.error || d.message || ('HTTP ' + r.status)); err.status = r.status; err.body = d; throw err; } return d; }); });
+      .then(function(r){ return r.json().catch(function(){ return {}; }).then(function(d){ if(!r.ok){ var err = new Error(d.error || d.message || ('HTTP ' + r.status)); err.status = r.status; err.code = d.code || ''; err.body = d; throw err; } return d; }); });
   }
   function authApi(path, body, attempt){
     return fetch(base() + path, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body || {}), signal:attempt && attempt.signal})
@@ -67859,16 +67858,17 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     var body = document.getElementById('ob-od-public-body');
     request = request || {};
     var delivered = request && request.status === 'delivered';
-    var paid = request && (request.payment_status === 'paid' || ['awaiting_expert_review','in_progress','delivered'].indexOf(request.status) >= 0);
-    var title = delivered ? 'Your private reading is ready' : (paid ? 'Payment received' : 'Request received');
+    var paid = request && request.payment_status === 'paid';
+    var refunded = request && (request.payment_status === 'refunded' || request.status === 'refunded');
+    var title = refunded ? 'Payment refunded' : delivered ? 'Your private reading is ready' : (paid ? 'Payment received' : 'Request received');
     var summary = [
       detailHtml('Progress', statusLabel(request)),
-      detailHtml('Amount paid', request.price_cents ? money(request.price_cents, request.currency) : ''),
+      detailHtml(paid || refunded ? 'Amount paid' : 'Amount', request.price_cents ? money(request.price_cents, request.currency) : ''),
       detailHtml(delivered ? 'Delivered' : 'Expected by', delivered && request.delivered_at ? when(request.delivered_at) : when(request.due_at)),
       detailHtml('Paid', request.paid_at ? when(request.paid_at) : ''),
       detailHtml('Topic', request.topic || 'Private request')
     ].filter(Boolean).join('');
-	    var copy = delivered
+	    var copy = refunded ? 'Your payment was refunded.' : delivered
 	      ? 'This is kept private in your client account.'
 	      : (paid
 	        ? 'You are all set. ' + expertName() + ' has your request, and we will email you as it moves forward.'
@@ -67881,10 +67881,10 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
 	      afterPaymentNote +
 	      (delivered ? '<div class="ob-od-card ob-od-reading"><div class="ob-od-reading-kicker">Private reading from ' + esc(expertName()) + '</div><h3>For you</h3><div class="ob-od-reading-text">' + readingHtml(request.answer || '') + '</div></div>' : '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:6px;"><button type="button" class="ob-od-btn secondary" onclick="obOdOpenRequestFromQuery(&quot;' + attr(request.id || '') + '&quot;)">Refresh status</button></div>');
 	  }
-  function showCheckoutMessage(title, message){
+  function showCheckoutMessage(title, message, terminal){
     ensurePublicModal().classList.add('show');
     var body = document.getElementById('ob-od-public-body');
-    if(body) body.innerHTML = '<h2 style="margin:0 0 8px;font-size:28px;letter-spacing:0;">' + esc(title) + '</h2><p class="ob-od-sub">' + esc(message) + '</p><div class="ob-od-card" style="display:flex;gap:12px;align-items:center;"><div class="ob-od-spin" aria-hidden="true"></div><div><strong>Finalizing securely</strong><div style="font-size:13px;color:#6d5b50;line-height:1.45;margin-top:3px;">Please keep this page open. This usually takes a few seconds.</div></div></div>';
+    if(body) body.innerHTML = '<h2 style="margin:0 0 8px;font-size:28px;letter-spacing:0;">' + esc(title) + '</h2><p class="ob-od-sub"' + (terminal ? ' role="alert"' : '') + '>' + esc(message) + '</p>' + (terminal ? '' : '<div class="ob-od-card" style="display:flex;gap:12px;align-items:center;"><div class="ob-od-spin" aria-hidden="true"></div><div><strong>Finalizing securely</strong><div style="font-size:13px;color:#6d5b50;line-height:1.45;margin-top:3px;">Please keep this page open. This usually takes a few seconds.</div></div></div>');
   }
   function onDemandReturnParams(){
     try {
@@ -67966,37 +67966,55 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     });
   };
   function confirmCheckoutFromQuery(attempt, explicitOwner){
-    attempt = Number(attempt || 0);
     var params = onDemandReturnParams();
     var checkout = params.get('checkout_session_id');
     var reqId = params.get('request_id') || params.get('on_demand_request');
     if(params.get('on_demand') === 'success' && checkout){
-      if(state.confirmedCheckout === checkout) return Promise.resolve(true);
-      if(state.confirmingCheckout) return Promise.resolve(false);
       if(!token()){
-        openRequestFromQuery(reqId, {title:'Payment received', copy:'Sign in so we can finish confirming your private reading and show the status securely.'});
+        openRequestFromQuery(reqId, {title:'Sign in to confirm payment', copy:'Sign in so we can check the payment and show your private reading status securely.'});
         return Promise.resolve(false);
       }
+      var existing = state.checkoutConfirmation;
+      if(existing && existing.checkout === checkout && existing.requestId === reqId && existing.path === location.pathname && onDemandOwnerCurrent(existing.owner) && existing.owner.context.token === token()) return existing.promise;
       var owner=explicitOwner||{attempt:null,context:window.OB_CLIENT_CONTEXT.capture('on-demand-confirm-checkout',{checkoutId:String(checkout)})};
       if(!onDemandOwnerCurrent(owner))return Promise.resolve(false);
-      state.confirmingCheckout = true;
-      showCheckoutMessage('Payment received', 'Give us a moment while we confirm your private reading.');
-      return api('/api/on-demand/checkout/confirm', {method:'POST', body:{checkout_session_id:checkout},token:owner.context.token,signal:owner.context.signal}).then(function(d){
-        if(!onDemandOwnerCurrent(owner))return false;
-        state.confirmingCheckout = false;
-        state.confirmedCheckout = checkout;
+      var operation = {checkout:checkout,requestId:reqId,path:location.pathname,owner:owner,promise:null};
+      state.checkoutConfirmation = operation;
+      function current(){
+        var latest = onDemandReturnParams();
+        return state.checkoutConfirmation === operation && operation.path === location.pathname && onDemandOwnerCurrent(owner) && owner.context.token === token() && latest.get('checkout_session_id') === checkout;
+      }
+      function clearCompletedReturn(){
         try { localStorage.removeItem('ob_od_pending_checkout'); } catch(e) {}
         cleanOnDemandReturnUrl();
-        renderClientStatus(d.request || {});
-        return true;
-      }).catch(function(e){
-        if(!onDemandOwnerCurrent(owner))return false;
-        state.confirmingCheckout = false;
-        if(attempt < 7) return waitMs(Math.min(6000, 900 + attempt * 900)).then(function(){return onDemandOwnerCurrent(owner)?confirmCheckoutFromQuery(attempt + 1,owner):false;});
-        showCheckoutMessage('Payment received', e.message || 'The payment is still finalizing. Refresh this page in a moment or sign in to view your request status.');
-        toastMsg(e.message || 'Payment is still finalizing.', 'err');
-        return false;
-      });
+      }
+      function confirm(retry){
+        if(!current()) return Promise.resolve(false);
+        showCheckoutMessage('Checking payment', 'Give us a moment while we confirm your private reading.');
+        return api('/api/on-demand/checkout/confirm', {method:'POST', body:{checkout_session_id:checkout},token:owner.context.token,signal:owner.context.signal}).then(function(d){
+          if(!current())return false;
+          var request = d && d.request;
+          if(request && (request.payment_status === 'paid' || request.payment_status === 'refunded' || request.status === 'refunded')){
+            clearCompletedReturn();
+            renderClientStatus(request);
+            return request.payment_status === 'paid';
+          }
+          var pending = request && request.status === 'pending_payment' && ['unpaid','processing'].indexOf(request.payment_status) >= 0;
+          var error = new Error(pending ? 'Your payment is still processing. Refresh this page to check again.' : 'This payment was not confirmed. Please check your request before paying again.');
+          error.status = 409;
+          error.code = pending ? 'payment_confirmation_pending' : 'on_demand_payment_not_confirmed';
+          throw error;
+        }).catch(function(e){
+          if(!current())return false;
+          var retryable = !e.status || e.status >= 500 || e.status === 408 || e.status === 429 || ['checkout_not_paid','payment_confirmation_pending'].indexOf(e.code) >= 0;
+          if(retryable && retry < 7) return waitMs(Math.min(6000, 900 + retry * 900)).then(function(){return confirm(retry + 1);});
+          if(!retryable) clearCompletedReturn();
+          showCheckoutMessage(retryable ? 'Payment confirmation pending' : 'Payment not completed', e.message || 'Please check your request status before paying again.', true);
+          return false;
+        });
+      }
+      operation.promise = confirm(0);
+      return operation.promise;
     } else if(params.get('on_demand_request')) {
       openRequestFromQuery(params.get('on_demand_request'));
     } else if(reqId && params.get('on_demand') === 'success') {
@@ -68140,8 +68158,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     setTimeout(function(){ confirmCheckoutFromQuery(0); }, 3200);
   }
   window.obResetOnDemandClientContext=function(){
-    state.confirmingCheckout=false;
-    state.confirmedCheckout='';
+    state.checkoutConfirmation=null;
     state.clientMode='signup';
     try{localStorage.removeItem('ob_od_pending_checkout');}catch(e){}
     try{cleanOnDemandReturnUrl();}catch(e2){}

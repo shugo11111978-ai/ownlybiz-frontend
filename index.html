@@ -61611,16 +61611,18 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   function capacityNumber(value,min,max){return typeof value==='number'&&Number.isSafeInteger(value)&&value>=min&&value<=max;}
   function capacityAllowanceValid(value){return value===null||capacityNumber(value,2,5);}
   function capacityAllowanceText(value){return value===null?'none':String(value);}
-  function capacityAuthorityText(value){return value==='admin_allowance'?'admin allowance':value==='verified_subscription'?'verified subscription':'Starter fallback';}
+  function capacityAuthorityText(value){return value==='expert_access_policy'?'plan and feature access':value==='admin_allowance'?'admin allowance':value==='verified_subscription'?'verified subscription':'Starter fallback';}
   function capacitySettingsValid(value,id){
     var human=value&&value.human,allowance=human&&human.admin_capacity_allowance;
+    var managed=human&&human.authorization_source==='expert_access_policy';
     return !!(value&&String(value.expert_id)===String(id)&&human&&value.ai
       &&capacityNumber(human.desired_concurrency,1,20)&&capacityNumber(human.plan_ceiling,1,20)
-      &&capacityAllowanceValid(allowance)&&capacityNumber(human.authorized_ceiling,1,20)
-      &&human.authorized_ceiling===Math.max(human.plan_ceiling,allowance===null?1:allowance)
-      &&['verified_subscription','admin_allowance','starter'].includes(String(human.authorization_source||''))
-      &&(human.authorization_source==='admin_allowance'?allowance!==null&&allowance>human.plan_ceiling:human.authorization_source==='verified_subscription'?human.plan_ceiling>1&&human.plan_ceiling>=human.authorized_ceiling:human.plan_ceiling===1&&allowance===null)
-      &&capacityNumber(human.effective_concurrency,1,20)&&human.effective_concurrency<=human.authorized_ceiling
+      &&capacityAllowanceValid(allowance)&&capacityNumber(human.authorized_ceiling,managed?0:1,20)
+      &&(managed?human.effective_concurrency===Math.min(human.desired_concurrency,human.authorized_ceiling)
+        :human.authorized_ceiling===Math.max(human.plan_ceiling,allowance===null?1:allowance)
+          &&['verified_subscription','admin_allowance','starter'].includes(String(human.authorization_source||''))
+          &&(human.authorization_source==='admin_allowance'?allowance!==null&&allowance>human.plan_ceiling:human.authorization_source==='verified_subscription'?human.plan_ceiling>1&&human.plan_ceiling>=human.authorized_ceiling:human.plan_ceiling===1&&allowance===null))
+      &&capacityNumber(human.effective_concurrency,managed?0:1,20)&&human.effective_concurrency<=human.authorized_ceiling
       &&capacityNumber(value.human.revision,1,Number.MAX_SAFE_INTEGER)
       &&capacityNumber(value.ai.desired_chat_capacity,1,500)&&capacityNumber(value.ai.safety_ceiling,1,500)
       &&typeof value.ai.fully_automated==='boolean'
@@ -61671,11 +61673,14 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   }
   function capacityDraft(state){
     var human=Number(capacityNode('human').value),ai=Number(capacityNode('ai').value),allowance=capacityAllowanceDraft();
+    var managed=state.saved.human.authorization_source==='expert_access_policy',humanDisabled=state.saved.human.authorized_ceiling===0;
+    if(humanDisabled)human=state.saved.human.desired_concurrency;
+    if(managed)allowance=state.saved.human.admin_capacity_allowance;
     var allowanceDirty=allowance!==state.saved.human.admin_capacity_allowance,reason=capacityAllowanceReason();
     var review=state.allowanceReview,confirmed=!allowanceDirty||(capacityNode('allowance-confirm').checked&&review
       &&review.revision===state.saved.human.revision&&review.allowance===allowance&&reason.length>=3&&reason.length<=500);
     return {human:human,ai:ai,allowance:allowance,allowanceDirty:allowanceDirty,allowanceConfirmed:confirmed,reason:reason,
-      valid:capacityNumber(human,1,state.saved.human.authorized_ceiling)&&capacityAllowanceValid(allowance)
+      valid:(humanDisabled||capacityNumber(human,1,state.saved.human.authorized_ceiling))&&capacityAllowanceValid(allowance)
       &&capacityNumber(ai,1,state.saved.ai.safety_ceiling)
       &&(state.saved.ai.fully_automated===true||ai===state.saved.ai.desired_chat_capacity||ai===1),
       dirty:human!==state.saved.human.desired_concurrency||ai!==state.saved.ai.desired_chat_capacity||allowanceDirty};
@@ -61697,10 +61702,13 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       return;
     }
     var saved=state.saved,rollout=state.rollout,draft=capacityDraft(state),target=capacityTargets(state);
+    var managed=saved.human.authorization_source==='expert_access_policy',humanDisabled=saved.human.authorized_ceiling===0;
+    capacityNode('human').disabled=state.busy||humanDisabled;
+    capacityNode('human-allowance').disabled=state.busy||managed;
     capacityNode('human-live').textContent=String(rollout.admission_limits.human_chat);
     capacityNode('ai-live').textContent=String(rollout.admission_limits.automatic_ai_chat);
-    capacityNode('human-meta').textContent='Saved: '+saved.human.desired_concurrency+' · Verified plan max: '+saved.human.plan_ceiling+' · Admin allowance: '+capacityAllowanceText(saved.human.admin_capacity_allowance)+' · Authorized max: '+saved.human.authorized_ceiling+' · Platform ceiling: '+rollout.effective_human_ceiling+' · Authority: '+capacityAuthorityText(saved.human.authorization_source);
-    capacityNode('human-allowance-meta').textContent='Saved allowance: '+capacityAllowanceText(saved.human.admin_capacity_allowance)+' · Independent of Stripe billing and applies only to this expert.';
+    capacityNode('human-meta').textContent=managed?'Saved preference: '+saved.human.desired_concurrency+' · Access allowance: '+saved.human.authorized_ceiling+' · Effective setting: '+saved.human.effective_concurrency+' · Platform ceiling: '+rollout.effective_human_ceiling+(humanDisabled?' · Human chat is disabled by the current access allowance.':''):'Saved: '+saved.human.desired_concurrency+' · Verified plan max: '+saved.human.plan_ceiling+' · Admin allowance: '+capacityAllowanceText(saved.human.admin_capacity_allowance)+' · Authorized max: '+saved.human.authorized_ceiling+' · Platform ceiling: '+rollout.effective_human_ceiling+' · Authority: '+capacityAuthorityText(saved.human.authorization_source);
+    capacityNode('human-allowance-meta').textContent=managed?'Controlled by Plan & feature access → Custom allowances. This legacy allowance does not override that policy.':'Saved allowance: '+capacityAllowanceText(saved.human.admin_capacity_allowance)+' · Independent of Stripe billing and applies only to this expert.';
     capacityNode('ai-meta').textContent='Saved: '+saved.ai.desired_chat_capacity+' · Safety maximum: '+saved.ai.safety_ceiling+' · Platform ceiling: '+rollout.effective_ai_ceiling
       +(saved.ai.fully_automated===true?'':' · Automatic replies are not currently eligible. Enablement and consent stay in the separate AI settings.');
     capacityNode('allowance-approval').hidden=!draft.allowanceDirty;
@@ -61712,10 +61720,11 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       ? (!draft.valid?'Enter whole-number limits within the displayed maximums. Automatic AI capacity above 1 requires eligible automatic replies.':draft.allowanceDirty&&!draft.allowanceConfirmed?'The admin allowance changed. Enter an audit reason and confirm the exact expert-only allowance before saving.':'Unsaved preferences. Saving can change new-session availability immediately, up to the current platform ceiling. The expert must be idle.')
       : 'Preferences match the saved values. A separate review is required to change the live platform ceilings.';
     capacityNode('save').disabled=state.busy||!draft.valid||!draft.dirty||!draft.allowanceConfirmed;
-    var eligible=rollout.ceiling_editable===true&&rollout.environment_limits.valid===true;
+    var eligible=rollout.ceiling_editable===true&&rollout.environment_limits.valid===true&&!humanDisabled;
     var differs=target.human!==rollout.human_ceiling||target.ai!==rollout.ai_ceiling;
     var note='Current live ceilings: '+rollout.effective_human_ceiling+' human chat / '+rollout.effective_ai_ceiling+' automatic chat. ';
-    if(!eligible){
+    if(humanDisabled)note+='Human chat admission is zero under the current access allowance. Enable its access allowance before changing the live rollout ceilings; the rollout ceiling itself has a minimum of 1.';
+    else if(!eligible){
       var reasons={other_expert_scope:'Another expert owns the current controlled rollout. This page cannot move it or change other experts.',fleet_scope:'Capacity is currently governed platform-wide. This page cannot change platform-wide limits.',not_enforced:'Parallel admission has not been activated for this expert. A controlled rollout is required first.',paused:'Capacity admission is paused. This page cannot unpause sessions.',emergency_pause:'An emergency safety limit is active. This page cannot override it.'};
       note+=reasons[rollout.ceiling_edit_unavailable_reason]||'The current safety controls do not permit changing live limits here.';
     }else if(draft.dirty)note+='Save your preferences before reviewing live limits.';
@@ -61730,9 +61739,10 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     var humanDraft=human.value,allowanceDraft=allowance.value,aiDraft=ai.value;
     if(!old||old.human.authorized_ceiling!==saved.human.authorized_ceiling){
       var options='';for(var n=1;n<=saved.human.authorized_ceiling;n++)options+='<option value="'+n+'">'+n+(n===1?' client':' clients')+'</option>';
+      if(saved.human.authorized_ceiling===0)options='<option value="0">Human chat disabled</option>';
       human.innerHTML=options;
     }
-    var defaultHuman=saved.human.desired_concurrency<=saved.human.authorized_ceiling?saved.human.desired_concurrency:Math.max(1,Math.min(saved.human.effective_concurrency,saved.human.authorized_ceiling));
+    var defaultHuman=saved.human.authorized_ceiling===0?0:saved.human.desired_concurrency<=saved.human.authorized_ceiling?saved.human.desired_concurrency:Math.max(1,Math.min(saved.human.effective_concurrency,saved.human.authorized_ceiling));
     var preserveHuman=!!old&&humanDraft!==String(old.human.desired_concurrency)&&capacityNumber(Number(humanDraft),1,saved.human.authorized_ceiling);
     human.value=preserveHuman?humanDraft:String(defaultHuman);
     allowance.value=!old||allowanceDraft===(old.human.admin_capacity_allowance===null?'':String(old.human.admin_capacity_allowance))?(saved.human.admin_capacity_allowance===null?'':String(saved.human.admin_capacity_allowance)):allowanceDraft;
@@ -75477,10 +75487,11 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     var selected=live.select?whole(Number(live.select.value),1,20):null;
     var canReplaceAboveAuthorized=!!(state.capacity&&state.capacity.desired>state.capacity.authorizedCeiling&&selected!==null&&selected<=state.capacity.authorizedCeiling&&selected!==state.capacity.desired);
     live.editor.setAttribute('aria-busy',state.loading||state.saving?'true':'false');
-    if(live.select)live.select.disabled=!!(state.saving||!state.capacity);
+    var unavailable=!!(state.capacity&&state.capacity.authorizedCeiling===0);
+    if(live.select)live.select.disabled=!!(state.saving||!state.capacity||unavailable);
     if(live.button){
-      live.button.textContent=state.saving?'Saving…':(!state.capacity?(state.loading?'Loading…':'Reload setting'):'Save chat limit');
-      live.button.disabled=!!(state.saving||state.loading||(state.capacity&&!state.dirty&&!canReplaceAboveAuthorized));
+      live.button.textContent=state.saving?'Saving…':(!state.capacity?(state.loading?'Loading…':'Reload setting'):unavailable?'Human chat disabled':'Save chat limit');
+      live.button.disabled=!!(state.saving||state.loading||unavailable||(state.capacity&&!state.dirty&&!canReplaceAboveAuthorized));
     }
   }
   function resetPrivate(){
@@ -75504,18 +75515,18 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
   }
   function parseCapacity(data){
     var source=data&&data.live_capacity,human=source&&source.human;
+    var authority=String(human&&human.authorization_source||''),managed=authority==='expert_access_policy';
     var desired=whole(human&&human.desired_concurrency,1,20);
-    var effective=whole(human&&human.effective_concurrency,1,20);
+    var effective=whole(human&&human.effective_concurrency,managed?0:1,20);
     var plan=whole(human&&human.plan_ceiling,1,20);
     var allowance=human&&human.admin_capacity_allowance;
-    var authorized=whole(human&&human.authorized_ceiling,1,20);
-    var authority=String(human&&human.authorization_source||'');
+    var authorized=whole(human&&human.authorized_ceiling,managed?0:1,20);
     var revision=whole(human&&human.revision,1,Number.MAX_SAFE_INTEGER);
     var rollout=whole(source&&source.human_rollout_ceiling,1,20);
     var mode=String(source&&source.rollout_mode||'');
     if(!source||!human||desired===null||effective===null||plan===null||(allowance!==null&&whole(allowance,2,5)===null)
-      ||authorized===null||authorized!==Math.max(plan,allowance===null?1:allowance)||['verified_subscription','admin_allowance','starter'].indexOf(authority)<0
-      ||(authority==='admin_allowance'&&!(allowance!==null&&allowance>plan))||(authority==='verified_subscription'&&!(plan>1&&plan>=authorized))||(authority==='starter'&&!(plan===1&&allowance===null))
+      ||authorized===null||(managed?effective!==Math.min(desired,authorized):authorized!==Math.max(plan,allowance===null?1:allowance)||['verified_subscription','admin_allowance','starter'].indexOf(authority)<0
+        ||(authority==='admin_allowance'&&!(allowance!==null&&allowance>plan))||(authority==='verified_subscription'&&!(plan>1&&plan>=authorized))||(authority==='starter'&&!(plan===1&&allowance===null)))
       ||revision===null||rollout===null||['disabled','observe','enforce','paused'].indexOf(mode)<0||typeof source.admission_enforced!=='boolean'||effective>authorized){
       throw {obLiveCapacityError:true,status:502,code:'live_capacity_invalid_response'};
     }
@@ -75546,21 +75557,22 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     return action==='save'?'The chat limit could not be saved. Reload the current value before trying again.':'The chat limit could not be loaded. Try again.';
   }
   function activeLimit(capacity){
-    if(!capacity||capacity.rolloutMode==='paused')return 0;
+    if(!capacity||capacity.rolloutMode==='paused'||capacity.effective===0)return 0;
     if(!capacity.admissionEnforced||capacity.rolloutMode!=='enforce')return 1;
     return Math.min(capacity.effective,capacity.rolloutCeiling);
   }
   function capacitySummary(capacity){
     var allowance=capacity.adminAllowance===null?'none':String(capacity.adminAllowance);
     var source=capacity.authorizationSource==='admin_allowance'?'admin allowance':capacity.authorizationSource==='verified_subscription'?'verified subscription':'Starter fallback';
-    var base='Saved preference: '+capacity.desired+'. Verified plan max: '+capacity.planCeiling+'. Admin allowance: '+allowance+'. Authorized max: '+capacity.authorizedCeiling+' ('+source+'), making '+capacity.effective+' effective. ';
+    var base=capacity.authorizationSource==='expert_access_policy'?'Saved preference: '+capacity.desired+'. Access allowance: '+capacity.authorizedCeiling+'. Effective setting: '+capacity.effective+'. ':'Saved preference: '+capacity.desired+'. Verified plan max: '+capacity.planCeiling+'. Admin allowance: '+allowance+'. Authorized max: '+capacity.authorizedCeiling+' ('+source+'), making '+capacity.effective+' effective. ';
+    if(capacity.authorizedCeiling===0)return 'Human chat is disabled by your current access allowance. No new human chats are available. Your saved preference is kept for when access is enabled.';
     var replace=capacity.desired>capacity.authorizedCeiling?' Save the selected authorized value only if you want to replace the higher saved preference.':'';
     if(capacity.rolloutMode==='paused')return 'New live sessions are temporarily paused. '+base+'Voice and video remain one at a time.'+replace;
     if(!capacity.admissionEnforced||capacity.rolloutMode!=='enforce')return base+'Multi-session admission is not active yet, so new live chat work remains single-session. Voice and video remain one at a time.'+replace;
     return base+'The rollout ceiling is '+capacity.rolloutCeiling+', so up to '+activeLimit(capacity)+' parallel human chats are active. Voice and video remain one at a time.'+replace;
   }
   function draftSummary(capacity,draft){return 'Selected '+draft+' parallel chat'+(draft===1?'':'s')+'; this choice is not saved yet. '+capacitySummary(capacity);}
-  function defaultEditorValue(capacity){return capacity.desired<=capacity.authorizedCeiling?capacity.desired:Math.max(1,Math.min(capacity.effective,capacity.authorizedCeiling));}
+  function defaultEditorValue(capacity){return capacity.authorizedCeiling===0?0:capacity.desired<=capacity.authorizedCeiling?capacity.desired:Math.max(1,Math.min(capacity.effective,capacity.authorizedCeiling));}
   function renderCapacity(capacity,options){
     options=options||{};
     var live=elements(),select=live.select;
@@ -75570,6 +75582,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     for(var value=1;value<=capacity.authorizedCeiling;value+=1){
       var option=document.createElement('option');option.value=String(value);option.textContent=value+(value===1?' chat':' chats');select.appendChild(option);
     }
+    if(capacity.authorizedCeiling===0){var disabledOption=document.createElement('option');disabledOption.value='0';disabledOption.textContent='Human chat disabled';select.appendChild(disabledOption);}
     var chosen=defaultEditorValue(capacity);
     if(preserveDirty&&draft!==null&&draft<=capacity.authorizedCeiling)chosen=draft;
     select.value=String(chosen);
@@ -75637,6 +75650,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     if(!context){resetPrivate();return Promise.resolve(false);}
     reveal(context);
     if(!state.capacity)return load({force:true,preserveDraft:state.pendingDraft,preserveDirty:state.pendingDraft!==null});
+    if(state.capacity.authorizedCeiling===0){setStatus(capacitySummary(state.capacity),'');return Promise.resolve(false);}
     if(state.saving)return state.savePromise||Promise.resolve(false);
     var desired=whole(Number(live.select&&live.select.value),1,state.capacity.authorizedCeiling);
     if(desired===null){setStatus('Choose a chat limit within your current authorized maximum.','error');return Promise.resolve(false);}

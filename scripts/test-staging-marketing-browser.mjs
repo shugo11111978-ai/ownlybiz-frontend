@@ -73,13 +73,16 @@ try{
  await page.screenshot({path:path.join(out,'pricing-mobile.png'),fullPage:true});
  assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'no page overflow');
  await page.goto(origin+'/signup?plan=pro&interval=annual',{waitUntil:'domcontentloaded'});
- await page.locator('#ob-signup-initial-plan [data-ob-signup-plan="pro"]').waitFor();
+ await page.locator('#ob-signup-initial-plan [data-ob-signup-plan="pro"]').waitFor({state:'attached'});
  assert.match(await page.locator('#ob-signup-initial-plan').innerText(),/\$990\/year/);
  assert.equal(await page.locator('#ob-signup-initial-plan [data-ob-signup-plan="pro"]').getAttribute('aria-pressed'),'true');
  let body=await page.evaluate(()=>window.obSignupOfferPayload());assert.equal(body.subscription_plan,'pro');assert.equal(body.subscription_interval,'annual');assert.equal(body.catalog_revision,4);
  offer={...offer,catalog_revision:5,plans:offer.plans.map(p=>({...p,catalog_revision:5,monthly_price:p.id==='starter'?39.99:p.monthly_price}))};
  let changed=await page.evaluate(async()=>{try{await window.obSignupOfferPayload();return '';}catch(e){return e.message;}});assert.match(changed,/pricing changed/i);assert.match(await page.locator('#ob-signup-initial-plan').innerText(),/\$390\/year/);
+ await page.locator('#ob-signup-initial-plan .ob-signup-change summary').click();
  await page.locator('#ob-signup-initial-plan [data-ob-signup-plan="starter"]').click();
+ assert.equal(await page.locator('#ob-signup-initial-plan .ob-signup-change').evaluate(el=>el.open),true);
+ assert.equal(await page.evaluate(()=>document.activeElement?.getAttribute('data-ob-signup-plan')),'starter');
  await page.locator('#ob-signup-initial-plan').getByRole('button',{name:'Monthly',exact:true}).click();
  assert.match(await page.locator('#ob-signup-initial-plan').innerText(),/\$39\.99\/month/);
  body=await page.evaluate(()=>window.obSignupOfferPayload());assert.equal(body.subscription_plan,'starter');assert.equal(body.catalog_revision,5);

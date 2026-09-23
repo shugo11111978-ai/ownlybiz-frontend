@@ -12,7 +12,9 @@ assert.match(html, />Learn more</, 'collapsed country guidance identifies the ex
 assert.match(html, />Show less</, 'expanded country guidance identifies the collapse action');
 assert.doesNotMatch(html, /\.ob-payout-country-details summary::after/, 'country guidance does not add a second arrow');
 assert.match(html, /aria-describedby="signup-payout-country-summary"/, 'country selector describes its live guidance accessibly');
-assert.match(html, /Legal Stripe account country/, 'signup distinguishes the connected-account country from a payout destination');
+assert.match(html, /for="signup-payout-country">Business country/, 'signup uses a plain business-country label');
+assert.match(html, /Currently available to US-based businesses/, 'the new offer states its current business-country scope');
+assert.match(html, /Use the country where your Stripe connected account will be legally based, which is separate from where your clients live/, 'expanded guidance distinguishes business country from client location');
 assert.match(html, /check Stripe Connect onboarding and paid-plan availability[\s\S]*does not confirm current balance or bank-payout eligibility/,
   'expanded country guidance limits Ownlybiz eligibility claims and keeps bank-payout authority in Stripe');
 assert.doesNotMatch(html, /class="ob-payout-country-help"/, 'question-mark tooltip is removed');

@@ -11,6 +11,14 @@ const paymentRuntime=extract('  function isEnabledSetting(settings, key){','\n  
 const policyScript=html.match(/<script id="ownlybiz-session-authorization-policy-20260816">([\s\S]*?)<\/script>/)[1];
 const policy=policyScript.slice(0,policyScript.indexOf('\n(function(){\n  if(window.__obCreditWalletV1) return;'));
 const catalog=fs.readFileSync(new URL('../assets/admin-commercial-catalog.js',import.meta.url),'utf8');
+const routeEntry=extract('  function findByOnclick(selector, value){','\n\t  function activeDashboardPanel()')+'\n'+extract('  function applyAdminRoute(route){','\n  async function applyBillingAliasRoute');
+const baseTab=extract('function adminTabSwitch(tabEl, panel) {','\n// ===== ADMIN REVENUE CHART');
+const canonicalNavStart=html.indexOf('  window.adminNav = function(el, panel){',html.indexOf('  function renderAdminExperts(){'));
+const canonicalNav=html.slice(canonicalNavStart,html.indexOf('  document.addEventListener',canonicalNavStart));
+const liveNavigation=extract('  var liveRenderers = {','\n  async function copyText(text)');
+const paymentRenderer=extract('  var platformPaymentsRenderGeneration = 0;','\n\n  function renderConnectors(){');
+const feeSidebar=html.match(/<div class="admin-nav-item" onclick="adminNav\(this,'fee-config'\)">[\s\S]*?<\/div>/)[0];
+const feeTab=html.match(/<div class="admin-tab" onclick="adminTabSwitch\(this,'fee-config'\)">[\s\S]*?<\/div>/)[0];
 const checks=[];const browser=await chromium.launch({executablePath:'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',headless:true});
 try{
 const context=await browser.newContext();await context.route('**/*',route=>route.fulfill({contentType:'text/html',body:'<!doctype html><body></body>'}));
@@ -28,6 +36,47 @@ await page.evaluate(()=>{
  document.getElementById('admin-panel-fee-config').classList.add('active');
 });
 await page.addScriptTag({content:feeRuntime+'\n'+feeLoader});
+// Exercise the real sidebar and tab chain, including the authoritative live renderer map.
+await page.addScriptTag({content:policy});
+await page.evaluate(({feeSidebar,feeTab})=>{
+ document.body.insertAdjacentHTML('afterbegin','<style>.admin-tab-panel{display:none}.admin-tab-panel.active{display:block}</style><div id="nav">'+feeSidebar+feeTab+'<button class="admin-nav-item" onclick="adminNav(this,\'platform-payments\')">Payments</button></div><div id="admin-page-title"></div><div id="admin-panel-platform-payments" class="admin-tab-panel active"><div class="admin-content"></div></div>');
+ document.getElementById('admin-panel-fee-config').classList.remove('active');renderAdminPlanConfig();
+ window.token=()=>__qa.credential;window.role=()=> 'admin';window.readCache={};
+ window.loadAdminPaymentSettings=async()=>({client_apple_pay_enabled:'1'});
+ window.api=async(path,opts={})=>{__qa.requests.push({path,opts});return{session_authorization_amount_cents:500,session_authorization_currency:'usd',updated_at:'fixture-revision'};};
+ window.panelNode=id=>document.getElementById('admin-panel-'+id);window.contentNode=id=>panelNode(id)?.querySelector('.admin-content');window.setContent=(id,value)=>contentNode(id).innerHTML=value;
+ window.obAdminLoadRefundQueue=async()=>({applied:true,stale:false});
+ for(const name of ['renderDashboard','renderExpertsSafe','renderRevenue','renderPayouts','renderModeration','renderSupport','renderPromotions','renderDomains','renderConnectors','allowAdminScrollReset','setAdminContext','resetAdminScroll','buildAdminChart'])window[name]=()=>{};
+},{feeSidebar,feeTab});
+await page.addScriptTag({content:paymentRuntime+'\n'+paymentRenderer+'\n'+baseTab+'\n'+canonicalNav+'\n'+liveNavigation});
+await page.getByRole('button',{name:'Payments',exact:true}).click();await page.waitForFunction(()=>document.getElementById('ob-session-authorization-amount')?.value==='5.00');
+await page.locator('#ob-session-authorization-amount').fill('6.23');
+assert.equal(await page.locator('#ob-admin-commercial-catalog').getAttribute('hidden'),'');
+await page.locator('.admin-nav-item[onclick*=fee-config]').click();
+await page.waitForFunction(()=>document.querySelector('[data-catalog-field="plans.starter.monthly_cents"]')&&!document.getElementById('ob-admin-save-all-fees').disabled);
+assert.equal((await page.evaluate(()=>obAdminNavigationRenderPromise)).applied,true);
+await page.locator('[data-catalog-field="plans.starter.monthly_cents"]').fill('42.00');
+await page.evaluate(()=>{document.getElementById('ob-admin-legacy-pricing').open=true;});await page.locator('#plan-pro-monthly').fill('66');
+await page.getByRole('button',{name:'Payments',exact:true}).click();await page.evaluate(()=>obAdminNavigationRenderPromise);
+assert.equal(await page.locator('#ob-session-authorization-amount').inputValue(),'6.23');
+await page.locator('.admin-tab[onclick*=fee-config]').click();await page.waitForFunction(()=>document.getElementById('admin-panel-fee-config').classList.contains('active'));
+assert.equal(await page.locator('[data-catalog-field="plans.starter.monthly_cents"]').inputValue(),'42.00');assert.equal(await page.locator('#plan-pro-monthly').inputValue(),'66');
+assert.equal(await page.evaluate(()=>__qa.requests.filter(x=>x.path==='/api/commercial-catalog/admin').length),1);
+assert.equal(await page.evaluate(()=>__qa.requests.filter(x=>x.path==='/api/admin/fees').length),1);
+assert.equal(await page.evaluate(()=>__qa.requests.some(x=>x.opts.method&&x.opts.method!=='GET')),false);
+checks.push('Actual native sidebar Payments → Fee Configuration loads hidden pricing; native tab return preserves current/legacy drafts and unsaved authorization amount; exactly one fee/catalog read and no writes.');
+// A fresh direct route goes through the real route entry and canonical navigation as well.
+await page.setContent(feeMarkup+feeSidebar);await page.addScriptTag({content:feeRuntime+'\n'+feeLoader});
+await page.evaluate(()=>{__qa.requests=[];window.userRole=()=> 'admin';window.applyPlatformFallbackSeo=()=>{};});
+await page.addScriptTag({content:routeEntry});
+await page.evaluate(()=>applyAdminRoute({panel:'fee-config'}));
+await page.waitForFunction(()=>document.querySelector('[data-catalog-field="plans.starter.monthly_cents"]')&&!document.getElementById('ob-admin-save-all-fees').disabled);
+assert.equal((await page.evaluate(()=>obAdminNavigationRenderPromise)).applied,true);
+assert.equal(await page.evaluate(()=>__qa.requests.filter(x=>x.path==='/api/admin/fees').length),1);
+checks.push('Fresh /admin/fee-config route entry dispatches through the same canonical renderer and loads current and legacy prices.');
+// Reset the same fixture to verify direct loading and failure conditions independently.
+await page.setContent(feeMarkup);await page.addScriptTag({content:feeRuntime+'\n'+feeLoader});
+await page.evaluate(()=>{__qa.requests=[];document.getElementById('admin-panel-fee-config').classList.add('active');});
 await page.evaluate(()=>{__qa.delay=true;__qa.a=loadAdminFeeConfig();__qa.b=loadAdminFeeConfig();});
 assert.equal(await page.locator('#ob-admin-save-all-fees').isDisabled(),true);assert.equal(await page.locator('#plan-pro-monthly').inputValue(),'');
 assert.equal(await page.evaluate(()=>__qa.requests.filter(x=>x.path==='/api/admin/fees').length),1);

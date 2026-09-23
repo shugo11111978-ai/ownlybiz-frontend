@@ -4916,7 +4916,7 @@ body{font-feature-settings:"ss01","cv11";background:
 	  var q=new URLSearchParams(location.search);
 	  var reserved = window.obPlatformRouteRoots || {};
 	  var isLegalRoute=path==='terms'||path==='privacy'||path.indexOf('legal/')===0;
-	  var isDashboardRoute=firstPath==='dash';
+	  var isDashboardRoute=firstPath==='dash'||path==='dashboard/billing';
 	  var isAdminRoute=firstPath==='admin';
 	  var isCustomDomain=!!host && host !== 'ownlybiz.com' && host !== 'www.ownlybiz.com' && host !== 'localhost' && host !== '127.0.0.1' && host.indexOf('vercel.app') < 0;
   var isExpertSubdomain=/^[^.]+\.ownlybiz\.com$/i.test(host) && !/^www\.ownlybiz\.com$/i.test(host);
@@ -35052,6 +35052,10 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
         }
         return target && target.classList.contains('active') ? panel : '';
       };
+      window.obDashboardRouteSetting = function(){
+        var route=parseRoute();
+        return route && route.type==='dash' && route.panel==='settings' ? route.settings : '';
+      };
 	  function dashboardPanelReady(panel,nav){
 	    if(panel !== 'group-sessions' && panel !== 'marketplace') return true;
 	    return !!(nav && !nav.hidden && (!nav.style || nav.style.display !== 'none') && document.getElementById('db-panel-'+panel));
@@ -35112,6 +35116,7 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
   function parseRoute(){
     var parts = pathParts();
     var first = clean(parts[0]);
+    if(platformHost() && first==='dashboard' && parts[1]==='billing' && parts.length===2) return {type:'billing-alias'};
     if(first === 'group' && clean(parts[1])) return {type:'group', roomId:clean(parts[1])};
     if(first === 'mini-suite') return {type:'mini-suite'};
     if(first === 'legal' || first === 'terms' || first === 'privacy') return {type:'legal'};
@@ -35261,6 +35266,40 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
     else if(typeof window.adminTabSwitch === 'function') window.adminTabSwitch(findByOnclick('.admin-tab', panel), panel);
     if(typeof window._markRouteReady === 'function') window._markRouteReady('admin');
   }
+  async function applyBillingAliasRoute(generation){
+    var context=window.OB_CLIENT_CONTEXT;
+    var owner=context && context.capture('billing-route');
+    if(!owner || !owner.token || owner.role!=='expert'){
+      if(owner && owner.role==='admin'){ applyAdminRoute({panel:'fee-config'});return; }
+      try { sessionStorage.setItem('ob_next','/dashboard/billing'); } catch(e) {}
+      applyMarketingRoute({page:'login'});
+      history.replaceState({obRoute:true},'','/login');
+      if(typeof window._markRouteReady==='function') window._markRouteReady('dashboard');
+      return;
+    }
+    var controller=new AbortController();
+    var timeout=setTimeout(function(){controller.abort();},8000);
+    function current(){return generation===routeApplicationGeneration && context.isCurrent(owner,{exactCredential:true}) && parseRoute().type==='billing-alias';}
+    try {
+      var base=String(window.OWNLYBIZ_API_URL || window._OB_BACKEND || '').replace(/\/$/,'');
+      if(!base) throw new Error('Billing is unavailable. Refresh and try again.');
+      var response=await fetch(base+'/api/auth/me',{headers:{Authorization:'Bearer '+owner.token},signal:controller.signal});
+      var payload=await response.json();
+      if(!current()) return;
+      var user=payload.user || {};
+      var slug=cleanSlug(user.slug || (payload.profile && payload.profile.slug));
+      if(!response.ok || user.role!=='expert' || !slug || !/^[a-z0-9][a-z0-9-]{1,62}$/i.test(slug)) throw new Error('Billing could not be opened. Sign in again and retry.');
+      history.replaceState({obRoute:true},'','/dash/'+enc(slug)+'/settings/billing');
+      applyRoute();
+    } catch(error) {
+      if(!current()) return;
+      try { sessionStorage.setItem('ob_next','/dashboard/billing'); } catch(e) {}
+      applyMarketingRoute({page:'login'});
+      history.replaceState({obRoute:true},'','/login');
+      if(typeof window.toast==='function') window.toast(error.name==='AbortError'?'Billing timed out. Retry when your connection is available.':error.message,'err');
+      if(typeof window._markRouteReady==='function') window._markRouteReady('dashboard');
+    } finally { clearTimeout(timeout); }
+  }
   function applyMarketingRoute(route){
     if(route && route.page === 'signup'){
       if(typeof window.switchView === 'function') window.switchView(2);
@@ -35295,7 +35334,8 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
     }
     applyingRoute = true;
     try {
-      if(route.type === 'admin') applyAdminRoute(route);
+      if(route.type === 'billing-alias') applyBillingAliasRoute(generation);
+      else if(route.type === 'admin') applyAdminRoute(route);
       else if(route.type === 'dash') applyDashRoute(route,generation);
       else if(route.type === 'group') applyGroupRoute(route);
       else if(route.type === 'mini-suite') {
@@ -35334,6 +35374,7 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
     var fake = new URL(path, location.origin);
     var parts = fake.pathname.replace(/^\/+|\/+$/g, '').split('/').filter(Boolean).map(safeDecodePathPart);
     var first = clean(parts[0]);
+    if(platformHost() && first==='dashboard' && parts[1]==='billing' && parts.length===2) return {type:'billing-alias'};
     if(first === 'group' && clean(parts[1])) return {type:'group', roomId:clean(parts[1])};
     if(first === 'mini-suite') return {type:'mini-suite'};
     if(first === 'admin') return {type:'admin', panel:ADMIN_PANELS[parts[1]] ? parts[1] : 'dashboard'};
@@ -76709,7 +76750,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     ensureNavItems();
     var panel=activeNavPanel(),previousPanel=activePanelId;
     activePanelId=panel;
-    if(panel === 'settings' && previousPanel !== 'settings' && !openingSetting) showSettingsHome();
+    if(panel === 'settings' && previousPanel !== 'settings' && !openingSetting && !(root.obDashboardRouteSetting && root.obDashboardRouteSetting())) showSettingsHome();
     var blockId=panel === 'settings' ? activeSettingsBlock() : '';
     if(blockId){ syncSettingsSemantics(blockId);syncDashboardSettingsAlias(blockId);panel=activeNavPanel(); }
     applyGroupState(panel);

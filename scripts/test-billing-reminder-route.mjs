@@ -1,0 +1,35 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import vm from 'node:vm';
+const html=fs.readFileSync(new URL('../index.html',import.meta.url),'utf8');
+function source(a,b){const start=html.indexOf(a),end=html.indexOf(b,start);assert(start>=0&&end>start);return html.slice(start,end);}
+const apply=source('  async function applyBillingAliasRoute(', '  function applyMarketingRoute(');
+const parse=source('  function parseRouteFromPath(', '  function pushAndApply(');
+function harness(owner={role:'expert',token:'owned-token'}){
+ let current=true,route=true,pending,pathname='/dashboard/billing';const saved=new Map(),calls=[],errors=[],nav=[];
+ const context={capture:()=>owner,isCurrent:()=>current};
+ const h={URL,AbortController,location:{origin:'https://staging.vercel.app'},routeApplicationGeneration:7,parseRoute:()=>({type:route?'billing-alias':'marketing'}),window:{OB_CLIENT_CONTEXT:context,OWNLYBIZ_API_URL:'https://staging-api.test',toast:m=>errors.push(m),_markRouteReady(){}},sessionStorage:{setItem:(k,v)=>saved.set(k,v)},history:{replaceState:(_a,_b,p)=>{pathname=p;}},setTimeout:()=>1,clearTimeout(){},cleanSlug:v=>typeof v==='string'&&!v.includes('/')?v:'',enc:encodeURIComponent,applyRoute:()=>nav.push('canonical'),applyMarketingRoute:r=>nav.push(r.page),applyAdminRoute:r=>nav.push(r.panel),fetch:(url,options)=>{calls.push({url,options});return new Promise(resolve=>{pending=resolve;});}};
+ vm.createContext(h);new vm.Script(apply).runInContext(h);
+ return {run:()=>h.applyBillingAliasRoute(7),reply:(body,status=200)=>pending({ok:status<400,json:async()=>body}),saved,calls,errors,nav,path:()=>pathname,switchAccount:()=>{current=false;},leave:()=>{route=false;}};
+}
+{
+ const h=harness();const p=h.run();assert.equal(h.calls.length,1);assert.equal(h.calls[0].url,'https://staging-api.test/api/auth/me');h.reply({user:{role:'expert',slug:'owned-expert'}});await p;assert.equal(h.path(),'/dash/owned-expert/settings/billing');assert.deepEqual(h.nav,['canonical']);
+}
+{
+ const h=harness(null);await h.run();assert.equal(h.saved.get('ob_next'),'/dashboard/billing');assert.equal(h.path(),'/login');assert.deepEqual(h.nav,['login']);assert.equal(h.calls.length,0);
+}
+for(const change of ['switchAccount','leave']){
+ const h=harness();const p=h.run();h[change]();h.reply({user:{role:'expert',slug:'old-expert'}});await p;assert.equal(h.path(),'/dashboard/billing');assert.equal(h.nav.length,0,'late prior navigation/identity cannot select a dashboard');
+}
+for(const body of [{user:{role:'client',slug:'someone'}},{user:{role:'expert',slug:'../someone'}},{user:{role:'expert'}}]){
+ const h=harness();const p=h.run();h.reply(body);await p;assert.equal(h.path(),'/login');assert.equal(h.saved.get('ob_next'),'/dashboard/billing');assert.equal(h.nav.includes('canonical'),false);
+}
+{
+ const h=harness({role:'admin',token:'owned-admin'});await h.run();assert.deepEqual(h.nav,['fee-config']);assert.equal(h.calls.length,0);
+}
+{
+ const h={URL,location:{origin:'https://staging.vercel.app'},safeDecodePathPart:decodeURIComponent,clean:v=>String(v||'').trim(),platformHost:()=>true};vm.createContext(h);new vm.Script(parse).runInContext(h);assert.equal(h.parseRouteFromPath('/dashboard/billing').type,'billing-alias');assert.equal(h.parseRouteFromPath('/dashboard/billing?source=email').type,'billing-alias');
+}
+assert.match(html,/firstPath==='dash'\|\|path==='dashboard\/billing'/,'alias uses private dashboard first-paint guard');
+assert.match(html,/!openingSetting && !\(root\.obDashboardRouteSetting && root\.obDashboardRouteSetting\(\)\)/,'initial settings synchronization preserves explicit routed settings');
+console.log('Billing reminder route: signed-in resolution, sign-in return, stale identity/navigation, invalid account, and private first paint PASS');

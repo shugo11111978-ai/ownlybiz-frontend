@@ -32,3 +32,16 @@ assert.match(rateOutput.textContent,/600.00.*572.70/);
 rateInput.value=0;vm.runInNewContext('updateRatePreview("video")',rateContext);assert.match(rateOutput.textContent,/0.00.*0.00/);
 rateContext.window.obSignupPlanState.billing={};vm.runInNewContext('updateRatePreview("video")',rateContext);assert.match(rateOutput.textContent,/loading/);assert.doesNotMatch(rateOutput.textContent,/12%/);
 console.log(JSON.stringify({status:'PASS',inlineScriptsParsed:count,checks:['dynamic cents and annual pricing','zero fee components','single combined fee','trial/card disclosure','no stale-price fallback','escaped claims','native source mounts and launch handler']}));
+
+// Eligibility arrives after the initial catalog; refresh the original CTA.
+const ctaSource=scripts.slice(scripts.indexOf('  function updateSignupCta(){'),scripts.indexOf('  window.obUpdateSignupCta = updateSignupCta;'));
+const cta={textContent:'',disabled:false,dataset:{}},hint={textContent:''},checkline={textContent:''};
+let eligibility=null;
+const ctaContext={selectedPlan:()=>({id:'starter'}),signupPayoutEligibility:()=>eligibility,stagingOffer:()=>true,planState:{publicOffer:offer},document:{getElementById:id=>({'ob-launch-plan-btn':cta,'ob-launch-plan-hint':hint,'launch-plan-checkline':checkline}[id])}};
+vm.runInNewContext(ctaSource+';updateSignupCta();',ctaContext);assert.equal(cta.disabled,true);
+eligibility={country:'US',status:'supported'};vm.runInNewContext('updateSignupCta();',ctaContext);assert.equal(cta.disabled,false);assert.equal(cta.textContent,'Continue to secure checkout');
+eligibility={country:'GB',status:'supported'};vm.runInNewContext('updateSignupCta();',ctaContext);assert.equal(cta.disabled,true);
+eligibility={country:'US',status:'supported'};ctaContext.planState.publicOffer={...offer,signup_available:false};vm.runInNewContext('updateSignupCta();',ctaContext);assert.equal(cta.disabled,true);
+const nativeSignup=scripts.slice(scripts.indexOf('  window.realExpertSignup = async function() {'),scripts.indexOf('// ── Claim subdomain'));
+assert(nativeSignup.indexOf('if(window.obUpdateSignupCta)window.obUpdateSignupCta();')>nativeSignup.indexOf('window._obSignupPayoutEligibility = d.payout_country_eligibility;'));
+console.log('PASS: native signup success refreshes the eligibility-dependent Checkout CTA');

@@ -27,7 +27,7 @@
     if (!container) return;
     var expertId = String(options.expertId || '');
     var base = '/expert-access/admin/experts/' + encodeURIComponent(expertId);
-    var model = null, preview = null, busy = false, operation = null, generation = 0;
+    var model = null, preview = null, busy = false, operation = null, generation = 0, pendingBilling = null;
     function current() { return container.isConnected && options.isCurrent(); }
     function node(key) { return container.querySelector('[data-access="' + key + '"]'); }
     function status(message, error) {
@@ -45,6 +45,10 @@
       busy = value;
       container.querySelectorAll('input,select,button').forEach(function (element) { element.disabled = value; });
       if (!value && node('save')) node('save').disabled = !preview;
+      if (!value && pendingBilling) {
+        container.querySelectorAll('input,select,[data-access="preview"],[data-access="enable-all"],[data-access="reset-features"],[data-access="reset-quantities"]').forEach(function(element){ element.disabled = true; });
+      }
+      if (!value && node('billing-stop') && !pendingBilling) node('billing-stop').disabled = !node('stop-renewal').checked;
     }
     function source(item) {
       if (!item) return 'Unavailable';
@@ -56,14 +60,14 @@
       var billing = model.billing || {};
       container.innerHTML = '<div class="admin-card" style="padding:20px;margin-top:18px">'
         + '<h3 style="margin:0 0 8px">Plan &amp; feature access</h3>'
-        + '<p>Grant a complimentary access plan or change individual features. Billing stays unchanged unless you explicitly choose to stop renewal below.</p>'
-        + '<p><strong>Billing:</strong> ' + escape(billing.has_subscription ? title(billing.subscription_plan) + ' · ' + title(billing.subscription_status) + ' · existing subscription unchanged' : 'No subscription on record')
+        + '<p>Grant a complimentary access plan or change individual features. Billing stays unchanged unless you explicitly choose to stop software billing below.</p>'
+        + '<p><strong>Billing:</strong> ' + escape(billing.has_subscription ? title(billing.subscription_plan) + ' · ' + title(billing.subscription_status) : 'No subscription on record')
         + '<br><strong>Effective access:</strong> ' + escape(effective.plan_id ? title(effective.plan_id) : 'No active plan') + ' · ' + escape(title(effective.plan_source)) + '</p>'
         + (effective.account_blockers.length ? '<p role="note">Account restrictions: ' + escape(effective.account_blockers.map(title).join(', ')) + '. A feature grant does not remove them.</p>' : '')
         + '<div class="ob-access-fields"><label>Access plan<select data-access="plan"><option value="">Follow subscription and existing grants</option>'
         + catalog.plans.map(function (plan) { return '<option value="' + escape(plan) + '"' + (state.access_plan && state.access_plan.plan_id === plan ? ' selected' : '') + '>Complimentary ' + escape(title(plan)) + ' access</option>'; }).join('')
         + '</select></label><label>Plan expiry (optional, your local time)<input type="datetime-local" data-access="plan-expiry" value="' + escape(dateInput(state.access_plan && state.access_plan.expires_at)) + '"></label></div>'
-        + (billing.has_subscription ? '<label style="display:block;margin:14px 0"><input type="checkbox" data-access="stop-renewal"> Also stop software subscription renewal at the end of the current paid period. Apply the selected complimentary access plan now. No refund is issued.</label>' : '')
+        + (billing.has_subscription ? '<label style="display:block;margin:14px 0"><input type="checkbox" data-access="stop-renewal"> Also stop software subscription billing</label><label data-access="billing-stop-field" hidden>Stop billing<select data-access="billing-stop" disabled><option value="period_end">At the end of the current paid or trial period</option><option value="immediately">Immediately</option></select></label><p>Complimentary access is applied now, independently of the billing change. Existing invoices and pending items remain for separate review. No refund or balance forgiveness is included.</p>' : '')
         + '<p>Default follows the plan and existing independent grants. Enable or disable overrides the default. Leave expiry empty for until changed. Providers and the expert’s service settings must still be ready.</p>'
         + '<div class="ob-access-scroll"><table class="ob-access-table"><thead><tr><th>Feature</th><th>Access</th><th>Expiry (optional)</th><th>Currently effective</th></tr></thead><tbody>'
         + Object.keys(catalog.features).map(function (id) {
@@ -92,6 +96,10 @@
         input.addEventListener('input', invalidate);
         input.addEventListener('change', invalidate);
       });
+      if (node('stop-renewal')) node('stop-renewal').addEventListener('change', function(){
+        node('billing-stop-field').hidden = !node('stop-renewal').checked;
+        node('billing-stop').disabled = !node('stop-renewal').checked;
+      });
       node('enable-all').onclick = function () {
         container.querySelectorAll('[data-feature]').forEach(function (input) { input.value = 'enable'; });
         container.querySelectorAll('[data-feature-expiry]').forEach(function (input) { input.value = ''; });
@@ -105,9 +113,9 @@
       node('history').onclick = history;
     }
     function invalidate() {
-      if (!current() || busy) return;
+      if (!current() || busy || pendingBilling) return;
       generation += 1; preview = null; operation = null;
-      node('save').disabled = true; node('review').textContent = '';
+      node('save').disabled = true; node('save').textContent = 'Save reviewed changes'; node('review').textContent = '';
     }
     function reset(selector) {
       container.querySelectorAll(selector).forEach(function (input) { input.value = ''; });
@@ -140,7 +148,9 @@
       try {
         var data = await options.request(base);
         if (!current()) return;
-        model = accept(data); operation = null; render(); status('Saved access settings loaded.');
+        model = accept(data); if (!pendingBilling) operation = null; render();
+        if (pendingBilling) restoreBillingRetry();
+        else status('Saved access settings loaded.');
       } catch (error) { status(error.message || 'Access settings could not be loaded.', true); }
       finally { if (current()) lock(false); }
     }
@@ -149,14 +159,16 @@
       try {
         var body = draft(), reason = node('reason').value.trim();
         var stopRenewal = !!(node('stop-renewal') && node('stop-renewal').checked);
+        var billingStop = stopRenewal ? node('billing-stop').value : null;
         if(stopRenewal && !body.access_plan) throw new Error('Choose a complimentary access plan before stopping subscription renewal.');
+        if(stopRenewal && ['period_end','immediately'].indexOf(billingStop) < 0) throw new Error('Choose when software billing should stop.');
         if (!reason) throw new Error('Add a reason so other administrators can understand this change.');
         preview = null; lock(true);
         var data = accept(await options.request(base + '/preview', { method: 'POST', body: body }));
         if (!current()) return;
-        preview = { body: body, reason: reason, generation: generation, stopRenewal: stopRenewal };
+        preview = { body: body, reason: reason, generation: generation, stopRenewal: stopRenewal, billingStop: billingStop };
         var changed = [];
-        if(stopRenewal) changed.push('Stop automatic software renewal at the end of the current paid period. Keep the paid period; no refund.');
+        if(stopRenewal) changed.push(billingStop === 'immediately' ? 'Stop software subscription billing immediately. No new prorated invoice or refund is requested.' : 'Stop automatic software renewal at the end of the current paid or trial period.');
         if (JSON.stringify(body.access_plan) !== JSON.stringify(model.state.access_plan)) changed.push('Access plan: ' + (body.access_plan ? title(body.access_plan.plan_id) + ' (complimentary access)' : 'follow subscription and existing grants'));
         Object.keys(data.catalog.features).forEach(function (id) {
           if (JSON.stringify(body.feature_overrides[id]) !== JSON.stringify(model.state.feature_overrides[id])) changed.push(data.catalog.features[id].label + ': ' + (data.effective.features[id].enabled ? 'enabled' : 'disabled') + ' (' + source(data.effective.features[id]) + ')');
@@ -165,11 +177,30 @@
           if (JSON.stringify(body.quantity_overrides[id]) !== JSON.stringify(model.state.quantity_overrides[id])) changed.push(data.catalog.quantities[id].label + ': ' + (data.effective.quantities[id].value == null ? 'not configured' : data.effective.quantities[id].value) + ' (' + source(data.effective.quantities[id]) + ')');
         });
         node('review').innerHTML = '<p><strong>Review changes</strong></p>' + (changed.length ? '<ul>' + changed.map(function (line) { return '<li>' + escape(line) + '</li>'; }).join('') + '</ul>' : '<p>No access changes.</p>')
-          + '<p>' + (stopRenewal ? 'Stripe cancellation must be verified before complimentary access is saved. Payment fees remain unchanged.' : 'Billing and payment fees remain unchanged.') + ' Spent usage is not reset.</p>';
+          + '<p>' + (stopRenewal ? 'Complimentary access is saved independently. If Stripe cannot confirm the billing change, the free access grant remains and billing needs reconciliation. Existing balances are not forgiven or refunded. Payment fees remain unchanged.' : 'Billing and payment fees remain unchanged.') + ' Spent usage is not reset.</p>';
         if (!changed.length) preview = null;
         status(changed.length ? 'Preview ready. Save to apply these changes.' : 'Nothing to save.');
       } catch (error) { status(error.message || 'Preview failed.', true); }
       finally { if (current()) lock(false); }
+    }
+    function balanceReview(data) {
+      var balances = data && data.existing_balances;
+      if (!balances) return '';
+      function money(amount, currency) {
+        var code = String(currency || 'USD').toUpperCase();
+        try { var format = new Intl.NumberFormat(undefined,{style:'currency',currency:code}); return format.format(Number(amount || 0) / Math.pow(10,format.resolvedOptions().maximumFractionDigits)); }
+        catch (_) { return String(amount || 0) + ' minor units ' + code; }
+      }
+      var lines = (balances.invoices || []).map(function(item){return 'Invoice ' + item.id + ': ' + money(item.amount_remaining,item.currency) + ' remaining · ' + title(item.status) + ' · automatic collection ' + (item.auto_advance === false ? 'stopped' : 'not confirmed stopped');});
+      (balances.pending_items || []).forEach(function(item){lines.push('Pending item ' + item.id + ': ' + money(item.amount,item.currency) + ' · ' + (item.scope === 'this_subscription' ? 'this subscription' : 'other or unassigned customer item'));});
+      return '<p><strong>Existing balances</strong></p>' + (lines.length ? '<ul>' + lines.map(function(line){return '<li>' + escape(line) + '</li>';}).join('') + '</ul><p>Review these separately in Stripe. No balance was forgiven or refunded.</p>' : '<p>No open invoices or pending invoice items were reported.</p>');
+    }
+    function restoreBillingRetry() {
+      preview = pendingBilling.reviewed; operation = pendingBilling.operation;
+      preview.generation = generation;
+      node('save').textContent = 'Retry billing change';
+      node('review').innerHTML = '<p><strong>Billing change incomplete</strong></p><p>' + escape(pendingBilling.message) + '</p><p>Retry the same reviewed ' + (preview.billingStop === 'immediately' ? 'immediate stop' : 'end-of-period stop') + ' to reconcile the original subscription. Editing is paused until its outcome is confirmed.</p>' + balanceReview(pendingBilling.data);
+      status(pendingBilling.message, true);
     }
     async function save() {
       if (!current() || busy || !preview || preview.generation !== generation) return;
@@ -180,15 +211,32 @@
       lock(true); status('Saving access settings…');
       try {
         var body = Object.assign({}, reviewed.body, { operation_id: operation, reason: reviewed.reason });
+        if (reviewed.stopRenewal) body.billing_stop = reviewed.billingStop;
         var data = await options.request(reviewed.stopRenewal ? '/billing/admin/experts/' + encodeURIComponent(expertId) + '/make-complimentary' : base,
           { method: reviewed.stopRenewal ? 'POST' : 'PUT', body: body });
         if (!current()) return;
-        model = accept(data); operation = null; render(); status(reviewed.stopRenewal ? 'Complimentary access saved. Software renewal cancellation is confirmed for the end of the current paid period. No refund was issued.' : 'Access settings saved. Billing was not changed.');
+        model = accept(data);
+        if (reviewed.stopRenewal) {
+          try { var refreshed = await options.request(base); if (!current()) return; model = accept(refreshed); } catch (_) {}
+        }
+        pendingBilling = null; operation = null; render();
+        var message = 'Access settings saved. Billing was not changed.';
+        if (reviewed.stopRenewal) message = data.billing_effect === 'canceled_immediately' ? 'Complimentary access saved. Software subscription cancellation is confirmed immediately.' : data.billing_effect === 'no_subscription' ? 'Complimentary access saved. No software subscription was on record.' : 'Complimentary access saved. Software renewal stops at the end of the current paid or trial period.';
+        if (reviewed.stopRenewal) { message += data.reconciliation_required ? ' Existing balances need separate review; no balance was forgiven or refunded.' : ' No refund was issued.'; node('review').innerHTML = balanceReview(data); }
+        status(message);
       } catch (error) {
-        if (error.status === 409) preview = null;
-        var partial = error.data && error.data.billing_effect === 'cancellation_scheduled';
-        var uncertainBilling = error.data && error.data.billing_effect === 'cancellation_confirmation_pending';
-        status((partial ? 'Software renewal cancellation was scheduled, but access was not applied. Reload and reconcile the access settings. ' : uncertainBilling ? 'Stripe has not confirmed whether renewal cancellation succeeded. Access was not applied. Retry the same reviewed change to reconcile. ' : error.status === 409 ? 'Settings changed elsewhere. Reload and review again. ' : '') + (error.message || 'Save failed. Retry with the same reviewed changes.'), true);
+        if (!current()) return;
+        var partial = error.data || {};
+        var needsRetry = reviewed.stopRenewal && partial.billing_completed !== true && (partial.reconciliation_required || !error.status || error.status >= 500);
+        if (needsRetry) {
+          var applied = partial.access_effect === 'applied' || partial.access_effect === 'operation_previously_applied';
+          pendingBilling = { reviewed: reviewed, operation: operation, data: partial, message: applied ? 'Complimentary access was granted; the billing change is incomplete.' : 'Access or billing confirmation is pending. Retry the same change before making another grant.' };
+          try { var fresh = await options.request(base); if (!current()) return; model = accept(fresh); render(); } catch (_) {}
+          restoreBillingRetry();
+        } else {
+          if (error.status === 409) preview = null;
+          status((error.status === 409 ? 'Settings changed elsewhere. Reload and review again. ' : '') + (error.message || 'Save failed. Retry with the same reviewed changes.'), true);
+        }
       } finally { if (current()) lock(false); }
     }
     async function history() {

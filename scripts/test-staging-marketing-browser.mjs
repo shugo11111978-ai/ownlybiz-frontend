@@ -9,7 +9,7 @@ const {chromium}=require('/Users/liranbahbut/.cache/codex-runtimes/codex-primary
 const presentation=require('../assets/subscription-offer.js');
 const runtimeMode=process.env.OB_QA_RUNTIME_MODE==='live'?'live':'test';
 const stageApi=runtimeMode==='live'?'https://ownlybiz-backend-production.up.railway.app':'https://victorious-wisdom-production-a6b0.up.railway.app';
-let origin='',offer={stripe_mode:runtimeMode,available:true,signup_available:true,offer_version:'subscription_v2',catalog_revision:4,currency:'usd',payment_fee_policy:{version:'ownly-payments-catalog-v1-r4',catalog_revision:4,currency:'usd',quoted_scope:'standard_us_domestic_card',processing_included:true,basis_points:450,fixed_cents:30},plans:[['starter',39,390],['pro',99,990],['scale',159,1590]].map(([id,monthly_price,annual_price])=>({id,name:id[0].toUpperCase()+id.slice(1),description:'Software tools for your practice.',monthly_price,annual_price,currency:'usd',offer_version:'subscription_v2',catalog_revision:4,features:['Expert website','Bookings','Human chat, voice and video'],quantities:{creation_ai_credits:id==='pro'?100:id==='scale'?300:0},trial_quantities:{one_to_one_call_minutes:120,group_participant_minutes:id==='scale'?510:0,creation_ai_credits:id==='pro'?100:id==='scale'?300:0}})),comparison_rows:[{label:'Creation credits per allowance period',values:{starter:0,pro:100,scale:300}}]};
+let origin='',offer={stripe_mode:runtimeMode,available:true,signup_available:true,offer_version:'subscription_v2',catalog_revision:4,currency:'usd',payout_scope:{business_countries:['US'],currency:'usd',card_countries:['US']},payment_fee_policy:{version:'ownly-payments-catalog-v1-r4',catalog_revision:4,currency:'usd',quoted_scope:'standard_us_domestic_card',processing_included:true,basis_points:450,fixed_cents:30},plans:[['starter',39,390],['pro',99,990],['scale',159,1590]].map(([id,monthly_price,annual_price])=>({id,name:id[0].toUpperCase()+id.slice(1),description:'Software tools for your practice.',monthly_price,annual_price,currency:'usd',offer_version:'subscription_v2',catalog_revision:4,features:['Expert website','Bookings','Human chat, voice and video'],quantities:{creation_ai_credits:id==='pro'?100:id==='scale'?300:0},trial_quantities:{one_to_one_call_minutes:120,group_participant_minutes:id==='scale'?510:0,creation_ai_credits:id==='pro'?100:id==='scale'?300:0}})),comparison_rows:[{label:'Creation credits per allowance period',values:{starter:0,pro:100,scale:300}}]};
 let publicOfferFail=false,signupBodies=[];
 const writeRequests=[],externalRequests=[],pageErrors=[];
 function payload(url){const pathname=new URL(url,origin||'http://localhost').pathname;
@@ -79,9 +79,9 @@ try{
  let body=await page.evaluate(()=>window.obSignupOfferPayload());assert.equal(body.subscription_plan,'pro');assert.equal(body.subscription_interval,'annual');assert.equal(body.catalog_revision,4);
  offer={...offer,catalog_revision:5,plans:offer.plans.map(p=>({...p,catalog_revision:5,monthly_price:p.id==='starter'?39.99:p.monthly_price}))};
  let changed=await page.evaluate(async()=>{try{await window.obSignupOfferPayload();return '';}catch(e){return e.message;}});assert.match(changed,/pricing changed/i);assert.match(await page.locator('#ob-signup-initial-plan').innerText(),/\$390\/year/);
- await page.locator('#ob-signup-initial-plan .ob-signup-change summary').click();
+
  await page.locator('#ob-signup-initial-plan [data-ob-signup-plan="starter"]').click();
- assert.equal(await page.locator('#ob-signup-initial-plan .ob-signup-change').evaluate(el=>el.open),true);
+ assert.equal(await page.locator('#ob-signup-initial-plan [data-ob-signup-plan]').count(),3);
  assert.equal(await page.evaluate(()=>document.activeElement?.getAttribute('data-ob-signup-plan')),'starter');
  await page.locator('#ob-signup-initial-plan').getByRole('button',{name:'Monthly',exact:true}).click();
  assert.match(await page.locator('#ob-signup-initial-plan').innerText(),/\$39\.99\/month/);

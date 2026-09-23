@@ -25,7 +25,7 @@ for(const body of [{user:{role:'client',slug:'someone'}},{user:{role:'expert',sl
  const h=harness();const p=h.run();h.reply(body);await p;assert.equal(h.path(),'/login');assert.equal(h.saved.get('ob_next'),'/dashboard/billing');assert.equal(h.nav.includes('canonical'),false);
 }
 {
- const h=harness({role:'admin',token:'owned-admin'});await h.run();assert.deepEqual(h.nav,['fee-config']);assert.equal(h.calls.length,0);
+ const h=harness({role:'admin',token:'owned-admin'});await h.run();assert.deepEqual(h.nav,['fee-config']);assert.equal(h.path(),'/admin/fee-config');assert.equal(h.calls.length,0);
 }
 {
  const h={URL,location:{origin:'https://staging.vercel.app'},safeDecodePathPart:decodeURIComponent,clean:v=>String(v||'').trim(),platformHost:()=>true};vm.createContext(h);new vm.Script(parse).runInContext(h);assert.equal(h.parseRouteFromPath('/dashboard/billing').type,'billing-alias');assert.equal(h.parseRouteFromPath('/dashboard/billing?source=email').type,'billing-alias');

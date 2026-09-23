@@ -6085,7 +6085,7 @@ if (!window.toast) {
         </div>
         <div class="form-group">
           <label class="form-label" for="signup-email">Email address</label>
-          <input type="email" class="form-input" id="signup-email" autocomplete="username" required placeholder="alex@example.com">
+          <input type="email" class="form-input" id="signup-email" autocomplete="username" inputmode="email" autocapitalize="none" spellcheck="false" required placeholder="alex@example.com">
         </div>
         <div class="form-group">
           <label class="form-label" for="signup-pass">Password</label>
@@ -6099,7 +6099,7 @@ if (!window.toast) {
 	          </select>
 	          <details class="tos-details ob-payout-country-details" id="signup-payout-country-note">
 	            <summary id="signup-payout-country-summary"><span id="signup-payout-country-summary-text">Select the country where your business is legally based.</span> <strong class="ob-payout-country-toggle"><span class="ob-payout-country-toggle-more">Learn more</span><span class="ob-payout-country-toggle-less">Show less</span></strong></summary>
-	            <p>Use the country where your Stripe connected account will be legally based, which is separate from where your clients live. Ownlybiz uses this country to check Stripe Connect onboarding and paid-plan availability. It does not confirm current balance or bank-payout eligibility; Stripe remains the authority for those details.</p>
+	            <p>Use the country where your Stripe connected account will be legally based, which is separate from where your clients live. Ownlybiz uses this country to check Stripe Connect onboarding and paid-plan availability. It does not confirm current balance or bank-payout eligibility; Stripe remains the authority for those details. Available locations depend on the current subscription offer.</p>
 	          </details>
 	        </div>
         <div id="ob-signup-initial-plan" class="ob-signup-plan-panel" hidden></div>
@@ -14511,6 +14511,7 @@ async function savePaymentConfig() {
       if(next)window.obInstallAuthSession(next,null);else window.obClearAuthSession();
     });
     window.obHandleAdminSessionExpired = window.obHandleAdminSessionExpired || function() {
+      if(!/^\/admin(?:\/|$)/.test(String(window.location.pathname||'')))return;
       if (window.__obAdminSessionExpiredHandled) return;
       window.__obAdminSessionExpiredHandled = true;
       var nextPath = String((window.location && window.location.pathname) || '/admin/dashboard');
@@ -18021,8 +18022,8 @@ async function savePaymentConfig() {
 	      return;
 	    }
 	    if(Auth.ok){
-      if(Auth.isExpert && !window._isSubdomain) loadExpertDashboard();
-      if(Auth.isAdmin && !window._isSubdomain) loadAdminDashboard();
+      if(Auth.isExpert && !window._isSubdomain && /^\/dash(?:\/|$)/.test(window.location.pathname)) loadExpertDashboard();
+      if(Auth.isAdmin && !window._isSubdomain && /^\/admin(?:\/|$)/.test(window.location.pathname)) loadAdminDashboard();
     }
     var _qe=new URLSearchParams(window.location.search).get('expert');
     if(_qe){window._browseExpert=_qe;window._isSubdomain=true;}
@@ -18137,6 +18138,7 @@ async function savePaymentConfig() {
 
   // ── Signup step 1 ─────────────────────────────────────
   window._obSignupPayoutCountries = [];
+  window.obSignupBusinessCountries=function(){return window.OB_SUBSCRIPTION_OFFER?window.OB_SUBSCRIPTION_OFFER.businessCountries(window.__OB_PUBLIC_OFFER__):[];};
   window.obUpdateSignupPayoutCountry = function() {
     var select = document.getElementById('signup-payout-country');
     var note = document.getElementById('signup-payout-country-note');
@@ -18145,11 +18147,11 @@ async function savePaymentConfig() {
     var country = (window._obSignupPayoutCountries || []).find(function(item){ return item.code === select.value; });
     try { sessionStorage.setItem('ob_signup_payout_country', select.value || ''); } catch(e) {}
     if (!country) {
-	      noteSummaryText.textContent = window.obSubscriptionOfferMode&&window.obSubscriptionOfferMode()!=='legacy'?'Currently available to US-based businesses.':'Select the country where your business is legally based.';
+	      noteSummaryText.textContent = 'Select the country where your business is legally based.';
       note.style.color = 'var(--gray-400)';
       return;
     }
-    if(window.obSubscriptionOfferMode&&window.obSubscriptionOfferMode()!=='legacy'){noteSummaryText.textContent=country.code==='US'?'Currently available to US-based businesses.':'This offer is currently available to US-based businesses only.';note.style.color=country.code==='US'?'#15803d':'#b45309';return;}
+    if(window.obSubscriptionOfferMode&&window.obSubscriptionOfferMode()!=='legacy'){var allowed=window.obSignupBusinessCountries().indexOf(country.code)>=0&&country.supported===true;noteSummaryText.textContent=allowed?'Payments are available for this business location.':'This location is not available for the current subscription offer.';note.style.color=allowed?'#15803d':'#b45309';return;}
     if (country.supported) {
 	      noteSummaryText.textContent = 'Supported for Ownlybiz paid plans and Stripe Connect onboarding. Bank-payout status is verified in Stripe.';
       note.style.color = '#15803d';
@@ -18168,7 +18170,7 @@ async function savePaymentConfig() {
       var response = await fetch(BASE + '/api/billing/payout-countries', { cache:'no-store' });
       var payload = await response.json();
       if (!response.ok || !Array.isArray(payload.countries) || !payload.countries.length) throw new Error(payload.error || 'Countries are unavailable');
-      if(window.obSubscriptionOfferMode&&window.obSubscriptionOfferMode()!=='legacy')payload.countries=payload.countries.filter(function(country){return country.code==='US';});
+      if(window.obSubscriptionOfferMode&&window.obSubscriptionOfferMode()!=='legacy'){var allowed=window.obSignupBusinessCountries();payload.countries=payload.countries.filter(function(country){return allowed.indexOf(country.code)>=0&&country.supported===true;});if(!payload.countries.length)throw new Error('Business locations are unavailable');}
       window._obSignupPayoutCountries = payload.countries;
       var saved = '';
       try { saved = sessionStorage.getItem('ob_signup_payout_country') || ''; } catch(e) {}
@@ -18219,7 +18221,7 @@ async function savePaymentConfig() {
     try {
       var signupOffer=window.obSignupOfferPayload?await window.obSignupOfferPayload():{};
       if(!window.obAuthAttemptCurrent(authAttempt))return;
-      if(signupOffer.offer_version==='subscription_v2'&&payoutCountry!=='US')throw new Error('This subscription offer currently supports US-based expert businesses.');
+      if(signupOffer.offer_version==='subscription_v2'&&window.obSignupBusinessCountries().indexOf(payoutCountry)<0)throw new Error('Choose a business location available for this subscription offer.');
       var r = await fetch(BASE+'/api/auth/signup', {
         method:'POST', headers:{'Content-Type':'application/json'},
 	        signal:authAttempt.signal,
@@ -35179,7 +35181,7 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
     var context=window.OB_CLIENT_CONTEXT;
     var owner=context && context.capture('billing-route');
     if(!owner || !owner.token || owner.role!=='expert'){
-      if(owner && owner.role==='admin'){ applyAdminRoute({panel:'fee-config'});return; }
+      if(owner && owner.role==='admin'){history.replaceState({obRoute:true},'','/admin/fee-config');applyAdminRoute({panel:'fee-config'});return;}
       try { sessionStorage.setItem('ob_next','/dashboard/billing'); } catch(e) {}
       applyMarketingRoute({page:'login'});
       history.replaceState({obRoute:true},'','/login');
@@ -35211,7 +35213,7 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
   }
   function applyMarketingRoute(route){
     if(route && route.page === 'signup'){
-      if(typeof window.switchView === 'function') window.switchView(2);
+      if(typeof window.switchView === 'function' && !document.querySelector('#view-2.active')) window.switchView(2);
       applyPlatformFallbackSeo();
       if(typeof window._markRouteReady === 'function') window._markRouteReady();
       return;
@@ -35847,13 +35849,14 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
     var pricing=document.getElementById('mkt-page-pricing');
     if(!usesSubscriptionOffer()){
       var legacyHome=document.getElementById('ob-legacy-home-offer'),legacyPricing=document.getElementById('ob-legacy-pricing-offer');
+      if(home)home._obOfferMarkup=null;if(pricing)pricing._obOfferMarkup=null;
       if(home&&legacyHome)home.innerHTML='<div class="section-inner">'+legacyHome.innerHTML+'</div>';
       if(pricing&&legacyPricing)pricing.innerHTML=legacyPricing.innerHTML;
       if(window.obLoadLegacyMarketingPricing)window.obLoadLegacyMarketingPricing();
       return;
     }
-    if(home) home.innerHTML=publicOfferRenderer().render(publicOffer,'home',publicOfferInterval);
-    if(pricing) pricing.innerHTML=publicOfferRenderer().render(publicOffer,'pricing',publicOfferInterval);
+    if(home){var homeMarkup=publicOfferRenderer().render(publicOffer,'home',publicOfferInterval);if(home._obOfferMarkup!==homeMarkup){home.innerHTML=homeMarkup;home._obOfferMarkup=homeMarkup;}}
+    if(pricing){var pricingMarkup=publicOfferRenderer().render(publicOffer,'pricing',publicOfferInterval);if(pricing._obOfferMarkup!==pricingMarkup){pricing.innerHTML=pricingMarkup;pricing._obOfferMarkup=pricingMarkup;}}
   }
   window.obSetPublicOfferInterval=function(interval){publicOfferInterval=interval==='annual'?'annual':'monthly';renderPublicOffer();};
   async function loadPublicOffer(){
@@ -35984,7 +35987,7 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
     var btn = document.getElementById('ob-launch-plan-btn') || document.querySelector('#step-7 .btn.btn-primary');
     var eligibility = signupPayoutEligibility();
     var v2=usesSubscriptionOffer();
-    var paidBlocked = (v2 || p.id !== 'starter') && (!eligibility || eligibility.status !== 'supported' || (v2&&eligibility.country!=='US'&&eligibility.country_code!=='US'));
+    var paidBlocked = (v2 || p.id !== 'starter') && (!eligibility || eligibility.status !== 'supported' || (v2&&publicOfferRenderer().businessCountries(planState.publicOffer).indexOf(eligibility.country||eligibility.country_code)<0));
     if(v2&&(!planState.publicOffer||planState.publicOffer.signup_available!==true))paidBlocked=true;
     var approvalBlocked=v2&&approvalBlocksCheckout();
     renderSignupApproval();
@@ -35992,7 +35995,7 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
     if(v2){
       if(btn){btn.textContent=approvalBlocked?'Awaiting approval':paidBlocked?'Subscription setup unavailable':'Continue to secure checkout';btn.disabled=paidBlocked||approvalBlocked;btn.dataset.obCountryBlocked=paidBlocked?'1':'';}
       var v2hint=document.getElementById('ob-launch-plan-hint');
-      if(v2hint)v2hint.textContent=approvalBlocked?'Your two-calendar-month trial begins only after approval and confirmed Stripe checkout.':paidBlocked?'This offer requires a US-based business and current plan availability.':'Card required. Your subscription starts billing automatically after the two-calendar-month trial unless you cancel beforehand. Stripe confirms the exact first-charge date and amount.';
+      if(v2hint)v2hint.textContent=approvalBlocked?'Your two-calendar-month trial begins only after approval and confirmed Stripe checkout.':paidBlocked?'Choose an available business location and a currently available plan.':'Card required. Your subscription starts billing automatically after the two-calendar-month trial unless you cancel beforehand. Stripe confirms the exact first-charge date and amount.';
       var v2check=document.getElementById('launch-plan-checkline');if(v2check)v2check.textContent='Card required for the two-calendar-month software trial; payment fees apply.';
       return;
     }
@@ -36075,12 +36078,7 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
       var data=planState.publicOffer;
       ['ob-signup-initial-plan','ob-signup-plan-card'].forEach(function(id){
         var target=document.getElementById(id);if(!target)return;
-        var expanded=Array.from(target.querySelectorAll('details[open]')).map(function(el){return el.className;});
-        var focused=document.activeElement,focusPlan=target.contains(focused)&&focused.getAttribute('data-ob-signup-plan'),focusInterval=target.contains(focused)&&focused.closest('.ob-signup-intervals')&&focused.textContent;
-        target.hidden=false;target.innerHTML=publicOfferRenderer().render(data,id==='ob-signup-plan-card'?'review':'signup',planState.interval,planState.selected);
-        target.querySelectorAll('details').forEach(function(el){el.open=expanded.indexOf(el.className)>=0;});
-        var focusTarget=focusPlan?target.querySelector('[data-ob-signup-plan="'+normalizePlanId(focusPlan)+'"]'):focusInterval?Array.from(target.querySelectorAll('.ob-signup-intervals button')).find(function(el){return el.textContent===focusInterval;}):null;
-        if(focusTarget)focusTarget.focus({preventScroll:true});
+        target.hidden=false;publicOfferRenderer().updateSignup(target,data,id==='ob-signup-plan-card'?'review':'signup',planState.interval,planState.selected);
       });
       updateSignupCta();
       return;

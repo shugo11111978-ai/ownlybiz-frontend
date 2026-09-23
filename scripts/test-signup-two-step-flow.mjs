@@ -12,7 +12,7 @@ assert(markup.indexOf('id="signup-pass"')<markup.indexOf('id="ob-signup-initial-
 let approval={status:'pending_review',required:true,checkout_allowed:false,review_before_checkout:true,review_completed:false};
 const writes=[];let cancelConfirmed=true,holdMe=false,releaseMe;
 const user={id:'owned-local-expert',name:'Local Expert',role:'expert',slug:'automatic-local-slug'};
-const offer={available:true,signup_available:true,signup_requires_approval:true,offer_version:'subscription_v2',catalog_revision:4,currency:'usd',payment_fee_policy:{currency:'usd',quoted_scope:'standard_us_domestic_card',processing_included:true,basis_points:450,fixed_cents:30},plans:[['starter',39,390],['pro',99,990],['scale',159,1590]].map(([id,monthly_price,annual_price])=>({id,name:id,monthly_price,annual_price,offer_version:'subscription_v2',currency:'usd',features:[],trial_quantities:{one_to_one_call_minutes:120,group_participant_minutes:0,creation_ai_credits:0}}))};
+const offer={available:true,signup_available:true,signup_requires_approval:true,offer_version:'subscription_v2',catalog_revision:4,currency:'usd',payout_scope:{business_countries:['US'],currency:'usd',card_countries:['US']},payment_fee_policy:{currency:'usd',quoted_scope:'standard_us_domestic_card',processing_included:true,basis_points:450,fixed_cents:30},plans:[['starter',39,390],['pro',99,990],['scale',159,1590]].map(([id,monthly_price,annual_price])=>({id,name:id,monthly_price,annual_price,offer_version:'subscription_v2',currency:'usd',features:[],trial_quantities:{one_to_one_call_minutes:120,group_participant_minutes:0,creation_ai_credits:0}}))};
 const server=http.createServer(async(req,res)=>{let body='';for await(const chunk of req)body+=chunk;const payload=body?JSON.parse(body):{};if(req.method==='POST')writes.push({path:req.url,body:payload});let result={};
  if(req.url==='/api/auth/signup')result={token:'local-fixture-token',user,approval,payout_country_eligibility:{country:'US',status:'supported'}};
  if(req.url==='/api/auth/me'){if(holdMe)await new Promise(r=>releaseMe=r);result={user,approval};}
@@ -30,7 +30,7 @@ try{
   window.qa={credential:'',user:null,attempt:0,checkouts:[],confirmations:[],messages:[],refreshes:0};
   window.token=()=>qa.credential;window.readUserSnapshot=()=>qa.user||{};window.currentBillingRole=()=>qa.user?.role||'';
   window.normalizePlanId=p=>['starter','pro','scale'].includes(p)?p:'starter';window.selectedPlan=()=>offer.plans.find(p=>p.id===planState.selected);window.selectedSignupPlanForLaunch=selectedPlan;
-  window.publicOfferRenderer=()=>OB_SUBSCRIPTION_OFFER;window.usesSubscriptionOffer=()=>true;window.signupPayoutEligibility=()=>window._obSignupPayoutEligibility||{country:'US',status:'supported'};
+  window.obSignupBusinessCountries=()=>OB_SUBSCRIPTION_OFFER.businessCountries(offer);window.publicOfferRenderer=()=>OB_SUBSCRIPTION_OFFER;window.usesSubscriptionOffer=()=>true;window.signupPayoutEligibility=()=>window._obSignupPayoutEligibility||{country:'US',status:'supported'};
   window.esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   window.obErr=(el,msg)=>{el.textContent=msg;el.style.display='block';};
   window.obBeginAuthAttempt=()=>({id:++qa.attempt});window.obAuthAttemptCurrent=a=>a.id===qa.attempt;
@@ -42,9 +42,9 @@ try{
  },{offer,origin});
  await page.addScriptTag({content:native});await page.evaluate(()=>{document.getElementById('view-2').classList.add('active');renderSignupPlans();document.getElementById('signup-payout-country').disabled=false;document.getElementById('signup-payout-country').innerHTML='<option value="US">United States</option>';});
  assert.equal(await page.locator('label[for="signup-email"]').count(),1);assert.equal(await page.locator('#signup-pass').getAttribute('autocomplete'),'new-password');
- await page.locator('#ob-signup-initial-plan .ob-signup-change summary').click();await page.locator('#ob-signup-initial-plan [data-ob-signup-plan="scale"]').click();
- assert(await page.locator('#ob-signup-initial-plan .ob-signup-change').evaluate(e=>e.open));assert.equal(await page.evaluate(()=>document.activeElement.getAttribute('data-ob-signup-plan')),'scale');
- await page.locator('#ob-signup-initial-plan .ob-signup-intervals').getByRole('button',{name:'Monthly',exact:true}).click();assert(await page.locator('#ob-signup-initial-plan .ob-signup-change').evaluate(e=>e.open));
+ await page.locator('#ob-signup-initial-plan [data-ob-signup-plan="scale"]').click();
+ assert.equal(await page.evaluate(()=>document.activeElement.getAttribute('data-ob-signup-plan')),'scale');
+ await page.locator('#ob-signup-initial-plan .ob-signup-intervals').getByRole('button',{name:'Monthly',exact:true}).click();
  await page.locator('#signup-fname').fill('Local');await page.locator('#signup-lname').fill('Expert');await page.locator('#signup-email').fill('local@example.invalid');await page.locator('#signup-pass').fill('local-test-password');await page.locator('#tos-check').check();
  await page.locator('#signup-pass').press('Enter');await page.waitForFunction(()=>document.getElementById('step-7').classList.contains('active'));
  assert.equal(writes.filter(w=>w.path==='/api/auth/signup').length,1);assert.equal(await page.locator('#step-4').isVisible(),false);assert.match(await page.locator('#progress-label').innerText(),/Step 2 of 2/);assert.match(await page.locator('#step-7').innerText(),/trial has not started/);assert(await page.locator('#ob-launch-plan-btn').isDisabled());

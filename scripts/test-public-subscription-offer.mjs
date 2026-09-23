@@ -5,10 +5,10 @@ import path from 'node:path';
 import {createRequire} from 'node:module';
 const require=createRequire(import.meta.url),root=path.resolve(new URL('..',import.meta.url).pathname);
 const presentation=require('../assets/subscription-offer.js');
-const offer={available:true,signup_available:true,offer_version:'subscription_v2',catalog_revision:4,currency:'usd',payment_fee_policy:{version:'ownly-payments-catalog-v1-r4',catalog_revision:4,currency:'usd',quoted_scope:'standard_us_domestic_card',processing_included:true,basis_points:450,fixed_cents:30},plans:[['starter',39,390],['pro',99,990],['scale',159,1590]].map(([id,monthly_price,annual_price])=>({id,name:id[0].toUpperCase()+id.slice(1),description:'Software tools',monthly_price,annual_price,currency:'usd',offer_version:'subscription_v2',catalog_revision:4,features:['Website','Bookings'],quantities:{creation_ai_credits:id==='pro'?100:0},trial_quantities:{one_to_one_call_minutes:120,group_participant_minutes:id==='scale'?510:0,creation_ai_credits:id==='pro'?100:id==='scale'?300:0}})),comparison_rows:[{label:'Creation credits',values:{starter:0,pro:100,scale:300}}]};
+const offer={available:true,signup_available:true,offer_version:'subscription_v2',catalog_revision:4,currency:'usd',payout_scope:{business_countries:['US'],currency:'usd',card_countries:['US']},payment_fee_policy:{version:'ownly-payments-catalog-v1-r4',catalog_revision:4,currency:'usd',quoted_scope:'standard_us_domestic_card',processing_included:true,basis_points:450,fixed_cents:30},plans:[['starter',39,390],['pro',99,990],['scale',159,1590]].map(([id,monthly_price,annual_price])=>({id,name:id[0].toUpperCase()+id.slice(1),description:'Software tools',monthly_price,annual_price,currency:'usd',offer_version:'subscription_v2',catalog_revision:4,features:['Website','Bookings'],quantities:{creation_ai_credits:id==='pro'?100:0},trial_quantities:{one_to_one_call_minutes:120,group_participant_minutes:id==='scale'?510:0,creation_ai_credits:id==='pro'?100:id==='scale'?300:0}})),comparison_rows:[{label:'Creation credits',values:{starter:0,pro:100,scale:300}}]};
 assert(presentation.valid(offer));
 assert(!presentation.valid({...offer,available:false}));
-assert.match(presentation.render(offer,'signup','monthly','scale'),/510 group participant-minutes/);
+assert.match(presentation.render(offer,'signup','monthly','scale'),/510 shared minutes/);
 assert.match(presentation.render(offer,'pricing'),/entire initial trial/);
 assert.match(presentation.render(offer,'pricing','monthly'),/\$39<sub>\/month/);
 assert.match(presentation.render(offer,'pricing','annual'),/\$1,590<sub>\/year/);
@@ -37,7 +37,7 @@ console.log(JSON.stringify({status:'PASS',inlineScriptsParsed:count,checks:['dyn
 const ctaSource=scripts.slice(scripts.indexOf('  function updateSignupCta(){'),scripts.indexOf('  window.obUpdateSignupCta = updateSignupCta;'));
 const cta={textContent:'',disabled:false,dataset:{}},hint={textContent:''},checkline={textContent:''};
 let eligibility=null;
-const ctaContext={approvalBlocksCheckout:()=>false,renderSignupApproval:()=>{},selectedPlan:()=>({id:'starter'}),signupPayoutEligibility:()=>eligibility,usesSubscriptionOffer:()=>true,planState:{publicOffer:offer},document:{getElementById:id=>({'ob-launch-plan-btn':cta,'ob-launch-plan-hint':hint,'launch-plan-checkline':checkline}[id])}};
+const ctaContext={publicOfferRenderer:()=>presentation,approvalBlocksCheckout:()=>false,renderSignupApproval:()=>{},selectedPlan:()=>({id:'starter'}),signupPayoutEligibility:()=>eligibility,usesSubscriptionOffer:()=>true,planState:{publicOffer:offer},document:{getElementById:id=>({'ob-launch-plan-btn':cta,'ob-launch-plan-hint':hint,'launch-plan-checkline':checkline}[id])}};
 vm.runInNewContext(ctaSource+';updateSignupCta();',ctaContext);assert.equal(cta.disabled,true);
 eligibility={country:'US',status:'supported'};vm.runInNewContext('updateSignupCta();',ctaContext);assert.equal(cta.disabled,false);assert.equal(cta.textContent,'Continue to secure checkout');
 eligibility={country:'GB',status:'supported'};vm.runInNewContext('updateSignupCta();',ctaContext);assert.equal(cta.disabled,true);
@@ -47,5 +47,5 @@ assert(nativeSignup.indexOf('if(window.obUpdateSignupCta)window.obUpdateSignupCt
 console.log('PASS: native signup success refreshes the eligibility-dependent Checkout CTA');
 
 const chatOffer=structuredClone(offer);chatOffer.plans.forEach((plan,i)=>{plan.features=['Human chat'];plan.quantities.chat_concurrency=[1,8,20][i];});chatOffer.comparison_rows.push({id:'chat_concurrency',label:'Commercial human chat ceiling',values:{starter:1,pro:8,scale:20}});
-const chatMarkup=presentation.render(chatOffer,'pricing');assert.match(chatMarkup,/Up to 8 simultaneous human chats/);assert.match(chatMarkup,/it starts at one/);assert.match(chatMarkup,/Voice and video remain one at a time/);assert.doesNotMatch(chatMarkup,/Commercial human chat ceiling/);
+const chatMarkup=presentation.render(chatOffer,'pricing');assert.match(chatMarkup,/Up to 8 simultaneous client chats/);assert.match(chatMarkup,/it starts at one/);assert.match(chatMarkup,/Voice and video remain one at a time/);assert.doesNotMatch(chatMarkup,/Commercial human chat ceiling/);
 console.log('PASS: dynamic public chat allowances and initial preference are explained');

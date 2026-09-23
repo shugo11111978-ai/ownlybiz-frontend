@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
+import {createRequire} from 'node:module';
+const presentation=createRequire(import.meta.url)('../assets/subscription-offer.js');
 
 const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 
@@ -13,7 +15,7 @@ assert.match(html, />Show less</, 'expanded country guidance identifies the coll
 assert.doesNotMatch(html, /\.ob-payout-country-details summary::after/, 'country guidance does not add a second arrow');
 assert.match(html, /aria-describedby="signup-payout-country-summary"/, 'country selector describes its live guidance accessibly');
 assert.match(html, /for="signup-payout-country">Business country/, 'signup uses a plain business-country label');
-assert.match(html, /Currently available to US-based businesses/, 'the new offer states its current business-country scope');
+assert.match(html, /obSignupBusinessCountries/, 'the new offer reads its business-country scope from the API');
 assert.match(html, /Use the country where your Stripe connected account will be legally based, which is separate from where your clients live/, 'expanded guidance distinguishes business country from client location');
 assert.match(html, /check Stripe Connect onboarding and paid-plan availability[\s\S]*does not confirm current balance or bank-payout eligibility/,
   'expanded country guidance limits Ownlybiz eligibility claims and keeps bank-payout authority in Stripe');
@@ -60,14 +62,16 @@ const elements={
   'signup-payout-country-summary-text':{textContent:''}
 };
 let mode='subscription_v2';
-const context={window:null,document:{getElementById:id=>elements[id]},sessionStorage:{getItem:()=>'',setItem:()=>{}},obSubscriptionOfferMode:()=>mode,obLoadPublicOffer:async()=>{},fetch:async()=>({ok:true,json:async()=>({countries:[{code:'US',label:'United States',supported:true},{code:'CA',label:'Canada',supported:true}]})})};context.window=context;vm.createContext(context);
+const context={window:null,OB_SUBSCRIPTION_OFFER:presentation,__OB_PUBLIC_OFFER__:{payout_scope:{business_countries:['US']}},document:{getElementById:id=>elements[id]},sessionStorage:{getItem:()=>'',setItem:()=>{}},obSubscriptionOfferMode:()=>mode,obLoadPublicOffer:async()=>{},fetch:async()=>({ok:true,json:async()=>({countries:[{code:'US',label:'United States',supported:true},{code:'CA',label:'Canada',supported:true}]})})};context.window=context;vm.createContext(context);
 vm.runInContext(html.slice(start,end),context);
 await context.obLoadSignupPayoutCountries();
 assert.equal(elements['signup-payout-country'].disabled,false);
-assert.equal(elements['signup-payout-country-summary-text'].textContent,'Currently available to US-based businesses.','catalog completion preserves concise US scope before selection');
+assert.equal(elements['signup-payout-country-summary-text'].textContent,'Select the country where your business is legally based.','catalog completion preserves neutral business guidance');
 assert.equal(context._obSignupPayoutCountries.length,1,'v2 catalog remains US-only');
 elements['signup-payout-country'].value='US';context.obUpdateSignupPayoutCountry();
-assert.equal(elements['signup-payout-country-summary-text'].textContent,'Currently available to US-based businesses.','selection keeps the same concise scope');
+assert.equal(elements['signup-payout-country-summary-text'].textContent,'Payments are available for this business location.','eligible selection confirms the business location');
+context.__OB_PUBLIC_OFFER__.payout_scope.business_countries=['US','CA'];await context.obLoadSignupPayoutCountries();assert.equal(context._obSignupPayoutCountries.length,2,'future API-authorized scope expands without a frontend country change');
+context.__OB_PUBLIC_OFFER__.payout_scope={};await context.obLoadSignupPayoutCountries();assert.equal(elements['signup-payout-country'].disabled,true,'missing country policy fails closed');
 mode='legacy';elements['signup-payout-country'].value='';await context.obLoadSignupPayoutCountries();
 assert.equal(elements['signup-payout-country-summary-text'].textContent,'Select the country where your business is legally based.','legacy empty selection keeps plain business-country guidance');
 elements['signup-payout-country'].value='CA';context.obUpdateSignupPayoutCountry();

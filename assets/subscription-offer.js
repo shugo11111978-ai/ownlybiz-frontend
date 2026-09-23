@@ -24,9 +24,9 @@
   function amount(plan,interval){return Math.round(plan[interval==='annual'?'annual_price':'monthly_price']*100);}
   function annualSaving(data){return data.plans.every(function(p){return amount(p,'annual')===10*amount(p,'monthly');});}
   function features(plan){
-    return (Array.isArray(plan.features)?plan.features:[]).filter(function(f){return typeof f==='string';}).map(function(f){var limit=plan.quantities&&plan.quantities.chat_concurrency;return f==='Human chat'&&Number.isSafeInteger(limit)&&limit>=0?chatLimit(limit):f;});
+    return (Array.isArray(plan.features)?plan.features:[]).filter(function(f){return typeof f==='string';}).map(function(f){var limit=plan.quantities&&plan.quantities.chat_concurrency;return f==='Human chat'&&Number.isSafeInteger(limit)&&limit>=0?chatLimit(limit):({'Human chat':'Client chats','Human voice':'Voice sessions','Human video':'Video sessions','Human chat, voice and video':'Chat, voice and video sessions'}[f]||f);});
   }
-  function chatLimit(value){return value===0?'Human chat not included':'Up to '+value+' simultaneous human chat'+(value===1?'':'s');}
+  function chatLimit(value){return value===0?'Client chats not included':'Up to '+value+' simultaneous client chat'+(value===1?'':'s');}
   function chatNote(){return '<p class="ob-offer-chat-note">Choose your chat limit in session settings; it starts at one. Voice and video remain one at a time.</p>';}
   function card(plan,data,interval,signup,selected){
     var suffix=interval==='annual'?'/year':'/month';
@@ -37,29 +37,69 @@
     return '<article class="pricing-card'+(plan.id==='pro'?' popular':'')+'"><div class="pricing-tier">'+esc(plan.name)+'</div><div class="pricing-price">'+price+'<sub>'+suffix+'</sub></div><p class="ob-offer-billing">'+(interval==='annual'?'Billed once yearly after your trial.':'Billed monthly after your trial.')+'</p><p>'+esc(plan.description||'')+'</p><ul class="pricing-features">'+items+'</ul>'+(data.signup_available===true?'<a class="btn '+(plan.id==='pro'?'btn-primary':'btn-secondary')+'" href="'+href+'">Try '+esc(plan.name)+' for two months</a>':'<button class="btn btn-secondary" disabled>Signup temporarily unavailable</button>')+'</article>';
   }
   function intervals(data,interval,signup){return '<div class="ob-plan-interval-group" role="group" aria-label="Subscription billing interval">'+['monthly','annual'].map(function(i){var text=i==='monthly'?'Monthly':(annualSaving(data)?'Annual · pay for 10 months':'Annual');return '<button type="button" class="ob-plan-interval-btn '+(i===interval?'active':'')+'" aria-pressed="'+(i===interval)+'" onclick="'+(signup?'obSetSignupPlan((window.obSignupPlanState&&window.obSignupPlanState.selected)||\'starter\',\''+i+'\')':'obSetPublicOfferInterval(\''+i+'\')')+'">'+text+'</button>';}).join('')+'</div>';}
-  function signupSummary(data,interval,chosen,review){
-    var suffix=interval==='annual'?'/year':'/month';
-    var trial=chosen.trial_quantities;
-    var billing='<div class="ob-signup-intervals" role="group" aria-label="Billing frequency">'+['monthly','annual'].map(function(i){return '<button type="button" aria-pressed="'+(i===interval)+'" onclick="obSetSignupPlan(\''+chosen.id+'\',\''+i+'\')">'+(i==='annual'?'Yearly'+(annualSaving(data)?' · save 2 months':''):'Monthly')+'</button>';}).join('')+'</div>';
-    var choices=data.plans.map(function(plan){return '<button type="button" class="ob-signup-choice" data-ob-signup-plan="'+plan.id+'" aria-pressed="'+(plan.id===chosen.id)+'" onclick="obSetSignupPlan(\''+plan.id+'\')"><span>'+esc(plan.name)+'</span><span>'+money(amount(plan,interval))+suffix+'</span></button>';}).join('');
-    var allowance=trial?'<p class="ob-signup-allowance">Across your two-month trial: '+esc(trial.one_to_one_call_minutes)+' 1:1 audio/video minutes'+(trial.group_participant_minutes?', '+esc(trial.group_participant_minutes)+' group participant-minutes':'')+(trial.creation_ai_credits?' and '+esc(trial.creation_ai_credits)+' creation AI credits':'')+'.</p>':'';
+  function businessCountries(data){
+    var countries=data&&data.payout_scope&&data.payout_scope.business_countries;
+    return Array.isArray(countries)?countries.filter(function(code){return typeof code==='string'&&/^[A-Z]{2}$/.test(code);}):[];
+  }
+  function signupParts(data,interval,chosen,review){
+    var suffix=interval==='annual'?'/year':'/month',trial=chosen.trial_quantities;
     var items=features(chosen).map(function(f){return '<li>'+esc(f)+'</li>';}).join('');
-    return '<div class="ob-signup-selection">'
-      +'<div class="ob-signup-summary"><div><span class="ob-signup-summary-label">Your plan</span><strong>'+esc(chosen.name)+'</strong></div><div class="ob-signup-summary-price"><strong>'+money(amount(chosen,interval))+'<span>'+suffix+'</span></strong><span>after your two-month trial</span></div></div>'
-      +'<details class="ob-signup-change"><summary>Change plan or billing</summary>'+billing+'<div class="ob-signup-choices" role="group" aria-label="Choose your plan">'+choices+'</div></details>'
-      +(review?'<dl class="ob-signup-total"><dt>Subscription due today</dt><dd>$0</dd></dl>':'')
-      +'<p class="ob-signup-trial-note">Two months free. Card required to start your trial. Renews automatically; cancel before your trial ends to avoid the first subscription charge.</p>'
-      +(data.signup_requires_approval===true?'<p class="ob-signup-approval-note">We review new expert accounts before checkout. Your trial starts after approval, when you finish checkout.</p>':'')
-      +'<details class="ob-signup-included"><summary>What’s included and trial limits</summary>'+(items?'<ul>'+items+'</ul>':'')+allowance+'<p><a href="/pricing" target="_blank" rel="noopener">Compare all plan features and limits</a></p></details>'
-      +'<p class="ob-signup-payment-note">Client payments: <strong>'+esc(feeText(data))+'</strong>, including ordinary processing and Ownlybiz payment services. Applies during the trial. US-issued cards in USD.</p>'
+    var allowances=[];
+    if(trial&&Number.isSafeInteger(trial.one_to_one_call_minutes))allowances.push('<li><strong>Voice and video sessions:</strong> '+esc(trial.one_to_one_call_minutes)+' minutes shared across your 1:1 calls.</li>');
+    if(trial&&trial.group_participant_minutes)allowances.push('<li><strong>Group sessions:</strong> '+esc(trial.group_participant_minutes)+' shared minutes. Each connected person, including you, uses one minute per minute.</li>');
+    if(trial&&trial.creation_ai_credits)allowances.push('<li><strong>Website and email creation:</strong> '+esc(trial.creation_ai_credits)+' AI credits.</li>');
+    return {
+      summary:'<div><span class="ob-signup-summary-label">Your plan</span><strong>'+esc(chosen.name)+'</strong></div><div class="ob-signup-summary-price"><strong>'+money(amount(chosen,interval))+'<span>'+suffix+'</span></strong><span>after your two-month trial</span></div>',
+      total:review?'<dt>Subscription due today</dt><dd>$0</dd>':'',
+      approval:data.signup_requires_approval===true?'We review new expert accounts before checkout. Your trial starts after approval, when you finish checkout.':'',
+      included:(items?'<ul>'+items+'</ul>':'')+'<p><a href="/pricing" target="_blank" rel="noopener">Compare all plan features</a></p>',
+      allowances:allowances.length?'<p>These limits cover your entire two-month trial.</p><ul>'+allowances.join('')+'</ul><p>Your dashboard shows what remains. Free and discounted sessions use these limits too. There are no automatic overage charges.</p>':'<p>Trial limits are shown before checkout.</p>',
+      payments:'<p><strong>'+esc(feeText(data).replace('successful payment','successful client payment'))+'</strong> after you connect Stripe. Includes ordinary processing and Ownlybiz payment services. Applies during your trial. Connecting Stripe itself does not trigger this fee.</p><p>Current payment scope: standard US-issued cards in USD. Other cards and currencies are outside this offer.</p>'
+    };
+  }
+  function signupSummary(data,interval,chosen,review){
+    var suffix=interval==='annual'?'/year':'/month',parts=signupParts(data,interval,chosen,review);
+    var billing='<div class="ob-signup-intervals" role="group" aria-label="Billing frequency">'+['monthly','annual'].map(function(i){return '<button type="button" data-ob-signup-interval="'+i+'" aria-pressed="'+(i===interval)+'" onclick="obSetSignupPlan((window.obSignupPlanState&&window.obSignupPlanState.selected)||\'starter\',\''+i+'\')">'+(i==='annual'?'Yearly'+(annualSaving(data)?' · save 2 months':''):'Monthly')+'</button>';}).join('')+'</div>';
+    var choices=data.plans.map(function(plan){return '<button type="button" class="ob-signup-choice" data-ob-signup-plan="'+plan.id+'" aria-pressed="'+(plan.id===chosen.id)+'" onclick="obSetSignupPlan(\''+plan.id+'\')"><span data-ob-signup-name>'+esc(plan.name)+'</span><span data-ob-signup-price>'+money(amount(plan,interval))+suffix+'</span></button>';}).join('');
+    return '<div class="ob-signup-selection" data-ob-signup-kind="'+(review?'review':'signup')+'">'
+      +billing+'<div class="ob-signup-choices" role="group" aria-label="Choose your plan">'+choices+'</div>'
+      +'<div class="ob-signup-summary" data-ob-signup-part="summary">'+parts.summary+'</div>'
+      +(review?'<dl class="ob-signup-total" data-ob-signup-part="total">'+parts.total+'</dl>':'')
+      +'<p class="ob-signup-trial-note">Two months free. Card required. Renews automatically; cancel before your trial ends to avoid the first subscription charge.</p>'
+      +'<p class="ob-signup-approval-note" data-ob-signup-part="approval"'+(parts.approval?'':' hidden')+'>'+parts.approval+'</p>'
+      +'<details class="ob-signup-included"><summary>What’s included</summary><div data-ob-signup-part="included">'+parts.included+'</div></details>'
+      +'<details class="ob-signup-limits"><summary>Trial usage limits</summary><div data-ob-signup-part="allowances">'+parts.allowances+'</div></details>'
+      +'<details class="ob-signup-payment-note"><summary>Platform fees apply when you accept payments with Ownlybiz.</summary><div data-ob-signup-part="payments">'+parts.payments+'</div></details>'
       +'<p class="ob-signup-country-eligibility-note"></p></div>';
+  }
+  // The signup component owns these controls. Keep their nodes mounted while
+  // updating selection and disclosures, so a click never detaches its target.
+  function updateSignup(target,data,kind,interval,selected){
+    if(!target)return;
+    var markup=render(data,kind,interval,selected);
+    var existing=target.querySelector('[data-ob-signup-kind="'+kind+'"]');
+    if(!valid(data)||!existing){if(target.innerHTML!==markup)target.innerHTML=markup;target._obSignupParts=null;return;}
+    interval=interval==='annual'?'annual':'monthly';
+    var chosen=data.plans.find(function(plan){return plan.id===selected;})||data.plans[0];
+    var parts=signupParts(data,interval,chosen,kind==='review');
+    var previous=target._obSignupParts||{};
+    Object.keys(parts).forEach(function(key){var node=target.querySelector('[data-ob-signup-part="'+key+'"]');if(!node)return;if(previous[key]!==parts[key]&&node.innerHTML!==parts[key])node.innerHTML=parts[key];if(key==='approval')node.hidden=!parts[key];});
+    target._obSignupParts=parts;
+    data.plans.forEach(function(plan){
+      var button=target.querySelector('[data-ob-signup-plan="'+plan.id+'"]');
+      if(!button)return;
+      var pressed=String(plan.id===chosen.id);if(button.getAttribute('aria-pressed')!==pressed)button.setAttribute('aria-pressed',pressed);
+      var name=button.querySelector('[data-ob-signup-name]');if(name&&name.textContent!==plan.name)name.textContent=plan.name;
+      var price=button.querySelector('[data-ob-signup-price]'),text=money(amount(plan,interval))+(interval==='annual'?'/year':'/month');if(price&&price.textContent!==text)price.textContent=text;
+    });
+    ['monthly','annual'].forEach(function(value){var button=target.querySelector('[data-ob-signup-interval="'+value+'"]');if(!button)return;var pressed=String(value===interval);if(button.getAttribute('aria-pressed')!==pressed)button.setAttribute('aria-pressed',pressed);var label=value==='annual'?'Yearly'+(annualSaving(data)?' · save 2 months':''):'Monthly';if(button.textContent!==label)button.textContent=label;});
   }
   function loading(){return '<div class="ob-offer-unavailable" role="status"><h2>Current plans are loading</h2><p>Prices and payment fees must be confirmed before checkout. Please reload if this message remains.</p></div>';}
   function comparison(data){
     var rows=(data.comparison_rows||[]).slice();
     if(data.plans.every(function(p){return p.trial_quantities;}))['one_to_one_call_minutes','group_participant_minutes','creation_ai_credits'].forEach(function(id){rows.push({label:{one_to_one_call_minutes:'1:1 audio/video minutes · entire initial trial',group_participant_minutes:'Group participant-minutes · entire initial trial',creation_ai_credits:'Creation credits · entire initial trial'}[id],values:Object.fromEntries(data.plans.map(function(p){return [p.id,p.trial_quantities[id]];}))});});
     if(!Array.isArray(rows)||!rows.length)return '';
-    return '<div class="ob-offer-table-wrap"><table class="ob-offer-table"><caption>Compare what is included</caption><thead><tr><th scope="col">Feature or allowance</th>'+data.plans.map(function(p){return '<th scope="col">'+esc(p.name)+'</th>';}).join('')+'</tr></thead><tbody>'+rows.map(function(row){if(!row||!row.label||!row.values)return '';return '<tr><th scope="row">'+esc(row.id==='chat_concurrency'?'Simultaneous human chats':row.label)+'</th>'+data.plans.map(function(p){var value=row.values[p.id];return '<td>'+esc(value==null?'—':row.id==='chat_concurrency'&&Number.isSafeInteger(value)&&value>=0?chatLimit(value):value)+'</td>';}).join('')+'</tr>';}).join('')+'</tbody></table></div>';
+    return '<div class="ob-offer-table-wrap"><table class="ob-offer-table"><caption>Compare what is included</caption><thead><tr><th scope="col">Feature or allowance</th>'+data.plans.map(function(p){return '<th scope="col">'+esc(p.name)+'</th>';}).join('')+'</tr></thead><tbody>'+rows.map(function(row){if(!row||!row.label||!row.values)return '';return '<tr><th scope="row">'+esc(row.id==='chat_concurrency'?'Simultaneous client chats':row.label)+'</th>'+data.plans.map(function(p){var value=row.values[p.id];return '<td>'+esc(value==null?'—':row.id==='chat_concurrency'&&Number.isSafeInteger(value)&&value>=0?chatLimit(value):value)+'</td>';}).join('')+'</tr>';}).join('')+'</tbody></table></div>';
   }
   function faq(data){
     var qs=[
@@ -95,5 +135,5 @@
     return '<section class="ob-media-usage"><h3>Live usage · '+(period.kind==='trial'?'initial trial total':'current monthly allowance')+'</h3>'+rows+'<p>Current period ends '+esc(ends)+'. 1:1 audio and video share the call allowance. Group usage counts each connected participant, including the host. Free and discounted sessions count too.</p><p>Creating a group reserves capacity × duration, including the host. Unused reserved time is released when the session finishes. No automatic overage charges.</p></section>';
   }
   function terms(data){return [['h2','Software subscriptions and payment services'],['p','New subscriptions under this offer have an initial two-calendar-month software trial with a payment method required. Checkout confirms the exact first-charge date and recurring amount. Stop renewal before the first-charge date to avoid the first software bill. Annual billing covers twelve months. The trial is available once and plan changes do not restart it.'],['p',paymentNote(data)+' The offer supports US-based expert businesses, USD and eligible US-issued cards. It does not promise an international or alternative-payment rate. Accepted payment commitments retain their saved fee terms.'],['p','Paid, free, promotional and discounted sessions consume the applicable usage allowance. The dashboard shows limits and remaining usage. Unused included allowances do not accumulate. There is no automatic overage billing. Existing paid obligations and separately agreed complimentary access remain subject to their own terms.']];}
-  return {mode:mode,valid:valid,money:money,feeText:feeText,paymentNote:paymentNote,render:render,terms:terms,amount:amount,annualSaving:annualSaving,usage:usage};
+  return {mode:mode,valid:valid,businessCountries:businessCountries,updateSignup:updateSignup,money:money,feeText:feeText,paymentNote:paymentNote,render:render,terms:terms,amount:amount,annualSaving:annualSaving,usage:usage};
 });

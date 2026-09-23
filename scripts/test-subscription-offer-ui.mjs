@@ -1,0 +1,36 @@
+import fs from 'node:fs';
+import vm from 'node:vm';
+import assert from 'node:assert/strict';
+const html=fs.readFileSync(new URL('../index.html',import.meta.url),'utf8');
+function section(start,end){const a=html.indexOf(start);assert(a>=0);const b=html.indexOf(end,a+start.length);assert(b>a);return html.slice(a,b);}
+const pricing=section('  function planPriceText(p, interval){','  function billingAttentionHtml(sub){');
+const saving=section('  async function handlePlanSave(){','  window.obSubmitPlanChange = function(){');
+const fee={currency:'usd',quoted_scope:'standard_us_domestic_card',processing_included:true,rounding:'nearest_cent_half_up',version:'ownly-payments-2026-09-v2',basis_points:450,fixed_cents:30};
+const plans=[['starter','Starter',39,390],['pro','Pro',99,990],['scale','Scale',159,1590]].map(([id,name,monthly_price,annual_price])=>({id,name,monthly_price,annual_price,offer_version:'subscription_v2',description:'Software subscription'}));
+let calls=[];
+const state={selected:'starter',interval:'monthly',current:plans[0],plans,billing:{offer_version:'subscription_v2',plans,current_plan:plans[0],subscription:{status:'not_started'},software_trial:{already_started:false},payment_fee_policy:fee}};
+const window={};const validation=section('function obValidPaymentPolicy(policy){','function obExpertMoney(value){');vm.runInNewContext(validation,{window});
+const context={window,planState:state,planDefaults:[{id:'starter',monthly_price:0,annual_price:0}],plansById:plans=>Object.fromEntries(plans.map(p=>[p.id,p])),esc:v=>String(v||''),billingAttentionHtml:()=>'',console,
+ confirmModal:async input=>{calls.push({type:'review',input});return true;},openSubscriptionCheckout:async(...args)=>calls.push({type:'checkout',args}),obJson:async(...args)=>calls.push({type:'api',args}),toastOk:()=>{},refreshBillingUi:()=>{},document:{querySelectorAll:()=>[]}};
+vm.createContext(context);vm.runInContext(pricing+saving,context);
+assert.equal(context.planPriceText(plans[0],'monthly'),'$39/mo');assert.equal(context.planPriceText(plans[0],'annual'),'$390/yr');
+assert.equal(context.planPriceText({id:'starter',monthly_price:0},'monthly'),'Free');
+const rendered=context.newOfferManagementHtml(state.billing,'payments');
+assert.match(rendered,/4.5% \+ \$0.30/);assert.match(rendered,/one combined fee/);assert.match(rendered,/first two calendar months/);
+assert.doesNotMatch(rendered,/12%|8%|5% platform fee|You keep|Starter has no monthly|no credit card required/);
+assert.match(rendered,/pay for 10 months/);assert.match(rendered,/billed once yearly/);
+await context.handlePlanSave();assert.equal(calls.find(x=>x.type==='checkout').args[0],'starter');assert.ok(!calls.some(x=>x.type==='api'));
+calls=[];state.billing.subscription={status:'active',stripe_subscription_id:'sub_fixture',interval:'monthly'};state.current=plans[2];state.selected='starter';
+await context.handlePlanSave();assert.equal(calls.find(x=>x.type==='api').args[0],'/api/billing/change');assert.equal(calls.find(x=>x.type==='api').args[1].body.plan,'starter');
+assert.ok(!calls.some(x=>x.type==='checkout'));assert.ok(!calls.some(x=>x.type==='api'&&/cancel|starter$/.test(x.args[0])));
+calls=[];state.billing.subscription.status='canceled';state.current=plans[0];state.selected='starter';
+await context.handlePlanSave();assert.equal(calls.find(x=>x.type==='checkout').args[0],'starter','Canceled Starter must be able to rejoin through paid Checkout');
+assert.match(context.newOfferPaymentNote({}),/confirmed separately/,'Unresolved fee must not be advertised as activated');
+const customPlans=plans.map(p=>({...p,monthly_price:39.99,annual_price:425.25,catalog_revision:4}));
+const changed={...state.billing,plans:customPlans,payment_fee_policy:{...fee,version:'ownly-payments-catalog-v1-r4',catalog_revision:4,basis_points:0,fixed_cents:75}};
+assert.equal(context.planPriceText(customPlans[0],'monthly'),'$39.99/mo');
+assert.match(context.newOfferManagementHtml(changed),/0% \+ \$0.75/);
+assert.doesNotMatch(context.newOfferManagementHtml(changed),/pay for 10 months/);
+state.billing=changed;state.plans=customPlans;state.selected='pro';state.current=customPlans[0];state.billing.subscription={status:'active',stripe_subscription_id:'sub_fixture',interval:'monthly'};calls=[];
+await context.handlePlanSave();assert.equal(calls.find(x=>x.type==='api').args[1].body.catalog_revision,4);
+console.log('Subscription offer UI: paid Starter, annual amounts, truthful fee note and paid-to-Starter change passed.');

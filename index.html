@@ -1174,7 +1174,9 @@ window.addEventListener('popstate', function (event) {
   function setPromoEligibility(plan){
     plan = normalizePromoPlan(plan);
     state.promoPlan = plan;
-    state.promoEligible = promoPlanEligible(plan);
+    var accessCurrent = state.promoAccessOwner && state.promoAccessOwner === token();
+    state.promoEligible = accessCurrent && typeof state.promoAccessDecision === 'boolean'
+      ? state.promoAccessDecision : promoPlanEligible(plan);
     var group = document.getElementById('ob-credit-promo-group');
     if(group) group.classList.toggle('ob-promo-locked', !state.promoEligible);
     var count = document.getElementById('ob-credit-promo-count');
@@ -1182,7 +1184,7 @@ window.addEventListener('popstate', function (event) {
     var note = document.getElementById('ob-credit-promo-eligibility-note');
     if(note){
       note.style.display = state.promoEligible ? 'none' : 'block';
-      note.innerHTML = '<strong>Promotion codes are locked on ' + esc(plan || 'Starter') + '.</strong> Move this expert to Pro or Scale to create codes and let clients apply them at checkout.';
+      note.innerHTML = '<strong>Promotion codes are not enabled for this expert.</strong> Promotion access follows the subscription plan and any Admin access settings.';
     }
     document.querySelectorAll('#ob-credit-promo-group input,#ob-credit-promo-group select,#ob-credit-promo-group button').forEach(function(el){
       if(el.closest && el.closest('.ob-credit-promo-lock')) return;
@@ -1192,14 +1194,23 @@ window.addEventListener('popstate', function (event) {
   }
 
   async function loadPromoEligibility(){
+    var requestOwner = token();
+    state.promoAccessOwner = null;
+    state.promoAccessDecision = null;
     setPromoEligibility(planFromLocalBilling());
     if(!isExpertCreditUser()) return state.promoEligible;
     try{
       var d = await appApi('GET','/api/billing/me');
+      if(token() !== requestOwner) return false;
+      var effective = d.expert_access;
+      var decision = effective && effective.features && effective.features.promotions && effective.features.promotions.decision;
+      state.promoAccessOwner = requestOwner;
+      state.promoAccessDecision = typeof decision === 'boolean' ? decision : null;
       var plan = planFromBillingPayload(d);
       setPromoEligibility(plan || planFromLocalBilling());
       return state.promoEligible;
     }catch(e){
+      if(token() !== requestOwner) return false;
       setPromoEligibility(planFromLocalBilling());
       return state.promoEligible;
     }
@@ -11911,6 +11922,8 @@ function obExpertSessionEstimate(opts){
   var clientTotalCents = Math.max(0, grossCents - promoDiscountCents);
   var grossFeeCents = Math.max(0, cents(dollars(grossCents) * (1 - cut)));
   var feeCents = grossCents > 0 ? Math.min(clientTotalCents, Math.max(0, Math.round(grossFeeCents * (clientTotalCents / grossCents)))) : 0;
+  var fixedPolicy = typeof window.obExpertFeeSnapshot === 'function' ? window.obExpertFeeSnapshot(opts.session) : null;
+  if(fixedPolicy) feeCents = clientTotalCents > 0 ? Math.min(clientTotalCents,Math.floor((clientTotalCents*fixedPolicy.basis_points+5000)/10000)+fixedPolicy.fixed_cents) : 0;
   var payoutCents = Math.max(0, clientTotalCents - feeCents);
   return {
     billableMins: billableMins,
@@ -11919,12 +11932,33 @@ function obExpertSessionEstimate(opts){
     clientTotal: dollars(clientTotalCents),
     payout: dollars(payoutCents),
     effectiveClientRate: rate * (1 - pct / 100),
-    effectivePayoutRate: rate * (1 - pct / 100) * cut,
+    effectivePayoutRate: rate * (1 - pct / 100) * (fixedPolicy ? 1 - fixedPolicy.basis_points / 10000 : cut),
     promoPercent: pct
   };
 }
 window.obExpertPromoPercent = obExpertPromoPercent;
 window.obExpertSessionEstimate = obExpertSessionEstimate;
+function obExpertFeeSnapshot(session){
+  var saved=window._obExpertPaymentPolicySnapshot;
+  if(!session){
+    var sid=window._obExpertRealtime&&window._obExpertRealtime.focusedRoomId||window._sid||window._obActiveSessId;
+    var token=window.OB_CLIENT_CONTEXT&&window.OB_CLIENT_CONTEXT.token();
+    if(!saved||saved.sessionId!==String(sid||'')||saved.token!==token)return null;
+    session=saved.session;
+  }
+  if(['prepaid','credit','topup'].indexOf(String(session.credit_mode||session.payment_mode||'').toLowerCase())!==-1)return null;
+  var policy=session.payment_fee_policy||session.payment_fee_policy_json;
+  try{if(typeof policy==='string')policy=JSON.parse(policy);}catch(e){return null;}
+  return obValidPaymentPolicy(policy)?policy:null;
+}
+window.obExpertFeeSnapshot=obExpertFeeSnapshot;
+function obValidPaymentPolicy(policy){
+  if(!policy||policy.currency!=='usd'||policy.quoted_scope!=='standard_us_domestic_card'||policy.processing_included!==true||policy.rounding!=='nearest_cent_half_up')return false;
+  if(!Number.isSafeInteger(policy.basis_points)||policy.basis_points<0||policy.basis_points>10000||!Number.isSafeInteger(policy.fixed_cents)||policy.fixed_cents<0||policy.fixed_cents>100000)return false;
+  if(policy.version==='ownly-payments-2026-09-v2')return policy.basis_points===450&&policy.fixed_cents===30;
+  return Number.isSafeInteger(policy.catalog_revision)&&policy.catalog_revision>0&&policy.version==='ownly-payments-catalog-v1-r'+policy.catalog_revision;
+}
+window.obValidPaymentPolicy=obValidPaymentPolicy;
 function obExpertMoney(value){
   var n = parseFloat(value || 0);
   if(!Number.isFinite(n)) n = 0;
@@ -12006,7 +12040,7 @@ function obRenderExpertBillingTruth(opts){
   var promoCode = sess.session_promo_code || sess.promo_code || window._obSessionPromoCode || '';
   var elapsed = opts.elapsedSecs != null ? parseFloat(opts.elapsedSecs || 0) : (sess.duration_secs != null ? parseFloat(sess.duration_secs || 0) : 0);
   if(!elapsed && sess.started_at) elapsed = Math.max(0, Math.floor(Date.now()/1000) - parseInt(sess.started_at || 0, 10));
-  var est = obExpertSessionEstimate({elapsedSecs:elapsed,rate:rate,freeMins:free,cut:cut,promoPercent:promoPct});
+  var est = obExpertSessionEstimate({elapsedSecs:elapsed,rate:rate,freeMins:free,cut:cut,promoPercent:promoPct,session:sess});
   if(sess.total_charged != null && Number(sess.total_charged) >= 0) est.clientTotal = Number(sess.total_charged) || 0;
   if(sess.promo_discount != null && Number(sess.promo_discount) >= 0) est.promoDiscount = Number(sess.promo_discount) || 0;
   if(sess.expert_earned != null && Number(sess.expert_earned) >= 0) est.payout = Number(sess.expert_earned) || 0;
@@ -35659,6 +35693,9 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
   setTimeout(function(){ if(publicExpertHost() && !hasExpertPayload()) showProfileLoadFallback(); }, 12000);
 })();
 </script>
+<link rel="stylesheet" href="/assets/admin-commercial-catalog.css">
+<script src="/assets/admin-commercial-catalog.js"></script>
+<script src="/assets/creation-ai-request.js"></script>
 <script>
 (function(){
 	  var PROD_API = 'https://ownlybiz-backend-production.up.railway.app';
@@ -36115,10 +36152,29 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
     updateSignupCta();
   }
 
+  var commercialOwner=null;
+  function renderAdminCommercialCatalog(panel){
+    var context=window.OB_CLIENT_CONTEXT;
+    if(!window.OWNLYBIZ_IS_STAGING||!context||!window.OB_ADMIN_COMMERCIAL_CATALOG)return;
+    var owner=context.capture('admin-commercial-catalog');
+    if(!owner||!owner.token||owner.role!=='admin'||!context.isCurrent(owner,{exactCredential:true}))return;
+    var existing=document.getElementById('ob-admin-commercial-catalog');
+    if(existing&&commercialOwner&&context.isCurrent(commercialOwner,{exactCredential:true}))return;
+    if(existing)existing.remove();
+    commercialOwner=owner;
+    var container=document.createElement('section');container.id='ob-admin-commercial-catalog';
+    var content=panel.querySelector('.admin-content')||panel;content.insertBefore(container,content.firstChild);
+    window.OB_ADMIN_COMMERCIAL_CATALOG.mount({container:container,
+      isCurrent:function(){return commercialOwner===owner&&context.isCurrent(owner,{exactCredential:true});},
+      request:function(path,opts){if(!context.isCurrent(owner,{exactCredential:true}))return Promise.reject(new Error('Administrator session changed. Reload pricing.'));return obJson(path,Object.assign({},opts,{token:owner.token,signal:owner.signal}));},
+      onPublished:function(){try{sessionStorage.removeItem(BILLING_CACHE_KEY);localStorage.removeItem(BILLING_CACHE_KEY);}catch(e){}}
+    });
+  }
   function renderAdminPlanConfig(){
     var panel = document.getElementById('admin-panel-fee-config');
     if(!panel) return;
 	    ensureAdminFeeSaveBar();
+    renderAdminCommercialCatalog(panel);
     var existingCard = document.getElementById('ob-admin-plan-config');
     if(existingCard){
       wireAdminPriceIdInputs(existingCard);
@@ -36130,12 +36186,15 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
     card.className = 'admin-card';
     card.id = 'ob-admin-plan-config';
     card.style.marginTop = '20px';
-    card.innerHTML = '<div class="ob-admin-plan-head"><div class="admin-card-title">Subscription Plans</div><div class="admin-card-title-sub">Prices, fees, and Stripe Price IDs</div>'
+    card.innerHTML = '<div class="ob-admin-plan-head"><div class="admin-card-title">Earlier subscription plans</div><div class="admin-card-title-sub">Legacy prices, fees, and Stripe Price IDs</div>'
       + '<div class="ob-admin-mode-toggle" role="group" aria-label="Stripe Price ID mode"><button type="button" data-ob-admin-price-mode="test" onclick="obSetAdminPriceMode(\'test\')">Test</button><button type="button" data-ob-admin-price-mode="live" onclick="obSetAdminPriceMode(\'live\')">Live</button></div></div>'
       + '<div id="ob-admin-plan-grid" style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;"></div>'
-      + '<div style="font-size:12px;color:rgba(246,241,233,.45);line-height:1.6;margin-top:14px;">Use Stripe Price IDs that begin with <code>price_</code>. Product IDs are intentionally rejected. The Test/Live toggle only changes which Stripe fields are shown; the single save button applies to all settings on this page.</div>';
+      + '<div style="font-size:12px;color:rgba(246,241,233,.45);line-height:1.6;margin-top:14px;">Use Stripe Price IDs that begin with <code>price_</code>. Product IDs are intentionally rejected. The Test/Live toggle only changes which Stripe fields are shown; the earlier-plan save button applies only to legacy settings, not the new subscription pricing above.</div>';
+    var catalogSection = document.getElementById('ob-admin-commercial-catalog');
     var first = panel.querySelector('.admin-card');
-    if(first && first.parentNode) first.parentNode.insertBefore(card, first.nextSibling);
+    if(catalogSection && catalogSection.parentNode) catalogSection.insertAdjacentElement('afterend',card);
+    else if(first && first.parentNode) first.parentNode.insertBefore(card, first.nextSibling);
+    else (panel.querySelector('.admin-content')||panel).appendChild(card);
     var grid = card.querySelector('#ob-admin-plan-grid');
     ['starter','pro','scale'].forEach(function(id){
       var title = id.charAt(0).toUpperCase() + id.slice(1);
@@ -36165,7 +36224,7 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
     var bar = document.createElement('div');
     bar.id = 'ob-admin-fee-save-bar';
     bar.className = 'ob-admin-fee-save-bar';
-    bar.innerHTML = '<div><div class="ob-admin-save-title">Fee and subscription settings</div><div class="ob-admin-save-sub">One save applies to platform fees, plan prices, availability, and Stripe Price IDs.</div></div><button id="ob-admin-save-all-fees" type="button" onclick="saveAdminFees()">Save all settings</button>';
+    bar.innerHTML = '<div><div class="ob-admin-save-title">Earlier-plan settings</div><div class="ob-admin-save-sub">Saves legacy platform fees, prices, availability, and Stripe Price IDs. New pricing has its own preview and publish controls.</div></div><button id="ob-admin-save-all-fees" type="button" onclick="saveAdminFees()">Save earlier-plan settings</button>';
     content.insertBefore(bar, content.firstChild);
   }
   function adminInput(plan, key, label, type, mode){
@@ -36333,11 +36392,12 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
       content.insertBefore(card, banner ? banner.nextSibling : content.firstChild);
     }
 	    var p = d.current_plan || planState.current || planDefaults[0];
+	    var newOffer = isNewSubscriptionOffer(d);
 	    var connect = d.stripe_connect || {};
 	    var connectText = billingConnectReady(connect) ? 'ready for paid sessions and expert-share transfers; bank-payout status stays in Stripe' : ((connect.pending || connect.account_id) ? 'setup pending; no balance or bank-payout state inferred' : 'not connected');
 		    card.innerHTML = '<div><div style="font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:var(--gray-400);font-weight:800;">Ownlybiz plan</div>'
 		      + '<div style="font-family:var(--font-head);font-size:22px;font-weight:800;color:var(--brown);margin-top:2px;">'+esc(p.name || 'Starter')+'</div>'
-		      + '<div style="font-size:13px;color:var(--gray-500);margin-top:4px;">You keep <strong style="color:var(--sage);">'+Math.round(p.expert_keep_pct || 88)+'%</strong> of paid sessions. Stripe Connect: '+connectText+'</div></div>'
+		      + '<div style="font-size:13px;color:var(--gray-500);margin-top:4px;">'+(newOffer ? 'Software subscription: '+esc((d.subscription||{}).status||'not started')+'. '+(d.expert_access&&d.expert_access.has_admin_plan_grant?'Complimentary '+esc(d.expert_access.plan_id)+' access is active. ':'') : 'You keep <strong style="color:var(--sage);">'+Math.round(p.expert_keep_pct || 88)+'%</strong> of paid sessions. ')+'Stripe Connect: '+connectText+'</div></div>'
 	      + '<button class="btn btn-primary btn-sm" onclick="dbNav(document.querySelector(\'.db-nav-item[onclick*=payments]\'),\'payments\')">Manage / Upgrade Plan</button>';
 	  }
 	  function syncDashboardPaymentBannerFromBilling(d){
@@ -36367,6 +36427,16 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
 
 	  function updateRatePreviewsWithPlan(plan){
     plan = plan || planState.current || selectedPlan();
+    if(isNewSubscriptionOffer()){
+      var policy=(planState.billing||{}).payment_fee_policy;
+      ['chat','voice','video'].forEach(function(ch){
+        var input=document.getElementById('rate-'+ch),el=document.getElementById('rp-'+ch),rate=Number(input&&input.value);
+        if(!el||!Number.isFinite(rate))return;
+        if(!window.obValidPaymentPolicy(policy)){el.textContent='Your payment rate will be confirmed before activation.';return;}
+        var gross=Math.max(0,Math.round(rate*60*100));var fee=gross?Math.min(gross,Math.floor((gross*policy.basis_points+5000)/10000)+policy.fixed_cents):0;
+        el.textContent='60-min standard US card payment: '+money(gross/100)+' · estimated expert share '+money((gross-fee)/100)+' after the combined payment fee.';
+      });return;
+    }
     var fee = Number(plan.platform_fee_pct || (100 - Number(plan.expert_keep_pct || 88)) || 12);
     var cut = Math.max(0, 1 - fee / 100);
     ['chat','voice','video'].forEach(function(ch){
@@ -36380,21 +36450,56 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
   }
 
   function planPriceText(p, interval){
-    if(!p || p.id === 'starter') return 'Free';
+    if(!p || (p.id === 'starter' && p.offer_version !== 'subscription_v2')) return 'Free';
     var value = Number(interval === 'annual' ? p.annual_price || 0 : p.monthly_price || 0);
-    return '$' + value.toFixed(0) + (interval === 'annual' ? '/yr' : '/mo');
+    return '$' + value.toFixed(Number.isInteger(value)?0:2) + (interval === 'annual' ? '/yr' : '/mo');
   }
   function planById(id){
     return plansById(planState.plans || planDefaults)[id] || plansById(planDefaults)[id] || planDefaults[0];
   }
+  function isNewSubscriptionOffer(data){
+    data=data||planState.billing||{};
+    return data.offer_version==='subscription_v2' || (data.plans||[]).some(function(p){return p.offer_version==='subscription_v2';});
+  }
+  function newOfferPaymentNote(data){
+    var fee=data&&data.payment_fee_policy;
+    if(window.obValidPaymentPolicy(fee)){
+      return 'Standard US domestic-card payments: '+(fee.basis_points/100)+'% + $'+(fee.fixed_cents/100).toFixed(2)+' per successful payment, including ordinary processing and Ownlybiz payment services. This is one combined fee. Other payment conditions require their applicable rate.';
+    }
+    return 'Fees apply when you accept client payments. Your payment rate is confirmed separately before activation.';
+  }
+  function newOfferManagementHtml(data,context){
+    var sub=data.subscription||{},access=data.expert_access||{},trial=data.software_trial||{};
+    var activeContract=!!sub.stripe_subscription_id&&['canceled','incomplete_expired'].indexOf(sub.status)===-1;
+    var plans=data.plans||[],current=data.current_plan||{};
+    var annualLabel=plans.length&&plans.every(function(p){return Math.round(Number(p.annual_price)*100)===10*Math.round(Number(p.monthly_price)*100);})?'Annual · pay for 10 months':'Annual';
+    planState.selected=current.id||'starter';planState.interval=sub.interval||'monthly';
+    var trialCopy=trial.ends_at ? 'Software trial ends '+new Date(trial.ends_at*1000).toLocaleString()+'.'
+      : trial.already_started ? 'The initial software trial has already been used.' : 'Your first two calendar months of software are free. A payment method is required; payment fees still apply to client payments.';
+    return '<div class="ob-plan-console-head"><div><div class="ob-plan-eyebrow">Software subscription</div><div class="ob-plan-title">Choose your plan</div><p>'+esc(trialCopy)+'</p></div>'
+      +(sub.stripe_subscription_id?'<button type="button" class="btn btn-sm" onclick="obManageBillingPortal()">Manage billing</button>':'')+'</div>'
+      +'<p>'+esc(newOfferPaymentNote(data))+'</p>'
+      +(access.has_admin_plan_grant?'<p><strong>Complimentary '+esc(access.plan_id)+' access is active.</strong> Your billing subscription remains separate; an access grant does not cancel a bill.</p>':'')
+      +'<div class="ob-plan-status-pill"><strong>Subscription</strong><span>'+esc(sub.status||'Not started')+'</span></div>'
+      +(sub.cancel_at_period_end?'<p>Software renewal is stopped. Existing access continues through the confirmed paid or trial period; any complimentary access remains separate.</p>':'')
+      +(data.scheduled_change?'<p>Scheduled change: '+esc(data.scheduled_change.plan_id||data.scheduled_change.plan||'selected plan')+' at the next confirmed renewal.</p>':'')
+      +(activeContract?'<p><strong>Your current subscription:</strong> '+esc(current.name||current.id)+' · '+esc(planPriceText(current,sub.interval||'monthly'))+'. This agreed price remains until a confirmed subscription change.</p>':'')
+      +'<p><strong>Plans available for your next subscription or plan change</strong></p>'
+      +billingAttentionHtml(sub)+planCardsHtml(plans,activeContract?current.id:'',planState.interval)
+      +'<div class="ob-plan-interval-group"><button type="button" class="ob-plan-interval-btn" data-ob-billing-interval="monthly" onclick="obSetBillingInterval(\'monthly\')">Monthly</button><button type="button" class="ob-plan-interval-btn" data-ob-billing-interval="annual" onclick="obSetBillingInterval(\'annual\')">'+annualLabel+'</button></div>'
+      +'<p>Annual prices cover twelve months and are billed once yearly. The initial software trial is separate. Stripe Checkout shows the amount and first-charge date before you confirm.</p>'
+      +'<div class="ob-plan-actions"><button type="button" class="btn btn-primary btn-sm ob-plan-confirm-btn" onclick="obSubmitPlanChange()">'+(activeContract?'Review plan change':'Continue to secure checkout')+'</button>'
+      +(sub.stripe_subscription_id&&!sub.cancel_at_period_end&&['active','trialing','past_due','unpaid','payment_action_required'].indexOf(sub.status)!==-1?'<button type="button" class="btn btn-sm" onclick="obStopSoftwareRenewal()">Stop subscription renewal</button>':'')
+      +'<span class="save-status ob-plan-save-status"></span></div><div class="ob-plan-action-hint"></div>';
+  }
   function planCardsHtml(plans, currentId, interval){
     return '<div class="ob-plan-grid">' + plans.filter(function(p){ return p.enabled !== false; }).map(function(p){
       var on = p.id === planState.selected;
-      var currentBadge = p.id === currentId ? '<span class="ob-plan-current-badge">Current</span>' : '';
+      var currentBadge = p.id === currentId ? '<span class="ob-plan-current-badge">'+(p.offer_version==='subscription_v2'?'Current tier':'Current')+'</span>' : '';
       return '<button type="button" class="ob-plan-choice ob-plan-btn '+(on?'active':'')+'" data-plan="'+p.id+'" onclick="obSelectPlan(\''+p.id+'\')" aria-label="Choose '+esc(p.name)+' plan">'
         + '<div class="ob-plan-choice-top"><div><span class="ob-plan-name">'+esc(p.name)+'</span>'+currentBadge+'</div><div class="ob-plan-price">'+planPriceText(p, interval)+'</div></div>'
         + '<div class="ob-plan-desc">'+esc(p.description || '')+'</div>'
-        + '<div class="ob-plan-keep">You keep '+Math.round(p.expert_keep_pct || (100 - (p.platform_fee_pct || 0)))+'% · '+Math.round(p.platform_fee_pct || (100 - (p.expert_keep_pct || 0)))+'% platform fee</div>'
+        + (p.offer_version==='subscription_v2' ? '' : '<div class="ob-plan-keep">You keep '+Math.round(p.expert_keep_pct || (100 - (p.platform_fee_pct || 0)))+'% · '+Math.round(p.platform_fee_pct || (100 - (p.expert_keep_pct || 0)))+'% platform fee</div>')
         + '</button>';
     }).join('') + '</div>';
   }
@@ -36425,6 +36530,13 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
     var interval = planState.interval || 'monthly';
     var current = (planState.current && planState.current.id) || 'starter';
     var p = planById(target);
+    if(isNewSubscriptionOffer()){
+      var subscription=(planState.billing||{}).subscription||{};
+      var subscribed=!!subscription.stripe_subscription_id&&['canceled','incomplete_expired'].indexOf(subscription.status)===-1;
+      document.querySelectorAll('.ob-plan-action-hint').forEach(function(el){el.textContent=planPriceText(p,interval)+' for software. '+(subscribed?'Access changes only after the confirmed billing change.':'Review the first-charge date and payment terms in Stripe Checkout.');});
+      document.querySelectorAll('.ob-plan-confirm-btn,#ob-plan-confirm-btn').forEach(function(btn){btn.textContent=subscribed?'Review plan change':'Continue to secure checkout';});
+      return;
+    }
     document.querySelectorAll('.ob-plan-action-hint').forEach(function(el){
       if(target === current && target !== 'starter') el.textContent = 'Changing billing interval or plan updates through Stripe. Your session fee only changes after Stripe confirms.';
       else if(target === 'starter') el.textContent = current === 'starter' ? 'Starter is active now. You keep ' + Math.round(p.expert_keep_pct || 88) + '% of paid sessions.' : 'Starter begins after your paid subscription is cancelled in Stripe.';
@@ -36462,6 +36574,7 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
   };
   function planManagementHtml(d, context){
     context = context || 'payments';
+    if(isNewSubscriptionOffer(d))return newOfferManagementHtml(d,context);
 	    var p = d.current_plan || planDefaults[0];
 	    var sub = d.subscription || {};
 	    var plans = d.plans || planState.plans || planDefaults;
@@ -36636,6 +36749,7 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
         source: source || '',
         return_path: dashboardReturnPath(source === 'signup' ? 'payments' : activeDashboardPanel() || 'payments')
       };
+      if(p.offer_version==='subscription_v2')body.catalog_revision=p.catalog_revision;
       if(source === 'signup') body.cancel_return_path = '/signup';
       var d = await obJson('/api/billing/checkout', {method:'POST', body:body});
       if(d.url) {
@@ -36664,6 +36778,18 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
     } catch(e) { hideStripeRedirectNotice(); toastErr(e.message || 'Could not open billing portal'); }
   };
 
+  window.obStopSoftwareRenewal = async function(){
+    try {
+      var billing=planState.billing||{},sub=billing.subscription||{};
+      if(!isNewSubscriptionOffer(billing)||!sub.stripe_subscription_id)return;
+      var approved=await confirmModal({title:'Stop software subscription renewal?',body:'Your subscription will not renew after the current paid or trial period. Canceling during the trial prevents its first software bill.',detail:'This does not refund an existing payment or erase an outstanding balance. Client-payment charges and any complimentary access remain separate.',confirmText:'Stop renewal'});
+      if(!approved)return;
+      await obJson('/api/billing/cancel',{method:'POST',body:{}});
+      toastOk('Software renewal cancellation submitted. Billing shows its confirmed status.');
+      refreshBillingUi();
+    } catch(e){toastErr(e.message||'Could not stop subscription renewal');}
+  };
+
   async function handlePlanSave(){
     var target = planState.selected || 'starter';
     var interval = planState.interval || 'monthly';
@@ -36672,6 +36798,17 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
     var sub = billing.subscription || {};
     var targetPlan = planById(target);
     var hasStripeSubscription = !!sub.stripe_subscription_id;
+    if(isNewSubscriptionOffer(billing)){
+      if(['canceled','incomplete_expired'].indexOf(sub.status)!==-1)hasStripeSubscription=false;
+      if(hasStripeSubscription&&target===current&&interval===(sub.interval||'monthly')){toastOk('This subscription is already selected.');return;}
+      var accepted=await confirmModal({title:hasStripeSubscription?'Review subscription change':'Start '+(targetPlan.name||target)+' software subscription',body:planPriceText(targetPlan,interval)+'. '+(hasStripeSubscription?'Stripe confirms when the change takes effect.':'Stripe Checkout shows your trial eligibility and exact first-charge date.'),detail:newOfferPaymentNote(billing),confirmText:hasStripeSubscription?'Submit plan change':'Continue to secure checkout'});
+      if(!accepted)return;
+      if(!hasStripeSubscription){await openSubscriptionCheckout(target,interval,'plan');return;}
+      try { await obJson('/api/billing/change',{method:'POST',body:{plan:target,interval:interval,catalog_revision:targetPlan.catalog_revision}}); }
+      catch(error){if(error.data&&error.data.requires_checkout){await openSubscriptionCheckout(target,interval,'plan');return;}throw error;}
+      toastOk('Subscription change submitted. Check the confirmed effective date in billing.');
+      refreshBillingUi();return;
+    }
     var needsCheckout = target !== 'starter' && !hasStripeSubscription;
     var currentInterval = sub.interval || 'monthly';
     if(target === current && (target === 'starter' || interval === currentInterval)){
@@ -36981,6 +37118,7 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
 	    return byId[plan] ? Number(byId[plan].platform_fee_pct || map[plan] || 12) : (map[plan] || 12);
 	  }
 		  function applySessionCut(sess){
+		    window._obExpertPaymentPolicySnapshot=sess&&sess.id?{sessionId:String(sess.id),token:window.OB_CLIENT_CONTEXT&&window.OB_CLIENT_CONTEXT.token(),session:sess}:null;
 		    var fee = feePctFromSession(sess || {});
     var cut = Math.max(0, 1 - fee / 100);
     window._expertSessCut = parseFloat(cut.toFixed(4));
@@ -36993,6 +37131,7 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
             ? window.obExpertSessionEstimate({elapsedSecs:60,rate:rate,freeMins:0,cut:cut,promoPercent:window._expertSessPromoPercent})
             : {effectivePayoutRate:rate * cut};
           earnRate.textContent = money(est.effectivePayoutRate) + '/min';
+          earnRate.title = window.obExpertFeeSnapshot&&window.obExpertFeeSnapshot(sess) ? 'Estimated rate after the percentage component. $'+(window.obExpertFeeSnapshot(sess).fixed_cents/100).toFixed(2)+' is deducted once per successful payment.' : '';
         }
 		  }
 	  window.obApplySessionCutImmediate = applySessionCut;
@@ -37450,6 +37589,8 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
 (function(){
   var LIMITS = {starter:0, pro:5, scale:10};
   var CHANNELS = ['chat','voice','video'];
+  var serverFreeLimit = null;
+  var serverFreeOwner = null;
 
   function normPlan(plan){
     plan = String(plan || '').trim().toLowerCase();
@@ -37479,6 +37620,8 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
     return plan || '';
   }
   function limitForPlan(plan){
+    var owner = readJson('ob_u') || {};
+    if(serverFreeOwner && serverFreeOwner === owner.id && serverFreeLimit !== null) return serverFreeLimit;
     plan = normPlan(plan);
     if(!plan) return null;
     return LIMITS[plan] || 0;
@@ -37512,6 +37655,10 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
     if(ch === 'video') window._currentExpert.free_minutes_video = val;
   }
   function policyCopy(plan, limit){
+    var owner = readJson('ob_u') || {};
+    if(serverFreeOwner && serverFreeOwner === owner.id && serverFreeLimit !== null) return limit > 0
+      ? 'Your current access allows up to ' + limit + ' free intro minutes for a new client only. Returning clients are billed from minute one.'
+      : 'Your current access does not include free intro minutes.';
     if(!normPlan(plan)) return 'Free intro limits are checked against your current plan when saved.';
     if(plan === 'pro') return 'Pro includes up to 5 free intro minutes for a new client only. Returning clients are billed from minute one.';
     if(plan === 'scale') return 'Scale includes up to 10 free intro minutes for a new client only. Returning clients are billed from minute one.';
@@ -37568,6 +37715,11 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
   }
   function clampRatePayload(rates){
     rates = rates || {};
+    var owner = readJson('ob_u') || {};
+    if(rates.expert_id && rates.expert_id === owner.id && Object.prototype.hasOwnProperty.call(rates,'free_minute_limit')){
+      var allowed = Number(rates.free_minute_limit);
+      if(Number.isSafeInteger(allowed) && allowed >= 0 && allowed <= 60){serverFreeOwner=owner.id;serverFreeLimit=allowed;}
+    }
     var plan = normPlan(rates.free_minute_plan) || knownPlan();
     var planKnown = !!plan;
     if(rates.free_minute_plan) window._obFreeMinutePlan = plan;
@@ -37586,7 +37738,7 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
     document.querySelectorAll('[data-ob-signup-plan], [data-ob-billing-plan]').forEach(function(card){
       var plan = normPlan(card.getAttribute('data-ob-signup-plan') || card.getAttribute('data-ob-billing-plan'));
       if(!plan || card.querySelector('.ob-plan-free-line')) return;
-      var limit = limitForPlan(plan);
+      var limit = LIMITS[plan] || 0;
       var line = document.createElement('div');
       line.className = 'ob-plan-free-line';
       line.textContent = limit > 0 ? 'Free intro: up to ' + limit + ' min for new clients' : 'Free intro: paid plans only';
@@ -54230,7 +54382,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
         else try { operation.signal.addEventListener('abort',function(){ try { controller.abort(); } catch(e) {} },{once:true}); } catch(e) {}
       }
     }
-    return fetch(baseUrl() + path, {
+    return window.obCreationAiFetch(baseUrl() + path, {
       method: opts.method || 'GET',
       headers: headers,
       body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
@@ -55251,6 +55403,15 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   };
 
   function creditTile(value,label){ return '<div class="ob-ai-credit-tile"><div class="ob-ai-credit-value">'+esc(value)+'</div><div class="ob-ai-credit-label">'+esc(label)+'</div></div>'; }
+  function aiAllowanceCopy(credits){
+    credits=credits||{};var period=credits.allowance_period;
+    if(!period)return {label:'included this month',context:'this month',note:''};
+    var trial=period.kind==='trial',end=Number(period.ends_at||0);
+    var note=end?(trial?'Trial allowance ends ':'Resets ')+new Date(end*1000).toLocaleString()+'.':'';
+    if(Number(credits.reserved_credits)>0)note+=' '+Number(credits.reserved_credits)+' credits are reserved for pending requests and excluded from the available balance.';
+    return {label:trial?'included for this trial':'included for this allowance period',context:trial?'for this trial':'for this allowance period',note:note};
+  }
+  window.obAiAllowanceCopy=aiAllowanceCopy;
   function creditSummary(statusData){
     var c = statusData && statusData.credits || {};
     var available = Number(c.available || 0);
@@ -55258,7 +55419,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     var includedLimit = Number(c.included_monthly_limit || 0);
     var previewCost = Number(c.preview_cost || 4);
     var imageCost = Number(c.image_cost || 24);
-    return { available:available, included:included, includedLimit:includedLimit, previewCost:previewCost, imageCost:imageCost };
+    return { available:available, included:included, includedLimit:includedLimit, previewCost:previewCost, imageCost:imageCost, allowance:aiAllowanceCopy(c) };
   }
   function aiReady(kind){
     if(!editorStatus || !editorStatus.eligible || !editorStatus.configured) return false;
@@ -55274,12 +55435,12 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       ? 'AI website tools'
       : (checking
         ? 'Checking AI drafting access…'
-        : (statusData.eligible ? 'AI drafting needs setup' : 'AI drafting requires active Pro / Scale billing'));
+        : (statusData.eligible ? 'AI drafting needs setup' : 'AI drafting is not enabled'));
     var detail = ready
-      ? c.available + ' credits available · ' + c.included + ' of ' + c.includedLimit + ' monthly credits left · wand drafts cost ' + c.previewCost + ' credits' + (statusData.media_configured ? ' · page image costs ' + c.imageCost : '')
+      ? c.available + ' credits available · ' + c.included + ' of ' + c.includedLimit + ' credits left '+c.allowance.context+' · wand drafts cost ' + c.previewCost + ' credits' + (statusData.media_configured ? ' · page image costs ' + c.imageCost : '') + (c.allowance.note?' · '+c.allowance.note:'')
       : (checking
         ? 'Content Pages and manual website editing remain available while access is checked.'
-        : 'Content Pages and manual website editing remain available. ' + (statusData.reason || (statusData.eligible ? 'Finish AI setup to use drafting tools.' : 'Activate Pro or Scale billing to use AI drafting.')));
+        : 'Content Pages and manual website editing remain available within your access. ' + (statusData.reason || (statusData.eligible ? 'Finish AI setup to use drafting tools.' : 'AI drafting requires access through your plan or an Admin grant.')));
     var badge = ready ? '<div class="ob-help-ai-badge">🪄 Ready</div>' : '';
     return '<div class="ob-ai-website-credits" id="ob-ai-website-credits"><div><strong>'+esc(title)+'</strong><span>'+esc(detail)+'</span></div>'+badge+'</div>';
   }
@@ -55500,10 +55661,10 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
 	      '<div class="ob-ai-editor-head"><div><div class="ob-ai-editor-kicker">AI website assistant</div><div class="ob-ai-editor-title">Chat with AI to shape your expert website.</div><p class="ob-ai-editor-copy">Use a default full-site prompt or write your own. AI can improve content, safe sections, images, and look and feel, but it cannot change pricing, checkout, booking, live sessions, Stripe, auth, admin settings, publish status, or add pages in the full-site build flow.</p></div><div class="ob-ai-editor-head-actions"><div class="ob-help-ai-badge '+(eligible && configured ? '' : 'warn')+'">'+(eligible ? (configured ? 'Ready' : 'AI not available yet') : esc(statusData.reason || 'Pro and Scale only'))+'</div><button class="ob-ai-editor-close" type="button" onclick="obAiCloseWebsiteStudio()">Close</button></div></div>' +
 	      '<div class="ob-ai-credit-grid">' +
         creditTile(c.available || 0,'available credits') +
-        creditTile(c.included_remaining || 0,'included this month') +
+        creditTile(c.included_remaining || 0,aiAllowanceCopy(c).label) +
         creditTile(c.purchased_balance || 0,'purchased balance') +
         creditTile((c.preview_cost || 0)+' / '+(c.apply_cost || 0),'preview / apply') +
-      '</div>' +
+      '</div>' + (aiAllowanceCopy(c).note?'<p>'+esc(aiAllowanceCopy(c).note)+'</p>':'') +
 	      (eligible ? '' : '<div class="ob-ai-result"><h3>Upgrade required</h3><p>'+esc(statusData.reason || 'AI website editing is available on Pro and Scale plans.')+'</p></div>') +
 	      (eligible && !configured ? '<div class="ob-ai-result"><h3>AI not available yet</h3><p>AI website editing is not ready yet. Ask admin to enable it.</p></div>' : '') +
 	      (eligible && configured && !mediaConfigured ? '<div class="ob-ai-result"><h3>Images not ready yet</h3><p>Text editing is ready. Image generation will appear here when admin enables website images.</p></div>' : '') +
@@ -56148,7 +56309,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     var rawLimit = own(nested, 'limit') ? nested.limit : (own(capabilities, 'custom_page_limit') ? capabilities.custom_page_limit : capabilities.custom_pages_limit);
     var parsedLimit = Number(rawLimit);
     var limit = hasLiveLimit && Number.isFinite(parsedLimit) && parsedLimit >= 0 ? Math.floor(parsedLimit) : fallbackLimit;
-    return { plan: plan, limit: limit, allowed: planAllowed(plan) && limit > 0 };
+    return { plan: plan, limit: limit, allowed: hasLiveLimit ? limit > 0 : planAllowed(plan) && limit > 0 };
   }
   function pageLimit(){
     return Math.max(0, Number(state.limit || 0));
@@ -60886,6 +61047,8 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
 })();
 </script>
 <script src="/assets/sfu-client.js"></script>
+<link rel="stylesheet" href="/assets/admin-expert-access.css">
+<script src="/assets/admin-expert-access.js"></script>
 <script id="ownlybiz-expert-live-client-receipt-guard">
 (function(){
   if(window.__obExpertLiveClientReceiptGuard) return;
@@ -60980,7 +61143,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       return r.json().catch(function(){ return {}; }).then(function(d){
         if(!r.ok){
           var error=new Error(d.error || d.message || ('Request failed: ' + r.status));
-          error.status=r.status;error.code=typeof d.code==='string'?d.code:'';throw error;
+          error.status=r.status;error.code=typeof d.code==='string'?d.code:'';error.data=d;throw error;
         }
         return d;
       });
@@ -61265,7 +61428,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       + '<div style="font-size:12px;color:rgba(246,241,233,.58);line-height:1.55;margin-bottom:12px;">' + esc(note) + '</div>'
       + '<div class="ob-admin-live-grid" style="margin-top:10px;">'
       +   kpi('Available', available, 'Ready to use')
-      +   kpi('Monthly remaining', includedRemaining + ' / ' + includedLimit, String(c.included_month || 'current month'))
+      +   kpi(c.allowance_period&&c.allowance_period.kind==='trial'?'Trial remaining':'Allowance remaining', includedRemaining + ' / ' + includedLimit, c.allowance_period ? (window.obAiAllowanceCopy?window.obAiAllowanceCopy(c).note:'Current allowance period') : String(c.included_month || 'current month'))
       +   kpi('Extra balance', purchased, 'Granted or purchased')
       +   kpi('Image cost', imageCost, 'Per generated image')
       + '</div>'
@@ -61621,6 +61784,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       +   infoGrid(user, profile)
       +   '<div style="margin-top:16px;font-size:12px;color:rgba(246,241,233,.58);line-height:1.6;"><strong style="display:block;color:rgba(246,241,233,.78);margin-bottom:4px;">Bio</strong>' + esc(profile.bio || 'No bio saved.') + '</div>'
       + '</div>'
+      + '<section id="ob-admin-expert-access" aria-label="Plan and feature access"></section>'
       + '<div class="ob-admin-live-grid" style="margin-top:18px;">'
       +   kpi('Total sessions', int(stats.total_sessions || 0), 'Chat ' + int(stats.chat_sessions || 0) + ' / Voice ' + int(stats.voice_sessions || 0) + ' / Video ' + int(stats.video_sessions || 0))
 	      +   kpi('Recorded expert share', money(stats.total_earnings || 0), 'Internal session accounting; Stripe balance and bank payouts are not included')
@@ -61675,6 +61839,11 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
 		      if(!adminExpertDetailCurrent(detail,content))return false;
 		      content.innerHTML = detailHtml(id, all[0] || {}, all[1] || {}, all[2] || {requests:[]}, all[3] || {}, all[4] || {}, all[5] || null);
 	      mountAdminLiveCapacity(detail);
+	      if(window.OB_ADMIN_EXPERT_ACCESS)window.OB_ADMIN_EXPERT_ACCESS.mount({
+	        container:content.querySelector('#ob-admin-expert-access'),expertId:detail.id,
+	        request:function(path,options){return api(path,Object.assign({},options||{},{token:detail.owner.token,signal:detail.owner.signal}));},
+	        isCurrent:function(){return adminExpertDetailCurrent(detail,content);}
+	      });
 	      if(typeof window.obAdminInjectOnDemand==='function')window.obAdminInjectOnDemand(id);
 	      try { content.scrollIntoView({block:'start'}); } catch(e) {}
 	    }).catch(function(err){
@@ -61811,6 +61980,8 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
 	    });
 	  };
 	  window.obAdminGrantAiCredits = function(id, label){
+    var detail=activeExpertDetail;
+    if(!adminExpertDetailCurrent(detail)||String(detail.id)!==String(id)||detail.aiGrantBusy)return;
 	    var status = document.getElementById('ob-ai-credit-grant-status');
 	    var amount = int((document.getElementById('ob-ai-credit-grant-amount') || {}).value || 0);
     var reason = ((document.getElementById('ob-ai-credit-grant-reason') || {}).value || '').trim();
@@ -61820,18 +61991,24 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     if(reason.length < 4){ if(status) status.textContent = 'Reason required.'; notify('Add a short reason before granting credits.', 'err'); return; }
     if(!confirmed){ if(status) status.textContent = 'Confirm this exact expert first.'; notify('Confirm the expert before granting credits.', 'err'); return; }
     if(!confirm('Grant ' + amount + ' AI credits to ' + (label || 'this expert') + '?')) return;
+    var signature=JSON.stringify([id,amount,reason]);
+    if(!detail.aiGrantOperation||detail.aiGrantOperation.signature!==signature)detail.aiGrantOperation={signature:signature,id:'ai_grant_'+crypto.randomUUID()};
+    detail.aiGrantBusy=true;
     if(status) status.textContent = 'Granting credits...';
     api('/admin/experts/' + encodeURIComponent(id) + '/ai-credits/grant', {
       method:'POST',
-      body:{amount:amount, reason:reason, confirmed:true}
+      body:{amount:amount, reason:reason, confirmed:true,operation_id:detail.aiGrantOperation.id},token:detail.owner.token,signal:detail.owner.signal
     }).then(function(){
+      if(!adminExpertDetailCurrent(detail))return;
+      detail.aiGrantOperation=null;
       if(status) status.textContent = 'Credits granted.';
       notify('AI credits granted.', 'ok');
       refreshActiveExpertDetail(id);
     }).catch(function(err){
+      if(!adminExpertDetailCurrent(detail))return;
       if(status) status.textContent = err.message || 'Grant failed.';
       notify(err.message || 'AI credit grant failed.', 'err');
-    });
+    }).finally(function(){detail.aiGrantBusy=false;});
   };
   window.obAdminExpertApproveRefund = function(id){
     if(!confirm('Approve this untouched refund request? Stripe may accept it for processing; a terminal outcome will be shown only after reconciliation.')) return;
@@ -63390,7 +63567,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     var headers = {'Content-Type':'application/json'};
     var token = tok();
     if(token) headers.Authorization = 'Bearer ' + token;
-    return fetch(BASE + '/api/experts/me/email-center' + path, {
+    return window.obCreationAiFetch(BASE + '/api/experts/me/email-center' + path, {
       method: opts.method || 'GET',
       headers: headers,
       cache: 'no-store',
@@ -63831,7 +64008,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     opts=opts||{};
     var headers={'Content-Type':'application/json'};
     var token=tok(); if(token) headers.Authorization='Bearer '+token;
-    return fetch(BASE+'/api/experts/me/email-center'+path,{method:opts.method||'GET',headers:headers,cache:'no-store',body:opts.body?JSON.stringify(opts.body):undefined}).then(function(r){return r.json().catch(function(){return {};}).then(function(d){if(!r.ok||d.success===false) throw new Error(d.error||'Email Center request failed'); return d;});});
+    return window.obCreationAiFetch(BASE+'/api/experts/me/email-center'+path,{method:opts.method||'GET',headers:headers,cache:'no-store',body:opts.body?JSON.stringify(opts.body):undefined}).then(function(r){return r.json().catch(function(){return {};}).then(function(d){if(!r.ok||d.success===false) throw new Error(d.error||'Email Center request failed'); return d;});});
   }
   function val(id){ var el=$(id); return el ? el.value : ''; }
   function checked(id){ var el=$(id); return !!(el && el.checked); }

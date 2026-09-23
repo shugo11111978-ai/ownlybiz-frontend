@@ -1,0 +1,36 @@
+import fs from 'node:fs';
+import vm from 'node:vm';
+import assert from 'node:assert/strict';
+import {webcrypto} from 'node:crypto';
+const source=fs.readFileSync(new URL('../assets/creation-ai-request.js',import.meta.url),'utf8');
+const saved=new Map(),calls=[];
+let token='expert-a',principal='user-a',lost=true,responseBody='{"success":true}',beforeResponse=null;
+function boot(){
+ const window={fetch:async(url,opts)=>{calls.push({url,opts,body:opts.body&&JSON.parse(opts.body)});if(lost)throw Error('Lost response');if(beforeResponse)beforeResponse();return new Response(responseBody,{status:200});},OB_CLIENT_CONTEXT:{capture:()=>({token,principal}),isCurrent:owner=>owner.token===token&&owner.principal===principal}};
+ vm.runInNewContext(source,{window,location:{origin:'https://staging.example'},URL,Headers,TextEncoder,Uint8Array,crypto:webcrypto,sessionStorage:{getItem:k=>saved.get(k)||null,setItem:(k,v)=>saved.set(k,v),removeItem:k=>saved.delete(k)}});return window.obCreationAiFetch;
+}
+let request=boot();const url='https://api.staging.example/api/ai/website-editor/preview';
+const options=()=>({method:'POST',headers:{Authorization:'Bearer '+token},body:JSON.stringify({prompt:'Revise the welcome text',mode:'improve'})});
+await assert.rejects(request(url,options()),/Lost response/);const initial=calls.at(-1).body.operation_id;
+request=boot();await assert.rejects(request(url,options()),/Lost response/);assert.equal(calls.at(-1).body.operation_id,initial,'page reload must preserve an uncertain request');
+token='rotated-a';request=boot();await assert.rejects(request(url,options()),/Lost response/);assert.equal(calls.at(-1).body.operation_id,initial,'credential refresh for same principal keeps request');
+lost=false;await request(url,options());assert.equal(calls.at(-1).body.operation_id,initial);assert.equal(saved.size,0);
+await request(url,options());assert.notEqual(calls.at(-1).body.operation_id,initial,'intentional generation after success gets a new operation');
+lost=true;const pair=await Promise.allSettled([request(url,options()),request(url,options())]);assert.ok(pair.every(x=>x.status==='rejected'));assert.equal(calls.at(-1).body.operation_id,calls.at(-2).body.operation_id,'double click cannot create two charges');
+const old=calls.at(-1).body.operation_id;principal='user-b';token='expert-b';await assert.rejects(request(url,options()),/Lost response/);assert.notEqual(calls.at(-1).body.operation_id,old);
+const before=calls.length;await assert.rejects(request(url,{...options(),headers:{Authorization:'Bearer expert-a'}}),/account changed/);assert.equal(calls.length,before);
+lost=false;await request('https://api.staging.example/api/experts/me/email-center/ai/generate',options());assert.match(calls.at(-1).body.operation_id,/^creation_/);
+await request('https://api.staging.example/api/experts/me/email-center/campaigns/preview',options());assert.equal(calls.at(-1).body.operation_id,undefined);
+responseBody='{"success":';
+await assert.rejects(request(url,options()),/interrupted/);const truncated=calls.at(-1).body.operation_id;
+request=boot();await assert.rejects(request(url,options()),/interrupted/);assert.equal(calls.at(-1).body.operation_id,truncated,'a lost 200 response body must retain the same operation after reload');
+responseBody='{"success":false,"error":"Provider outcome uncertain"}';
+await request(url,options());assert.equal(calls.at(-1).body.operation_id,truncated,'application failure must not clear an uncertain operation');
+responseBody='{"success":true}';
+await request(url,options());assert.equal(calls.at(-1).body.operation_id,truncated);
+beforeResponse=()=>{token='expert-c';principal='user-c';};
+await assert.rejects(request(url,options()),/account changed/);const switched=calls.at(-1).body.operation_id;
+beforeResponse=null;token='expert-b';principal='user-b';request=boot();
+await request(url,{...options(),method:'post'});assert.equal(calls.at(-1).body.operation_id,switched,'late response after account switch retains original-owner operation and never returns old data');
+assert.ok([...saved.keys()].every(k=>/^ob_creation_ai_operation_[a-f0-9]{64}$/.test(k)));
+console.log('AI generation browser requests: uncertain header/body retry, reload, credential refresh, double clicks, account isolation before/after response and endpoint scope passed.');

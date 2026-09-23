@@ -42,6 +42,14 @@ for(const offerVersion of ['subscription_v2','legacy']){
  assert.equal(requests[0].body.catalog_revision,offerVersion==='subscription_v2'?4:undefined);
  assert.equal(redirects.length,1);
 }
+// A successful provider return must not race an explicit billing settings route.
+const returnNotice=source('  function handleBillingReturnNotice(){', '  function dashboardRouteActive(){');
+for(const explicitSetting of ['billing','']){
+ const timers=[],panels=[];let refreshed=0;
+ const h={URLSearchParams,location:{search:'?billing=success',pathname:'/dash/owned/settings/billing'},window:{obDashboardRouteSetting:()=>explicitSetting},toastOk(){},toastErr(){},setTimeout:(fn,delay)=>timers.push({fn,delay}),dbNav:(_node,panel)=>panels.push(panel),document:{querySelector:()=>({})},refreshBillingUi:()=>refreshed++};
+ vm.createContext(h);new vm.Script(returnNotice).runInContext(h);h.handleBillingReturnNotice();timers.find(t=>t.delay===250).fn();
+ assert.deepEqual(panels,explicitSetting?[]:['payments']);assert.equal(refreshed,1);
+}
 assert.match(html,/firstPath==='dash'\|\|path==='dashboard\/billing'/,'alias uses private dashboard first-paint guard');
 assert.match(html,/!openingSetting && !\(root\.obDashboardRouteSetting && root\.obDashboardRouteSetting\(\)\)/,'initial settings synchronization preserves explicit routed settings');
 console.log('Billing reminder route and native signup Checkout return: signed-in resolution, sign-in return, stale identity/navigation, invalid account, and private first paint PASS');

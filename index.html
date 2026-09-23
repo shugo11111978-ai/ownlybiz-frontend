@@ -6071,7 +6071,7 @@ if (!window.toast) {
       <div class="signup-step active" id="step-1">
         <h1 class="signup-step-title">Create your account</h1>
         <p class="signup-step-sub">Your website and services can be set up later.</p>
-        <p class="signup-field-hint">Already have an account? <a href="/login">Log in</a></p>
+        <p class="signup-field-hint">Already have an account? <a href="/login?resume=signup">Log in</a></p>
         <form class="signup-account-form" onsubmit="event.preventDefault();realExpertSignup();" novalidate>
         <div class="form-row">
           <div class="form-group">
@@ -14556,6 +14556,10 @@ async function savePaymentConfig() {
     // ── handleMarketingLogin — defined EARLY, works before health check ──────
     // This is called by the Sign In button's onclick attribute directly.
     window.handleMarketingLogin = async function() {
+      // A fixed return destination also survives opening Sign in in a new tab.
+      if(new URLSearchParams(location.search || '').get('resume') === 'signup') {
+        try { sessionStorage.setItem('ob_next', '/signup?resume=1'); } catch(e) {}
+      }
       var BASE = window.OWNLYBIZ_API_URL || 'https://ownlybiz-backend-production.up.railway.app';
       var email = (document.getElementById('mkt-login-email') || {}).value || '';
       var pass  = (document.getElementById('mkt-login-pass')  || {}).value || '';
@@ -35214,6 +35218,11 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
   }
   function applyMarketingRoute(route, event){
     if(route && route.page === 'signup'){
+      if(typeof window.obResumeSignupRoute === 'function' && window.obResumeSignupRoute()){
+        applyPlatformFallbackSeo();
+        if(typeof window._markRouteReady === 'function') window._markRouteReady();
+        return;
+      }
       if(typeof window.obApplySignupOfferRoute === 'function' && (!document.querySelector('#view-2.active') || (event && (event.obExplicitNavigation || event.type === 'popstate')))) window.obApplySignupOfferRoute();
       if(typeof window.switchView === 'function' && !document.querySelector('#view-2.active')) window.switchView(2);
       applyPlatformFallbackSeo();
@@ -35241,6 +35250,7 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
     var route = parseRoute();
     if(!route) return;
     var generation=++routeApplicationGeneration;
+    if((route.type !== 'marketing' || route.page !== 'signup') && typeof window.obLeaveSignupRoute === 'function') window.obLeaveSignupRoute();
     if(route.type === 'legal'){
       if(typeof window.obRenderLegalPage === 'function') window.obRenderLegalPage();
       return;
@@ -36004,6 +36014,7 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
   }
 
   function updateSignupCta(){
+    if(window.obRenderSignupResumeState && window.obRenderSignupResumeState()) return;
     var p = selectedPlan();
     var btn = document.getElementById('ob-launch-plan-btn') || document.querySelector('#step-7 .btn.btn-primary');
     var closed=planState.publicOfferFailed||publicOfferRenderer().unavailable(planState.publicOffer);
@@ -36068,10 +36079,108 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
   window.obUpdateSignupCta = updateSignupCta;
 
   var signupBillingCheck=null,signupBillingRequest=null;
+  // Resume is a read-only route. Checkout is created only by the Review button.
+  var signupResumeState=null;
+  function signupResumeCurrent(operation){
+    return signupResumeState===operation && token()===operation.credential &&
+      String(readUserSnapshot().id||'')===operation.owner &&
+      location.pathname+location.search===operation.route &&
+      (!operation.context || window.OB_CLIENT_CONTEXT.isCurrent(operation.context,{exactCredential:true}));
+  }
+  window.obLeaveSignupRoute=function(){
+    if(signupResumeState && signupResumeState.controller) signupResumeState.controller.abort();
+    signupResumeState=null;
+  };
+  function signupResumeSignIn(){
+    try { sessionStorage.setItem('ob_next','/signup?resume=1'); } catch(e) {}
+    location.replace('/login?resume=signup');
+  }
+  window.obRenderSignupResumeState=function(){
+    var operation=signupResumeState;
+    if(!operation || !signupResumeCurrent(operation) || operation.phase==='ready') return false;
+    var failed=operation.phase==='error';
+    var heading=document.getElementById('signup-review-title'),intro=document.getElementById('signup-review-intro');
+    if(heading)heading.textContent=failed?'Continue your account setup':'Welcome back';
+    if(intro)intro.textContent=failed?operation.message:'Loading your saved plan and approval status…';
+    var card=document.getElementById('ob-signup-plan-card');
+    if(card){card.hidden=false;card.innerHTML=failed?'<p role="alert">'+esc(operation.message)+'</p>'+(operation.wrongRole?'<a href="/login?resume=signup">Sign in with your expert account</a>':'<button type="button" class="btn btn-secondary" onclick="obRetrySignupResume()">Try again</button>'):'<p role="status">Checking your account…</p>';}
+    var approval=document.getElementById('ob-signup-approval');if(approval)approval.hidden=true;
+    var btn=document.getElementById('ob-launch-plan-btn');if(btn){btn.disabled=true;btn.textContent=failed?'Account check required':'Checking your account…';}
+    var hint=document.getElementById('ob-launch-plan-hint');if(hint)hint.textContent='No trial or payment starts until you finish secure checkout.';
+    return true;
+  };
+  window.obSignupResumeBlocked=function(){return !!(signupResumeState && signupResumeCurrent(signupResumeState) && signupResumeState.phase!=='ready');};
+  window.obRetrySignupResume=function(){window.obLeaveSignupRoute();return window.obResumeSignupRoute();};
+  window.obResumeSignupRoute=function(){
+    if(String(location.pathname||'').replace(/\/+$/,'')!=='/signup')return false;
+    var credential=token();
+    if(!credential){
+      if(new URLSearchParams(location.search||'').get('resume')!=='1')return false;
+      signupResumeSignIn();return true;
+    }
+    if(signupResumeState && signupResumeCurrent(signupResumeState))return true;
+    window.obLeaveSignupRoute();
+    var controller=new AbortController();
+    var operation={credential:credential,owner:String(readUserSnapshot().id||''),route:location.pathname+location.search,controller:controller,phase:'loading',context:window.OB_CLIENT_CONTEXT&&window.OB_CLIENT_CONTEXT.capture('signup-resume')};
+    signupResumeState=operation;
+    var oldNotice=document.getElementById('ob-signup-checkout-return');if(oldNotice)oldNotice.remove();
+    if(!document.querySelector('#view-2.active') && typeof switchView==='function')switchView(2);
+    if(typeof goStep==='function')goStep(7);
+    window.obRenderSignupResumeState();
+    var role=currentBillingRole();
+    if(role && role!=='expert'){
+      operation.phase='error';operation.wrongRole=true;operation.message='Sign in with the expert account you created to continue setup.';
+      window.obRenderSignupResumeState();return true;
+    }
+    var timeout=setTimeout(function(){controller.abort();},10000);
+    operation.promise=(async function(){
+      try{
+        var auth=await obJson('/api/auth/me',{method:'GET',token:credential,signal:controller.signal});
+        if(!signupResumeCurrent(operation))return;
+        if(!auth.user || auth.user.role!=='expert' || !auth.user.id || (operation.owner && String(auth.user.id)!==operation.owner)){
+          operation.wrongRole=true;throw new Error('Sign in with the expert account you created to continue setup.');
+        }
+        var billing=await obJson('/api/billing/me',{method:'GET',token:credential,signal:controller.signal});
+        if(!signupResumeCurrent(operation))return;
+        validateSignupBillingData(billing);
+        if(signupTrialWasStarted(billing)){
+          operation.phase='redirecting';location.assign('/dashboard/billing');return;
+        }
+        var profile=auth.profile||{},sub=billing.subscription;
+        var plan=sub.pending_plan || (billing.current_plan&&billing.current_plan.id) || profile.subscription_pending_plan || profile.subscription_plan;
+        var interval=sub.pending_interval || sub.interval || profile.subscription_pending_interval || profile.subscription_interval;
+        var eligibility=billing.payout_country_eligibility;
+        var approval=billing.approval || auth.approval;
+        if(['starter','pro','scale'].indexOf(plan)<0 || ['monthly','annual'].indexOf(interval)<0 || !eligibility || !/^[A-Z]{2}$/.test(eligibility.country||eligibility.country_code||'') || ['supported','unsupported','missing'].indexOf(eligibility.status)<0 || !approval || typeof approval.checkout_allowed!=='boolean' || typeof approval.status!=='string')throw new Error('Your saved account setup could not be confirmed. Please try again.');
+        signupBillingCheck={credential:credential,data:billing};
+        planState.billing=billing;
+        window._obSignupPayoutEligibility=eligibility;
+        try{
+          sessionStorage.setItem('ob_signup_payout_eligibility',JSON.stringify(eligibility));
+          sessionStorage.setItem('ob_signup_payout_country',eligibility.country||eligibility.country_code);
+        }catch(e){}
+        window.obUpdateSignupApproval(approval,credential);
+        operation.phase='ready';
+        setSignupPlan(plan,interval);
+        renderSignupPlans();updateSignupCta();
+      }catch(error){
+        if(!signupResumeCurrent(operation))return;
+        if(error.status===401){signupResumeSignIn();return;}
+        operation.phase='error';
+        operation.message=operation.wrongRole?error.message:'We could not load your saved setup. Please try again.';
+        window.obRenderSignupResumeState();
+      }finally{clearTimeout(timeout);}
+    })();
+    return true;
+  };
   function signupRouteActive(){return String(location.pathname||'').replace(/\/+$/,'')==='/signup'||!!document.querySelector('#view-2.active');}
   function signupTrialWasStarted(data){
     var trial=data&&data.software_trial||{},sub=data&&data.subscription||{};
     return data.offer_version==='legacy'||!!(trial.already_started||trial.started_at||sub.stripe_subscription_id||['active','trialing','canceled','past_due','unpaid','payment_action_required'].indexOf(sub.status)>=0);
+  }
+  function validateSignupBillingData(data){
+    if(!data||['legacy','subscription_v2'].indexOf(data.offer_version)<0||!data.subscription||typeof data.subscription.status!=='string')throw new Error('Subscription state unavailable');
+    if(data.offer_version==='subscription_v2'&&!signupTrialWasStarted(data)&&(['signup_draft','checkout_pending','checkout_expired','checkout_payment_failed'].indexOf(data.subscription.status)<0||!data.software_trial||data.software_trial.already_started!==false))throw new Error('Trial eligibility unavailable');
   }
   function renderSignupBillingCheck(message){
     ['ob-signup-initial-plan','ob-signup-plan-card'].forEach(function(id){var target=document.getElementById(id);if(target){target.hidden=false;target.innerHTML='<p role="status">'+esc(message||'Checking your existing subscription…')+'</p>';}});
@@ -36084,8 +36193,7 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
     var operation={credential:credential};
     operation.promise=obJson('/api/billing/me',{method:'GET',token:credential}).then(function(data){
       if(!current())return true;
-      if(!data||['legacy','subscription_v2'].indexOf(data.offer_version)<0||!data.subscription||typeof data.subscription.status!=='string')throw new Error('Subscription state unavailable');
-      if(data.offer_version==='subscription_v2'&&!signupTrialWasStarted(data)&&(['signup_draft','checkout_pending','checkout_expired','checkout_payment_failed'].indexOf(data.subscription.status)<0||!data.software_trial||data.software_trial.already_started!==false))throw new Error('Trial eligibility unavailable');
+      validateSignupBillingData(data);
       signupBillingCheck={credential:credential,data:data};
       if(data.approval)window.obUpdateSignupApproval(data.approval,credential);
       if(signupTrialWasStarted(data)){renderSignupBillingCheck('Your account already has subscription history. Opening Billing…');window.location.assign('/dashboard/billing');return true;}
@@ -36098,6 +36206,7 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
   };
 
   function renderSignupPlans(){
+    if(window.obRenderSignupResumeState && window.obRenderSignupResumeState()) return;
     var step = document.getElementById('step-7');
     if(!step) return;
     var savedPlan = sessionStorage.getItem('ob_signup_plan');
@@ -36183,6 +36292,8 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
   }
 
   async function finishSignupLaunch(){
+    if(!token() || currentBillingRole()!=='expert')throw new Error('Sign in with your expert account before continuing.');
+    if(window.obSignupResumeBlocked && window.obSignupResumeBlocked())throw new Error('Wait for your saved account setup to load, then try again.');
     if(planState.publicOfferFailed||publicOfferRenderer().unavailable(window.__OB_PUBLIC_OFFER__))throw new Error('New signups are temporarily unavailable. Existing experts can sign in to their dashboard.');
     var p = selectedSignupPlanForLaunch();
     var launchBtn = document.getElementById('ob-launch-plan-btn');
@@ -37644,7 +37755,8 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
 	    installBillingFirstPaintWrappers();
 	    installIncompleteDashboardGuard();
 	    renderDashboardBillingShell();
-	    var signupReturnHandled = handleSignupCheckoutReturnNotice();
+	    var signupResumeHandled=window.obResumeSignupRoute();
+	    var signupReturnHandled = !signupResumeHandled && handleSignupCheckoutReturnNotice();
 	    handleBillingReturnNotice();
 	    loadPlans().then(function(){ renderSignupPlans(); updateSignupCta(); if(signupReturnHandled) handleSignupCheckoutReturnNotice(); });
 	    setTimeout(function(){ var free = document.getElementById('free-min-val'); if(free && free.textContent === '1') free.textContent = '0'; }, 400);

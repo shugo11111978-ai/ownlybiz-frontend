@@ -49,6 +49,30 @@ assert.doesNotMatch(
 assert.match(html, /\['Payout country', payoutCountry\]/, 'Admin Expert Info shows payout country');
 assert.match(html, /\['Paid plan eligibility', payoutStatus\]/, 'Admin Expert Info shows country eligibility');
 
+// Execute the original catalog loader and change handler: the initial empty
+// selection was the post-load path that replaced the compact helper.
+const start=html.indexOf('  window._obSignupPayoutCountries = [];');
+const end=html.indexOf("  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', window.obLoadSignupPayoutCountries);",start);
+assert(start>=0&&end>start);
+const elements={
+  'signup-payout-country':{value:'',disabled:true,innerHTML:''},
+  'signup-payout-country-note':{style:{}},
+  'signup-payout-country-summary-text':{textContent:''}
+};
+let mode='subscription_v2';
+const context={window:null,document:{getElementById:id=>elements[id]},sessionStorage:{getItem:()=>'',setItem:()=>{}},obSubscriptionOfferMode:()=>mode,obLoadPublicOffer:async()=>{},fetch:async()=>({ok:true,json:async()=>({countries:[{code:'US',label:'United States',supported:true},{code:'CA',label:'Canada',supported:true}]})})};context.window=context;vm.createContext(context);
+vm.runInContext(html.slice(start,end),context);
+await context.obLoadSignupPayoutCountries();
+assert.equal(elements['signup-payout-country'].disabled,false);
+assert.equal(elements['signup-payout-country-summary-text'].textContent,'Currently available to US-based businesses.','catalog completion preserves concise US scope before selection');
+assert.equal(context._obSignupPayoutCountries.length,1,'v2 catalog remains US-only');
+elements['signup-payout-country'].value='US';context.obUpdateSignupPayoutCountry();
+assert.equal(elements['signup-payout-country-summary-text'].textContent,'Currently available to US-based businesses.','selection keeps the same concise scope');
+mode='legacy';elements['signup-payout-country'].value='';await context.obLoadSignupPayoutCountries();
+assert.equal(elements['signup-payout-country-summary-text'].textContent,'Select the country where your business is legally based.','legacy empty selection keeps plain business-country guidance');
+elements['signup-payout-country'].value='CA';context.obUpdateSignupPayoutCountry();
+assert.match(elements['signup-payout-country-summary-text'].textContent,/Supported for Ownlybiz paid plans/,'legacy country eligibility remains intact');
+
 const scripts = html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi);
 let scriptCount = 0;
 for (const match of scripts) {

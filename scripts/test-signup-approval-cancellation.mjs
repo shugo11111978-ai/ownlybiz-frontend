@@ -17,6 +17,7 @@ context.publicOfferRenderer=()=>presentation;
 vm.runInContext(source('  var signupApproval=null,','  function updateSignupCta(){')+source('  var signupBillingCheck=null,','  function renderSignupPlans(){')+source('  async function finishSignupLaunch(){','  function signupCheckoutPlanName(')+source('  function subscriptionEndDate(data){','  function newOfferManagementHtml')+source('  window.obStopSoftwareRenewal = async function(){','  async function handlePlanSave()'),context);
 context.__OB_PUBLIC_OFFER__={available:false,signup_available:false,offer_version:'legacy',reason:'admission_closed'};
 await assert.rejects(context.finishSignupLaunch(),/temporarily unavailable/);assert.equal(actions.length,0);delete context.__OB_PUBLIC_OFFER__;
+context.planState.publicOfferFailed=true;await assert.rejects(context.finishSignupLaunch(),/temporarily unavailable/);assert.equal(actions.length,0);context.planState.publicOfferFailed=false;
 context.obUpdateSignupApproval(approval,credential);assert.equal(context.approvalBlocksCheckout(),true);context.renderSignupApproval();assert.match(nodes['signup-review-intro'].textContent,/trial has not started/);assert.equal(nodes['ob-signup-approval'].hidden,false);
 await assert.rejects(context.finishSignupLaunch(),/needs approval/);assert.equal(actions.filter(x=>x.action==='checkout').length,0);
 rejectRead=true;await assert.rejects(context.finishSignupLaunch(),/unavailable/);assert.equal(actions.filter(x=>x.action==='checkout').length,0);rejectRead=false;

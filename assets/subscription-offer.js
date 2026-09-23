@@ -75,11 +75,11 @@
   }
   // The signup component owns these controls. Keep their nodes mounted while
   // updating selection and disclosures, so a click never detaches its target.
-  function updateSignup(target,data,kind,interval,selected){
+  function updateSignup(target,data,kind,interval,selected,loadFailed){
     if(!target)return;
-    var markup=render(data,kind,interval,selected);
+    var markup=render(data,kind,interval,selected,loadFailed);
     var existing=target.querySelector('[data-ob-signup-kind="'+kind+'"]');
-    if(!valid(data)||unavailable(data)||!existing){if(target.innerHTML!==markup)target.innerHTML=markup;target._obSignupParts=null;return;}
+    if(loadFailed||!valid(data)||unavailable(data)||!existing){if(target.innerHTML!==markup)target.innerHTML=markup;target._obSignupParts=null;return;}
     interval=interval==='annual'?'annual':'monthly';
     var chosen=data.plans.find(function(plan){return plan.id===selected;})||data.plans[0];
     var parts=signupParts(data,interval,chosen,kind==='review');
@@ -97,6 +97,7 @@
   }
   function loading(){return '<div class="ob-offer-unavailable" role="status"><h2>Current plans are loading</h2><p>Prices and payment fees must be confirmed before checkout. Please reload if this message remains.</p></div>';}
   function closed(){return '<div class="ob-offer-unavailable" role="status"><h2>Plans are being updated</h2><p>New signups are temporarily unavailable while we finish updating our plans. Existing experts can sign in to their dashboard.</p><a class="btn btn-secondary" href="/login">Existing expert? Sign in</a></div>';}
+  function failed(){return '<div class="ob-offer-unavailable" role="status"><h2>Plans are temporarily unavailable</h2><p>We could not confirm the current plans. Please try again before creating an account.</p><button type="button" class="btn btn-secondary" onclick="obLoadPublicOffer().catch(function(){})">Try again</button> <a class="btn btn-secondary" href="/login">Existing expert? Sign in</a></div>';}
   function comparison(data){
     var rows=(data.comparison_rows||[]).slice();
     if(data.plans.every(function(p){return p.trial_quantities;}))['one_to_one_call_minutes','group_participant_minutes','creation_ai_credits'].forEach(function(id){rows.push({label:{one_to_one_call_minutes:'1:1 audio/video minutes · entire initial trial',group_participant_minutes:'Group participant-minutes · entire initial trial',creation_ai_credits:'Creation credits · entire initial trial'}[id],values:Object.fromEntries(data.plans.map(function(p){return [p.id,p.trial_quantities[id]];}))});});
@@ -116,8 +117,9 @@
     ];
     return '<section class="ob-offer-faq"><h2>Questions about plans and payments</h2>'+qs.map(function(pair){return '<details><summary>'+esc(pair[0])+'</summary><p>'+esc(pair[1])+'</p></details>';}).join('')+'</section>';
   }
-  function render(data,kind,interval,selected){
+  function render(data,kind,interval,selected,loadFailed){
     if(unavailable(data))return closed();
+    if(loadFailed)return failed();
     if(!valid(data))return loading();
     interval=interval==='annual'?'annual':'monthly';
     var chosen=data.plans.find(function(p){return p.id===selected;})||data.plans[0];

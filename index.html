@@ -35856,19 +35856,25 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
       if(window.obLoadLegacyMarketingPricing)window.obLoadLegacyMarketingPricing();
       return;
     }
-    if(home){var homeMarkup=publicOfferRenderer().render(publicOffer,'home',publicOfferInterval);if(home._obOfferMarkup!==homeMarkup){home.innerHTML=homeMarkup;home._obOfferMarkup=homeMarkup;}}
-    if(pricing){var pricingMarkup=publicOfferRenderer().render(publicOffer,'pricing',publicOfferInterval);if(pricing._obOfferMarkup!==pricingMarkup){pricing.innerHTML=pricingMarkup;pricing._obOfferMarkup=pricingMarkup;}}
+    if(home){var homeMarkup=publicOfferRenderer().render(publicOffer,'home',publicOfferInterval,null,planState.publicOfferFailed);if(home._obOfferMarkup!==homeMarkup){home.innerHTML=homeMarkup;home._obOfferMarkup=homeMarkup;}}
+    if(pricing){var pricingMarkup=publicOfferRenderer().render(publicOffer,'pricing',publicOfferInterval,null,planState.publicOfferFailed);if(pricing._obOfferMarkup!==pricingMarkup){pricing.innerHTML=pricingMarkup;pricing._obOfferMarkup=pricingMarkup;}}
   }
   window.obSetPublicOfferInterval=function(interval){publicOfferInterval=interval==='annual'?'annual':'monthly';renderPublicOffer();};
   async function loadPublicOffer(){
     if(publicOfferRequest)return publicOfferRequest;
     publicOfferRequest=obJson('/api/billing/public-offer',{token:'',cache:'no-store'}).then(function(data){
       if(!publicOfferRenderer()||publicOfferRenderer().mode(data)==='unknown')throw new Error('Current subscription prices could not be confirmed. Please reload.');
-      var wasUnavailable=publicOfferRenderer().unavailable(planState.publicOffer);
+      var wasUnavailable=planState.publicOfferFailed||publicOfferRenderer().unavailable(planState.publicOffer);
+      planState.publicOfferFailed=false;
       publicOffer=data;window.__OB_PUBLIC_OFFER__=data;
       if(wasUnavailable||publicOfferRenderer().unavailable(data)){planState.publicOffer=data;planState.plans=publicOfferRenderer().unavailable(data)?[]:data.plans||[];renderSignupPlans();}
       renderPublicOffer();return data;
-    }).catch(function(error){publicOffer=null;window.__OB_PUBLIC_OFFER__=null;planState.publicOffer=null;planState.plans=[];renderPublicOffer();renderSignupPlans();updateSignupCta();throw error;})
+    }).catch(function(error){
+      // A confirmed closure is safe to retain; an open offer must be revalidated.
+      publicOffer=publicOfferRenderer().unavailable(publicOffer)?publicOffer:null;
+      window.__OB_PUBLIC_OFFER__=publicOffer;planState.publicOffer=publicOffer;planState.publicOfferFailed=true;planState.plans=[];
+      renderPublicOffer();renderSignupPlans();updateSignupCta();throw error;
+    })
       .finally(function(){publicOfferRequest=null;});
     return publicOfferRequest;
   }
@@ -35890,7 +35896,7 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
     try{
       var current=await loadPublicOffer();
       if(publicOfferRenderer().mode(current)!=='legacy'||publicOfferRenderer().unavailable(current)){planState.publicOffer=current;planState.plans=publicOfferRenderer().unavailable(current)?[]:current.plans||[];return planState.plans;}
-    }catch(e){planState.publicOffer=null;planState.plans=[];return planState.plans;}
+    }catch(e){return planState.plans;}
     try {
       var d = await obJson('/api/billing/plans');
       if(Array.isArray(d.plans) && d.plans.length) planState.plans = d.plans;
@@ -35989,7 +35995,7 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
   function updateSignupCta(){
     var p = selectedPlan();
     var btn = document.getElementById('ob-launch-plan-btn') || document.querySelector('#step-7 .btn.btn-primary');
-    var closed=publicOfferRenderer().unavailable(planState.publicOffer);
+    var closed=planState.publicOfferFailed||publicOfferRenderer().unavailable(planState.publicOffer);
     var accountBtn=document.getElementById('signup-step1-btn');
     if(accountBtn){
       if(closed){if(!accountBtn.dataset.obOfferClosed)accountBtn.dataset.obOpenLabel=accountBtn._t||accountBtn.textContent;accountBtn.dataset.obOfferClosed='1';accountBtn.disabled=true;accountBtn.textContent='Signup temporarily unavailable';}
@@ -36088,7 +36094,7 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
     if(savedPlan) planState.selected = savedPlan;
     if(savedInterval) planState.interval = savedInterval;
     if(usesSubscriptionOffer()||publicOfferRenderer().unavailable(planState.publicOffer)){
-      if(!publicOfferRenderer().unavailable(planState.publicOffer)&&token()&&currentBillingRole()==='expert'&&signupRouteActive()){
+      if(!planState.publicOfferFailed&&!publicOfferRenderer().unavailable(planState.publicOffer)&&token()&&currentBillingRole()==='expert'&&signupRouteActive()){
         if(!signupBillingCheck||signupBillingCheck.credential!==token()){
           renderSignupBillingCheck();window.obCheckSignupSubscription().then(function(redirected){if(!redirected)renderSignupPlans();});return;
         }
@@ -36097,7 +36103,7 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
       var data=planState.publicOffer;
       ['ob-signup-initial-plan','ob-signup-plan-card'].forEach(function(id){
         var target=document.getElementById(id);if(!target)return;
-        target.hidden=false;publicOfferRenderer().updateSignup(target,data,id==='ob-signup-plan-card'?'review':'signup',planState.interval,planState.selected);
+        target.hidden=false;publicOfferRenderer().updateSignup(target,data,id==='ob-signup-plan-card'?'review':'signup',planState.interval,planState.selected,planState.publicOfferFailed);
       });
       updateSignupCta();
       return;
@@ -36166,7 +36172,7 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
   }
 
   async function finishSignupLaunch(){
-    if(publicOfferRenderer().unavailable(window.__OB_PUBLIC_OFFER__))throw new Error('New signups are temporarily unavailable. Existing experts can sign in to their dashboard.');
+    if(planState.publicOfferFailed||publicOfferRenderer().unavailable(window.__OB_PUBLIC_OFFER__))throw new Error('New signups are temporarily unavailable. Existing experts can sign in to their dashboard.');
     var p = selectedSignupPlanForLaunch();
     var launchBtn = document.getElementById('ob-launch-plan-btn');
     var checkoutRequested = !!(launchBtn && /checkout/i.test(launchBtn.textContent || ''));

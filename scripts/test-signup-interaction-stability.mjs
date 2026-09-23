@@ -74,6 +74,18 @@ assert.match(mount.innerHTML,/Plans are being updated/);assert.deepEqual(fields,
 nextOffer={...offer,signup_available:false};await context.obLoadPublicOffer();assert.match(mount.innerHTML,/Plans are being updated/);assert.doesNotMatch(mount.innerHTML,/\$/);
 nextOffer=offer;await context.obLoadPublicOffer();assert.equal(Object.keys(mount.children).filter(k=>k.startsWith('[data-ob-signup-plan=')).length,3);assert.deepEqual(fields,originalFields);
 context.publicOffer=null;context.renderPublicOffer();assert.match(nodes['mkt-page-pricing'].innerHTML,/Current plans are loading/);assert.doesNotMatch(nodes['mkt-page-pricing'].innerHTML,/\$/);
+// A failed refresh preserves only confirmed closure, never an open offer.
+for(const initial of [{available:false,signup_available:false,offer_version:'legacy',reason:'admission_closed'},null,offer]){
+ context.publicOffer=initial;context.__OB_PUBLIC_OFFER__=initial;state.publicOffer=initial;state.publicOfferFailed=false;
+ context.obJson=async()=>{throw Error('Network unavailable');};
+ await assert.rejects(context.obSignupOfferPayload(),/Network unavailable/);
+ const knownClosed=presentation.unavailable(initial);
+ assert.equal(context.publicOffer,knownClosed?initial:null);assert.equal(context.__OB_PUBLIC_OFFER__,knownClosed?initial:null);assert.equal(state.publicOfferFailed,true);
+ assert.match(nodes['mkt-page-pricing'].innerHTML,knownClosed?/Plans are being updated/:/Plans are temporarily unavailable/);
+ assert.doesNotMatch(nodes['mkt-page-pricing'].innerHTML,/Current plans are loading|\$|href="\/signup/);
+ assert.match(mount.innerHTML,knownClosed?/Plans are being updated/:/Try again/);assert.deepEqual(fields,originalFields);
+}
+context.obJson=async()=>offer;await context.obLoadPublicOffer();assert.equal(state.publicOfferFailed,false);assert.equal(Object.keys(mount.children).filter(k=>k.startsWith('[data-ob-signup-plan=')).length,3);
 let viewChanges=0;context.switchView=()=>viewChanges++;context.applyMarketingRoute({page:'signup'});assert.equal(viewChanges,0,'reapplying active signup does not scroll/reset it');context.document.querySelector=()=>null;context.applyMarketingRoute({page:'signup'});assert.equal(viewChanges,1,'first navigation still opens signup');
 // Execute the original submission serializer, stopping at a fake 400 response.
 // This proves punctuation survives the real handler; it does not claim Safari UI reproduction.

@@ -19,6 +19,7 @@
     if(data&&data.available===false&&data.signup_available===false&&typeof data.reason==='string'&&['legacy','subscription_v2'].indexOf(data.offer_version)>=0)return data.offer_version;
     return 'unknown';
   }
+  function unavailable(data){return !!(data&&data.signup_available===false&&mode(data)!=='unknown');}
   function feeText(data){var f=data.payment_fee_policy;return (f.basis_points/100)+'% + '+money(f.fixed_cents)+' per successful payment';}
   function paymentNote(data){return valid(data)?feeText(data)+' for standard US domestic-card payments in USD. This single combined fee includes ordinary processing and Ownlybiz payment services. Payment fees apply during the software trial.':'Current payment fees could not be confirmed. Please reload before choosing a plan.';}
   function amount(plan,interval){return Math.round(plan[interval==='annual'?'annual_price':'monthly_price']*100);}
@@ -78,7 +79,7 @@
     if(!target)return;
     var markup=render(data,kind,interval,selected);
     var existing=target.querySelector('[data-ob-signup-kind="'+kind+'"]');
-    if(!valid(data)||!existing){if(target.innerHTML!==markup)target.innerHTML=markup;target._obSignupParts=null;return;}
+    if(!valid(data)||unavailable(data)||!existing){if(target.innerHTML!==markup)target.innerHTML=markup;target._obSignupParts=null;return;}
     interval=interval==='annual'?'annual':'monthly';
     var chosen=data.plans.find(function(plan){return plan.id===selected;})||data.plans[0];
     var parts=signupParts(data,interval,chosen,kind==='review');
@@ -95,6 +96,7 @@
     ['monthly','annual'].forEach(function(value){var button=target.querySelector('[data-ob-signup-interval="'+value+'"]');if(!button)return;var pressed=String(value===interval);if(button.getAttribute('aria-pressed')!==pressed)button.setAttribute('aria-pressed',pressed);var label=value==='annual'?'Yearly'+(annualSaving(data)?' · save 2 months':''):'Monthly';if(button.textContent!==label)button.textContent=label;});
   }
   function loading(){return '<div class="ob-offer-unavailable" role="status"><h2>Current plans are loading</h2><p>Prices and payment fees must be confirmed before checkout. Please reload if this message remains.</p></div>';}
+  function closed(){return '<div class="ob-offer-unavailable" role="status"><h2>Plans are being updated</h2><p>New signups are temporarily unavailable while we finish updating our plans. Existing experts can sign in to their dashboard.</p><a class="btn btn-secondary" href="/login">Existing expert? Sign in</a></div>';}
   function comparison(data){
     var rows=(data.comparison_rows||[]).slice();
     if(data.plans.every(function(p){return p.trial_quantities;}))['one_to_one_call_minutes','group_participant_minutes','creation_ai_credits'].forEach(function(id){rows.push({label:{one_to_one_call_minutes:'1:1 audio/video minutes · entire initial trial',group_participant_minutes:'Group participant-minutes · entire initial trial',creation_ai_credits:'Creation credits · entire initial trial'}[id],values:Object.fromEntries(data.plans.map(function(p){return [p.id,p.trial_quantities[id]];}))});});
@@ -115,6 +117,7 @@
     return '<section class="ob-offer-faq"><h2>Questions about plans and payments</h2>'+qs.map(function(pair){return '<details><summary>'+esc(pair[0])+'</summary><p>'+esc(pair[1])+'</p></details>';}).join('')+'</section>';
   }
   function render(data,kind,interval,selected){
+    if(unavailable(data))return closed();
     if(!valid(data))return loading();
     interval=interval==='annual'?'annual':'monthly';
     var chosen=data.plans.find(function(p){return p.id===selected;})||data.plans[0];
@@ -135,5 +138,5 @@
     return '<section class="ob-media-usage"><h3>Live usage · '+(period.kind==='trial'?'initial trial total':'current monthly allowance')+'</h3>'+rows+'<p>Current period ends '+esc(ends)+'. 1:1 audio and video share the call allowance. Group usage counts each connected participant, including the host. Free and discounted sessions count too.</p><p>Creating a group reserves capacity × duration, including the host. Unused reserved time is released when the session finishes. No automatic overage charges.</p></section>';
   }
   function terms(data){return [['h2','Software subscriptions and payment services'],['p','New subscriptions under this offer have an initial two-calendar-month software trial with a payment method required. Checkout confirms the exact first-charge date and recurring amount. Stop renewal before the first-charge date to avoid the first software bill. Annual billing covers twelve months. The trial is available once and plan changes do not restart it.'],['p',paymentNote(data)+' The offer supports US-based expert businesses, USD and eligible US-issued cards. It does not promise an international or alternative-payment rate. Accepted payment commitments retain their saved fee terms.'],['p','Paid, free, promotional and discounted sessions consume the applicable usage allowance. The dashboard shows limits and remaining usage. Unused included allowances do not accumulate. There is no automatic overage billing. Existing paid obligations and separately agreed complimentary access remain subject to their own terms.']];}
-  return {mode:mode,valid:valid,businessCountries:businessCountries,updateSignup:updateSignup,money:money,feeText:feeText,paymentNote:paymentNote,render:render,terms:terms,amount:amount,annualSaving:annualSaving,usage:usage};
+  return {mode:mode,valid:valid,unavailable:unavailable,businessCountries:businessCountries,updateSignup:updateSignup,money:money,feeText:feeText,paymentNote:paymentNote,render:render,terms:terms,amount:amount,annualSaving:annualSaving,usage:usage};
 });

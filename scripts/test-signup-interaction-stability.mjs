@@ -63,6 +63,17 @@ const changed=structuredClone(offer);changed.catalog_revision=5;changed.plans[2]
 context.renderSignupPlans();assert.equal(scale.querySelector('[data-ob-signup-name]').textContent,'Scale Plus');assert.equal(scale.querySelector('[data-ob-signup-price]').textContent,'$1,600/year');assert.equal(annual.textContent,'Yearly');assert.match(mount.children['[data-ob-signup-part="payments"]'].innerHTML,/4\.75%/);assert.equal(mount.replacements,1);
 // Background public catalog redraws do not replace identical markup elsewhere.
 context.renderPublicOffer();before=writes;context.renderPublicOffer();assert.equal(writes,before);
+// Execute the native offer request and both original renderers across a closed
+// response and reopening. Account fields live outside these component mounts.
+let nextOffer={available:false,signup_available:false,offer_version:'legacy',reason:'admission_closed'};
+context.publicOfferRequest=null;context.obJson=async()=>nextOffer;
+vm.runInContext(source('  async function loadPublicOffer(){','  async function loadPlans(){'),context);
+await assert.rejects(context.obSignupOfferPayload(),/temporarily unavailable/);
+assert.match(nodes['mkt-page-pricing'].innerHTML,/Plans are being updated/);assert.doesNotMatch(nodes['mkt-page-pricing'].innerHTML,/\$|Current plans are loading/);
+assert.match(mount.innerHTML,/Plans are being updated/);assert.deepEqual(fields,originalFields);
+nextOffer={...offer,signup_available:false};await context.obLoadPublicOffer();assert.match(mount.innerHTML,/Plans are being updated/);assert.doesNotMatch(mount.innerHTML,/\$/);
+nextOffer=offer;await context.obLoadPublicOffer();assert.equal(Object.keys(mount.children).filter(k=>k.startsWith('[data-ob-signup-plan=')).length,3);assert.deepEqual(fields,originalFields);
+context.publicOffer=null;context.renderPublicOffer();assert.match(nodes['mkt-page-pricing'].innerHTML,/Current plans are loading/);assert.doesNotMatch(nodes['mkt-page-pricing'].innerHTML,/\$/);
 let viewChanges=0;context.switchView=()=>viewChanges++;context.applyMarketingRoute({page:'signup'});assert.equal(viewChanges,0,'reapplying active signup does not scroll/reset it');context.document.querySelector=()=>null;context.applyMarketingRoute({page:'signup'});assert.equal(viewChanges,1,'first navigation still opens signup');
 // Execute the original submission serializer, stopping at a fake 400 response.
 // This proves punctuation survives the real handler; it does not claim Safari UI reproduction.

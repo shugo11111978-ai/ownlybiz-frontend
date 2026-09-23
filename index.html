@@ -18293,6 +18293,7 @@ async function savePaymentConfig() {
       console.error('[OB] signup err:', err);
       obErr(errEl, '⚠ ' + (err.message || 'Something went wrong'));
       if (btn) { btn.textContent = btn._t || 'Continue →'; btn.disabled = false; }
+      if(window.obUpdateSignupCta)window.obUpdateSignupCta();
     }
   };
 
@@ -35840,14 +35841,14 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
 	    writeBillingSnapshot(cached);
 	    renderDashboardBillingShell();
 	  }
-  var publicOffer = null, publicOfferRequest = null, publicOfferInterval = 'monthly';
+  var publicOffer = window.__OB_PUBLIC_OFFER__ || null, publicOfferRequest = null, publicOfferInterval = 'monthly';
   function publicOfferRenderer(){ return window.OB_SUBSCRIPTION_OFFER; }
   function usesSubscriptionOffer(){ return !publicOfferRenderer() || publicOfferRenderer().mode(window.__OB_PUBLIC_OFFER__) !== 'legacy'; }
   function renderPublicOffer(){
     if(!publicOfferRenderer()) return;
     var home=document.getElementById('ob-marketing-home-offer');
     var pricing=document.getElementById('mkt-page-pricing');
-    if(!usesSubscriptionOffer()){
+    if(publicOfferRenderer().mode(publicOffer)==='legacy'&&!publicOfferRenderer().unavailable(publicOffer)){
       var legacyHome=document.getElementById('ob-legacy-home-offer'),legacyPricing=document.getElementById('ob-legacy-pricing-offer');
       if(home)home._obOfferMarkup=null;if(pricing)pricing._obOfferMarkup=null;
       if(home&&legacyHome)home.innerHTML='<div class="section-inner">'+legacyHome.innerHTML+'</div>';
@@ -35863,7 +35864,9 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
     if(publicOfferRequest)return publicOfferRequest;
     publicOfferRequest=obJson('/api/billing/public-offer',{token:'',cache:'no-store'}).then(function(data){
       if(!publicOfferRenderer()||publicOfferRenderer().mode(data)==='unknown')throw new Error('Current subscription prices could not be confirmed. Please reload.');
+      var wasUnavailable=publicOfferRenderer().unavailable(planState.publicOffer);
       publicOffer=data;window.__OB_PUBLIC_OFFER__=data;
+      if(wasUnavailable||publicOfferRenderer().unavailable(data)){planState.publicOffer=data;planState.plans=publicOfferRenderer().unavailable(data)?[]:data.plans||[];renderSignupPlans();}
       renderPublicOffer();return data;
     }).catch(function(error){publicOffer=null;window.__OB_PUBLIC_OFFER__=null;planState.publicOffer=null;planState.plans=[];renderPublicOffer();renderSignupPlans();updateSignupCta();throw error;})
       .finally(function(){publicOfferRequest=null;});
@@ -35873,6 +35876,7 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
   window.obSignupOfferPayload=async function(){
     var shown=planState.publicOffer;
     var data=await loadPublicOffer();
+    if(publicOfferRenderer().unavailable(data))throw new Error('New signups are temporarily unavailable while we update our plans. Existing experts can sign in.');
     if(publicOfferRenderer().mode(data)==='legacy')return {};
     if(!publicOfferRenderer().valid(data))throw new Error('Current subscription prices could not be confirmed. Please reload.');
     if(!shown||shown.catalog_revision!==data.catalog_revision){planState.publicOffer=data;planState.plans=data.plans;renderSignupPlans();throw new Error('Subscription pricing changed. Review the updated plan before continuing.');}
@@ -35885,7 +35889,7 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
   async function loadPlans(){
     try{
       var current=await loadPublicOffer();
-      if(publicOfferRenderer().mode(current)!=='legacy'){planState.publicOffer=current;planState.plans=current.plans||[];return planState.plans;}
+      if(publicOfferRenderer().mode(current)!=='legacy'||publicOfferRenderer().unavailable(current)){planState.publicOffer=current;planState.plans=publicOfferRenderer().unavailable(current)?[]:current.plans||[];return planState.plans;}
     }catch(e){planState.publicOffer=null;planState.plans=[];return planState.plans;}
     try {
       var d = await obJson('/api/billing/plans');
@@ -35985,6 +35989,21 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
   function updateSignupCta(){
     var p = selectedPlan();
     var btn = document.getElementById('ob-launch-plan-btn') || document.querySelector('#step-7 .btn.btn-primary');
+    var closed=publicOfferRenderer().unavailable(planState.publicOffer);
+    var accountBtn=document.getElementById('signup-step1-btn');
+    if(accountBtn){
+      if(closed){if(!accountBtn.dataset.obOfferClosed)accountBtn.dataset.obOpenLabel=accountBtn._t||accountBtn.textContent;accountBtn.dataset.obOfferClosed='1';accountBtn.disabled=true;accountBtn.textContent='Signup temporarily unavailable';}
+      else if(accountBtn.dataset.obOfferClosed){accountBtn.disabled=false;accountBtn.textContent=accountBtn.dataset.obOpenLabel||'Create account';delete accountBtn.dataset.obOfferClosed;delete accountBtn.dataset.obOpenLabel;}
+    }
+    if(closed){
+      if(btn){btn.textContent='Signup temporarily unavailable';btn.disabled=true;}
+      var closedHint=document.getElementById('ob-launch-plan-hint');if(closedHint)closedHint.textContent='New signups are temporarily unavailable while we finish updating our plans.';
+      var closedCheck=document.getElementById('launch-plan-checkline');if(closedCheck)closedCheck.textContent='';
+      var reviewTitle=document.getElementById('signup-review-title');if(reviewTitle)reviewTitle.textContent='Plans are being updated';
+      var reviewIntro=document.getElementById('signup-review-intro');if(reviewIntro)reviewIntro.textContent='Existing experts can sign in to their dashboard.';
+      var approvalNotice=document.getElementById('ob-signup-approval');if(approvalNotice)approvalNotice.hidden=true;
+      return;
+    }
     var eligibility = signupPayoutEligibility();
     var v2=usesSubscriptionOffer();
     var paidBlocked = (v2 || p.id !== 'starter') && (!eligibility || eligibility.status !== 'supported' || (v2&&publicOfferRenderer().businessCountries(planState.publicOffer).indexOf(eligibility.country||eligibility.country_code)<0));
@@ -36068,8 +36087,8 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
     var savedInterval = sessionStorage.getItem('ob_signup_interval');
     if(savedPlan) planState.selected = savedPlan;
     if(savedInterval) planState.interval = savedInterval;
-    if(usesSubscriptionOffer()){
-      if(token()&&currentBillingRole()==='expert'&&signupRouteActive()){
+    if(usesSubscriptionOffer()||publicOfferRenderer().unavailable(planState.publicOffer)){
+      if(!publicOfferRenderer().unavailable(planState.publicOffer)&&token()&&currentBillingRole()==='expert'&&signupRouteActive()){
         if(!signupBillingCheck||signupBillingCheck.credential!==token()){
           renderSignupBillingCheck();window.obCheckSignupSubscription().then(function(redirected){if(!redirected)renderSignupPlans();});return;
         }
@@ -36147,6 +36166,7 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
   }
 
   async function finishSignupLaunch(){
+    if(publicOfferRenderer().unavailable(window.__OB_PUBLIC_OFFER__))throw new Error('New signups are temporarily unavailable. Existing experts can sign in to their dashboard.');
     var p = selectedSignupPlanForLaunch();
     var launchBtn = document.getElementById('ob-launch-plan-btn');
     var checkoutRequested = !!(launchBtn && /checkout/i.test(launchBtn.textContent || ''));

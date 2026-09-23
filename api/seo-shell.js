@@ -1553,7 +1553,7 @@ function renderSubscriptionOfferSource(html, offer) {
     const begin=`<!--OB_${marker}_OFFER_START-->`, end=`<!--OB_${marker}_OFFER_END-->`;
     const a=html.indexOf(begin), b=html.indexOf(end,a);
     var rendered=subscriptionPresentation.render(offer,kind,'monthly');
-    if(subscriptionPresentation.mode(offer)==='legacy'){
+    if(subscriptionPresentation.mode(offer)==='legacy'&&!subscriptionPresentation.unavailable(offer)){
       const template=html.match(new RegExp('<template id="ob-legacy-'+kind+'-offer">([\\s\\S]*?)</template>'));
       if(template)rendered=template[1];
     }

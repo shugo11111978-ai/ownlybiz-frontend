@@ -19,6 +19,15 @@ const changed=structuredClone(offer);changed.plans[0].monthly_price=39.99;change
 assert.match(presentation.render(changed,'pricing'),/\$39\.99/);assert.doesNotMatch(presentation.render(changed,'pricing'),/pay for 10 months/);assert.match(presentation.paymentNote(changed),/0% \+ \$0/);
 assert(!presentation.valid({...offer,plans:offer.plans.slice(1)}));
 assert.doesNotMatch(presentation.render(null,'pricing'),/href="\/signup/);
+assert.match(presentation.render(null,'pricing'),/Current plans are loading/);
+for(const closed of [{available:false,signup_available:false,offer_version:'legacy',reason:'admission_closed'},{available:false,signup_available:false,offer_version:'subscription_v2',reason:'catalog_unavailable'},{...offer,signup_available:false}]){
+  assert.equal(presentation.unavailable(closed),true);
+  for(const kind of ['home','pricing','signup','review']){
+    const markup=presentation.render(closed,kind);
+    assert.match(markup,/Plans are being updated/);assert.match(markup,/New signups are temporarily unavailable/);assert.match(markup,/href="\/login"/);
+    assert.doesNotMatch(markup,/Current plans are loading|\$|US-issued|two-month|href="\/signup/);
+  }
+}
 const unsafe=structuredClone(offer);unsafe.plans[0].features=['<img src=x onerror=alert(1)>'];assert.match(presentation.render(unsafe,'pricing'),/&lt;img/);
 assert.match(presentation.usage({managed:true,period:{kind:'trial',ends_at:1800000000},one_to_one:{included_minutes:120,used_minutes:1,reserved_minutes:10,remaining_minutes:109},group:{included_minutes:510,used_minutes:0,reserved_minutes:0,remaining_minutes:510}}),/initial trial total/);
 const scripts=fs.readFileSync(path.join(root,'index.html'),'utf8');let count=0;for(const m of scripts.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi)){if(/src=|application\/ld\+json|application\/json/.test(m[1]))continue;new vm.Script(m[2]);count++;}
@@ -35,13 +44,18 @@ console.log(JSON.stringify({status:'PASS',inlineScriptsParsed:count,checks:['dyn
 
 // Eligibility arrives after the initial catalog; refresh the original CTA.
 const ctaSource=scripts.slice(scripts.indexOf('  function updateSignupCta(){'),scripts.indexOf('  window.obUpdateSignupCta = updateSignupCta;'));
-const cta={textContent:'',disabled:false,dataset:{}},hint={textContent:''},checkline={textContent:''};
+const cta={textContent:'',disabled:false,dataset:{}},account={textContent:'Create account',disabled:false,dataset:{}},hint={textContent:''},checkline={textContent:''},approval={hidden:false};
+let approvalRenders=0;
 let eligibility=null;
-const ctaContext={publicOfferRenderer:()=>presentation,approvalBlocksCheckout:()=>false,renderSignupApproval:()=>{},selectedPlan:()=>({id:'starter'}),signupPayoutEligibility:()=>eligibility,usesSubscriptionOffer:()=>true,planState:{publicOffer:offer},document:{getElementById:id=>({'ob-launch-plan-btn':cta,'ob-launch-plan-hint':hint,'launch-plan-checkline':checkline}[id])}};
+const ctaContext={publicOfferRenderer:()=>presentation,approvalBlocksCheckout:()=>false,renderSignupApproval:()=>{approvalRenders++;approval.hidden=false;},selectedPlan:()=>({id:'starter'}),signupPayoutEligibility:()=>eligibility,usesSubscriptionOffer:()=>true,planState:{publicOffer:offer},document:{getElementById:id=>({'signup-step1-btn':account,'ob-signup-approval':approval,'ob-launch-plan-btn':cta,'ob-launch-plan-hint':hint,'launch-plan-checkline':checkline}[id])}};
 vm.runInNewContext(ctaSource+';updateSignupCta();',ctaContext);assert.equal(cta.disabled,true);
 eligibility={country:'US',status:'supported'};vm.runInNewContext('updateSignupCta();',ctaContext);assert.equal(cta.disabled,false);assert.equal(cta.textContent,'Continue to secure checkout');
 eligibility={country:'GB',status:'supported'};vm.runInNewContext('updateSignupCta();',ctaContext);assert.equal(cta.disabled,true);
 eligibility={country:'US',status:'supported'};ctaContext.planState.publicOffer={...offer,signup_available:false};vm.runInNewContext('updateSignupCta();',ctaContext);assert.equal(cta.disabled,true);
+assert.equal(cta.textContent,'Signup temporarily unavailable');
+assert.equal(account.disabled,true);assert.equal(account.textContent,'Signup temporarily unavailable');assert.equal(approval.hidden,true);
+const closedRenders=approvalRenders;ctaContext.planState.publicOffer=offer;vm.runInNewContext('updateSignupCta();',ctaContext);
+assert.equal(account.disabled,false);assert.equal(account.textContent,'Create account');assert.equal(cta.disabled,false);assert.equal(approval.hidden,false);assert(approvalRenders>closedRenders);
 const nativeSignup=scripts.slice(scripts.indexOf('  window.realExpertSignup = async function() {'),scripts.indexOf('// ── Claim subdomain'));
 assert(nativeSignup.indexOf('if(window.obUpdateSignupCta)window.obUpdateSignupCta();')>nativeSignup.indexOf('window._obSignupPayoutEligibility = d.payout_country_eligibility;'));
 console.log('PASS: native signup success refreshes the eligibility-dependent Checkout CTA');

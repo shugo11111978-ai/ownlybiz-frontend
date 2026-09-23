@@ -27,13 +27,14 @@
     }
     function accept(data) {
       var c = data && data.catalog;
-      if (!c || c.mode !== 'test' || c.currency !== 'usd' || !Number.isSafeInteger(c.revision) || !c.plans || !c.payment_fee || !data.limits) throw new Error('Pricing response is incomplete. Reload before editing.');
+      if (!c || ['test','live'].indexOf(c.mode)<0 || data.publish_mode!==c.mode || typeof data.admission_enabled!=='boolean' || c.currency !== 'usd' || !Number.isSafeInteger(c.revision) || !c.plans || !c.payment_fee || !data.limits) throw new Error('Pricing response is incomplete. Reload before editing.');
       return data;
     }
     function render() {
       var c = model.catalog;
       container.innerHTML = '<div class="admin-card ob-commercial-card"><h3>New subscription pricing</h3>'
-        + '<p>Staging · USD · revision ' + c.revision + '. Edit only the amounts you want to change. Preview shows exactly what will apply.</p>'
+        + '<p>' + (c.mode==='live'?'Live':'Test') + ' · USD · revision ' + c.revision + '. Edit only the amounts you want to change. Preview shows exactly what will apply.</p>'
+        + '<p>New subscription enrollment is ' + (model.admission_enabled?'enabled':'closed') + '. Publishing prices does not enroll or charge an expert.</p>'
         + '<div class="ob-commercial-plans">' + ['starter','pro','scale'].map(function (id) { return '<fieldset><legend>' + esc(id[0].toUpperCase() + id.slice(1)) + '</legend>' + field('plans.' + id + '.monthly_cents', 'Monthly subscription ($)', c.plans[id].monthly_cents) + field('plans.' + id + '.annual_cents', 'Annual subscription ($ per year)', c.plans[id].annual_cents) + '</fieldset>'; }).join('') + '</div>'
         + '<fieldset><legend>Combined payment fee · same across these plans</legend><div class="ob-commercial-plans">'
         + field('payment_fee.basis_points', 'Percentage (%)', c.payment_fee.basis_points) + field('payment_fee.fixed_cents', 'Fixed amount ($ per successful payment)', c.payment_fee.fixed_cents) + '</div>'
@@ -77,11 +78,11 @@
         locked(true); status('Checking pricing changes…');
         var result = await options.request('/api/commercial-catalog/admin/preview', {method:'POST', body:body});
         if (!current()) return;
-        if (!result.preview_hash || !result.proposed || !Array.isArray(result.changes)) throw new Error('Preview could not be verified.');
+        if (!result.preview_hash || !result.proposed || result.proposed.mode!==model.catalog.mode || result.publish_mode!==model.catalog.mode || typeof result.admission_enabled!=='boolean' || !Array.isArray(result.changes)) throw new Error('Preview could not be verified.');
         preview = {body:body, reason:reason, hash:result.preview_hash}; operation = null;
         node('review').innerHTML = '<h4>Revision ' + esc(result.proposed.revision) + '</h4><ul>' + result.changes.map(function (change) { return '<li>' + esc(pathLabel(change.path)) + ': ' + esc(display(change.path, change.before)) + ' → <strong>' + esc(display(change.path, change.after)) + '</strong></li>'; }).join('') + '</ul>'
           + (!result.changes.length ? '<p>Publish the initial catalog with the displayed amounts.</p>' : '')
-          + '<p>Applies to future offers in the new staging pricing cohort. Existing subscriptions and accepted payments keep their agreed terms. No expert is enrolled or charged by publishing this catalog.</p>';
+          + '<p>Applies to future offers in this ' + esc(model.catalog.mode) + ' pricing catalog. Existing subscriptions and accepted payments keep their agreed terms. No expert is enrolled or charged by publishing this catalog.</p>';
         status('Preview ready. Publish to activate these reviewed amounts.');
       } catch (e) { status(e.message, true); } finally { if (current()) locked(false); }
     }

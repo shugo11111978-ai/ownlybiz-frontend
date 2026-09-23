@@ -2,7 +2,7 @@
 (function(root,factory){
   var api=factory();
   if(typeof module==='object'&&module.exports)module.exports=api;
-  else root.OB_SUBSCRIPTION_OFFER=api;
+  else {root.OB_SUBSCRIPTION_OFFER=api;root.obSubscriptionOfferMode=function(){return api.mode(root.__OB_PUBLIC_OFFER__);};}
 })(typeof window!=='undefined'?window:globalThis,function(){
   'use strict';
   var IDS=['starter','pro','scale'];
@@ -13,6 +13,11 @@
     var fee=data.payment_fee_policy;
     if(!fee||fee.currency!=='usd'||fee.processing_included!==true||fee.quoted_scope!=='standard_us_domestic_card'||!Number.isSafeInteger(fee.basis_points)||fee.basis_points<0||fee.basis_points>10000||!Number.isSafeInteger(fee.fixed_cents)||fee.fixed_cents<0||fee.fixed_cents>100000)return false;
     return IDS.every(function(id){var items=data.plans.filter(function(p){return p.id===id;});return items.length===1&&items[0].offer_version==='subscription_v2'&&items[0].currency==='usd'&&['monthly_price','annual_price'].every(function(k){var n=items[0][k];return typeof n==='number'&&Number.isFinite(n)&&n>=1&&n<=100000&&Math.abs(n*100-Math.round(n*100))<0.00001;});});
+  }
+  function mode(data){
+    if(valid(data))return 'subscription_v2';
+    if(data&&data.available===false&&data.signup_available===false&&typeof data.reason==='string'&&['legacy','subscription_v2'].indexOf(data.offer_version)>=0)return data.offer_version;
+    return 'unknown';
   }
   function feeText(data){var f=data.payment_fee_policy;return (f.basis_points/100)+'% + '+money(f.fixed_cents)+' per successful payment';}
   function paymentNote(data){return valid(data)?feeText(data)+' for standard US domestic-card payments in USD. This single combined fee includes ordinary processing and Ownlybiz payment services. Payment fees apply during the software trial.':'Current payment fees could not be confirmed. Please reload before choosing a plan.';}
@@ -76,5 +81,5 @@
     return '<section class="ob-media-usage"><h3>Live usage · '+(period.kind==='trial'?'initial trial total':'current monthly allowance')+'</h3>'+rows+'<p>Current period ends '+esc(ends)+'. 1:1 audio and video share the call allowance. Group usage counts each connected participant, including the host. Free and discounted sessions count too.</p><p>Creating a group reserves capacity × duration, including the host. Unused reserved time is released when the session finishes. No automatic overage charges.</p></section>';
   }
   function terms(data){return [['h2','Software subscriptions and payment services'],['p','New subscriptions under this offer have an initial two-calendar-month software trial with a payment method required. Checkout confirms the exact first-charge date and recurring amount. Stop renewal before the first-charge date to avoid the first software bill. Annual billing covers twelve months. The trial is available once and plan changes do not restart it.'],['p',paymentNote(data)+' The offer supports US-based expert businesses, USD and eligible US-issued cards. It does not promise an international or alternative-payment rate. Accepted payment commitments retain their saved fee terms.'],['p','Paid, free, promotional and discounted sessions consume the applicable usage allowance. The dashboard shows limits and remaining usage. Unused included allowances do not accumulate. There is no automatic overage billing. Existing paid obligations and separately agreed complimentary access remain subject to their own terms.']];}
-  return {valid:valid,money:money,feeText:feeText,paymentNote:paymentNote,render:render,terms:terms,amount:amount,annualSaving:annualSaving,usage:usage};
+  return {mode:mode,valid:valid,money:money,feeText:feeText,paymentNote:paymentNote,render:render,terms:terms,amount:amount,annualSaving:annualSaving,usage:usage};
 });

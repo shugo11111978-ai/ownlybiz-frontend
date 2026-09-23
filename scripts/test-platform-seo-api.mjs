@@ -78,8 +78,8 @@ for (const host of ['ownlybiz.com', 'preview.vercel.app', 'localhost']) {
   assert.match(page.body, /rel="canonical" href="https:\/\/ownlybiz.com\/pricing"/);
   assert.match(page.body, /id="ob-platform-schema"/);
   assert.match(page.body, /https:\/\/ownlybiz.com\/#organization/);
-  assert.equal(page.calls.length, 1, 'only optional public config is requested');
-  assert.match(page.calls[0], /\/api\/config$/);
+  assert.equal(page.calls.filter(url=>url.endsWith('/api/config')).length,1,'one optional public config lookup');
+  assert.equal(page.calls.filter(url=>url.endsWith('/api/billing/public-offer')).length,1,'fresh subscription authority lookup');
   assert.match(page.body, /Configured platform description/);
   assert.doesNotMatch(page.body, /MUST_NOT_LEAK/);
 }
@@ -96,7 +96,7 @@ assert.equal((await request('/pricing', { host: 'www.ownlybiz.com', method: 'HEA
 const postRequest = await request('/pricing', { host: 'www.ownlybiz.com', method: 'POST' });
 assert.equal(postRequest.code, 200, 'new canonical redirect only applies to GET/HEAD');
 assert.match(postRequest.body, /id="raw-shell"/);
-assert.equal(postRequest.calls.length, 0, 'non-GET/HEAD requests keep original delivery without SEO config lookup');
+assert.equal(postRequest.calls.filter(url=>url.endsWith('/api/config')).length,0,'non-GET/HEAD requests keep original delivery without SEO config lookup');
 
 for (const url of ['/signup', '/login', '/checkout', '/billing', '/session/test', '/dash/test', '/admin', '/reset-password', '/pricing?session_id=callback', '/?token=callback', '/?checkout_session_id=callback', '/?unknown=1']) {
  for (const host of ['ownlybiz.com', 'www.ownlybiz.com']) {
@@ -244,18 +244,18 @@ for (const options of [{ configError: true }, { configAbsent: true }, { configTi
   assert.equal(second.code, 200);
   assert.doesNotMatch(first.body, /id="ob-platform-schema"/);
   assert.doesNotMatch(second.body, /id="ob-platform-schema"/);
-  assert.equal(instance.calls.length, 1, 'failed optional config requests are cached');
+  assert.equal(instance.calls.filter(url=>url.endsWith('/api/config')).length, 1, 'failed optional config requests are cached');
 }
 const clock = { now: 1_000_000 };
 const cached = createHandler('api/seo-shell.js', { clock });
 await Promise.all([request('/', { instance: cached }), request('/pricing', { instance: cached })]);
-assert.equal(cached.calls.length, 1, 'concurrent requests share one config lookup');
+assert.equal(cached.calls.filter(url=>url.endsWith('/api/config')).length, 1, 'concurrent requests share one config lookup');
 clock.now += 299_999;
 await request('/', { instance: cached });
-assert.equal(cached.calls.length, 1);
+assert.equal(cached.calls.filter(url=>url.endsWith('/api/config')).length, 1);
 clock.now += 2;
 await request('/', { instance: cached });
-assert.equal(cached.calls.length, 2, 'config is refreshed after five minutes');
+assert.equal(cached.calls.filter(url=>url.endsWith('/api/config')).length, 2, 'config is refreshed after five minutes');
 const social = await request('/', { seo: { platform_schema_same_as: 'https://example.com/one\nhttps://example.com/two,javascript:alert(1)' } });
 assert.match(social.body, /"sameAs":\["https:\/\/example.com\/one","https:\/\/example.com\/two"\]/);
 assert.doesNotMatch(social.body, /javascript:alert/);
@@ -267,8 +267,8 @@ if (existsSync(path.join(root, 'data', 'ownlybiz-platform.html'))) {
     assert.match(response.body, new RegExp(`<div class="mkt-page active" id="mkt-page-${page}"[^>]*>`), `${url} selects its actual SSR page`);
     assert.equal((response.body.match(/<div class="mkt-page active" id="mkt-page-/g) || []).length, 1, `${url} has exactly one active marketing page`);
     assert.ok(Buffer.byteLength(response.body) < 2_000_000, `${url} generated response is below the HTML crawl ceiling`);
-    assert.equal(response.calls.length, 1);
-    assert.match(response.calls[0], /\/api\/config$/);
+    assert.equal(response.calls.filter(url=>url.endsWith('/api/config')).length,1);
+    assert.equal(response.calls.filter(url=>url.endsWith('/api/billing/public-offer')).length,1);
   }
   const privacy = await request('/legal/privacy', { actualFiles: true });
   assert.match(privacy.body, /<section class="legal-page active"[^>]*>/);

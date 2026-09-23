@@ -7,12 +7,15 @@ import {createRequire} from 'node:module';
 const require=createRequire(import.meta.url),root=path.resolve(new URL('..',import.meta.url).pathname);
 const {chromium}=require('/Users/liranbahbut/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
 const presentation=require('../assets/subscription-offer.js');
-const stageApi='https://victorious-wisdom-production-a6b0.up.railway.app';
-let origin='',offer={available:true,signup_available:true,offer_version:'subscription_v2',catalog_revision:4,currency:'usd',payment_fee_policy:{version:'ownly-payments-catalog-v1-r4',catalog_revision:4,currency:'usd',quoted_scope:'standard_us_domestic_card',processing_included:true,basis_points:450,fixed_cents:30},plans:[['starter',39,390],['pro',99,990],['scale',159,1590]].map(([id,monthly_price,annual_price])=>({id,name:id[0].toUpperCase()+id.slice(1),description:'Software tools for your practice.',monthly_price,annual_price,currency:'usd',offer_version:'subscription_v2',catalog_revision:4,features:['Expert website','Bookings','Human chat, voice and video'],quantities:{creation_ai_credits:id==='pro'?100:id==='scale'?300:0},trial_quantities:{one_to_one_call_minutes:120,group_participant_minutes:id==='scale'?510:0,creation_ai_credits:id==='pro'?100:id==='scale'?300:0}})),comparison_rows:[{label:'Creation credits per allowance period',values:{starter:0,pro:100,scale:300}}]};
+const runtimeMode=process.env.OB_QA_RUNTIME_MODE==='live'?'live':'test';
+const stageApi=runtimeMode==='live'?'https://ownlybiz-backend-production.up.railway.app':'https://victorious-wisdom-production-a6b0.up.railway.app';
+let origin='',offer={stripe_mode:runtimeMode,available:true,signup_available:true,offer_version:'subscription_v2',catalog_revision:4,currency:'usd',payment_fee_policy:{version:'ownly-payments-catalog-v1-r4',catalog_revision:4,currency:'usd',quoted_scope:'standard_us_domestic_card',processing_included:true,basis_points:450,fixed_cents:30},plans:[['starter',39,390],['pro',99,990],['scale',159,1590]].map(([id,monthly_price,annual_price])=>({id,name:id[0].toUpperCase()+id.slice(1),description:'Software tools for your practice.',monthly_price,annual_price,currency:'usd',offer_version:'subscription_v2',catalog_revision:4,features:['Expert website','Bookings','Human chat, voice and video'],quantities:{creation_ai_credits:id==='pro'?100:id==='scale'?300:0},trial_quantities:{one_to_one_call_minutes:120,group_participant_minutes:id==='scale'?510:0,creation_ai_credits:id==='pro'?100:id==='scale'?300:0}})),comparison_rows:[{label:'Creation credits per allowance period',values:{starter:0,pro:100,scale:300}}]};
 let publicOfferFail=false,signupBodies=[];
 const writeRequests=[],externalRequests=[],pageErrors=[];
 function payload(url){const pathname=new URL(url,origin||'http://localhost').pathname;
  if(pathname==='/api/billing/public-offer')return publicOfferFail?null:offer;
+ if(pathname==='/api/billing/plans')return {plans:[['starter',0,0],['pro',49,470],['scale',99,948]].map(([id,monthly_price,annual_price])=>({id,name:id,monthly_price,annual_price,platform_fee_pct:{starter:12,pro:8,scale:5}[id],expert_keep_pct:{starter:88,pro:92,scale:95}[id]})),starter_requires_approval:true};
+ if(pathname==='/api/experts/platform-fees')return {fee_starter_pct:12,fee_pro_pct:8,fee_scale_pct:5,price_starter_monthly:0,price_pro_monthly:49,price_scale_monthly:99};
  if(pathname==='/api/billing/payout-countries')return {countries:[{code:'US',label:'United States',supported:true},{code:'GB',label:'United Kingdom',supported:true}]};
  if(pathname==='/api/config')return {success:true,features:{},analytics:{},seo:{}};
  if(pathname==='/api/tracking/config')return {enabled:false,providers:{},settings:{enabled:false},consent_required:true};
@@ -21,8 +24,8 @@ function payload(url){const pathname=new URL(url,origin||'http://localhost').pat
  if(pathname==='/api/marketing/featured-experts')return {experts:[]};
  return null;
 }
-function transformed(value){return String(value).replaceAll('https://ownlybiz-backend-production.up.railway.app',origin).replaceAll('wss://ownlybiz-backend-production.up.railway.app',origin.replace('http:','ws:')).replaceAll('window.OWNLYBIZ_IS_STAGING=false;','window.OWNLYBIZ_IS_STAGING=true;');}
-const context={module:{exports:{}},process:{cwd:()=>root,env:{NODE_ENV:'test',VERCEL_ENV:'preview',OWNLYBIZ_API_URL:stageApi}},URL,URLSearchParams,AbortController,setTimeout,clearTimeout,Date,console,fetch:async(url)=>{const d=payload(url);return {ok:!!d,status:d?200:503,json:async()=>d};},require(name){if(name==='fs')return {...fs,readFileSync(filename,encoding){const data=fs.readFileSync(filename,encoding);return encoding==='utf8'?transformed(data):data;}};if(name==='path')return path;if(name.startsWith('../'))return require(path.join(root,'api',name));return require(name);}};
+function transformed(value){return String(value).replaceAll('https://ownlybiz-backend-production.up.railway.app',origin).replaceAll('wss://ownlybiz-backend-production.up.railway.app',origin.replace('http:','ws:')).replaceAll('window.OWNLYBIZ_IS_STAGING=false;',runtimeMode==='test'?'window.OWNLYBIZ_IS_STAGING=true;':'window.OWNLYBIZ_IS_STAGING=false;');}
+const context={module:{exports:{}},process:{cwd:()=>root,env:{NODE_ENV:'test',VERCEL_ENV:runtimeMode==='test'?'preview':'production',OWNLYBIZ_API_URL:stageApi}},URL,URLSearchParams,AbortController,setTimeout,clearTimeout,Date,console,fetch:async(url)=>{const d=payload(url);return {ok:!!d,status:d?200:503,json:async()=>d};},require(name){if(name==='fs')return {...fs,readFileSync(filename,encoding){const data=fs.readFileSync(filename,encoding);return encoding==='utf8'?transformed(data):data;}};if(name==='path')return path;if(name.startsWith('../'))return require(path.join(root,'api',name));return require(name);}};
 vm.runInNewContext(fs.readFileSync(path.join(root,'api/seo-shell.js'),'utf8'),context,{filename:'api/seo-shell.js'});
 const handler=context.module.exports;
 const server=http.createServer(async(req,res)=>{
@@ -40,14 +43,14 @@ const server=http.createServer(async(req,res)=>{
    res.writeHead(200,{'content-type':type});res.end(pathname.endsWith('.js')?transformed(fs.readFileSync(filename,'utf8')):fs.readFileSync(filename));return;
  }
  const adapter={setHeader:(k,v)=>res.setHeader(k,v),status(code){res.statusCode=code;return this;},send(body){res.end(transformed(body));},end(){res.end();}};
- try{await handler({url:req.url,method:req.method,headers:{host:'staging-fixture.vercel.app'}},adapter);}catch(e){json({error:e.message},500);}
+ try{await handler({url:req.url,method:req.method,headers:{host:runtimeMode==='test'?'staging-fixture.vercel.app':'ownlybiz.com'}},adapter);}catch(e){json({error:e.message},500);}
 });
 await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));origin='http://127.0.0.1:'+server.address().port;
 const out=process.env.OB_QA_OUTPUT||'/tmp/ownlybiz-staging-marketing-qa';fs.mkdirSync(out,{recursive:true});
 let browser;
 try{
  // Actual server handler, actual source slots, scriptless stale/production boundaries.
- let response=await fetch(origin+'/pricing');let html=await response.text();assert.equal(response.status,200);assert.match(response.headers.get('x-robots-tag'),/noindex/);assert.match(html,/data-catalog-revision="4"/);assert.match(html,/\$39<sub>\/month/);
+ let response=await fetch(origin+'/pricing');let html=await response.text();assert.equal(response.status,200);if(runtimeMode==='test')assert.match(response.headers.get('x-robots-tag'),/noindex/);else assert.doesNotMatch(response.headers.get('x-robots-tag')||'',/noindex/);assert.match(html,/data-catalog-revision="4"/);assert.match(html,/\$39<sub>\/month/);
  response=await fetch(origin+'/legal/independent-professional-terms');html=await response.text();assert.match(html,/Software subscriptions and payment services/);assert.match(html,/4\.5% \+ \$0\.30/);
  publicOfferFail=true;response=await fetch(origin+'/pricing');html=await response.text();assert.match(html,/Current plans are loading/);assert.doesNotMatch(html.slice(html.indexOf('<!--OB_PRICING_OFFER_START-->'),html.indexOf('<!--OB_PRICING_OFFER_END-->')),/12%|Free forever|href="\/signup/);publicOfferFail=false;
  browser=await chromium.launch({executablePath:'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',headless:true});
@@ -88,7 +91,17 @@ try{
  await page.evaluate(()=>window.obShowSignupCheckoutReturn('starter'));
  assert.equal(await page.locator('#ob-signup-plan-card [data-ob-signup-plan="starter"]').getAttribute('aria-pressed'),'true');
  publicOfferFail=true;const failed=await page.evaluate(async()=>{try{await window.obSignupOfferPayload();return '';}catch(e){return e.message;}});assert(failed);assert.equal(signupBodies.length,1);publicOfferFail=false;
+ // Explicit API authority, independent of the browser's TEST/staging flag.
+ const published=offer;
+ offer={...published,signup_available:false};await page.goto(origin+'/pricing',{waitUntil:'domcontentloaded'});await page.locator('#mkt-page-pricing .ob-public-offer').waitFor();assert.match(await page.locator('#mkt-page-pricing').innerText(),/39.99/);assert.equal(await page.locator('#mkt-page-pricing a[href^="/signup"]').count(),0);assert.match(await page.locator('#mkt-page-pricing').innerText(),/Signup temporarily unavailable/);
+ offer={available:false,signup_available:false,offer_version:'legacy',reason:'admission_closed'};
+ response=await fetch(origin+'/pricing');html=await response.text();const legacySlot=html.slice(html.indexOf('<!--OB_PRICING_OFFER_START-->'),html.indexOf('<!--OB_PRICING_OFFER_END-->'));assert.match(legacySlot,/12%/);assert.doesNotMatch(legacySlot,/Current plans are loading/);
+ response=await fetch(origin+'/legal/independent-professional-terms');html=await response.text();const legal=html.match(/<section class="legal-page active"[\s\S]*?<\/section>/)?.[0]||'';assert.doesNotMatch(legal,/Software subscriptions and payment services/);
+ await page.goto(origin+'/pricing',{waitUntil:'domcontentloaded'});await page.waitForFunction(()=>window.obSubscriptionOfferMode?.()==='legacy');assert.match(await page.locator('#mkt-page-pricing').innerText(),/12%/);assert.equal(await page.locator('#ob-v3-dynamic-home').count(),0);
+ await page.goto(origin+'/signup',{waitUntil:'domcontentloaded'});await page.locator('#signup-payout-country option[value="GB"]').waitFor({state:'attached'});await page.waitForFunction(()=>window.obLoadPublicOffer&&window.obSignupOfferPayload);assert.deepEqual(await page.evaluate(()=>window.obSignupOfferPayload()),{});assert.equal(await page.locator('#ob-signup-initial-plan').isVisible(),false);
+ publicOfferFail=true;const legacyFailure=await page.evaluate(async()=>{try{await window.obSignupOfferPayload();return '';}catch(e){return e.message;}});assert(legacyFailure);assert.equal(await page.evaluate(()=>window.obSubscriptionOfferMode()),'unknown');assert.match(await page.locator('#mkt-page-pricing').innerText(),/Current plans are loading/);assert.equal(signupBodies.length,1);
+ publicOfferFail=false;offer={available:false,signup_available:false,offer_version:'subscription_v2',reason:'catalog_unavailable'};await page.goto(origin+'/signup',{waitUntil:'domcontentloaded'});await page.waitForFunction(()=>window.obSubscriptionOfferMode?.()==='subscription_v2');assert.match(await page.locator('#ob-signup-initial-plan').innerText(),/Current plans are loading/);const unavailable=await page.evaluate(async()=>{try{await window.obSignupOfferPayload();return '';}catch(e){return e.message;}});assert(unavailable);assert.equal(signupBodies.length,1);offer=published;
  await ctx.close();
  fs.writeFileSync(path.join(out,'result.json'),JSON.stringify({status:'PASS',checks:['server first paint','server fee terms','failed catalog no stale offer','desktop/mobile monthly/annual','no overflow','plan/interval CTA preselection','stale revision requires review','actual signup body server contract','no account created'],pageErrors,externalRequestsBlocked:externalRequests.length,writeRequests:writeRequests.map(x=>x.path)},null,2));
- console.log(JSON.stringify({status:'PASS',out,pageErrors,externalRequestsBlocked:externalRequests.length}));
+ console.log(JSON.stringify({status:'PASS',runtimeMode,out,pageErrors,externalRequestsBlocked:externalRequests.length}));
 }finally{if(browser)await browser.close();await new Promise(resolve=>server.close(resolve));}

@@ -34,7 +34,7 @@ for(const body of [{user:{role:'client',slug:'someone'}},{user:{role:'expert',sl
 const checkout=source('  async function openSubscriptionCheckout(', '  window.obOpenSubscriptionCheckout =');
 for(const offerVersion of ['subscription_v2','legacy']){
  const requests=[],redirects=[];const plan={id:'starter',name:'Starter',offer_version:offerVersion,catalog_revision:4};
- const h={stagingOffer:()=>offerVersion==='subscription_v2',planState:{publicOffer:{plans:[plan]},interval:'monthly'},plansById:plans=>Object.fromEntries(plans.map(p=>[p.id,p])),planById:()=>plan,showStripeRedirectNotice(){},hideStripeRedirectNotice(){},dashboardReturnPath:()=>'/dash',activeDashboardPanel:()=>'',obJson:async(url,options)=>{requests.push({url,...options});return {url:'https://checkout.stripe.com/owned-test'};},redirectToStripe:url=>redirects.push(url)};
+ const h={usesSubscriptionOffer:()=>offerVersion==='subscription_v2',planState:{publicOffer:{plans:[plan]},interval:'monthly'},plansById:plans=>Object.fromEntries(plans.map(p=>[p.id,p])),planById:()=>plan,showStripeRedirectNotice(){},hideStripeRedirectNotice(){},dashboardReturnPath:()=>'/dash',activeDashboardPanel:()=>'',obJson:async(url,options)=>{requests.push({url,...options});return {url:'https://checkout.stripe.com/owned-test'};},redirectToStripe:url=>redirects.push(url)};
  vm.createContext(h);new vm.Script(checkout).runInContext(h);await h.openSubscriptionCheckout('starter','monthly','signup');
  assert.equal(requests.length,1);assert.equal(requests[0].url,'/api/billing/checkout');
  assert.equal(requests[0].body.return_path,offerVersion==='subscription_v2'?'/dashboard/billing':'/dash');

@@ -27,7 +27,7 @@ assert.match(html, />Stripe account country<\/label>/,
   'Connect onboarding asks for the connected-account country without implying a platform payout account');
 assert.doesNotMatch(html, /Stripe payout account is legally based/,
   'signup and Connect onboarding avoid the obsolete payout-account description');
-assert.match(html, /paidBlocked = p\.id !== 'starter'/, 'only paid signup plans are country-gated');
+assert.match(html, /paidBlocked = \(v2 \|\| p\.id !== 'starter'\)/, 'legacy paid plans and every new subscription tier are country-gated');
 assert.match(html, /btn\.disabled = paidBlocked/, 'unsupported paid checkout button is disabled');
 assert.match(
   html,

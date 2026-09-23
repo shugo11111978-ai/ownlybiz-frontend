@@ -30,7 +30,7 @@ function createHandler(file, options = {}) {
     module: { exports: {} },
     require(name) {
       if (name === 'path') return path;
-      if (name.startsWith('../lib/')) {
+      if (name.startsWith('../lib/') || name === '../assets/subscription-offer') {
         const dependency = { ...context, module: { exports: {} } };
         vm.runInNewContext(readFileSync(path.join(root, 'api', name + '.js'), 'utf8'), dependency, { filename: name });
         return dependency.module.exports;
@@ -127,9 +127,11 @@ for (const [url, host] of [['/exampleexpert/book', 'ownlybiz.com'], ['/book', 'e
   assert.match(page.body, /UNCHANGED SESSION MARKUP/);
 }
 function expertMetadata(html) {
-  const script=html.match(/<script id="ob-expert-site-metadata">window\.__OB_EXPERT_SITE__=([\s\S]*?);<\/script>/);
+  const script=html.match(/<script id="ob-expert-site-metadata">([\s\S]*?)<\/script>/);
   assert.ok(script,'expert metadata payload present');
-  return JSON.parse(script[1]);
+  const context={window:{},document:{documentElement:{classList:{add(){},remove(){}}}},setTimeout(){return 1;}};
+  vm.runInNewContext(script[1],context,{timeout:1000});
+  return JSON.parse(JSON.stringify(context.window.__OB_EXPERT_SITE__));
 }
 const queryExpert={...expert,website_content:{ai_pages:[{slug:'guide',title:'A published guide',meta_title:'Custom Guide | Independent Expert',published:true,sections:[{title:'Useful advice',body:'A complete authored explanation.'}]}]}};
 for(const queryPath of ['/','/about','/guide']) {

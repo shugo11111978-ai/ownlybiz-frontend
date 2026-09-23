@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const publicSite = require('../lib/expert-public');
 const expertRender = require('../lib/expert-render');
+const subscriptionPresentation = require('../assets/subscription-offer');
 
 const BACKEND = (process.env.OWNLYBIZ_API_URL || process.env.OWNLY_API || 'https://ownlybiz-backend-production.up.railway.app').replace(/\/+$/, '');
 const STAGING_NOINDEX_HOST = 'ownlybiz-git-staging-shugo11111978-4289s-projects.vercel.app';
@@ -180,8 +181,8 @@ function platformMarketingSeo(pathname) {
       canonicalPath: '/features',
     },
     pricing: {
-      title: 'Ownlybiz Pricing - Clear Platform Fees for Experts',
-      description: 'Compare Ownlybiz plans and platform fees for independent experts running paid chat, voice, video, written services, and packages.',
+      title: 'Ownlybiz Pricing - Plans for Independent Experts',
+      description: 'Compare Ownlybiz software subscriptions, payment fees and included tools for your independent expert practice.',
       canonicalPath: '/pricing',
     },
     experts: {
@@ -455,8 +456,9 @@ function renderPlatformLegal(doc) {
   return `<div class="legal-shell"><div class="legal-kicker">${esc(doc.kicker)}</div><h1>${esc(doc.title)}</h1><div class="legal-updated">${esc(doc.updated)}</div>${body}<div class="legal-link-row">${links}<button class="legal-pill" onclick="obOpenConsentManager();return false;">Cookie Preferences</button></div></div>`;
 }
 
-function injectPlatformLegal(html, info) {
-  const doc = readPlatformLegal()[info.key];
+function injectPlatformLegal(html, info, offer) {
+  let doc = readPlatformLegal()[info.key];
+  if (doc && offer && ['terms','independent','platform'].includes(info.key)) doc = {...doc, updated: 'Subscription offer updated: September 23, 2026', body: [...doc.body, ...subscriptionPresentation.terms(offer)]};
   if (!doc || !Array.isArray(doc.body)) return html;
   html = activatePlatformPage(html, 'home');
   html = html.replace(/<section class="legal-page" id="legal-page" aria-live="polite"><\/section>/,
@@ -1536,9 +1538,29 @@ function whiteLabelExpertShell(html) {
     .replace(/Powered by Ownlybiz/g, '');
 }
 
+async function readPublicSubscriptionOffer() {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 4000);
+  try {
+    const response = await fetch(`${BACKEND}/api/billing/public-offer`, {headers:{accept:'application/json'},signal:controller.signal,cache:'no-store'});
+    if (!response.ok) return null;
+    const data = await response.json();
+    return subscriptionPresentation.valid(data) ? data : null;
+  } catch (_) { return null; } finally { clearTimeout(timeout); }
+}
+function renderSubscriptionOfferSource(html, offer) {
+  for (const [marker, kind] of [['HOME','home'],['PRICING','pricing']]) {
+    const begin=`<!--OB_${marker}_OFFER_START-->`, end=`<!--OB_${marker}_OFFER_END-->`;
+    const a=html.indexOf(begin), b=html.indexOf(end,a);
+    if(a>=0&&b>=0) html=html.slice(0,a+begin.length)+subscriptionPresentation.render(offer,kind,'monthly')+html.slice(b);
+  }
+  return html.replace(/<head([^>]*)>/i, (tag) => tag + '\n<script id="ob-public-offer-data">window.__OB_PUBLIC_OFFER__=' + safeScriptJson(offer) + ';</script>');
+}
+
 module.exports = async function handler(req, res) {
   const host = publicSite.hostFromReq(req);
   const stagingNoindex = process.env.VERCEL_ENV === 'preview' || host === STAGING_NOINDEX_HOST;
+  const stagingSubscription = stagingNoindex && BACKEND === 'https://victorious-wisdom-production-a6b0.up.railway.app';
   if (stagingNoindex) res.setHeader('X-Robots-Tag', 'noindex,nofollow');
   if (isLegacyCpanelPath(req)) {
     res.setHeader('Location', `https://${host || 'ownlybiz.com'}/`);
@@ -1552,6 +1574,7 @@ module.exports = async function handler(req, res) {
   // authentication, dashboards, group rooms, or session deep links.
   if (publicSite.isUtilityRequest(req, host) && !(publicPlatformRequest(req, host) && (knownPublicPlatformPath(pathOnly(req)) || invalidPublicPlatformPath(pathOnly(req))))) {
     let html = readIndex();
+    if (stagingSubscription) html = renderSubscriptionOfferSource(html, pathOnly(req)==='/signup' ? await readPublicSubscriptionOffer() : null);
     html = setMeta(html, 'name', 'robots', 'noindex,nofollow');
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.setHeader('Cache-Control', 'no-store');
@@ -1617,6 +1640,8 @@ module.exports = async function handler(req, res) {
   let html;
   try { html = isExpert ? readExpertIndex() : knownPlatformPublic ? readPlatformIndex() : readIndex(); }
   catch (_) { failPublic(503); return; }
+  const subscriptionOffer = stagingSubscription && !isExpert ? await readPublicSubscriptionOffer() : null;
+  if (stagingSubscription && !isExpert) html = renderSubscriptionOfferSource(html, subscriptionOffer);
   let statusCode = 200;
   if (isExpert) {
     const preloadOnDemand = expert.on_demand_public || null;
@@ -1662,7 +1687,7 @@ module.exports = async function handler(req, res) {
   } else if (platformPublic && platformLegalRoute(publicPath)) {
     const legal = platformLegalRoute(publicPath);
     const canonicalPath = legal.canonicalPath || publicPath;
-    html = injectPlatformLegal(html, legal);
+    html = injectPlatformLegal(html, legal, subscriptionOffer);
     html = injectSeo(html, {
       title: `${legal.title} - Ownlybiz`,
       description: `Ownlybiz ${legal.title} for platform users, independent experts, clients, privacy, payments, and acceptable use.`,

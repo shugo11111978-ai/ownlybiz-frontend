@@ -847,6 +847,7 @@ new vm.Script(authorizationPolicySource, { filename: 'admin-session-authorizatio
 new vm.Script(`(function(){
   function esc(value){return String(value == null ? '' : value);}
   function role(){return 'admin';}
+  function token(){return 'fixture-admin';}
   var readCache={};
   function api(path,options){return window.__adminApi(path,options||{});}
   ${adminAuthorizationSource}

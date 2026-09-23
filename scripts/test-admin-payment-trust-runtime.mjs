@@ -252,7 +252,7 @@ function makeHarness({ role = 'admin', responseFactory } = {}) {
     'ob-stripe-config-toggle', 'passkey-register', 'passkey-verify',
   ].map((id) => new FakeElement(id));
   const nodes = Object.fromEntries(controls.map((node) => [node.id, node]));
-  for (const id of ['stripe-status-badge', 'stripe-account-info', 'stripe-test-result']) {
+  for (const id of ['ob-platform-stripe-config-card', 'stripe-status-badge', 'stripe-account-info', 'stripe-test-result']) {
     nodes[id] = new FakeElement(id);
   }
   const panelControls = controls.filter((node) => node.id !== 'ob-stripe-config-toggle');
@@ -322,6 +322,16 @@ assert(admin.controls.every((control) => control.disabled === false),
   'controls unlock only after the authenticated admin response succeeds');
 assert.doesNotMatch(admin.nodes['stripe-status-badge'].textContent + admin.nodes['stripe-status-badge'].innerHTML, /Loading/i);
 
+admin.nodes['stripe-secret-key'].value='unsaved-fixture-key';
+admin.nodes['stripe-environment'].value='live';
+await admin.sandbox.loadAdminPaymentSettings();
+assert.equal(admin.calls.length,1,'reopening trusted editor uses current mount without loading again');
+assert.equal(admin.nodes['stripe-secret-key'].value,'unsaved-fixture-key');
+assert.equal(admin.nodes['stripe-environment'].value,'live');
+await admin.sandbox.loadAdminPaymentSettings(true);
+assert.equal(admin.calls.length,2,'explicit refresh fetches current settings');
+assert.equal(admin.nodes['stripe-secret-key'].value,'');
+
 const expert = makeHarness({ role: 'expert' });
 const expertResult = await expert.sandbox.loadAdminPaymentSettings();
 assert.equal(expertResult, null);
@@ -339,15 +349,30 @@ assert(failed.controls.every((control) => control.disabled === true),
   'a settings API failure never leaves mutation controls enabled');
 assert.match(failed.nodes['stripe-account-info'].textContent, /settings temporarily unavailable/);
 
+const incomplete=makeHarness({responseFactory:()=>response(200,{})});
+assert.equal(await incomplete.sandbox.loadAdminPaymentSettings(),null);
+assert.equal(incomplete.sandbox.__obStripeSettingsLoadState.trusted,false);
+assert(incomplete.controls.every(control=>control.disabled));
+
 let releaseSlowResponse;
 const slowResponse = new Promise((resolve) => { releaseSlowResponse = resolve; });
 const changed = makeHarness({ responseFactory: () => slowResponse });
 const staleLoad = changed.sandbox.loadAdminPaymentSettings();
+assert.equal(changed.sandbox.loadAdminPaymentSettings(),staleLoad,'concurrent settings readers share one request');
+assert.equal(changed.calls.length,1);
 changed.setIdentity({ token: 'jwt-other-admin', principal: 'principal-other', generation: 2 });
 releaseSlowResponse(response(200, { settings: { stripe_mode: 'live', stripe_active_configured: true } }));
 assert.equal(await staleLoad, null);
 assert.equal(changed.sandbox.__obStripeSettingsLoadState.trusted, false,
   'a response from a previous principal cannot unlock Stripe controls');
 assert(changed.controls.every((control) => control.disabled === true));
+
+let releaseMount;
+const remounted=makeHarness({responseFactory:()=>new Promise(resolve=>{releaseMount=resolve;})});
+const detachedLoad=remounted.sandbox.loadAdminPaymentSettings();
+remounted.nodes['ob-platform-stripe-config-card']=new FakeElement('ob-platform-stripe-config-card');
+releaseMount(response(200,{settings:{stripe_mode:'live'}}));
+assert.equal(await detachedLoad,null,'detached mount cannot become trusted from an old request');
+assert.equal(remounted.sandbox.__obStripeSettingsLoadState.trusted,false);
 
 console.log('admin payment trust runtime regression: PASS');

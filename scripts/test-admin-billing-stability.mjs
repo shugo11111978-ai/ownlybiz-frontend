@@ -1,0 +1,84 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import {createRequire} from 'node:module';
+const require=createRequire(import.meta.url),{chromium}=require('/Users/liranbahbut/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright');
+const html=fs.readFileSync(new URL('../index.html',import.meta.url),'utf8');
+function extract(start,end){const a=html.indexOf(start),b=html.indexOf(end,a);assert(a>=0&&b>a,start);return html.slice(a,b);}
+const feeMarkup=extract('      <div class="admin-tab-panel" id="admin-panel-fee-config"','      <!-- ========== PLATFORM SETTINGS PANEL');
+const feeRuntime=extract('  var commercialOwner=null','\n\t  function billingConnectReady');
+const feeLoader=extract('  var adminFeeLoad=null','\n\t  function feePctFromSession');
+const paymentRuntime=extract('  function isEnabledSetting(settings, key){','\n  var platformPaymentsRenderGeneration');
+const policyScript=html.match(/<script id="ownlybiz-session-authorization-policy-20260816">([\s\S]*?)<\/script>/)[1];
+const policy=policyScript.slice(0,policyScript.indexOf('\n(function(){\n  if(window.__obCreditWalletV1) return;'));
+const catalog=fs.readFileSync(new URL('../assets/admin-commercial-catalog.js',import.meta.url),'utf8');
+const checks=[];const browser=await chromium.launch({executablePath:'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',headless:true});
+try{
+const context=await browser.newContext();await context.route('**/*',route=>route.fulfill({contentType:'text/html',body:'<!doctype html><body></body>'}));
+const page=await context.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));await page.goto('https://fixture.invalid/admin');
+await page.setContent(feeMarkup);await page.addScriptTag({content:catalog});
+await page.evaluate(()=>{
+ window.__qa={requests:[],pending:[],credential:'admin-A',fail:false};window.OwnlyAPI={};
+ window.OB_CLIENT_CONTEXT={capture:()=>({role:'admin',token:__qa.credential}),isCurrent:o=>o.token===__qa.credential};
+ window.esc=x=>String(x??'');window.toastOk=()=>{};window.BILLING_CACHE_KEY='fixture';window.adminFeeSnapshot=null;
+ window.ADMIN_PLAN_DEFAULTS={starter:{fee:12,monthly:0,annual:0},pro:{fee:8,monthly:49,annual:470},scale:{fee:5,monthly:99,annual:948}};window.ADMIN_TEST_PRICE_IDS={};
+ const fees={platform_fee_chat:0,platform_fee_voice:7,platform_fee_video:9,platform_fee_fixed:3,fee_enterprise_pct:2,price_starter_trial:6};
+ for(const id of ['starter','pro','scale'])Object.assign(fees,{['plan_'+id+'_enabled']:id==='pro'?'0':'1',['plan_'+id+'_name']:id,['plan_'+id+'_description']:'Saved description',['fee_'+id+'_pct']:0,['price_'+id+'_monthly']:id==='starter'?0:57,['price_'+id+'_annual']:id==='starter'?0:570,['plan_'+id+'_stripe_test_price_monthly']:'price_test_'+id,['plan_'+id+'_stripe_test_price_annual']:'price_test_annual_'+id,['plan_'+id+'_stripe_live_price_monthly']:'price_live_'+id,['plan_'+id+'_stripe_live_price_annual']:'price_live_annual_'+id});
+ __qa.fees=fees;
+ window.obJson=async(path,opts={})=>{__qa.requests.push({path,opts});if(path==='/api/admin/fees'){if(opts.method==='PUT')return{success:true};if(__qa.fail)throw new Error('Fixture load unavailable');if(__qa.delay)return new Promise(resolve=>__qa.pending.push(()=>resolve({fees})));return{fees};}if(path==='/api/commercial-catalog/admin')return{catalog:{mode:'live',currency:'usd',revision:1,plans:Object.fromEntries(['starter','pro','scale'].map(id=>[id,{monthly_cents:3900,annual_cents:39000}])),payment_fee:{basis_points:450,fixed_cents:30}},publish_mode:'live',admission_enabled:true,limits:{subscription_max_cents:10000000,subscription_min_cents:100,basis_points_max:10000,fixed_cents_max:100000}};throw new Error(path);};
+ document.getElementById('admin-panel-fee-config').classList.add('active');
+});
+await page.addScriptTag({content:feeRuntime+'\n'+feeLoader});
+await page.evaluate(()=>{__qa.delay=true;__qa.a=loadAdminFeeConfig();__qa.b=loadAdminFeeConfig();});
+assert.equal(await page.locator('#ob-admin-save-all-fees').isDisabled(),true);assert.equal(await page.locator('#plan-pro-monthly').inputValue(),'');
+assert.equal(await page.evaluate(()=>__qa.requests.filter(x=>x.path==='/api/admin/fees').length),1);
+await page.evaluate(async()=>{__qa.pending.shift()();await Promise.all([__qa.a,__qa.b]);__qa.delay=false;});
+assert.equal(await page.locator('#plan-pro-enabled').isChecked(),false);assert.equal(await page.locator('#fee-pct-chat').inputValue(),'0');assert.equal(await page.locator('#plan-pro-monthly').inputValue(),'57');
+assert.equal(await page.locator('#ob-admin-legacy-pricing').getAttribute('open'),null);
+assert.equal(await page.evaluate(()=>document.querySelector('#admin-panel-fee-config .admin-content').firstElementChild.id),'ob-admin-commercial-catalog');
+assert.equal(await page.locator('[data-catalog-field="plans.starter.monthly_cents"]').count(),1);
+await page.evaluate(()=>{document.getElementById('ob-admin-legacy-pricing').open=true;document.querySelector('[data-catalog-field="plans.starter.monthly_cents"]').value='41.00';document.getElementById('plan-pro-monthly').value='61';obSetAdminPriceMode('live');document.getElementById('admin-panel-fee-config').classList.remove('active');renderAdminPlanConfig();document.getElementById('admin-panel-fee-config').classList.add('active');});
+await page.evaluate(()=>loadAdminFeeConfig());
+assert.equal(await page.locator('#plan-pro-monthly').inputValue(),'61');assert.equal(await page.locator('#plan-pro-enabled').isChecked(),false);assert.equal(await page.locator('[data-catalog-field="plans.starter.monthly_cents"]').inputValue(),'41.00');assert.equal(await page.evaluate(()=>_obAdminPriceMode),'live');
+assert.equal(await page.evaluate(()=>__qa.requests.filter(x=>x.path==='/api/commercial-catalog/admin').length),1);
+assert.equal(await page.evaluate(()=>__qa.requests.some(x=>x.opts.method&&x.opts.method!=='GET')),false);
+await page.evaluate(()=>{document.getElementById('fee-pct-chat').value='';document.getElementById('plan-pro-fee').value='';});
+const collected=await page.evaluate(()=>collectAdminFees());assert.equal(collected.platform_fee_chat,0);assert.equal(collected.fee_pro_pct,0);assert.equal(collected.price_pro_monthly,61);assert.equal(collected.fee_enterprise_pct,2);assert.equal(collected.price_starter_trial,6);assert.equal(collected.plan_pro_stripe_live_price_monthly,'price_live_pro');assert.equal('payment_fee' in collected,false);
+checks.push('Current catalog first; one collapsed legacy editor; concurrent load deduplicated; current/legacy edits, zero values, disabled plan, and Test/Live mode persist across navigation; no route writes.');
+await page.evaluate(()=>{__qa.fail=true;return loadAdminFeeConfig(true);});assert.equal(await page.locator('#ob-admin-save-all-fees').isDisabled(),true);
+const beforeBlocked=await page.evaluate(()=>__qa.requests.length);await page.evaluate(()=>saveAdminFees());assert.equal(await page.evaluate(()=>__qa.requests.length),beforeBlocked);
+await page.evaluate(()=>{__qa.fail=false;return loadAdminFeeConfig(true);});assert.equal(await page.locator('#ob-admin-save-all-fees').isDisabled(),false);
+await page.evaluate(()=>{__qa.credential='admin-B';});const beforeStale=await page.evaluate(()=>__qa.requests.length);await page.evaluate(()=>saveAdminFees());assert.equal(await page.evaluate(()=>__qa.requests.length),beforeStale);
+checks.push('Legacy API failures and changed Admin identity prevent direct saves; explicit reload restores editing.');
+// Load the actual native payment controls in a fresh local page; hidden settings use opposite wallet values.
+await page.goto('https://fixture.invalid/payments');await page.addScriptTag({content:policy});
+await page.evaluate(()=>{
+ window.__qa={credential:'admin-A',requests:[],pending:[],amount:500,fail:false};window.__OB_TEST_HOOKS__=true;
+ window.token=()=>__qa.credential;window.role=()=>__qa.credential?'admin':'';window.esc=x=>String(x??'');window.readCache={};
+ window.loadAdminPaymentSettings=async()=>__qa.fail?null:{client_apple_pay_enabled:'1',client_google_pay_enabled:'0',client_payment_domain_auto_register_enabled:'1'};
+ window.api=async(path,opts={})=>{__qa.requests.push({path,opts});if(__qa.delay)return new Promise(resolve=>__qa.pending.push(resolve));if(path==='/admin/settings/session-authorization')return{session_authorization_amount_cents:opts.body?.session_authorization_amount_cents??__qa.amount,session_authorization_currency:'usd',updated_at:'fixture-revision'};return{success:true};};
+ document.body.innerHTML='<section id="hidden-settings" hidden><input type="checkbox" id="client_apple_pay_enabled" name="client_apple_pay_enabled"><input type="checkbox" id="client_google_pay_enabled" name="client_google_pay_enabled" checked><input type="checkbox" id="client_payment_domain_auto_register_enabled" name="client_payment_domain_auto_register_enabled"></section><div id="payments"></div>';
+});
+await page.addScriptTag({content:paymentRuntime});await page.evaluate(()=>document.getElementById('payments').innerHTML=platformPaymentServiceConfigHtml());
+assert.equal(await page.locator('#ob-session-authorization-amount').inputValue(),'');
+await page.evaluate(async()=>{await obAdminSaveStripeServiceSettings();await obAdminSaveSessionAuthorizationAmount();});assert.equal(await page.evaluate(()=>__qa.requests.length),0);
+await page.evaluate(()=>hydratePlatformPaymentServiceSettings());assert.equal(await page.locator('#ob-session-authorization-amount').inputValue(),'5.00');
+assert.equal(await page.locator('#ob-payments-client_apple_pay_enabled').isChecked(),true);assert.equal(await page.locator('#client_apple_pay_enabled').isChecked(),false);
+await page.evaluate(()=>obAdminSaveStripeServiceSettings());
+const walletBody=await page.evaluate(()=>__qa.requests.find(x=>x.path==='/admin/settings').opts.body);assert.deepEqual(walletBody,{client_apple_pay_enabled:'1',client_google_pay_enabled:'0',client_payment_domain_auto_register_enabled:'1'});
+await page.locator('#ob-session-authorization-amount').fill('7.25');await page.evaluate(()=>obAdminSaveSessionAuthorizationAmount());
+const amountBody=await page.evaluate(()=>__qa.requests.find(x=>x.opts.method==='PUT').opts.body);assert.deepEqual(amountBody,{session_authorization_amount_cents:725,expected_updated_at:'fixture-revision'});
+checks.push('Native amount renders only confirmed $5; local exact-cent save retains revision; wallet save reads visible Payments card, not opposite hidden Settings controls.');
+await page.evaluate(()=>{__qa.credential='admin-B';});const writesBefore=await page.evaluate(()=>__qa.requests.length);await page.evaluate(async()=>{await obAdminSaveStripeServiceSettings();await obAdminSaveSessionAuthorizationAmount();});assert.equal(await page.evaluate(()=>__qa.requests.length),writesBefore);
+await page.evaluate(()=>{__qa.fail=true;return hydratePlatformPaymentServiceSettings();});assert.equal(await page.locator('#ob-payments-client_apple_pay_enabled').isDisabled(),true);const failedWrites=await page.evaluate(()=>__qa.requests.length);await page.evaluate(()=>obAdminSaveStripeServiceSettings());assert.equal(await page.evaluate(()=>__qa.requests.length),failedWrites);
+await page.evaluate(()=>{__qa.fail=false;return hydratePlatformPaymentServiceSettings();});assert.equal(await page.locator('#ob-payments-client_apple_pay_enabled').isDisabled(),false);
+// An old authorization response cannot apply to the replacement card, nor may its save authority be used.
+await page.evaluate(()=>{__qa.delay=true;__qa.stale=hydrateSessionAuthorizationSetting();document.getElementById('ob-session-authorization-config-card').outerHTML=sessionAuthorizationConfigHtml();__qa.pending.shift()({session_authorization_amount_cents:999,session_authorization_currency:'usd',updated_at:'stale'});return __qa.stale;});
+assert.equal(await page.locator('#ob-session-authorization-amount').inputValue(),'');assert.equal(await page.locator('#ob-session-authorization-save').isDisabled(),true);
+const staleWrites=await page.evaluate(()=>__qa.requests.length);await page.evaluate(()=>obAdminSaveSessionAuthorizationAmount());assert.equal(await page.evaluate(()=>__qa.requests.length),staleWrites);
+await page.evaluate(async()=>{__qa.delay=false;await hydratePlatformPaymentServiceSettings();document.getElementById('ob-session-authorization-amount').value='8.00';__qa.delay=true;__qa.save=obAdminSaveSessionAuthorizationAmount();__qa.credential='admin-C';__qa.pending.shift()({session_authorization_amount_cents:800,session_authorization_currency:'usd',updated_at:'old-save-result'});return __qa.save;});
+assert.equal(await page.locator('#ob-session-authorization-amount').inputValue(),'8.00');
+assert.doesNotMatch(await page.locator('#ob-session-authorization-status').innerText(),/Saved \$8\.00/);
+assert.equal(await page.evaluate(()=>OB_SESSION_AUTHORIZATION_POLICY.configuredCents()),500,'stale save response cannot adopt a new public authorization amount');
+checks.push('Direct wallet/amount saves reject unhydrated and changed-principal state; wallet retry works; detached authorization response cannot enable or write replacement controls.');
+assert.deepEqual(errors,[]);console.log(JSON.stringify({status:'PASS',checks,browserErrors:errors}));
+}finally{await browser.close();}

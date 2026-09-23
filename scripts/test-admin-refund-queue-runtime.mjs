@@ -66,67 +66,51 @@ assert.doesNotMatch(livePanelEnforcerSource,
   /renderPlatformPayments\(\)|renderConnectors\(\)|renderDomains\(\)|renderPayouts\(\)/,
   'the repair interval cannot directly supersede an in-flight live renderer');
 
-const feeRequests = [];
-const rendererQueueRefreshes = [];
-let rendererContent = '';
+const hydrationRequests = [], rendererQueueRefreshes = [];
+let rendererContent = '', rendererMount=null, mountCount=0, rendererActive=true;
 function rendererDeferred(target) {
-  let resolve;
-  let reject;
-  const promise = new Promise((resolvePromise, rejectPromise) => {
-    resolve = resolvePromise;
-    reject = rejectPromise;
-  });
-  target.push({ promise, resolve, reject });
-  return promise;
+  let resolve, reject;
+  const promise = new Promise((a,b) => { resolve=a; reject=b; });
+  target.push({promise,resolve,reject}); return promise;
 }
 const rendererSandbox = {
-  window: null,
-  api(path) {
-    assert.equal(path, '/admin/fees');
-    return rendererDeferred(feeRequests);
-  },
-  loading() { rendererContent = 'loading'; },
-  setContent(_panel, value) { rendererContent = String(value); },
-  note(value) { return `note:${value}`; },
-  card(label, value) { return `card:${label}:${value}`; },
-  num(value) { return Number(value || 0); },
-  platformPaymentServiceConfigHtml() { return 'payment-config'; },
-  hydratePlatformPaymentServiceSettings() {},
-  errorBox(error) { return `error:${error?.message || error}`; },
-  setTimeout() { return 1; },
-  Promise,
-  Object,
-  String,
-  Number,
+  window:null,
+  document:{getElementById(){return {classList:{contains(){return rendererActive;}}};}},
+  api(){throw new Error('Payments must not fetch legacy fees');},
+  contentNode(){return {querySelector(){return rendererMount;}};},
+  token(){return 'fixture-admin';},role(){return 'admin';},
+  setContent(_panel,value){rendererContent=String(value);rendererMount={};mountCount++;},
+  platformPaymentServiceConfigHtml(){return 'payment-config';},
+  hydratePlatformPaymentServiceSettings(){return rendererDeferred(hydrationRequests);},
+  Promise,Object,String,Number
 };
-rendererSandbox.window = rendererSandbox;
-rendererSandbox.window.obAdminLoadRefundQueue = () => rendererDeferred(rendererQueueRefreshes);
+rendererSandbox.window=rendererSandbox;
+rendererSandbox.obAdminLoadRefundQueue=()=>rendererDeferred(rendererQueueRefreshes);
 vm.createContext(rendererSandbox);
-new vm.Script(`${paymentsRendererRuntimeSource}\nwindow.__testRenderPlatformPayments = renderPlatformPayments;`, {
-  filename: 'admin-platform-payments-renderer.js',
-}).runInContext(rendererSandbox);
-
-const olderRenderer = rendererSandbox.window.__testRenderPlatformPayments();
-const newerRenderer = rendererSandbox.window.__testRenderPlatformPayments();
-assert.equal(feeRequests.length, 2);
-feeRequests[1].resolve({ fees: { fee_starter_pct: 22, fee_pro_pct: 18, fee_scale_pct: 9 } });
-await new Promise((resolve) => setImmediate(resolve));
-assert.equal(rendererQueueRefreshes.length, 1,
-  'only the current fees renderer reaches its final queue refresh');
-rendererQueueRefreshes[0].resolve({ generation: 7, applied: true, stale: false });
-const newerRendererResult = await newerRenderer;
-assert.equal(newerRendererResult.applied, true);
-assert.equal(newerRendererResult.stale, false);
-assert.match(rendererContent, /Starter fee:22%/);
-
-feeRequests[0].resolve({ fees: { fee_starter_pct: 11, fee_pro_pct: 10, fee_scale_pct: 8 } });
-const olderRendererResult = await olderRenderer;
-assert.equal(olderRendererResult.applied, false);
-assert.equal(olderRendererResult.stale, true);
-assert.match(rendererContent, /Starter fee:22%/,
-  'a slower older fees response cannot replace the newer Platform Payments content');
-assert.equal(rendererQueueRefreshes.length, 1,
-  'a stale fees renderer cannot start another queue refresh');
+new vm.Script(`${paymentsRendererRuntimeSource}\nwindow.__testRenderPlatformPayments=renderPlatformPayments;`).runInContext(rendererSandbox);
+const olderRenderer=rendererSandbox.__testRenderPlatformPayments();
+const newerRenderer=rendererSandbox.__testRenderPlatformPayments();
+assert.equal(hydrationRequests.length,1,'overlapping navigation shares one settings hydration');
+assert.equal(mountCount,1,'payment controls mount once');
+hydrationRequests[0].resolve(true);
+await new Promise(resolve=>setImmediate(resolve));
+assert.equal(rendererQueueRefreshes.length,1,'only current render requests refund refresh');
+rendererQueueRefreshes[0].resolve({generation:7,applied:true,stale:false});
+assert.equal((await newerRenderer).applied,true);
+assert.equal((await olderRenderer).stale,true);
+assert.doesNotMatch(rendererContent,/12%|QA expert|Starter fee/);
+const retainedMount=rendererMount;
+const repeated=rendererSandbox.__testRenderPlatformPayments();
+await new Promise(resolve=>setImmediate(resolve));
+assert.equal(hydrationRequests.length,1,'reentry does not reset edited settings');
+assert.equal(rendererMount,retainedMount);
+assert.equal(mountCount,1);
+rendererQueueRefreshes[1].resolve({generation:8,applied:true,stale:false});
+assert.equal((await repeated).applied,true);
+const leaving=rendererSandbox.__testRenderPlatformPayments();
+await new Promise(resolve=>setImmediate(resolve));
+rendererActive=false;rendererQueueRefreshes[2].resolve({generation:9,applied:true,stale:false});
+assert.equal((await leaving).stale,true,'completion after leaving Payments cannot claim an active application');
 
 const queueStart = html.indexOf('  function refundStatusBadge(s){', apiEnd);
 const queueEnd = html.indexOf('\n\n  window.obCreditRefundClient', queueStart);
@@ -177,6 +161,7 @@ function installQueue(htmlSource) {
 }
 
 const content = {
+  appendChild(node){queueMount=node;node.parentElement=content;return node;},
   get innerHTML() { return platformContentHtml; },
   set innerHTML(value) { platformContentHtml = String(value); },
 };
@@ -187,7 +172,7 @@ const panel = {
     if (selector === '[data-ob-refund-queue-mount]') return queueMount;
     return null;
   },
-  appendChild(node) { queueMount = node; return node; },
+  appendChild() { throw new Error('Refund queue must stay inside primary content'); },
   contains(node) { return node === queueHost || node === queueMount; },
 };
 const document = {
@@ -313,14 +298,10 @@ assert.match(renderedHtml, /1 failed · 1 other unresolved · 1 decided/,
   'unexpected durable states remain visible in the queue summary');
 assert.match(renderedHtml, /legacy-eur-written-reading[\s\S]*€21\.00/,
   'legacy non-USD records are displayed with their recorded currency instead of a false dollar label');
-assert(queueMount && queueMount !== content,
-  'the refund queue renders into a stable mount outside replaceable payment content');
-
-content.innerHTML = '<div>late Platform Payments render</div>';
-assert.match(platformContentHtml, /late Platform Payments render/);
-assert.match(renderedHtml, /data-refund-request-id="voice-request-current"/,
-  'a later Platform Payments content replacement cannot erase the queue');
-assert.equal(document.getElementById('ob-admin-refund-queue'), queueHost);
+assert(queueMount && queueMount.parentElement===content,
+  'refund queue stays inside the single primary content container');
+assert.equal(queueMount.className,'ob-admin-refund-queue-mount');
+assert.equal(document.getElementById('ob-admin-refund-queue'),queueHost);
 
 const currentVoiceHtml = renderedHtml;
 requests[0].resolve({ requests: [{

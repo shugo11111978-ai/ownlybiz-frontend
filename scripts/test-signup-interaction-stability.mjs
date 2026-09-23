@@ -37,8 +37,8 @@ const nodes={'step-7':new Node(),'ob-signup-initial-plan':new Mount(),'ob-signup
 const fields={email:'qa.first+signup@example.co.uk',first:'QA.Test',last:"O'Example",password:'punc.Tu+ation!'};
 const originalFields={...fields},stored=new Map(),navigation=[];
 const state={publicOffer:offer,selected:'starter',interval:'monthly'};
-const context={console,planState:state,publicOffer:offer,publicOfferInterval:'monthly',publicOfferRenderer:()=>presentation,usesSubscriptionOffer:()=>true,normalizePlanId:p=>p,token:()=>'',updateSignupCta(){},sessionStorage:{getItem:k=>stored.get(k)||null,setItem:(k,v)=>stored.set(k,v)},document:{getElementById:id=>nodes[id]||null,activeElement:null,querySelector:selector=>selector==='#view-2.active'?nodes['step-7']:null},history:{replaceState:(...args)=>navigation.push(args),pushState:(...args)=>navigation.push(args)},scrollTo:()=>navigation.push('scroll'),applyPlatformFallbackSeo(){}};context.window=context;context.obSignupPlanState=state;vm.createContext(context);
-vm.runInContext(source('  function setSignupPlan(plan, interval){','  var signupApproval=null,')+source('  function renderSignupPlans(){','  window.renderSignupPlans=renderSignupPlans;')+source('  function renderPublicOffer(){','  window.obSetPublicOfferInterval=')+source('  function applyMarketingRoute(route){','  function applyGroupRoute('),context);
+const context={console,URLSearchParams,location:{search:''},planState:state,publicOffer:offer,publicOfferInterval:'monthly',publicOfferRenderer:()=>presentation,usesSubscriptionOffer:()=>true,normalizePlanId:p=>p,token:()=>'',updateSignupCta(){},sessionStorage:{getItem:k=>stored.get(k)||null,setItem:(k,v)=>stored.set(k,v)},document:{getElementById:id=>nodes[id]||null,activeElement:null,querySelector:selector=>selector==='#view-2.active'?nodes['step-7']:null},history:{replaceState:(...args)=>navigation.push(args),pushState:(...args)=>navigation.push(args)},scrollTo:()=>navigation.push('scroll'),applyPlatformFallbackSeo(){}};context.window=context;context.obSignupPlanState=state;vm.createContext(context);
+vm.runInContext(source('  function signupOfferQuery(){','\n\n\t  function plansById(plans){')+source('  function setSignupPlan(plan, interval){','  var signupApproval=null,')+source('  function renderSignupPlans(){','  window.renderSignupPlans=renderSignupPlans;')+source('  function renderPublicOffer(){','  window.obSetPublicOfferInterval=')+source('  function applyMarketingRoute(route, event){','  function applyGroupRoute('),context);
 context.renderSignupPlans();const mount=nodes['ob-signup-initial-plan'];
 assert.equal(Object.keys(mount.children).filter(k=>k.startsWith('[data-ob-signup-plan=')).length,3);
 assert.equal(Object.keys(mount.children).filter(k=>k.startsWith('[data-ob-signup-interval=')).length,2);
@@ -87,6 +87,26 @@ for(const initial of [{available:false,signup_available:false,offer_version:'leg
 }
 context.obJson=async()=>offer;await context.obLoadPublicOffer();assert.equal(state.publicOfferFailed,false);assert.equal(Object.keys(mount.children).filter(k=>k.startsWith('[data-ob-signup-plan=')).length,3);
 let viewChanges=0;context.switchView=()=>viewChanges++;context.applyMarketingRoute({page:'signup'});assert.equal(viewChanges,0,'reapplying active signup does not scroll/reset it');context.document.querySelector=()=>null;context.applyMarketingRoute({page:'signup'});assert.equal(viewChanges,1,'first navigation still opens signup');
+// A marketing CTA changes the URL without reloading the document. Apply its
+// validated selection through the real router/controller, retaining mounted form controls.
+context.document.querySelector=()=>null;context.location.search='?plan=pro&interval=annual';
+context.applyMarketingRoute({page:'signup'},{obExplicitNavigation:true});
+assert.equal(state.selected,'pro');assert.equal(state.interval,'annual');
+assert.equal(stored.get('ob_signup_plan'),'pro');assert.equal(stored.get('ob_signup_interval'),'annual');
+const routeMount=nodes['ob-signup-initial-plan'],routeReplacements=routeMount.replacements;
+const routeControls=Object.fromEntries(Object.entries(routeMount.children).filter(([key])=>key.startsWith('[data-ob-signup-plan=')||key.startsWith('[data-ob-signup-interval=')));
+context.document.querySelector=()=>nodes['step-7'];context.document.activeElement=routeControls['[data-ob-signup-plan="scale"]'];context.scrollY=413;
+context.setSignupPlan('scale','monthly');context.applyMarketingRoute({page:'signup'});
+assert.equal(state.selected,'scale','background route application must not restore an old query');assert.equal(state.interval,'monthly');
+assert.equal(context.document.activeElement,routeControls['[data-ob-signup-plan="scale"]']);assert.equal(context.scrollY,413);assert.deepEqual(fields,originalFields);
+context.applyMarketingRoute({page:'signup'},{type:'popstate'});assert.equal(state.selected,'pro');assert.equal(state.interval,'annual');
+context.location.search='?plan=invalid&interval=invalid';context.applyMarketingRoute({page:'signup'},{obExplicitNavigation:true});assert.equal(state.selected,'pro');assert.equal(state.interval,'annual');
+context.location.search='';context.applyMarketingRoute({page:'signup'},{obExplicitNavigation:true});assert.equal(state.selected,'pro');assert.equal(state.interval,'annual');
+for(const [key,node]of Object.entries(routeControls))assert.equal(routeMount.children[key],node,'route selection keeps control identity');assert.equal(routeMount.replacements,routeReplacements);
+// Direct reload executes the same query parser and overrides a stale stored choice.
+stored.set('ob_signup_plan','starter');stored.set('ob_signup_interval','monthly');context.location.search='?plan=scale&interval=annual';
+vm.runInContext(source('  function signupOfferQuery(){','\n\n\t  function plansById(plans){'),context);
+assert.equal(state.selected,'scale');assert.equal(state.interval,'annual');assert.equal(stored.get('ob_signup_plan'),'scale');
 // Execute the original submission serializer, stopping at a fake 400 response.
 // This proves punctuation survives the real handler; it does not claim Safari UI reproduction.
 const inputs={'signup-fname':{value:fields.first},'signup-lname':{value:fields.last},'signup-email':{value:fields.email},'signup-pass':{value:fields.password},'signup-payout-country':{value:'US'},'tos-check':{checked:true},'signup-step1-error':{style:{}},'signup-step1-btn':{textContent:'Create account',disabled:false}};
@@ -106,4 +126,4 @@ for(const path of ['/signup','/login','/pricing','/dashboard/billing','/dash/own
  const loads=[];vm.runInNewContext(init,{Auth:{ok:true,isExpert:role==='expert',isAdmin:role==='admin'},window:{_isSubdomain:false,location:{pathname:path}},loadExpertDashboard:()=>loads.push('expert'),loadAdminDashboard:()=>loads.push('admin')});
  assert.deepEqual(loads,path.startsWith('/dash/')&&role==='expert'?['expert']:path.startsWith('/admin/')&&role==='admin'?['admin']:[]);
 }
-console.log(JSON.stringify({status:'PASS',browser:false,externalRequests:0,checks:['actual native selection handlers preserve mounted controls, focus, scroll and field values','all three plans and both intervals remain visible non-submit buttons','identical render is no-op; revised catalog updates names/prices/fees','background catalog no-op and active signup route avoids reset','punctuation survives native signup request serialization','public-route late Admin 401 is ignored; real Admin expiry still works','private init only loads on its own routes']}));
+console.log(JSON.stringify({status:'PASS',browser:false,externalRequests:0,checks:['actual native selection handlers preserve mounted controls, focus, scroll and field values','all three plans and both intervals remain visible non-submit buttons','identical render is no-op; revised catalog updates names/prices/fees','background catalog no-op and active signup route avoids reset','SPA CTA, direct reload and history navigation honor validated plan/interval without replacing controls','punctuation survives native signup request serialization','public-route late Admin 401 is ignored; real Admin expiry still works','private init only loads on its own routes']}));

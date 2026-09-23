@@ -458,7 +458,7 @@ function renderPlatformLegal(doc) {
 
 function injectPlatformLegal(html, info, offer) {
   let doc = readPlatformLegal()[info.key];
-  if (doc && offer && ['terms','independent','platform'].includes(info.key)) doc = {...doc, updated: 'Subscription offer updated: September 23, 2026', body: [...doc.body, ...subscriptionPresentation.terms(offer)]};
+  if (doc && subscriptionPresentation.valid(offer) && ['terms','independent','platform'].includes(info.key)) doc = {...doc, updated: 'Subscription offer updated: September 23, 2026', body: [...doc.body, ...subscriptionPresentation.terms(offer)]};
   if (!doc || !Array.isArray(doc.body)) return html;
   html = activatePlatformPage(html, 'home');
   html = html.replace(/<section class="legal-page" id="legal-page" aria-live="polite"><\/section>/,
@@ -1545,14 +1545,19 @@ async function readPublicSubscriptionOffer() {
     const response = await fetch(`${BACKEND}/api/billing/public-offer`, {headers:{accept:'application/json'},signal:controller.signal,cache:'no-store'});
     if (!response.ok) return null;
     const data = await response.json();
-    return subscriptionPresentation.valid(data) ? data : null;
+    return subscriptionPresentation.mode(data)!=='unknown' ? data : null;
   } catch (_) { return null; } finally { clearTimeout(timeout); }
 }
 function renderSubscriptionOfferSource(html, offer) {
   for (const [marker, kind] of [['HOME','home'],['PRICING','pricing']]) {
     const begin=`<!--OB_${marker}_OFFER_START-->`, end=`<!--OB_${marker}_OFFER_END-->`;
     const a=html.indexOf(begin), b=html.indexOf(end,a);
-    if(a>=0&&b>=0) html=html.slice(0,a+begin.length)+subscriptionPresentation.render(offer,kind,'monthly')+html.slice(b);
+    var rendered=subscriptionPresentation.render(offer,kind,'monthly');
+    if(subscriptionPresentation.mode(offer)==='legacy'){
+      const template=html.match(new RegExp('<template id="ob-legacy-'+kind+'-offer">([\\s\\S]*?)</template>'));
+      if(template)rendered=template[1];
+    }
+    if(a>=0&&b>=0) html=html.slice(0,a+begin.length)+rendered+html.slice(b);
   }
   return html.replace(/<head([^>]*)>/i, (tag) => tag + '\n<script id="ob-public-offer-data">window.__OB_PUBLIC_OFFER__=' + safeScriptJson(offer) + ';</script>');
 }
@@ -1560,7 +1565,6 @@ function renderSubscriptionOfferSource(html, offer) {
 module.exports = async function handler(req, res) {
   const host = publicSite.hostFromReq(req);
   const stagingNoindex = process.env.VERCEL_ENV === 'preview' || host === STAGING_NOINDEX_HOST;
-  const stagingSubscription = stagingNoindex && BACKEND === 'https://victorious-wisdom-production-a6b0.up.railway.app';
   if (stagingNoindex) res.setHeader('X-Robots-Tag', 'noindex,nofollow');
   if (isLegacyCpanelPath(req)) {
     res.setHeader('Location', `https://${host || 'ownlybiz.com'}/`);
@@ -1574,7 +1578,7 @@ module.exports = async function handler(req, res) {
   // authentication, dashboards, group rooms, or session deep links.
   if (publicSite.isUtilityRequest(req, host) && !(publicPlatformRequest(req, host) && (knownPublicPlatformPath(pathOnly(req)) || invalidPublicPlatformPath(pathOnly(req))))) {
     let html = readIndex();
-    if (stagingSubscription) html = renderSubscriptionOfferSource(html, pathOnly(req)==='/signup' ? await readPublicSubscriptionOffer() : null);
+    html = renderSubscriptionOfferSource(html, pathOnly(req)==='/signup' ? await readPublicSubscriptionOffer() : null);
     html = setMeta(html, 'name', 'robots', 'noindex,nofollow');
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.setHeader('Cache-Control', 'no-store');
@@ -1640,8 +1644,8 @@ module.exports = async function handler(req, res) {
   let html;
   try { html = isExpert ? readExpertIndex() : knownPlatformPublic ? readPlatformIndex() : readIndex(); }
   catch (_) { failPublic(503); return; }
-  const subscriptionOffer = stagingSubscription && !isExpert ? await readPublicSubscriptionOffer() : null;
-  if (stagingSubscription && !isExpert) html = renderSubscriptionOfferSource(html, subscriptionOffer);
+  const subscriptionOffer = !isExpert ? await readPublicSubscriptionOffer() : null;
+  if (!isExpert) html = renderSubscriptionOfferSource(html, subscriptionOffer);
   let statusCode = 200;
   if (isExpert) {
     const preloadOnDemand = expert.on_demand_public || null;

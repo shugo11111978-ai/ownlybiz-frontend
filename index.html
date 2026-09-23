@@ -5504,8 +5504,7 @@ if (!window.toast) {
   </section>
 
   <!-- PRICING -->
-  <section class="section" id="ob-marketing-home-offer">
-    <div class="section-inner"><!--OB_HOME_OFFER_START-->
+  <template id="ob-legacy-home-offer">
       <div class="section-header text-center" style="margin-left:auto;margin-right:auto;max-width:500px;">
         <div class="section-tag">Pricing</div>
         <h2 class="section-title">Start free. Scale on your terms.</h2>
@@ -5559,7 +5558,9 @@ if (!window.toast) {
       <div class="pricing-legal">
         <p>⚖️ <strong>Legal notice:</strong> Ownlybiz is a technology platform providing infrastructure for independent professionals. Ownlybiz is not a service provider, employer, or franchisor. All services are provided directly by independent experts who are solely responsible for the quality, accuracy, and legality of their services. Platform fees are charged on session revenue. Starter plan is free forever with a 12% platform fee. Rates shown are illustrative; actual fees may vary. This page does not constitute financial, legal, or professional advice.</p>
       </div>
-    <!--OB_HOME_OFFER_END--></div>
+    </template>
+  <section class="section" id="ob-marketing-home-offer">
+    <div class="section-inner"><!--OB_HOME_OFFER_START--><div class="ob-offer-unavailable" role="status"><h2>Current plans are loading</h2><p>Prices and payment fees must be confirmed before checkout. Please reload if this message remains.</p></div><!--OB_HOME_OFFER_END--></div>
   </section>
 
   <!-- CTA BANNER -->
@@ -5750,8 +5751,7 @@ if (!window.toast) {
   </div><!-- end features -->
 
   <!-- ========== PRICING PAGE ========== -->
-  <div class="mkt-page" id="mkt-page-pricing" role="main">
-    <!--OB_PRICING_OFFER_START-->
+  <template id="ob-legacy-pricing-offer">
     <div class="mkt-page-hero" class="mkt-page-hero" style="background:var(--cream);padding:80px 40px;text-align:center;border-bottom:1px solid var(--gray-200);">
       <div class="section-tag">Pricing</div>
       <h1 style="font-family:var(--font-head);font-size:48px;color:var(--brown);margin:16px 0;">Start free. Scale on your terms.</h1>
@@ -5840,7 +5840,9 @@ if (!window.toast) {
         </div>
       </div>
     </div>
-    <!--OB_PRICING_OFFER_END-->
+    </template>
+  <div class="mkt-page" id="mkt-page-pricing" role="main">
+    <!--OB_PRICING_OFFER_START--><div class="ob-offer-unavailable" role="status"><h2>Current plans are loading</h2><p>Prices and payment fees must be confirmed before checkout. Please reload if this message remains.</p></div><!--OB_PRICING_OFFER_END-->
   </div><!-- end pricing -->
 
   <!-- ========== EXPERT TYPES PAGE ========== -->
@@ -11424,7 +11426,7 @@ function toggleFaq(item){
 }
 
 function setBillingCycle(cycle){
-  if(window.OWNLYBIZ_IS_STAGING && window.obSetPublicOfferInterval) return window.obSetPublicOfferInterval(cycle);
+  if(window.obSubscriptionOfferMode&&window.obSubscriptionOfferMode()!=='legacy'&&window.obSetPublicOfferInterval) return window.obSetPublicOfferInterval(cycle);
   var mo=document.getElementById('billing-monthly-btn');
   var an=document.getElementById('billing-annual-btn');
   if(cycle==='monthly'){
@@ -18082,10 +18084,10 @@ async function savePaymentConfig() {
       }
       // --- Routing: immediate, no blocking ---
       _wireLoginForm();
-    // Legacy pricing is independent from the staging subscription catalog.
-    (function(){
-      if(window.OWNLYBIZ_IS_STAGING) return;
-      fetch('https://ownlybiz-backend-production.up.railway.app/api/experts/platform-fees')
+    // Legacy marketing amounts load only after the offer API explicitly selects legacy.
+    window.obLoadLegacyMarketingPricing=function(){
+      if(!window.obSubscriptionOfferMode||window.obSubscriptionOfferMode()!=='legacy')return;
+      fetch(String(window.OWNLYBIZ_API_URL||window.OWNLY_API||'https://ownlybiz-backend-production.up.railway.app').replace(/\/+$/,'')+'/api/experts/platform-fees')
         .then(function(r){return r.json();}).then(function(p){
           var s=function(id,v){var e=document.getElementById(id);if(e&&v!=null)e.textContent=v;};
           s('pricing-starter-fee',p.fee_starter_pct);
@@ -18095,7 +18097,8 @@ async function savePaymentConfig() {
           s('pricing-scale-fee',p.fee_scale_pct);
           s('pricing-scale-price',p.price_scale_monthly);
         }).catch(function(){});
-    })();
+    };
+    window.obLoadLegacyMarketingPricing();
 	    if(isLegalRoute){
 	      window._browseExpert = '';
 	      loadMarketing();
@@ -18239,7 +18242,7 @@ async function savePaymentConfig() {
       note.style.color = 'var(--gray-400)';
       return;
     }
-    if(window.OWNLYBIZ_IS_STAGING){noteSummaryText.textContent=country.code==='US'?'This offer supports US-based expert businesses and eligible US-issued cards in USD. Stripe verification is required.':'This subscription offer currently supports US-based businesses only.';note.style.color=country.code==='US'?'#15803d':'#b45309';return;}
+    if(window.obSubscriptionOfferMode&&window.obSubscriptionOfferMode()!=='legacy'){noteSummaryText.textContent=country.code==='US'?'This offer supports US-based expert businesses and eligible US-issued cards in USD. Stripe verification is required.':'This subscription offer currently supports US-based businesses only.';note.style.color=country.code==='US'?'#15803d':'#b45309';return;}
     if (country.supported) {
 	      noteSummaryText.textContent = 'Supported for Ownlybiz paid plans and Stripe Connect onboarding. Bank-payout status is verified in Stripe.';
       note.style.color = '#15803d';
@@ -18254,10 +18257,11 @@ async function savePaymentConfig() {
     if (!select) return;
     var BASE = (window.OWNLYBIZ_API_URL || window._OB_BACKEND || 'https://ownlybiz-backend-production.up.railway.app').replace(/\/$/, '');
     try {
+      if(window.obLoadPublicOffer)await window.obLoadPublicOffer();
       var response = await fetch(BASE + '/api/billing/payout-countries', { cache:'no-store' });
       var payload = await response.json();
       if (!response.ok || !Array.isArray(payload.countries) || !payload.countries.length) throw new Error(payload.error || 'Countries are unavailable');
-      if(window.OWNLYBIZ_IS_STAGING)payload.countries=payload.countries.filter(function(country){return country.code==='US';});
+      if(window.obSubscriptionOfferMode&&window.obSubscriptionOfferMode()!=='legacy')payload.countries=payload.countries.filter(function(country){return country.code==='US';});
       window._obSignupPayoutCountries = payload.countries;
       var saved = '';
       try { saved = sessionStorage.getItem('ob_signup_payout_country') || ''; } catch(e) {}
@@ -33365,7 +33369,7 @@ window._handleRTCMessage=function(d){
   function legalDocForKey(key){
     if(expertSiteContext())return expertClientLegalDoc(key);
     var doc=legalDocs[key]||legalDocs.terms,offer=window.__OB_PUBLIC_OFFER__,presentation=window.OB_SUBSCRIPTION_OFFER;
-    if(window.OWNLYBIZ_IS_STAGING&&presentation&&presentation.valid(offer)&&['terms','independent','platform'].indexOf(key)!==-1)return Object.assign({},doc,{updated:'Subscription offer updated: September 23, 2026',body:doc.body.concat(presentation.terms(offer))});
+    if(presentation&&presentation.valid(offer)&&['terms','independent','platform'].indexOf(key)!==-1)return Object.assign({},doc,{updated:'Subscription offer updated: September 23, 2026',body:doc.body.concat(presentation.terms(offer))});
     return doc;
   }
 	  function legalHtml(key){
@@ -35932,31 +35936,38 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
 	  }
   var publicOffer = null, publicOfferRequest = null, publicOfferInterval = 'monthly';
   function publicOfferRenderer(){ return window.OB_SUBSCRIPTION_OFFER; }
-  function stagingOffer(){ return window.OWNLYBIZ_IS_STAGING === true; }
+  function usesSubscriptionOffer(){ return !publicOfferRenderer() || publicOfferRenderer().mode(window.__OB_PUBLIC_OFFER__) !== 'legacy'; }
   function renderPublicOffer(){
-    if(!stagingOffer() || !publicOfferRenderer()) return;
+    if(!publicOfferRenderer()) return;
     var home=document.getElementById('ob-marketing-home-offer');
     var pricing=document.getElementById('mkt-page-pricing');
+    if(!usesSubscriptionOffer()){
+      var legacyHome=document.getElementById('ob-legacy-home-offer'),legacyPricing=document.getElementById('ob-legacy-pricing-offer');
+      if(home&&legacyHome)home.innerHTML='<div class="section-inner">'+legacyHome.innerHTML+'</div>';
+      if(pricing&&legacyPricing)pricing.innerHTML=legacyPricing.innerHTML;
+      if(window.obLoadLegacyMarketingPricing)window.obLoadLegacyMarketingPricing();
+      return;
+    }
     if(home) home.innerHTML=publicOfferRenderer().render(publicOffer,'home',publicOfferInterval);
     if(pricing) pricing.innerHTML=publicOfferRenderer().render(publicOffer,'pricing',publicOfferInterval);
   }
   window.obSetPublicOfferInterval=function(interval){publicOfferInterval=interval==='annual'?'annual':'monthly';renderPublicOffer();};
   async function loadPublicOffer(){
-    if(!stagingOffer()) return null;
     if(publicOfferRequest)return publicOfferRequest;
     publicOfferRequest=obJson('/api/billing/public-offer',{token:'',cache:'no-store'}).then(function(data){
-      if(!publicOfferRenderer()||!publicOfferRenderer().valid(data))throw new Error('Current subscription prices could not be confirmed. Please reload.');
+      if(!publicOfferRenderer()||publicOfferRenderer().mode(data)==='unknown')throw new Error('Current subscription prices could not be confirmed. Please reload.');
       publicOffer=data;window.__OB_PUBLIC_OFFER__=data;
       renderPublicOffer();return data;
-    }).catch(function(error){publicOffer=null;window.__OB_PUBLIC_OFFER__=null;renderPublicOffer();throw error;})
+    }).catch(function(error){publicOffer=null;window.__OB_PUBLIC_OFFER__=null;planState.publicOffer=null;planState.plans=[];renderPublicOffer();renderSignupPlans();updateSignupCta();throw error;})
       .finally(function(){publicOfferRequest=null;});
     return publicOfferRequest;
   }
   window.obLoadPublicOffer=loadPublicOffer;
   window.obSignupOfferPayload=async function(){
-    if(!stagingOffer())return {};
     var shown=planState.publicOffer;
     var data=await loadPublicOffer();
+    if(publicOfferRenderer().mode(data)==='legacy')return {};
+    if(!publicOfferRenderer().valid(data))throw new Error('Current subscription prices could not be confirmed. Please reload.');
     if(!shown||shown.catalog_revision!==data.catalog_revision){planState.publicOffer=data;planState.plans=data.plans;renderSignupPlans();throw new Error('Subscription pricing changed. Review the updated plan before continuing.');}
     if(data.signup_available!==true)throw new Error('New subscriptions are temporarily unavailable. Please try again later.');
     var plan=normalizePlanId(sessionStorage.getItem('ob_signup_plan')||planState.selected);
@@ -35965,11 +35976,10 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
     return {offer_version:'subscription_v2',catalog_revision:data.catalog_revision,subscription_plan:plan,subscription_interval:sessionStorage.getItem('ob_signup_interval')==='annual'?'annual':'monthly'};
   };
   async function loadPlans(){
-    if(stagingOffer()){
-      try{var current=await loadPublicOffer();planState.publicOffer=current;planState.plans=current.plans;}
-      catch(e){planState.publicOffer=null;planState.plans=[];}
-      return planState.plans;
-    }
+    try{
+      var current=await loadPublicOffer();
+      if(publicOfferRenderer().mode(current)!=='legacy'){planState.publicOffer=current;planState.plans=current.plans||[];return planState.plans;}
+    }catch(e){planState.publicOffer=null;planState.plans=[];return planState.plans;}
     try {
       var d = await obJson('/api/billing/plans');
       if(Array.isArray(d.plans) && d.plans.length) planState.plans = d.plans;
@@ -35990,7 +36000,7 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
     }
     if(!current())return null;
     planState.plans=d.plans||planState.plans;planState.current=d.current_plan||null;planState.billing=d;
-    writeBillingSnapshot(d);if(stagingOffer())updateSignupCta();return d;
+    writeBillingSnapshot(d);if(usesSubscriptionOffer())updateSignupCta();return d;
   }
 
   function setSignupPlan(plan, interval){
@@ -36001,7 +36011,7 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
       sessionStorage.setItem('ob_signup_plan', planState.selected);
       sessionStorage.setItem('ob_signup_interval', planState.interval);
     } catch(e) {}
-    if(stagingOffer()){
+    if(usesSubscriptionOffer()){
       renderSignupPlans();updateSignupCta();return;
     }
     document.querySelectorAll('[data-ob-signup-plan]').forEach(function(btn){
@@ -36032,7 +36042,7 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
     var p = selectedPlan();
     var btn = document.getElementById('ob-launch-plan-btn') || document.querySelector('#step-7 .btn.btn-primary');
     var eligibility = signupPayoutEligibility();
-    var v2=stagingOffer();
+    var v2=usesSubscriptionOffer();
     var paidBlocked = (v2 || p.id !== 'starter') && (!eligibility || eligibility.status !== 'supported' || (v2&&eligibility.country!=='US'&&eligibility.country_code!=='US'));
     if(v2&&(!planState.publicOffer||planState.publicOffer.signup_available!==true))paidBlocked=true;
     var countryName = eligibility && (eligibility.country_label || eligibility.country) || 'your country';
@@ -36082,12 +36092,13 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
     var savedInterval = sessionStorage.getItem('ob_signup_interval');
     if(savedPlan) planState.selected = savedPlan;
     if(savedInterval) planState.interval = savedInterval;
-    if(stagingOffer()){
+    if(usesSubscriptionOffer()){
       var data=planState.publicOffer;
       ['ob-signup-initial-plan','ob-signup-plan-card'].forEach(function(id){var target=document.getElementById(id);if(target){target.hidden=false;target.innerHTML=publicOfferRenderer().render(data,'signup',planState.interval,planState.selected);}});
       updateSignupCta();
       return;
     }
+    var initial=document.getElementById('ob-signup-initial-plan');if(initial){initial.hidden=true;initial.innerHTML='';}
     var card = document.getElementById('ob-signup-plan-card');
     if(!card)return;
     var plansHtml = (planState.plans || planDefaults).filter(function(p){ return p.enabled !== false; }).map(function(p){
@@ -36134,7 +36145,7 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
   }
 
   function selectedSignupPlanForLaunch(){
-    var byId = plansById(stagingOffer()&&planState.publicOffer?planState.publicOffer.plans:(planState.plans || planDefaults));
+    var byId = plansById(usesSubscriptionOffer()&&planState.publicOffer?planState.publicOffer.plans:(planState.plans || planDefaults));
     var raw = normalizePlanId(
       (window._obSignupSelectedPlan || '') ||
       (sessionStorage.getItem('ob_signup_plan') || '') ||
@@ -36152,10 +36163,10 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
     var p = selectedSignupPlanForLaunch();
     var launchBtn = document.getElementById('ob-launch-plan-btn');
     var checkoutRequested = !!(launchBtn && /checkout/i.test(launchBtn.textContent || ''));
-    if(!stagingOffer() && checkoutRequested && p.id === 'starter'){
+    if(!usesSubscriptionOffer() && checkoutRequested && p.id === 'starter'){
       throw new Error('Please choose Pro or Scale before secure checkout.');
     }
-    if(!stagingOffer() && p.id === 'starter'){
+    if(!usesSubscriptionOffer() && p.id === 'starter'){
       var d = await obJson('/api/billing/starter', {method:'POST', body:{source:'signup'}});
       if((d && d.pending_approval) || planState.starterRequiresApproval){
         renderStarterPendingApproval((d && d.message) || 'Your Starter account is waiting for Ownlybiz approval. We will email you when your dashboard is ready.');
@@ -36165,7 +36176,7 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
       if(window.OwnlyAPI && window.OwnlyAPI.loadExpertDashboard) setTimeout(function(){ window.OwnlyAPI.loadExpertDashboard(); }, 200);
       return;
     }
-    var interval = stagingOffer() ? (sessionStorage.getItem('ob_signup_interval') === 'annual' ? 'annual' : 'monthly') : planState.interval;
+    var interval = usesSubscriptionOffer() ? (sessionStorage.getItem('ob_signup_interval') === 'annual' ? 'annual' : 'monthly') : planState.interval;
     await openSubscriptionCheckout(p.id, interval, 'signup');
   }
 
@@ -36194,7 +36205,7 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
 
   function showSignupCheckoutReturn(plan, message){
     plan = normalizePlanId(plan || sessionStorage.getItem('ob_signup_plan') || planState.selected || 'pro');
-    if(!stagingOffer() && plan === 'starter') plan = 'pro';
+    if(!usesSubscriptionOffer() && plan === 'starter') plan = 'pro';
     try {
       sessionStorage.setItem('ob_signup_plan', plan);
       window._obSignupSelectedPlan = plan;
@@ -36216,7 +36227,7 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
     var source = String(q.get('checkout_source') || '').toLowerCase();
     var onSignup = String(location.pathname || '').replace(/\/+$/, '') === '/signup';
     if(status !== 'cancelled' || (!onSignup && source !== 'signup')) return false;
-    showSignupCheckoutReturn(q.get('checkout_plan') || q.get('plan'), stagingOffer()?'Checkout was not completed. Your subscription is not active; choose a plan and continue when ready.':'No payment was submitted, so the paid plan is not active. Continue to secure checkout again, or choose Starter to submit the account for admin approval.');
+    showSignupCheckoutReturn(q.get('checkout_plan') || q.get('plan'), usesSubscriptionOffer()?'Checkout was not completed. Your subscription is not active; choose a plan and continue when ready.':'No payment was submitted, so the paid plan is not active. Continue to secure checkout again, or choose Starter to submit the account for admin approval.');
     try {
       var clean = new URL(location.href);
       clean.searchParams.delete('billing');
@@ -36266,7 +36277,7 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
   var commercialOwner=null;
   function renderAdminCommercialCatalog(panel){
     var context=window.OB_CLIENT_CONTEXT;
-    if(!window.OWNLYBIZ_IS_STAGING||!context||!window.OB_ADMIN_COMMERCIAL_CATALOG)return;
+    if(!context||!window.OB_ADMIN_COMMERCIAL_CATALOG)return;
     var owner=context.capture('admin-commercial-catalog');
     if(!owner||!owner.token||owner.role!=='admin'||!context.isCurrent(owner,{exactCredential:true}))return;
     var existing=document.getElementById('ob-admin-commercial-catalog');
@@ -36831,7 +36842,7 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
   window.obRedirectToStripe = redirectToStripe;
 
   async function openSubscriptionCheckout(plan, interval, source){
-    var p = source==='signup'&&stagingOffer()&&planState.publicOffer ? plansById(planState.publicOffer.plans)[plan] : planById(plan);
+    var p = source==='signup'&&usesSubscriptionOffer()&&planState.publicOffer ? plansById(planState.publicOffer.plans)[plan] : planById(plan);
     if(!p)throw new Error('Please reload current subscription prices before continuing.');
     showStripeRedirectNotice('Preparing Stripe Checkout', 'Ownlybiz is creating a secure checkout for ' + (p.name || plan) + '. Your plan activates only after Stripe confirms the subscription.');
     try {
@@ -37572,7 +37583,7 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
       if(!incompleteSignupProfile(profile)) return;
       var plan = profile.subscription_pending_plan || profile.approval_plan || profile.subscription_plan || sessionStorage.getItem('ob_signup_plan') || 'pro';
       try { history.replaceState(history.state || {}, '', '/signup'); } catch(e) {}
-      showSignupCheckoutReturn(plan, stagingOffer()?'Your subscription is not yet confirmed. Choose your plan and complete secure checkout to start the software trial.':'No paid subscription has been confirmed yet. Continue to secure checkout to activate Pro or Scale, or choose Starter to submit the account for admin approval.');
+      showSignupCheckoutReturn(plan, usesSubscriptionOffer()?'Your subscription is not yet confirmed. Choose your plan and complete secure checkout to start the software trial.':'No paid subscription has been confirmed yet. Continue to secure checkout to activate Pro or Scale, or choose Starter to submit the account for admin approval.');
     }).catch(function(){}).finally(function(){ incompleteGuardBusy = false; });
     return true;
   }
@@ -37590,7 +37601,7 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
   var billingBooted=false;
 	  function boot(){
     if(billingBooted)return;billingBooted=true;
-    if(stagingOffer()){if(!publicOffer&&publicOfferRenderer().valid(window.__OB_PUBLIC_OFFER__)){publicOffer=window.__OB_PUBLIC_OFFER__;planState.publicOffer=publicOffer;planState.plans=publicOffer.plans;}renderPublicOffer();}
+    if(publicOfferRenderer()){if(publicOfferRenderer().mode(window.__OB_PUBLIC_OFFER__)!=='unknown'){publicOffer=window.__OB_PUBLIC_OFFER__;planState.publicOffer=publicOffer;planState.plans=publicOffer.plans||[];}renderPublicOffer();}
 	    installBillingFirstPaintWrappers();
 	    installIncompleteDashboardGuard();
 	    renderDashboardBillingShell();
@@ -37823,7 +37834,7 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
     return rates;
   }
   function enhancePlanCards(){
-    if(window.OWNLYBIZ_IS_STAGING)return;
+    if(!window.obSubscriptionOfferMode||window.obSubscriptionOfferMode()!=='legacy')return;
     document.querySelectorAll('[data-ob-signup-plan], [data-ob-billing-plan]').forEach(function(card){
       var plan = normPlan(card.getAttribute('data-ob-signup-plan') || card.getAttribute('data-ob-billing-plan'));
       if(!plan || card.querySelector('.ob-plan-free-line')) return;
@@ -39748,219 +39759,7 @@ body{
   .rocket-animation{animation:none!important;}
 }
 </style>
-<script id="ownlybiz-v3-redesign-enhancements">
-(function(){
-  // Staging uses the native source sections and catalog renderer, without this legacy overlay.
-  if(window.OWNLYBIZ_IS_STAGING === true) return;
-  var steps = ['Account','Website','Plan'];
-  var rail = [
-    ['01','Your expert website','A polished booking page with your services, rates, reviews, and contact details.'],
-    ['02','Live paid sessions','Clients can start or schedule chat, voice, and video sessions from the same link.'],
-    ['03','Client management','Messages, bookings, session notes, and client history stay organized in one dashboard.'],
-    ['04','Payments built in','Clients authorize payment before the session. Stripe Connect routes the expert share, and Stripe manages bank payouts.'],
-    ['05','Clear earnings','Starter, Pro, and Scale automatically show the expert keep rate and payout math.'],
-    ['06','Modern client flow','Mic and camera checks, receipts, and booking updates keep every session clear.']
-  ];
-  function esc(s){
-    return String(s == null ? '' : s).replace(/[&<>"']/g,function(c){
-      return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
-    });
-  }
-  function ready(fn){
-    if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fn, {once:true});
-    else fn();
-  }
-  function installMarketingV3(){
-    var home = document.getElementById('mkt-page-home');
-    if(!home || document.getElementById('ob-v3-dynamic-home')) return;
-    var hero = home.querySelector('.hero');
-    if(hero && !hero.querySelector('.ob-v3-hero-feed')){
-      var feed = document.createElement('div');
-      feed.className = 'ob-v3-hero-feed';
-      feed.innerHTML = '<div class="ob-v3-feed-label">Live practice snapshot</div>'
-        + '<div class="ob-v3-feed-item"><div class="ob-v3-feed-mark">SITE</div><div><div class="ob-v3-feed-title">Share one expert site</div><div class="ob-v3-feed-copy">Clients see your services, rates, availability, and booking options.</div></div><span class="ob-v3-feed-status"></span></div>';
-      var heroCopy = hero.querySelector('.hero-grid > div:first-child') || hero;
-      heroCopy.appendChild(feed);
-      var facts = [
-        ['SITE','Share one expert site','Clients see your services, rates, availability, and booking options.'],
-        ['LIVE','Paid chat, voice, video','Start live or schedule later without sending outside links.'],
-        ['PAY','Payments handled','Authorize cards and eligible wallets before sessions begin.'],
-        ['CRM','Client follow-up','Track sessions, messages, notes, and payouts from the dashboard.']
-      ];
-      var i = 0;
-      setInterval(function(){
-        if(!document.body.contains(feed)) return;
-        i = (i + 1) % facts.length;
-        var f = facts[i];
-        feed.querySelector('.ob-v3-feed-mark').textContent = f[0];
-        feed.querySelector('.ob-v3-feed-title').textContent = f[1];
-        feed.querySelector('.ob-v3-feed-copy').textContent = f[2];
-      }, 5200);
-    }
-    var stats = home.querySelector('.stats-strip');
-    var section = document.createElement('section');
-    section.id = 'ob-v3-dynamic-home';
-    section.className = 'ob-v3-home-dynamic';
-    var cards = rail.concat(rail).map(function(r){
-      return '<article class="ob-v3-rail-card"><div class="ob-v3-rail-kicker">' + esc(r[0]) + '</div><h3>' + esc(r[1]) + '</h3><p>' + esc(r[2]) + '</p></article>';
-    }).join('');
-    section.innerHTML = '<div class="ob-v3-dynamic-inner">'
-      + '<div class="ob-v3-section-head"><h2>Build the paid expert practice clients can book in <span class="italic">one click</span></h2><p>Ownlybiz gives independent professionals a branded website, session room, client dashboard, and payment flow without stitching together separate tools.</p></div>'
-      + '<div class="ob-v3-feature-strip" aria-label="Top features"><span>Branded expert website</span><span>Paid chat, voice, and video</span><span>Client messages and notes</span><span>Stripe Connect</span><span>Plans and fee math</span><span>Booking and receipts</span></div>'
-      + '<div class="ob-v3-carousel" aria-label="Practice carousel"><div class="ob-v3-carousel-track">' + cards + '</div></div>'
-      + '<div class="ob-v3-bento">'
-      + '<article class="ob-v3-bento-card" data-span="wide"><div class="ob-v3-pill" style="display:inline-flex;padding:6px 12px;font-size:10px;text-transform:uppercase;">Expert dashboard</div><h3 style="margin-top:18px;">Run sessions, clients, and payment setup from one place.</h3><p>See today\'s sessions, live Stripe Connect readiness, your keep percentage, messages, notes, and Ownlybiz accounting history before the next client arrives. Stripe Dashboard remains the authority for balance and bank payouts.</p><div class="ob-v3-mini-dashboard"><div><strong>88-95%</strong><span>Expert keep rate</span></div><div><strong>3</strong><span>Chat, voice, video</span></div><div><strong>0-10</strong><span>New-client intro cap</span></div></div></article>'
-      + '<article class="ob-v3-bento-card"><h3>Show clients a real session room before they pay.</h3><p>Chat, voice, and video are built into the booking flow with timers, receipts, device readiness, and clear end-session controls.</p><div class="ob-v3-session-showcase"><div class="ob-v3-session-tabs"><span>Chat</span><span>Voice</span><span>Video</span></div><div class="ob-v3-shot ob-v3-shot-chat"><b>Live chat</b><em></em><em></em><i></i></div><div class="ob-v3-shot ob-v3-shot-voice"><b>Voice session</b><strong></strong><div><span></span><span></span><span></span><span></span></div></div><div class="ob-v3-shot ob-v3-shot-video"><b>Video room</b><strong></strong><i></i></div></div></article>'
-      + '<article class="ob-v3-bento-card"><h3>Get paid without chasing invoices.</h3><p>Clients authorize payment before a live session. Stripe Connect routes the expert share while Ownlybiz applies the right plan fee; Stripe then manages the connected account’s bank payouts.</p><div class="ob-v3-flow"><div class="ob-v3-flow-step"><span>Client authorizes</span><span>Card or wallet</span></div><div class="ob-v3-flow-step"><span>Session runs</span><span>Exact time tracked</span></div><div class="ob-v3-flow-step"><span>Expert share</span><span>Destination transfer</span></div></div></article>'
-      + '<article class="ob-v3-bento-card" data-span="wide"><h3>Your own site, not a marketplace profile.</h3><p>Every approved expert gets a routed subdomain, optional custom domain, service pages, booking, contact, and modern checkout support when the visitor\'s device is eligible.</p><div class="ob-v3-flow"><div class="ob-v3-flow-step"><span>Website</span><span>Branded booking</span></div><div class="ob-v3-flow-step"><span>Plans</span><span>Starter, Pro, Scale</span></div><div class="ob-v3-flow-step"><span>Checkout</span><span>Cards and wallets</span></div></div></article>'
-      + '</div></div>';
-    if(stats && stats.parentNode) stats.parentNode.insertBefore(section, stats.nextSibling);
-    else home.insertBefore(section, home.firstChild);
-  }
-  function installSignupV3(){
-    var page = document.querySelector('#view-2 .signup-page');
-    var card = page && page.querySelector('.signup-card');
-    var progress = page && page.querySelector('.progress-bar-wrap');
-    if(!page || !card || !progress || page.querySelector('.ob-v3-signup-stage')) return;
-    var stage = document.createElement('div');
-    stage.className = 'ob-v3-signup-stage';
-    var main = document.createElement('div');
-    main.className = 'ob-v3-signup-main';
-    page.insertBefore(stage, progress);
-    stage.appendChild(main);
-    main.appendChild(progress);
-    main.appendChild(card);
-    var preview = document.createElement('aside');
-    preview.className = 'ob-v3-signup-preview';
-    preview.innerHTML = '<h3>Launch with the right plan.</h3><p>Starter keeps signup low friction and waits for admin approval. Pro and Scale continue through secure Stripe checkout and activate after webhook confirmation.</p>'
-      + '<div class="ob-v3-progress-fill"><span id="ob-v3-signup-progress-fill"></span></div>'
-      + '<div class="ob-v3-step-list">' + steps.map(function(s,i){ return '<div class="ob-v3-step-card" data-step="' + (i+1) + '"><strong>' + (i+1) + '</strong><span>' + esc(s) + '</span></div>'; }).join('') + '</div>'
-      + '<div class="ob-v3-plan-strip"><div><strong>Starter</strong><span>Free + 12%</span></div><div><strong>Pro</strong><span>$49/mo + 8%</span></div><div><strong>Scale</strong><span>$99/mo + 5%</span></div></div>';
-    stage.appendChild(preview);
-    syncSignupV3();
-  }
-  function signupPublicStep(n){
-    n = parseInt(n, 10);
-    if(!Number.isFinite(n) || n < 1) return 1;
-    if(n >= 7) return 3;
-    if(n >= 4) return 2;
-    return 1;
-  }
-  function syncSignupV3(){
-    var active = document.querySelector('#view-2 .signup-step.active');
-    var n = active && active.id ? parseInt(active.id.replace('step-',''),10) : 1;
-    if(!Number.isFinite(n) || n < 1) n = 1;
-    var publicStep = signupPublicStep(n);
-    document.documentElement.style.setProperty('--ob-v3-step', publicStep);
-    var fill = document.getElementById('ob-v3-signup-progress-fill');
-    if(fill) fill.style.width = Math.max(33.333, (publicStep / 3) * 100) + '%';
-    document.querySelectorAll('.ob-v3-step-card').forEach(function(el){
-      var step = parseInt(el.getAttribute('data-step'),10);
-      el.classList.toggle('active', step === publicStep);
-      el.classList.toggle('done', step < publicStep);
-    });
-  }
-  function hookSignupStep(){
-    if(window.__ownlybizV3GoStepHooked) return;
-    if(typeof window.goStep !== 'function') return;
-    var old = window.goStep;
-    window.__ownlybizV3GoStepHooked = true;
-    window.goStep = function(n){
-      var result = old.apply(this, arguments);
-      setTimeout(syncSignupV3, 30);
-      return result;
-    };
-  }
-  function installDashboardV3(){
-    var content = document.querySelector('#db-panel-overview .db-content');
-    if(!content || document.getElementById('ob-v3-dash-command')) return;
-    var kpis = content.querySelector('.kpi-row');
-    var box = document.createElement('div');
-    box.className = 'ob-v3-dash-command';
-    box.id = 'ob-v3-dash-command';
-    box.innerHTML = '<div class="ob-v3-command-card"><div class="ob-v3-pill" style="display:inline-flex;padding:6px 12px;font-size:10px;text-transform:uppercase;">Today\'s practice</div><h3>Ready for the next client.</h3><p>Check your plan, payout connection, unread messages, and live room before you turn your attention to the next booking.</p><div class="ob-v3-command-actions"><button class="btn btn-primary btn-sm" type="button" id="ob-v3-open-payments">Billing & payouts</button><button class="btn btn-secondary btn-sm" type="button" id="ob-v3-open-live">Open live room</button></div></div>'
-      + '<div class="ob-v3-command-card"><div class="ob-v3-command-metrics"><div><strong id="ob-v3-keep-rate">88%</strong><span>Keep rate</span></div><div><strong>3</strong><span>Live session types</span></div><div><strong>Stripe</strong><span>Payout status</span></div><div><strong>Ready</strong><span>Booking flow</span></div></div></div>';
-    if(kpis) content.insertBefore(box, kpis);
-    else content.insertBefore(box, content.firstChild);
-    var payBtn = document.getElementById('ob-v3-open-payments');
-    var liveBtn = document.getElementById('ob-v3-open-live');
-    if(payBtn) payBtn.onclick = function(){ if(typeof dbNav === 'function') dbNav(document.querySelector('.db-nav-item[onclick*=payments]'), 'payments'); };
-    if(liveBtn) liveBtn.onclick = function(){ if(typeof dbNav === 'function') dbNav(document.querySelector('.db-nav-item[onclick*=live-session]'), 'live-session'); };
-    syncDashboardKeepRate();
-  }
-  function syncDashboardKeepRate(){
-    var el = document.getElementById('ob-v3-keep-rate');
-    if(!el) return;
-    var text = document.body.innerText || '';
-    var match = text.match(/you keep\s+(88|92|95)%/i) || text.match(/\b(88|92|95)%\s+of paid sessions/i);
-    if(match) el.textContent = match[1] + '%';
-  }
-  function setAttrIfChanged(el, name, value){
-    if(el && el.getAttribute(name) !== String(value)) el.setAttribute(name, value);
-  }
-  function decorateIcons(){
-    var groups = [
-      ['.page-card-icon',['HM','AB','SV','BK','CT']],
-      ['.model-card-icon',['IP','LC','PY','FM']],
-      ['.billing-icon',['PM','FX','PK','AS']],
-      ['.type-emoji',['BC','LC','WL','LF','PT']],
-      ['.cat-btn-icon',['BC','LC','WL','LA','FA','PT','FT','NT','OT']],
-      ['.channel-toggle-icon',['CH','VO','VI']],
-      ['.rate-config-icon',['CH','VO','VI']],
-      ['.stype-btn-icon',['CH','VO','VI','FX','60','WR']],
-      ['.service-option-icon',['CH','VO','VI']],
-      ['.pay-proc-icon',['SC','PP','BC','BT']],
-      ['.contact-info-icon',['EM','TM','LC']],
-      ['.receipt-icon,.conf-icon,.cred-icon',['OK']]
-    ];
-    groups.forEach(function(group){
-      document.querySelectorAll(group[0]).forEach(function(el,i){
-        if(group[0] === '.stype-btn-icon' && el.closest && el.closest('.ob-od-stype-card')) return;
-        if(!el.getAttribute('data-ob-line-icon')) setAttrIfChanged(el, 'data-ob-line-icon', group[1][i % group[1].length]);
-        setAttrIfChanged(el, 'aria-hidden', 'true');
-      });
-    });
-  }
-  function bindBentoMouse(){
-    document.querySelectorAll('.ob-v3-bento-card').forEach(function(card){
-      if(card.__obV3Mouse) return;
-      card.__obV3Mouse = true;
-      card.addEventListener('mousemove', function(e){
-        var r = card.getBoundingClientRect();
-        card.style.setProperty('--mx', ((e.clientX - r.left) / Math.max(1, r.width)) * 100 + '%');
-        card.style.setProperty('--my', ((e.clientY - r.top) / Math.max(1, r.height)) * 100 + '%');
-      });
-    });
-  }
-  function run(){
-    installMarketingV3();
-    installSignupV3();
-    hookSignupStep();
-    installDashboardV3();
-    decorateIcons();
-    bindBentoMouse();
-    syncSignupV3();
-    syncDashboardKeepRate();
-  }
-  ready(function(){
-    run();
-    [300,900,1800,3200].forEach(function(ms){ setTimeout(run, ms); });
-    try {
-      var pending = false;
-      new MutationObserver(function(){
-        if(pending) return;
-        pending = true;
-        requestAnimationFrame(function(){
-          pending = false;
-          decorateIcons();
-          bindBentoMouse();
-          syncDashboardKeepRate();
-        });
-      }).observe(document.body, {childList:true, subtree:true});
-    } catch(e) {}
-  });
-})();
-</script>
+
 <style id="ownlybiz-v3-accessibility-stability">
 /* ===== OWNBIZ DESIGN SYSTEM V3.1: ACCESSIBILITY + FUNCTIONALITY STABILIZER ===== */
 #view-3,

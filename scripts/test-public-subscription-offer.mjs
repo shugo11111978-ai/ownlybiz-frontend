@@ -37,7 +37,7 @@ console.log(JSON.stringify({status:'PASS',inlineScriptsParsed:count,checks:['dyn
 const ctaSource=scripts.slice(scripts.indexOf('  function updateSignupCta(){'),scripts.indexOf('  window.obUpdateSignupCta = updateSignupCta;'));
 const cta={textContent:'',disabled:false,dataset:{}},hint={textContent:''},checkline={textContent:''};
 let eligibility=null;
-const ctaContext={selectedPlan:()=>({id:'starter'}),signupPayoutEligibility:()=>eligibility,stagingOffer:()=>true,planState:{publicOffer:offer},document:{getElementById:id=>({'ob-launch-plan-btn':cta,'ob-launch-plan-hint':hint,'launch-plan-checkline':checkline}[id])}};
+const ctaContext={selectedPlan:()=>({id:'starter'}),signupPayoutEligibility:()=>eligibility,usesSubscriptionOffer:()=>true,planState:{publicOffer:offer},document:{getElementById:id=>({'ob-launch-plan-btn':cta,'ob-launch-plan-hint':hint,'launch-plan-checkline':checkline}[id])}};
 vm.runInNewContext(ctaSource+';updateSignupCta();',ctaContext);assert.equal(cta.disabled,true);
 eligibility={country:'US',status:'supported'};vm.runInNewContext('updateSignupCta();',ctaContext);assert.equal(cta.disabled,false);assert.equal(cta.textContent,'Continue to secure checkout');
 eligibility={country:'GB',status:'supported'};vm.runInNewContext('updateSignupCta();',ctaContext);assert.equal(cta.disabled,true);

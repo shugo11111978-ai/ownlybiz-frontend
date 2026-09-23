@@ -34,7 +34,7 @@
       var c = model.catalog;
       container.innerHTML = '<div class="admin-card ob-commercial-card"><h3>New subscription pricing</h3>'
         + '<p>' + (c.mode==='live'?'Live':'Test') + ' · USD · revision ' + c.revision + '. Edit only the amounts you want to change. Preview shows exactly what will apply.</p>'
-        + '<p>New subscription enrollment is ' + (model.admission_enabled?'enabled':'closed') + '. Publishing prices does not enroll or charge an expert.</p>'
+        + '<p>Admin enrollment is ' + (model.admission_enabled?'enabled':'disabled') + '. Public signup has a separate control. Publishing prices does not enroll or charge an expert.</p>'
         + '<div class="ob-commercial-plans">' + ['starter','pro','scale'].map(function (id) { return '<fieldset><legend>' + esc(id[0].toUpperCase() + id.slice(1)) + '</legend>' + field('plans.' + id + '.monthly_cents', 'Monthly subscription ($)', c.plans[id].monthly_cents) + field('plans.' + id + '.annual_cents', 'Annual subscription ($ per year)', c.plans[id].annual_cents) + '</fieldset>'; }).join('') + '</div>'
         + '<fieldset><legend>Combined payment fee · same across these plans</legend><div class="ob-commercial-plans">'
         + field('payment_fee.basis_points', 'Percentage (%)', c.payment_fee.basis_points) + field('payment_fee.fixed_cents', 'Fixed amount ($ per successful payment)', c.payment_fee.fixed_cents) + '</div>'

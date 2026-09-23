@@ -59736,6 +59736,9 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
 
   var PROD_API = 'https://ownlybiz-backend-production.up.railway.app';
   var state = { status:null, room:null, publicRoom:null };
+  var publicLoadSequence = 0;
+  var checkoutConfirmation = null;
+  var checkoutNotice = null;
   var media = { ws:null, roomId:'', role:'client', participant:null, participants:[], localStream:null, peers:{}, ice:null, started:false, ownerOperation:null, generation:0 };
   var authRetryCount = 0;
   var ownerLoadSequence = 0;
@@ -59845,7 +59848,12 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       cache: 'no-store'
     }).then(function(r){
       return r.json().catch(function(){ return {}; }).then(function(d){
-        if(!r.ok || d.success === false) throw new Error(d.error || ('HTTP ' + r.status));
+        if(!r.ok || d.success === false){
+          var error = new Error(d.error || ('HTTP ' + r.status));
+          error.status = r.status;
+          error.code = d.code || '';
+          throw error;
+        }
         return d;
       });
     });
@@ -60900,6 +60908,9 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     var registration = room.viewer_registration || null;
     var price = money(room.ticket_price || 0, room.currency || 'usd');
     var action = publicRoomAction(room, authed, registration);
+    if(checkoutNotice && publicContextCurrent(checkoutNotice.context) && (!registration || registration.status !== 'confirmed')){
+      action.status = '<div role="alert" id="ob-group-payment-status">' + esc(checkoutNotice.message) + '</div>' + action.status;
+    }
     page.innerHTML =
       '<div class="ob-group-public-inner">' +
         '<div class="ob-group-head">' +
@@ -61008,37 +61019,81 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     location.href = new URL('/login', groupLink(roomId || state.publicRoom && state.publicRoom.id)).href;
   };
 
-  function confirmCheckoutFromQuery(attempt){
-    attempt = Number(attempt || 0);
+  function capturePublicContext(){
+    var captured=null;
+    try {
+      if(window.OB_CLIENT_CONTEXT && typeof window.OB_CLIENT_CONTEXT.capture === 'function') captured=window.OB_CLIENT_CONTEXT.capture('group-public-checkout');
+    } catch(e) {}
+    return {path:location.pathname, principal:ownerPrincipal(), captured:captured};
+  }
+  function publicContextCurrent(context){
+    if(!context || context.path !== location.pathname || context.principal !== ownerPrincipal()) return false;
+    try {
+      if(context.captured && window.OB_CLIENT_CONTEXT && typeof window.OB_CLIENT_CONTEXT.isCurrent === 'function') return !!window.OB_CLIENT_CONTEXT.isCurrent(context.captured, {exactCredential:true});
+    } catch(e) { return false; }
+    return true;
+  }
+  function clearCheckoutQuery(){
+    try {
+      var url = new URL(location.href);
+      ['group_ticket','registration_id','checkout_session_id'].forEach(function(key){ url.searchParams.delete(key); });
+      history.replaceState({}, '', url.pathname + url.search + url.hash);
+    } catch(e) {}
+  }
+  function confirmCheckoutFromQuery(){
     var registrationId = query('registration_id');
     var checkoutId = query('checkout_session_id');
     if(query('group_ticket') !== 'success' || !registrationId || !checkoutId || !token()) return Promise.resolve(false);
-    return api('/registrations/' + encodeURIComponent(registrationId) + '/confirm-checkout', {
-      method:'POST',
-      body:{checkout_session_id:checkoutId}
-    }).then(function(){
-      try { history.replaceState({}, '', location.pathname); } catch(e) {}
-      toast('Ticket confirmed.');
-      return true;
-    }).catch(function(err){
-      if(attempt < 7) return wait(Math.min(6000, 900 + attempt * 900)).then(function(){ return confirmCheckoutFromQuery(attempt + 1); });
-      toast(err.message || 'Ticket confirmation is still processing.', 'err');
-      return false;
-    });
+    var context = capturePublicContext();
+    var key = JSON.stringify([context.path,context.principal,registrationId,checkoutId]);
+    if(checkoutConfirmation && checkoutConfirmation.key === key && publicContextCurrent(checkoutConfirmation.context)) return checkoutConfirmation.promise;
+    checkoutNotice = null;
+    var operation = {key:key,context:context,promise:null};
+    checkoutConfirmation = operation;
+    function current(){
+      return checkoutConfirmation === operation && publicContextCurrent(context) && query('registration_id') === registrationId && query('checkout_session_id') === checkoutId;
+    }
+    function confirm(attempt){
+      if(!current()) return Promise.resolve(false);
+      return api('/registrations/' + encodeURIComponent(registrationId) + '/confirm-checkout', {
+        method:'POST',
+        body:{checkout_session_id:checkoutId}
+      }).then(function(){
+        if(!current()) return false;
+        clearCheckoutQuery();
+        toast('Ticket confirmed.');
+        return true;
+      }).catch(function(err){
+        if(!current()) return false;
+        var retryable = !err.status || err.status >= 500 || err.status === 408 || err.status === 429 || err.code === 'payment_confirmation_pending';
+        if(retryable && attempt < 7) return wait(Math.min(6000, 900 + attempt * 900)).then(function(){ return confirm(attempt + 1); });
+        checkoutNotice = {context:context,message:err.message || 'Ticket confirmation is still processing.'};
+        if(!retryable) clearCheckoutQuery();
+        return false;
+      });
+    }
+    operation.promise = confirm(0);
+    return operation.promise;
   }
 
   function bootPublicRoute(){
     var match = (location.pathname || '').match(/^\/group\/([^\/?#]+)/);
     if(!match) return false;
     var roomId = decodeURIComponent(match[1]);
+    var context = capturePublicContext();
+    var sequence = ++publicLoadSequence;
+    function current(){ return sequence === publicLoadSequence && publicContextCurrent(context); }
     renderPublicLoading();
     confirmCheckoutFromQuery().then(function(){
+      if(!current()) return null;
       return api('/public/rooms/' + encodeURIComponent(roomId));
     }).then(function(d){
+      if(!current() || !d) return;
       state.publicRoom = d.room;
       if(maybeRedirectToGroupUrl(d.room)) return;
       renderPublicRoom(d.room);
     }).catch(function(err){
+      if(!current()) return;
       var page = renderPublicLoading();
       page.innerHTML = '<div class="ob-group-public-inner"><section class="ob-group-band"><div class="ob-group-room-name">Group room unavailable.</div><div class="ob-group-muted">' + esc(err.message) + '</div></section></div>';
     });

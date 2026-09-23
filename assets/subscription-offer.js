@@ -37,6 +37,23 @@
     return '<article class="pricing-card'+(plan.id==='pro'?' popular':'')+'"><div class="pricing-tier">'+esc(plan.name)+'</div><div class="pricing-price">'+price+'<sub>'+suffix+'</sub></div><p class="ob-offer-billing">'+(interval==='annual'?'Billed once yearly after your trial.':'Billed monthly after your trial.')+'</p><p>'+esc(plan.description||'')+'</p><ul class="pricing-features">'+items+'</ul>'+(data.signup_available===true?'<a class="btn '+(plan.id==='pro'?'btn-primary':'btn-secondary')+'" href="'+href+'">Try '+esc(plan.name)+' for two months</a>':'<button class="btn btn-secondary" disabled>Signup temporarily unavailable</button>')+'</article>';
   }
   function intervals(data,interval,signup){return '<div class="ob-plan-interval-group" role="group" aria-label="Subscription billing interval">'+['monthly','annual'].map(function(i){var text=i==='monthly'?'Monthly':(annualSaving(data)?'Annual · pay for 10 months':'Annual');return '<button type="button" class="ob-plan-interval-btn '+(i===interval?'active':'')+'" aria-pressed="'+(i===interval)+'" onclick="'+(signup?'obSetSignupPlan((window.obSignupPlanState&&window.obSignupPlanState.selected)||\'starter\',\''+i+'\')':'obSetPublicOfferInterval(\''+i+'\')')+'">'+text+'</button>';}).join('')+'</div>';}
+  function signupSummary(data,interval,chosen,review){
+    var suffix=interval==='annual'?'/year':'/month';
+    var trial=chosen.trial_quantities;
+    var billing='<div class="ob-signup-intervals" role="group" aria-label="Billing frequency">'+['monthly','annual'].map(function(i){return '<button type="button" aria-pressed="'+(i===interval)+'" onclick="obSetSignupPlan(\''+chosen.id+'\',\''+i+'\')">'+(i==='annual'?'Yearly'+(annualSaving(data)?' · save 2 months':''):'Monthly')+'</button>';}).join('')+'</div>';
+    var choices=data.plans.map(function(plan){return '<button type="button" class="ob-signup-choice" data-ob-signup-plan="'+plan.id+'" aria-pressed="'+(plan.id===chosen.id)+'" onclick="obSetSignupPlan(\''+plan.id+'\')"><span>'+esc(plan.name)+'</span><span>'+money(amount(plan,interval))+suffix+'</span></button>';}).join('');
+    var allowance=trial?'<p class="ob-signup-allowance">Across your two-month trial: '+esc(trial.one_to_one_call_minutes)+' 1:1 audio/video minutes'+(trial.group_participant_minutes?', '+esc(trial.group_participant_minutes)+' group participant-minutes':'')+(trial.creation_ai_credits?' and '+esc(trial.creation_ai_credits)+' creation AI credits':'')+'.</p>':'';
+    var items=features(chosen).map(function(f){return '<li>'+esc(f)+'</li>';}).join('');
+    return '<div class="ob-signup-selection">'
+      +'<div class="ob-signup-summary"><div><span class="ob-signup-summary-label">Your plan</span><strong>'+esc(chosen.name)+'</strong></div><div class="ob-signup-summary-price"><strong>'+money(amount(chosen,interval))+'<span>'+suffix+'</span></strong><span>after your two-month trial</span></div></div>'
+      +'<details class="ob-signup-change"><summary>Change plan or billing</summary>'+billing+'<div class="ob-signup-choices" role="group" aria-label="Choose your plan">'+choices+'</div></details>'
+      +(review?'<dl class="ob-signup-total"><dt>Subscription due today</dt><dd>$0</dd></dl>':'')
+      +'<p class="ob-signup-trial-note">Two months free. Card required to start your trial. Renews automatically; cancel before your trial ends to avoid the first subscription charge.</p>'
+      +(data.signup_requires_approval===true?'<p class="ob-signup-approval-note">We review new expert accounts before checkout. Your trial starts after approval, when you finish checkout.</p>':'')
+      +'<details class="ob-signup-included"><summary>What’s included and trial limits</summary>'+(items?'<ul>'+items+'</ul>':'')+allowance+'<p><a href="/pricing" target="_blank" rel="noopener">Compare all plan features and limits</a></p></details>'
+      +'<p class="ob-signup-payment-note">Client payments: <strong>'+esc(feeText(data))+'</strong>, including ordinary processing and Ownlybiz payment services. Applies during the trial. US-issued cards in USD.</p>'
+      +'<p class="ob-signup-country-eligibility-note"></p></div>';
+  }
   function loading(){return '<div class="ob-offer-unavailable" role="status"><h2>Current plans are loading</h2><p>Prices and payment fees must be confirmed before checkout. Please reload if this message remains.</p></div>';}
   function comparison(data){
     var rows=(data.comparison_rows||[]).slice();
@@ -60,11 +77,8 @@
   function render(data,kind,interval,selected){
     if(!valid(data))return loading();
     interval=interval==='annual'?'annual':'monthly';
-    var signup=kind==='signup';
     var chosen=data.plans.find(function(p){return p.id===selected;})||data.plans[0];
-    var trial=chosen.trial_quantities;
-    var trialNote=trial?'<p><strong>Your total trial allowance:</strong> '+esc(trial.one_to_one_call_minutes)+' 1:1 audio/video minutes, '+esc(trial.group_participant_minutes)+' group participant-minutes and '+esc(trial.creation_ai_credits)+' creation AI credits across the entire two-calendar-month trial.</p>':'';
-    if(signup)return '<div class="ob-plan-eyebrow">Software subscription</div><h3 class="ob-plan-title">Choose your plan</h3><p>Two calendar months without a software charge. Card required. Your first-charge date and recurring amount are shown before confirmation.</p>'+intervals(data,interval,true)+'<div class="ob-plan-grid">'+data.plans.map(function(p){return card(p,data,interval,true,selected);}).join('')+'</div>'+trialNote+chatNote()+'<p class="ob-offer-payment">'+esc(paymentNote(data))+'</p><p>US-based expert businesses only. Your site stays private until published. <a href="/pricing" target="_blank" rel="noopener">Plan limits and payment details</a> · <a href="/legal/independent-professional-terms" target="_blank" rel="noopener">Expert terms</a></p><p class="ob-signup-country-eligibility-note"></p>';
+    if(kind==='signup'||kind==='review')return signupSummary(data,interval,chosen,kind==='review');
     var heading=kind==='home'?'<h2>Build your practice. Choose your plan.</h2>':'<h1>Tools for your practice. Room to grow.</h1>';
     return '<div class="ob-public-offer" data-catalog-revision="'+data.catalog_revision+'"><header class="ob-offer-heading"><p class="section-tag">Ownlybiz plans</p>'+heading+'<p>Start with two calendar months without a software charge. A card is required; payment fees still apply.</p>'+intervals(data,interval,false)+'</header><div class="pricing-grid">'+data.plans.map(function(p){return card(p,data,interval,false);}).join('')+'</div>'+chatNote()+'<aside class="ob-offer-payment"><strong>One payment rate across all plans</strong><p>'+esc(paymentNote(data))+'</p><p>For US-based expert businesses. USD and supported US-issued cards only. Your subscription and payment fees are separate. <a href="/legal/independent-professional-terms">Read the payment and subscription terms</a>.</p></aside>'+(kind==='home'?'<p class="ob-offer-more"><a href="/pricing">Compare allowances and read plan details →</a></p>':comparison(data)+faq(data))+'</div>';
   }

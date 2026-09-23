@@ -23,7 +23,7 @@ try {
   async function fixture(outcomes) {
     await page.goto('https://fixture.invalid/group/room?group_ticket=success&registration_id=registration&checkout_session_id=checkout&keep=yes#details');
     await page.evaluate(({code,outcomes}) => {
-      window.__qa = {outcomes, calls:0, reads:0, waits:[], toasts:[], principal:'client-a', generation:1, confirmed:false};
+      window.__qa = {outcomes, calls:0, reads:0, waits:[], waitingStates:[], toasts:[], principal:'client-a', generation:1, confirmed:false};
       const qa=window.__qa;
       window.OB_CLIENT_CONTEXT={capture:()=>({generation:qa.generation}),isCurrent:c=>c.generation===qa.generation};
       window.fetch=async (url) => {
@@ -32,8 +32,9 @@ try {
           if(index===0) await new Promise(resolve=>{qa.release=resolve;});
           const reply=qa.outcomes[Math.min(index,qa.outcomes.length-1)];
           if(reply.network) throw new TypeError('Network error');
-          if(reply.status===200) qa.confirmed=true;
-          return {ok:reply.status===200,status:reply.status,json:async()=>reply.body||{success:true}};
+          const body=reply.body||{success:true,registration:{status:'confirmed',payment_status:'paid'}};
+          if(reply.status===200 && body.registration?.status==='confirmed' && body.registration?.payment_status==='paid') qa.confirmed=true;
+          return {ok:reply.status===200,status:reply.status,json:async()=>body};
         }
         qa.reads++;
         return {ok:true,status:200,json:async()=>({room:{id:'room',title:'Group',status:'scheduled',ticket_price:100,capacity_limit:2,viewer_registration:qa.confirmed?{status:'confirmed'}:{status:'failed'}}})};
@@ -45,7 +46,7 @@ try {
         function token(){return __qa.principal;}
         function ownerPrincipal(){return __qa.principal;}
         function query(k){return new URLSearchParams(location.search).get(k);}
-        function wait(ms){__qa.waits.push(ms);return Promise.resolve();}
+        function wait(ms){__qa.waits.push(ms);__qa.waitingStates.push({toasts:__qa.toasts.slice(),checkout:new URLSearchParams(location.search).get('checkout_session_id')});return Promise.resolve();}
         function toast(message){__qa.toasts.push(message);}
         function ensureStyles(){}
         function esc(v){return String(v==null?'':v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
@@ -85,6 +86,23 @@ try {
     assert.equal(await page.locator('#ob-group-payment-status').count(),0);
   }
   results.push('explicit pending, server, timeout, rate-limit and network errors retry then confirm');
+  for(const status of ['pending_payment','approved_pending_payment']) {
+    await fixture([{status:200,body:{success:true,registration:{status,payment_status:'processing'}}},{status:200}]);
+    await page.evaluate(()=>__qa.release());
+    await page.locator('#ob-group-join-room-btn').waitFor();
+    assert.deepEqual(await page.evaluate(()=>({calls:__qa.calls,waiting:__qa.waitingStates,toasts:__qa.toasts})),{calls:2,waiting:[{toasts:[],checkout:'checkout'}],toasts:['Ticket confirmed.']});
+  }
+  results.push('native 200 pending registration keeps callback and silence until paid confirmation');
+  for(const registration of [{status:'payment_failed',payment_status:'failed'},{status:'checkout_expired',payment_status:'expired'},{status:'confirmed',payment_status:'unpaid'},null]) {
+    await fixture([{status:200,body:{success:true,registration}}]);
+    await page.evaluate(()=>__qa.release());
+    await page.locator('#ob-group-payment-status').waitFor();
+    assert.match(await page.locator('#ob-group-payment-status').innerText(),/was not confirmed/);
+    assert.deepEqual(await page.evaluate(()=>[__qa.calls,__qa.waits.length,__qa.toasts.length]),[1,0,0]);
+    assert.equal(await page.locator('#ob-group-join-room-btn').count(),0);
+  }
+  results.push('failed, expired, unpaid or malformed 200 response cannot claim confirmed payment');
+
   await fixture([{status:503,body:{error:'Still processing'}}]);
   await page.evaluate(()=>__qa.release());
   await page.locator('#ob-group-payment-status').waitFor();

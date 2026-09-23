@@ -18386,7 +18386,7 @@ async function savePaymentConfig() {
         body: JSON.stringify({is_active:1, is_verified:1})
       });
       if (!r.ok) { var d=await r.json(); throw new Error(d.error||'Failed'); }
-      if (typeof toast === 'function') toast('✓ Expert approved — now live!');
+      if (typeof toast === 'function') toast('✓ Approval saved. Subscription and publishing requirements still apply.');
       if (window.OwnlyAPI) window.OwnlyAPI.loadAdminExperts();
     } catch(err) { if (typeof toast === 'function') toast(err.message, 'err'); }
   };
@@ -38650,16 +38650,24 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
       return !!(d.settings && d.settings.ctrl_starter_manual_approval !== false && d.settings.ctrl_starter_manual_approval !== '0');
     } catch(e) { if(e && e.name === 'AbortError') throw e; return true; }
   }
+  function adminExpertAccountState(user, profile){
+    user=user||{};profile=profile||user;
+    var approval=String(profile.approval_status||'').toLowerCase();
+    var subscription=String(profile.subscription_status||'').toLowerCase();
+    var active=Number(user.is_active)!==0;
+    var unstarted=['signup_draft','checkout_pending','checkout_expired','checkout_payment_failed'].indexOf(subscription)>=0;
+    var waiting=approval==='pending_review'||approval==='pending'||approval==='pending_approval'||(Number(profile.approval_required)===1&&!profile.approved_at)||(approval==='draft'&&!unstarted);
+    if(waiting)return {label:'Waiting approval',tone:'warn',approve:true,suspend:false,restore:false};
+    if(!active||approval==='suspended')return {label:'Suspended',tone:'bad',approve:false,suspend:false,restore:true};
+    if(approval==='signup_incomplete'||(approval==='draft'&&unstarted))return {label:profile.approved_at?'Approved · awaiting checkout':'Awaiting checkout',tone:'info',approve:false,suspend:true,restore:false};
+    if(approval==='approved'||!approval)return {label:Number(profile.website_published)===1?'Live':'Approved',tone:'ok',approve:false,suspend:true,restore:false};
+    return {label:'Review needed',tone:'warn',approve:true,suspend:true,restore:false};
+  }
+  window.obAdminExpertAccountState=adminExpertAccountState;
   function statusForExpert(e){
-    var approval = String(e.approval_status || '').toLowerCase();
-    var waiting = approval === 'draft' || approval === 'pending' || approval === 'pending_approval' || approval === 'signup_incomplete' || (e.approval_required == 1 && !e.approved_at);
-    var approved = !waiting && Number(e.is_active) === 1 && (approval === 'approved' || !approval);
-    var published = approved && (Number(e.website_published) === 1 || e.website_published === true);
-    if(waiting) return '<span style="color:#f59e0b;font-weight:800;">Waiting approval</span>';
-    if(!Number(e.is_active)) return '<span style="color:#f87171;font-weight:700;">Suspended</span>';
-    if(published) return '<span style="color:#22c55e;font-weight:800;">Live</span>';
-    if(approved) return '<span style="color:#86efac;font-weight:800;">Approved</span>';
-    return '<span style="color:#f59e0b;font-weight:800;">Waiting approval</span>';
+    var state=adminExpertAccountState(e,e);
+    var colors={warn:'#f59e0b',bad:'#f87171',ok:'#86efac',info:'#cbd5e1'};
+    return '<span style="color:'+colors[state.tone]+';font-weight:800;">'+state.label+'</span>';
   }
   function renderAdminExpertsEnhanced(options){
     options = options || {};
@@ -38685,15 +38693,15 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
         var d = all[1] || {};
         var experts = d.experts || [];
         var rows = experts.map(function(e){
-          var approval = String(e.approval_status || '').toLowerCase();
-          var waiting = approval === 'draft' || approval === 'pending' || approval === 'pending_approval' || approval === 'signup_incomplete' || (e.approval_required == 1 && !e.approved_at);
-          var approve = waiting || !Number(e.is_active) ? '<button class="admin-action-btn" onclick="adminApproveExpert(\'' + String(e.id || '').replace(/'/g,'\\\'') + '\')">Approve</button> ' : '';
-          var suspend = !waiting && Number(e.is_active) ? '<button class="admin-action-btn" onclick="OwnlyAPI.adminToggleExpert(\'' + String(e.id || '').replace(/'/g,'\\\'') + '\',false)">Suspend</button> ' : '';
+          var accountState=adminExpertAccountState(e,e);
+          var approve = accountState.approve ? '<button class="admin-action-btn" onclick="adminApproveExpert(\'' + String(e.id || '').replace(/'/g,'\\\'') + '\')">Approve</button> ' : '';
+          var suspend = accountState.suspend ? '<button class="admin-action-btn" onclick="OwnlyAPI.adminToggleExpert(\'' + String(e.id || '').replace(/'/g,'\\\'') + '\',false)">Suspend</button> ' : '';
+          var restore = accountState.restore ? '<button class="admin-action-btn" onclick="OwnlyAPI.adminToggleExpert(\'' + String(e.id || '').replace(/'/g,'\\\'') + '\',true)">Restore</button> ' : '';
           return '<tr><td style="padding:12px;">' + esc(e.name || 'Expert') + '<div style="font-size:11px;color:#888;">' + esc(e.slug || '') + '</div></td>'
             + '<td>' + esc(e.email || '') + '</td><td style="text-align:center;">' + (e.session_count || 0) + '</td>'
             + '<td style="text-align:center;">' + (typeof money === 'function' ? money(e.total_revenue || 0) : ('$' + Number(e.total_revenue || 0).toFixed(2))) + '</td>'
             + '<td style="text-align:center;">' + esc(e.subscription_plan || 'starter') + '</td><td style="text-align:center;">' + statusForExpert(e) + '</td>'
-            + '<td style="text-align:center;">' + approve + '<button class="admin-action-btn ob-admin-view-expert" data-id="' + esc(e.id || '') + '" data-slug="' + esc(e.slug || '') + '" data-name="' + esc(e.name || '') + '">View</button> ' + suspend + '</td></tr>';
+            + '<td style="text-align:center;">' + approve + '<button class="admin-action-btn ob-admin-view-expert" data-id="' + esc(e.id || '') + '" data-slug="' + esc(e.slug || '') + '" data-name="' + esc(e.name || '') + '">View</button> ' + suspend + restore + '</td></tr>';
         }).join('');
         if(!controller.current(ticket)) return false;
         content.innerHTML = '<div id="ob-admin-experts-list" data-admin-experts-state="ready">' + renderApprovalControl(enabled) + '<div class="admin-card"><div style="overflow:auto;"><table id="ob-admin-experts-table" class="experts-table" style="width:100%;"><thead><tr><th>Expert</th><th>Email</th><th>Sessions</th><th>Revenue</th><th>Plan</th><th>Status</th><th>Actions</th></tr></thead><tbody>' + (rows || '<tr><td colspan="7" style="padding:32px;text-align:center;color:#888;">No experts yet</td></tr>') + '</tbody></table></div></div></div>';
@@ -61087,13 +61095,8 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     return '<span style="display:inline-flex;align-items:center;border:1px solid rgba(255,255,255,.12);border-radius:999px;padding:5px 10px;font-size:11px;font-weight:900;' + (map[tone] || map.info) + '">' + esc(text) + '</span>';
   }
   function expertStatus(user, profile){
-    var active = Number(user && user.is_active) !== 0;
-    var verified = Number(user && user.is_verified) !== 0;
-    var approval = String(profile && profile.approval_status || '').toLowerCase();
-    if(!active || approval === 'suspended') return badge('Suspended','bad');
-    if(approval === 'pending' || approval === 'draft' || approval === 'pending_approval' || Number(profile && profile.approval_required || 0)) return badge('Waiting approval','warn');
-    if(verified || approval === 'approved') return badge('Approved','ok');
-    return badge('Review needed','warn');
+    var state=window.obAdminExpertAccountState(user,profile);
+    return badge(state.label,state.tone);
   }
   function refundStatus(s){
     s = String(s || '').toLowerCase();
@@ -61655,6 +61658,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     profile.__payout_country_eligibility = profileData.payout_country_eligibility || {};
     var slug = profile.slug || '';
     var name = user.name || 'Expert';
+    var accountState=window.obAdminExpertAccountState(user,profile);
     var enabled = Number(ai.enabled || 0) === 1;
     var pause = profileData.service_pause || profile.service_pause || dashboardData.service_pause || {};
     var pauseAllowed = !!pause.allowed;
@@ -61667,9 +61671,9 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
       + '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px;">'
       +   '<button class="admin-action-btn" type="button" onclick="obAdminExpertBackToList()">Back to expert list</button>'
       +   '<div style="display:flex;gap:8px;flex-wrap:wrap;">'
-      +     '<button class="admin-action-btn" type="button" onclick="obAdminExpertAction(&quot;' + attr(id) + '&quot;,&quot;approve&quot;)">Approve</button>'
-      +     '<button class="admin-action-btn danger" type="button" onclick="obAdminExpertAction(&quot;' + attr(id) + '&quot;,&quot;suspend&quot;)">Suspend</button>'
-      +     '<button class="admin-action-btn" type="button" onclick="obAdminExpertAction(&quot;' + attr(id) + '&quot;,&quot;restore&quot;)">Restore</button>'
+      + (accountState.approve ?     '<button class="admin-action-btn" type="button" onclick="obAdminExpertAction(&quot;' + attr(id) + '&quot;,&quot;approve&quot;)">Approve</button>' : '')
+      + (accountState.suspend ?     '<button class="admin-action-btn danger" type="button" onclick="obAdminExpertAction(&quot;' + attr(id) + '&quot;,&quot;suspend&quot;)">Suspend</button>' : '')
+      + (accountState.restore ?     '<button class="admin-action-btn" type="button" onclick="obAdminExpertAction(&quot;' + attr(id) + '&quot;,&quot;restore&quot;)">Restore</button>' : '')
       +     '<button class="admin-action-btn" type="button" onclick="obAdminOpenExpertDashboard(&quot;' + attr(id) + '&quot;,&quot;' + attr(slug) + '&quot;,&quot;' + attr(name) + '&quot;)">View exactly as expert</button>'
       +     '<button class="admin-action-btn" type="button" onclick="obAdminExpertPauseAccess(&quot;' + attr(id) + '&quot;,' + (!pauseAllowed) + ')">' + esc(pauseBtnLabel) + '</button>'
       +   '</div>'

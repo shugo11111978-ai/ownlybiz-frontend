@@ -36572,6 +36572,7 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
       +(access.has_admin_plan_grant?'<p><strong>Complimentary '+esc(access.plan_id)+' access is active.</strong> Your billing subscription remains separate; an access grant does not cancel a bill.</p>':'')
       +'<div class="ob-plan-status-pill"><strong>Subscription</strong><span>'+esc(sub.status||'Not started')+'</span></div>'
       +(sub.cancel_at_period_end?'<p>Software renewal is stopped. Existing access continues through the confirmed paid or trial period; any complimentary access remains separate.</p>':'')
+      +(data.pending_change?'<p role="status"><strong>Plan change awaiting confirmation:</strong> '+esc(data.pending_change.plan_id||'selected plan')+' · '+esc(data.pending_change.interval||'selected interval')+'. Your current plan remains in place. Choose this same plan and billing interval to retry; other changes must wait for confirmation.</p>':'')
       +(data.scheduled_change?'<p>Scheduled change: '+esc(data.scheduled_change.plan_id||data.scheduled_change.plan||'selected plan')+' at the next confirmed renewal.</p>':'')
       +(activeContract?'<p><strong>Your current subscription:</strong> '+esc(current.name||current.id)+' · '+esc(planPriceText(current,sub.interval||'monthly'))+'. This agreed price remains until a confirmed subscription change.</p>':'')
       +'<p><strong>Plans available for your next subscription or plan change</strong></p>'
@@ -36891,12 +36892,12 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
     var hasStripeSubscription = !!sub.stripe_subscription_id;
     if(isNewSubscriptionOffer(billing)){
       if(['canceled','incomplete_expired'].indexOf(sub.status)!==-1)hasStripeSubscription=false;
-      if(hasStripeSubscription&&target===current&&interval===(sub.interval||'monthly')){toastOk('This subscription is already selected.');return;}
+      if(hasStripeSubscription&&!billing.pending_change&&target===current&&interval===(sub.interval||'monthly')){toastOk('This subscription is already selected.');return;}
       var accepted=await confirmModal({title:hasStripeSubscription?'Review subscription change':'Start '+(targetPlan.name||target)+' software subscription',body:planPriceText(targetPlan,interval)+'. '+(hasStripeSubscription?'Stripe confirms when the change takes effect.':'Stripe Checkout shows your trial eligibility and exact first-charge date.'),detail:newOfferPaymentNote(billing),confirmText:hasStripeSubscription?'Submit plan change':'Continue to secure checkout'});
       if(!accepted)return;
       if(!hasStripeSubscription){await openSubscriptionCheckout(target,interval,'plan');return;}
       try { await obJson('/api/billing/change',{method:'POST',body:{plan:target,interval:interval,catalog_revision:targetPlan.catalog_revision}}); }
-      catch(error){if(error.data&&error.data.requires_checkout){await openSubscriptionCheckout(target,interval,'plan');return;}throw error;}
+      catch(error){if(error.data&&error.data.requires_checkout){await openSubscriptionCheckout(target,interval,'plan');return;}if(error.data&&error.data.code==='subscription_schedule_pending')refreshBillingUi();throw error;}
       toastOk('Subscription change submitted. Check the confirmed effective date in billing.');
       refreshBillingUi();return;
     }
@@ -36946,8 +36947,9 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
   }
   window.obSubmitPlanChange = function(){
     return handlePlanSave().catch(function(e){
-      document.querySelectorAll('.ob-plan-save-status,#save-status-plan').forEach(function(st){ st.textContent = 'Error'; st.style.color = '#dc2626'; });
-      toastErr(e.message || 'Plan change failed');
+      var pending=!!(e.data&&e.data.code==='subscription_schedule_pending');
+      document.querySelectorAll('.ob-plan-save-status,#save-status-plan').forEach(function(st){ st.textContent = pending ? 'Awaiting confirmation' : 'Error'; st.style.color = pending ? 'var(--terra)' : '#dc2626'; });
+      toastErr(e.message || (pending ? 'Your plan change is awaiting confirmation. Choose the same plan and billing interval to retry.' : 'Plan change failed'));
     });
   };
 

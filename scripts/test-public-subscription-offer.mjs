@@ -45,3 +45,7 @@ eligibility={country:'US',status:'supported'};ctaContext.planState.publicOffer={
 const nativeSignup=scripts.slice(scripts.indexOf('  window.realExpertSignup = async function() {'),scripts.indexOf('// ── Claim subdomain'));
 assert(nativeSignup.indexOf('if(window.obUpdateSignupCta)window.obUpdateSignupCta();')>nativeSignup.indexOf('window._obSignupPayoutEligibility = d.payout_country_eligibility;'));
 console.log('PASS: native signup success refreshes the eligibility-dependent Checkout CTA');
+
+const chatOffer=structuredClone(offer);chatOffer.plans.forEach((plan,i)=>{plan.features=['Human chat'];plan.quantities.chat_concurrency=[1,8,20][i];});chatOffer.comparison_rows.push({id:'chat_concurrency',label:'Commercial human chat ceiling',values:{starter:1,pro:8,scale:20}});
+const chatMarkup=presentation.render(chatOffer,'pricing');assert.match(chatMarkup,/Up to 8 simultaneous human chats/);assert.match(chatMarkup,/it starts at one/);assert.match(chatMarkup,/Voice and video remain one at a time/);assert.doesNotMatch(chatMarkup,/Commercial human chat ceiling/);
+console.log('PASS: dynamic public chat allowances and initial preference are explained');

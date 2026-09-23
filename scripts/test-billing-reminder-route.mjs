@@ -30,6 +30,18 @@ for(const body of [{user:{role:'client',slug:'someone'}},{user:{role:'expert',sl
 {
  const h={URL,location:{origin:'https://staging.vercel.app'},safeDecodePathPart:decodeURIComponent,clean:v=>String(v||'').trim(),platformHost:()=>true};vm.createContext(h);new vm.Script(parse).runInContext(h);assert.equal(h.parseRouteFromPath('/dashboard/billing').type,'billing-alias');assert.equal(h.parseRouteFromPath('/dashboard/billing?source=email').type,'billing-alias');
 }
+// Exercise the original Checkout request with no cached slug, as on a resumed draft.
+const checkout=source('  async function openSubscriptionCheckout(', '  window.obOpenSubscriptionCheckout =');
+for(const offerVersion of ['subscription_v2','legacy']){
+ const requests=[],redirects=[];const plan={id:'starter',name:'Starter',offer_version:offerVersion,catalog_revision:4};
+ const h={stagingOffer:()=>offerVersion==='subscription_v2',planState:{publicOffer:{plans:[plan]},interval:'monthly'},plansById:plans=>Object.fromEntries(plans.map(p=>[p.id,p])),planById:()=>plan,showStripeRedirectNotice(){},hideStripeRedirectNotice(){},dashboardReturnPath:()=>'/dash',activeDashboardPanel:()=>'',obJson:async(url,options)=>{requests.push({url,...options});return {url:'https://checkout.stripe.com/owned-test'};},redirectToStripe:url=>redirects.push(url)};
+ vm.createContext(h);new vm.Script(checkout).runInContext(h);await h.openSubscriptionCheckout('starter','monthly','signup');
+ assert.equal(requests.length,1);assert.equal(requests[0].url,'/api/billing/checkout');
+ assert.equal(requests[0].body.return_path,offerVersion==='subscription_v2'?'/dashboard/billing':'/dash');
+ assert.equal(requests[0].body.cancel_return_path,'/signup');
+ assert.equal(requests[0].body.catalog_revision,offerVersion==='subscription_v2'?4:undefined);
+ assert.equal(redirects.length,1);
+}
 assert.match(html,/firstPath==='dash'\|\|path==='dashboard\/billing'/,'alias uses private dashboard first-paint guard');
 assert.match(html,/!openingSetting && !\(root\.obDashboardRouteSetting && root\.obDashboardRouteSetting\(\)\)/,'initial settings synchronization preserves explicit routed settings');
-console.log('Billing reminder route: signed-in resolution, sign-in return, stale identity/navigation, invalid account, and private first paint PASS');
+console.log('Billing reminder route and native signup Checkout return: signed-in resolution, sign-in return, stale identity/navigation, invalid account, and private first paint PASS');

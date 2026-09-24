@@ -35828,7 +35828,8 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
     if(signupResumeState && signupResumeCurrent(signupResumeState))return true;
     window.obLeaveSignupRoute();
     var controller=new AbortController();
-    var operation={credential:credential,owner:String(readUserSnapshot().id||''),route:location.pathname+location.search,controller:controller,phase:'loading',context:window.OB_CLIENT_CONTEXT&&window.OB_CLIENT_CONTEXT.capture('signup-resume')};
+    var checkoutReturn=cancelledSignupCheckout?{status:'cancelled',plan:resumeQuery.get('checkout_plan')||resumeQuery.get('plan')||''}:null;
+    var operation={credential:credential,owner:String(readUserSnapshot().id||''),route:location.pathname+location.search,controller:controller,phase:'loading',checkoutReturn:checkoutReturn,context:window.OB_CLIENT_CONTEXT&&window.OB_CLIENT_CONTEXT.capture('signup-resume')};
     signupResumeState=operation;
     var oldNotice=document.getElementById('ob-signup-checkout-return');if(oldNotice)oldNotice.remove();
     if(!document.querySelector('#view-2.active') && typeof switchView==='function')switchView(2);
@@ -35865,6 +35866,13 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
         operation.phase='ready';
         setSignupPlan(plan,interval);
         renderSignupPlans();updateSignupCta();
+        if(operation.checkoutReturn&&operation.checkoutReturn.status==='cancelled'){
+          renderSignupCheckoutNotice(operation.checkoutReturn.plan||plan,signupCheckoutCancellationMessage());
+          try{
+            history.replaceState(history.state||{},'','/signup?resume=1');
+            operation.route=location.pathname+location.search;
+          }catch(e){}
+        }
       }catch(error){
         if(!signupResumeCurrent(operation))return;
         if(error.status===401){signupResumeSignIn();return;}
@@ -36023,6 +36031,10 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
     return (p && p.name) || String(plan || 'Paid plan').replace(/^\w/, function(ch){ return ch.toUpperCase(); });
   }
 
+  function signupCheckoutCancellationMessage(){
+    return usesSubscriptionOffer()?'Checkout was not completed. Your subscription is not active; choose a plan and continue when ready.':'No payment was submitted, so the paid plan is not active. Continue to secure checkout again, or choose Starter to submit the account for admin approval.';
+  }
+
   function renderSignupCheckoutNotice(plan, message){
     var step = document.getElementById('step-7');
     if(!step) return;
@@ -36071,7 +36083,7 @@ html.ob-expert-consent-disabled .privacy-consent.active{display:none!important;}
     var source = String(q.get('checkout_source') || '').toLowerCase();
     var onSignup = String(location.pathname || '').replace(/\/+$/, '') === '/signup';
     if(status !== 'cancelled' || (!onSignup && source !== 'signup')) return false;
-    showSignupCheckoutReturn(q.get('checkout_plan') || q.get('plan'), usesSubscriptionOffer()?'Checkout was not completed. Your subscription is not active; choose a plan and continue when ready.':'No payment was submitted, so the paid plan is not active. Continue to secure checkout again, or choose Starter to submit the account for admin approval.');
+    showSignupCheckoutReturn(q.get('checkout_plan') || q.get('plan'), signupCheckoutCancellationMessage());
     try {
       var clean = new URL(location.href);
       clean.searchParams.delete('billing');

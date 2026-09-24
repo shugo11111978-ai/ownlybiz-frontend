@@ -258,8 +258,8 @@ assert.doesNotMatch(html, /installPricingRateRepair|repairPricingRates/,
 assert.match(html, /window\.OB_RATE_POLICY\.marketplaceRate\(owner\|\|\{\},mini\|\|\{\},ch\)/,
   'marketplace display and selection use the authoritative effective-rate policy');
 for (const channel of channels) {
-  assert.match(html, new RegExp(`id="rate-${channel}"[^>]*min="0"`),
-    `the owner ${channel} editor accepts an explicit zero rate`);
+  assert.match(html, new RegExp(`id="rate-${channel}"[^>]*min="0\\.50"`),
+    `the owner ${channel} editor requires a base rate of at least $0.50`);
 }
 assert.match(html, /function liveRateNumber\(channel\)[\s\S]{0,500}OB_RATE_POLICY\.explicit/,
   'public booking copy accepts zero instead of retaining stale positive text');

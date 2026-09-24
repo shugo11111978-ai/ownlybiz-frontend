@@ -499,6 +499,10 @@ window.addEventListener('popstate', function (event) {
     function requiresAuthorization(paymentMode,rate){
       return String(paymentMode||'minute').toLowerCase()!=='prepaid'&&explicit(rate)!==null&&Number(rate)>0;
     }
+    function validBaseRate(value){
+      var rate=explicit(value);
+      return rate!==null&&rate>=0.5;
+    }
     function enabledChannel(expert,channelName){
       expert=expert||{};channelName=channel(channelName);
       var value=expert[channelName+'_enabled'];
@@ -513,13 +517,17 @@ window.addEventListener('popstate', function (event) {
     function channelCanStart(expert,channelName,paymentMode){
       channelName=channel(channelName);
       if(!enabledChannel(expert,channelName))return false;
-      return paymentAccountReady(expert)||!requiresAuthorization(paymentMode||'minute',ownerRate(expert||{},channelName));
+      var rate=ownerRate(expert||{},channelName);
+      if(!validBaseRate(rate))return false;
+      return paymentAccountReady(expert)||!requiresAuthorization(paymentMode||'minute',rate);
     }
     function hasStartableMinuteChannel(expert){
       return ['chat','voice','video'].some(function(channelName){return channelCanStart(expert||{},channelName,'minute');});
     }
     root.OB_RATE_POLICY=Object.freeze({
       defaults:DEFAULT_RATES,
+      minimumBaseRate:0.5,
+      validBaseRate:validBaseRate,
       explicit:explicit,
       first:first,
       ownerRate:ownerRate,
@@ -6809,17 +6817,17 @@ if (!window.toast) {
           <!-- Per-Minute Rates -->
           <div class="pay-section" data-group="pricing">
             <div class="pay-section-title">Per-Minute Session Rates</div>
-            <div class="pay-section-sub">Set your live session rates for each channel. Free intro minutes are managed below.</div>
+            <div class="pay-section-sub" id="minute-rate-guidance">Rates start at $0.50/min to help cover payment and platform costs. You can offer free intro minutes below when included in your plan.</div>
             <div class="rate-config-grid">
               <div class="rate-config-card">
                 <div class="rate-config-icon">💬</div>
                 <div class="rate-config-label">Chat</div>
                 <div class="rate-big-input">
                   <span class="rate-currency">$</span>
-                  <input type="number" class="rate-num-input" id="rate-chat" value="3.50" min="0" max="99" step="0.50" oninput="updateRatePreview('chat')">
+                  <input type="number" class="rate-num-input" id="rate-chat" value="0.50" min="0.50" max="99" step="0.01" aria-label="Chat rate per minute" aria-describedby="minute-rate-guidance rp-chat" oninput="updateRatePreview('chat')">
                   <span class="rate-unit">/min</span>
                 </div>
-                <input type="range" class="rate-slider" min="0" max="20" step="0.50" value="3.50" oninput="syncRateSlider('chat',this.value)">
+                <input type="range" class="rate-slider" min="0.50" max="20" step="0.50" value="0.50" aria-label="Chat rate per minute" oninput="syncRateSlider('chat',this.value)">
                 <div class="rate-preview" id="rp-chat">Your payment rate is loading.</div>
                 <div class="session-start-mode ssm-coming-soon" id="ssm-chat">
                   <div class="ssm-label">Session start mode</div>
@@ -6839,10 +6847,10 @@ if (!window.toast) {
                 <div class="rate-config-label">Voice Call</div>
                 <div class="rate-big-input">
                   <span class="rate-currency">$</span>
-                  <input type="number" class="rate-num-input" id="rate-voice" value="4.50" min="0" max="99" step="0.50" oninput="updateRatePreview('voice')">
+                  <input type="number" class="rate-num-input" id="rate-voice" value="0.50" min="0.50" max="99" step="0.01" aria-label="Voice rate per minute" aria-describedby="minute-rate-guidance rp-voice" oninput="updateRatePreview('voice')">
                   <span class="rate-unit">/min</span>
                 </div>
-                <input type="range" class="rate-slider" min="0" max="20" step="0.50" value="4.50" oninput="syncRateSlider('voice',this.value)">
+                <input type="range" class="rate-slider" min="0.50" max="20" step="0.50" value="0.50" aria-label="Voice rate per minute" oninput="syncRateSlider('voice',this.value)">
                 <div class="rate-preview" id="rp-voice">Your payment rate is loading.</div>
                 <div class="session-start-mode ssm-coming-soon" id="ssm-voice">
                   <div class="ssm-label">Session start mode</div>
@@ -6862,10 +6870,10 @@ if (!window.toast) {
                 <div class="rate-config-label">Video Call</div>
                 <div class="rate-big-input">
                   <span class="rate-currency">$</span>
-                  <input type="number" class="rate-num-input" id="rate-video" value="6.00" min="0" max="99" step="0.50" oninput="updateRatePreview('video')">
+                  <input type="number" class="rate-num-input" id="rate-video" value="0.50" min="0.50" max="99" step="0.01" aria-label="Video rate per minute" aria-describedby="minute-rate-guidance rp-video" oninput="updateRatePreview('video')">
                   <span class="rate-unit">/min</span>
                 </div>
-                <input type="range" class="rate-slider" min="0" max="20" step="0.50" value="6.00" oninput="syncRateSlider('video',this.value)">
+                <input type="range" class="rate-slider" min="0.50" max="20" step="0.50" value="0.50" aria-label="Video rate per minute" oninput="syncRateSlider('video',this.value)">
                 <div class="rate-preview" id="rp-video">Your payment rate is loading.</div>
                 <div class="session-start-mode ssm-coming-soon" id="ssm-video">
                   <div class="ssm-label">Session start mode</div>
@@ -11367,15 +11375,15 @@ function confirmBooking(){
     if(grid){ grid.style.animation='none'; void grid.offsetWidth; grid.style.animation='shake .4s ease'; }
     return;
   }
-  // A connected payment account is required only for a selection that charges money.
-  // A real $0/minute session remains bookable without loading or calling Stripe.
+  // New sessions require a valid current rate. Card-funded sessions also require
+  // the expert's payment account to be ready.
   var selectedExpert=window._currentExpert||{};
   var selectedChannel=String(currentBookChannel||window._obPendingChannel||'chat').toLowerCase();
   var selectedCanStart=currentBookMode==='permin'
     ? window.OB_RATE_POLICY.channelCanStart(selectedExpert,selectedChannel,'minute')
     : window.OB_RATE_POLICY.paymentAccountReady(selectedExpert);
   if(!selectedCanStart){
-    alert('This paid option is not available until the expert connects payments.');
+    alert('This session option is temporarily unavailable. Please choose another option or try again later.');
     return;
   }
   // PER-MINUTE: clean stale WS state then open booking overlay (same as Book Another Session)
@@ -12995,7 +13003,11 @@ function updateRatePreview(ch) {
   var input = document.getElementById('rate-' + ch);
   var el = document.getElementById('rp-' + ch);
   if (!input || !el) return;
-  var rate = Math.max(0, Number(input.value) || 0);
+  var valid = window.OB_RATE_POLICY.validBaseRate(input.value);
+  input.setCustomValidity(valid ? '' : 'Choose a rate of at least $0.50 per minute.');
+  input.setAttribute('aria-invalid', valid ? 'false' : 'true');
+  if (!valid) { el.textContent = 'Choose $0.50/min or more. Free intro minutes can be set separately.'; return; }
+  var rate = Number(input.value);
   var gross = Math.round(rate * 60 * 100);
   var billing = (window.obSignupPlanState || {}).billing || {};
   var plan = billing.current_plan || {};
@@ -13003,15 +13015,27 @@ function updateRatePreview(ch) {
   if (billing.offer_version === 'subscription_v2' || plan.offer_version === 'subscription_v2') {
     if (window.obValidPaymentPolicy && window.obValidPaymentPolicy(policy)) {
       var paymentFee = gross ? Math.min(gross, Math.floor((gross * policy.basis_points + 5000) / 10000) + policy.fixed_cents) : 0;
-      el.textContent = '60-min standard US card payment: $' + (gross / 100).toFixed(2) + ' · estimated expert share $' + ((gross - paymentFee) / 100).toFixed(2) + ' after the combined payment fee.';
+      el.textContent = '60 paid minutes: $' + (gross / 100).toFixed(2) + ' from your client · about $' + ((gross - paymentFee) / 100).toFixed(2) + ' after ' + (policy.basis_points / 100) + '% + $' + (policy.fixed_cents / 100).toFixed(2) + ' in payment fees. Your subscription is billed separately. This example assumes one standard US card payment in USD, before discounts.';
     } else el.textContent = 'Your payment rate will be confirmed before activation.';
   } else if (Number.isFinite(Number(plan.platform_fee_pct)) && plan.platform_fee_pct != null) {
     var fee = Math.min(100, Math.max(0, Number(plan.platform_fee_pct)));
-    el.textContent = '60-min session: $' + (gross / 100).toFixed(2) + ' · estimated expert share $' + (gross * (1 - fee / 100) / 100).toFixed(2) + ' after ' + fee + '% fee';
-  } else el.textContent = '60-min session: $' + (gross / 100).toFixed(2) + ' · Your payment rate is loading.';
+    el.textContent = '60 paid minutes: $' + (gross / 100).toFixed(2) + ' from your client · about $' + (gross * (1 - fee / 100) / 100).toFixed(2) + ' after your existing ' + fee + '% platform fee. Any subscription is billed separately.';
+  } else el.textContent = '60 paid minutes: $' + (gross / 100).toFixed(2) + ' from your client. Your payment rate is loading.';
   var card = el.closest('.rate-config-card');
   var slider = card && card.querySelector('.rate-slider');
   if (slider) slider.value = rate;
+}
+
+function validateExpertRateInputs() {
+  var invalid = null;
+  ['chat','voice','video'].forEach(function(ch){
+    var input = document.getElementById('rate-' + ch);
+    if (!input) return;
+    updateRatePreview(ch);
+    if (!input.checkValidity() && !invalid) invalid = input;
+  });
+  if (invalid) { invalid.reportValidity(); invalid.focus(); return false; }
+  return true;
 }
 
 function syncRateSlider(ch, val) {
@@ -18252,12 +18276,7 @@ function loadExpertPricing() {
     setVal('sfield-free-min', rates.chat_free_min);
     setVal('fm-voice', rates.voice_free_min);
     setVal('fm-video', rates.video_free_min);
-    var rcEl = document.getElementById('rp-chat');
-    var rvEl = document.getElementById('rp-voice');
-    var rdEl = document.getElementById('rp-video');
-    if(rcEl&&window.OB_RATE_POLICY.explicit(rates.chat_pm)!==null)rcEl.textContent='$'+Number(rates.chat_pm).toFixed(2)+'/min';
-    if(rvEl&&window.OB_RATE_POLICY.explicit(rates.voice_pm)!==null)rvEl.textContent='$'+Number(rates.voice_pm).toFixed(2)+'/min';
-    if(rdEl&&window.OB_RATE_POLICY.explicit(rates.video_pm)!==null)rdEl.textContent='$'+Number(rates.video_pm).toFixed(2)+'/min';
+    ['chat','voice','video'].forEach(updateRatePreview);
   }).catch(function(){});
   fetch('https://ownlybiz-backend-production.up.railway.app/api/experts/stripe/status', {
     headers: { 'Authorization': 'Bearer ' + tok }
@@ -26130,9 +26149,7 @@ window._handleRTCMessage=function(d){
     setControlText('fm-chat', rates.chat_free_min);
     setControlText('fm-voice', rates.voice_free_min);
     setControlText('fm-video', rates.video_free_min);
-    setControlText('rp-chat', '$' + Number(rates.chat_pm).toFixed(2) + '/min');
-    setControlText('rp-voice', '$' + Number(rates.voice_pm).toFixed(2) + '/min');
-    setControlText('rp-video', '$' + Number(rates.video_pm).toFixed(2) + '/min');
+    ['chat','voice','video'].forEach(updateRatePreview);
     setControlText('db-rate-val', '$' + Number(rates.chat_pm).toFixed(2));
     setControlText('db-rate-display', '$' + Number(rates.chat_pm).toFixed(2));
     if(typeof freeMinutes==='object'){
@@ -32380,6 +32397,7 @@ window._handleRTCMessage=function(d){
 
   function saveRates(){
     if(!token()){ toastMsg('Please log in first', 'err'); return Promise.resolve(false); }
+    if(!validateExpertRateInputs()) return Promise.resolve(false);
     var body = collectRates();
     var adminId = window._adminViewingExpertId;
     var url = adminId ? '/admin/experts/' + encodeURIComponent(adminId) + '/rates' : '/experts/rates';
@@ -49043,14 +49061,15 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
   function launchOfferInfo(rates){
     var configured=false;
     var paid=false;
+    var invalid=false;
     ['chat','voice','video'].forEach(function(channel){
       if(!launchChannelEnabled(rates,channel))return;
       var rate=launchRate(rates,channel);
-      if(rate===null)return;
+      if(!window.OB_RATE_POLICY.validBaseRate(rate)){invalid=true;return;}
       configured=true;
       if(rate>0)paid=true;
     });
-    return {configured:configured,paid:paid};
+    return {configured:configured&&!invalid,paid:paid};
   }
   function derive(){
     var d = data();
@@ -49071,7 +49090,7 @@ button[data-ob-book-later="1"],button[onclick*="openBookLaterModal"]{
     if(offer.paid)required.push({id:'stripe', title:'Connect Stripe', copy:stripe.pending && !stripe.ready ? 'Stripe setup was started; finish onboarding before publishing.' : stripe.state==='unknown' ? 'Stripe readiness is unavailable or untrusted. Refresh before publishing a paid offer.' : 'Required before paid clients can book or start sessions.', done:stripe.ready, action:'stripe', button:stripe.pending && !stripe.ready ? 'Finish setup' : 'Connect'});
     required = required.concat([
       {id:'profile', title:'Profile basics', copy:'Display name, professional title, short intro, and one specialty. Your public link is already created.', done:profileReady, action:'profile', button:'Edit basics'},
-      {id:'rates', title:'Set your offer', copy:'Set a rate for at least one available channel. A $0 rate is allowed.', done:rateReady, action:'rates', button:'Set offer'},
+      {id:'rates', title:'Set your offer', copy:'Choose $0.50/min or more for each available channel. Free intro minutes can be added separately when included in your plan.', done:rateReady, action:'rates', button:'Set offer'},
       {id:'availability', title:'Set availability', copy:'Choose at least one time window clients can book.', done:availReady, action:'availability', button:'Set hours'}
     ]);
     var domainReady = domainConnectedFrom(p);
@@ -70137,6 +70156,10 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
       notify((miniName(mini) || 'This expert') + ' is not offering ' + channel + ' right now.', 'err');
       return;
     }
+    if(!window.OB_RATE_POLICY.validBaseRate(channelRate(ownerBase(),mini,channel))){
+      notify('This session option is temporarily unavailable while its rate is updated.', 'err');
+      return;
+    }
     if(miniStatus(mini).cls === 'offline'){
       notify((miniName(mini) || 'This expert') + ' is offline right now.', 'err');
       return;
@@ -70155,7 +70178,7 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
       scheduleMarketplaceOverlaySync(channel);
     }, 40);
   };
-  window.obMarketplaceBookLater = function(id){
+	  window.obMarketplaceBookLater = function(id){
     var mini = miniById(id) || selectedMini();
     if(!mini || !miniEnabled(mini, 'book_later_enabled')){
       notify((miniName(mini) || 'This expert') + ' is not accepting scheduled sessions right now.', 'err');
@@ -70167,7 +70190,10 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
 	    var generation=state.publicGeneration;
 	    var ownerKey=state.publicOwnerKey;
 	    var selectedId=String(mini.id || '');
-	    var ch = miniEnabled(mini, 'chat_enabled') ? 'chat' : miniEnabled(mini, 'voice_enabled') ? 'voice' : 'video';
+	    var ch = ['chat','voice','video'].filter(function(channel){
+        return miniEnabled(mini, channel + '_enabled') && window.OB_RATE_POLICY.validBaseRate(channelRate(ownerBase(),mini,channel));
+      })[0];
+      if(!ch){ notify('Scheduled sessions are temporarily unavailable while rates are updated.', 'err'); return; }
 	    setTimeout(function(){
 	      if(generation !== state.publicGeneration || ownerKey !== state.publicOwnerKey || String(window._selectedMarketplaceExpertId || '') !== selectedId) return;
 	      if(typeof window.openBookLaterModal === 'function') window.openBookLaterModal(ch);
@@ -70281,12 +70307,13 @@ window.__ownlybizExpertEmailCenterParityPending20260609 = true;
     var card = cards[idx];
     if(!card) return;
     var owner = ownerBase();
-    var enabled = !mini || mini[ch + '_enabled'];
+    var rate = channelRate(owner, mini, ch);
+    var enabled = (!mini || mini[ch + '_enabled']) && window.OB_RATE_POLICY.validBaseRate(rate);
     card.classList.toggle('ob-mp-channel-disabled', !enabled);
-    card.title = enabled ? '' : ((mini && mini.display_name || 'This expert') + ' is not offering ' + ch + ' right now.');
+    card.title = enabled ? '' : ((mini && mini.display_name || 'This expert') + ' is not offering this session option right now.');
     var price = card.querySelector('.stype-btn-price');
     if(price) {
-      var copy = money(channelRate(owner, mini, ch)) + '/min';
+      var copy = money(rate) + '/min';
       if(price.textContent !== copy) price.textContent = copy;
       if(price.getAttribute('data-ob-full-price') !== copy) price.setAttribute('data-ob-full-price', copy);
     }

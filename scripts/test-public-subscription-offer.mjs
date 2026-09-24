@@ -34,11 +34,14 @@ const scripts=fs.readFileSync(path.join(root,'index.html'),'utf8');let count=0;f
 assert.doesNotMatch(scripts,/patchSignupLaunch\(/);assert.doesNotMatch(scripts,/_obStagingApiGuard/);
 assert.match(scripts,/id="ob-signup-initial-plan"/);assert.match(scripts,/id="ob-admin-commercial-catalog" hidden/);
 const rateSource=scripts.slice(scripts.indexOf('function updateRatePreview(ch) {'),scripts.indexOf('function syncRateSlider',scripts.indexOf('function updateRatePreview(ch) {')));
-const rateOutput={textContent:'',closest(){return null;}},rateInput={value:10};
+const rateOutput={textContent:'',closest(){return null;}},rateInput={value:10,setCustomValidity(message){this.validationMessage=message;},setAttribute(){}};
 const rateContext={window:{obSignupPlanState:{billing:{offer_version:'subscription_v2',payment_fee_policy:offer.payment_fee_policy}},obValidPaymentPolicy:()=>true},document:{getElementById:id=>id.startsWith('rate-')?rateInput:rateOutput}};
+const ratePolicySource=scripts.match(/<script id="ownlybiz-rate-and-session-status-policy-20260827">([\s\S]*?)<\/script>/);
+assert(ratePolicySource);vm.runInNewContext(ratePolicySource[1],rateContext);
 vm.runInNewContext(rateSource+';updateRatePreview("video");',rateContext);
 assert.match(rateOutput.textContent,/600.00.*572.70/);
-rateInput.value=0;vm.runInNewContext('updateRatePreview("video")',rateContext);assert.match(rateOutput.textContent,/0.00.*0.00/);
+rateInput.value=0;vm.runInNewContext('updateRatePreview("video")',rateContext);assert.match(rateOutput.textContent,/Choose \$0\.50\/min or more/);assert.match(rateInput.validationMessage,/at least \$0\.50/);
+rateInput.value=0.50;
 rateContext.window.obSignupPlanState.billing={};vm.runInNewContext('updateRatePreview("video")',rateContext);assert.match(rateOutput.textContent,/loading/);assert.doesNotMatch(rateOutput.textContent,/12%/);
 console.log(JSON.stringify({status:'PASS',inlineScriptsParsed:count,checks:['dynamic cents and annual pricing','zero fee components','single combined fee','trial/card disclosure','no stale-price fallback','escaped claims','native source mounts and launch handler']}));
 
@@ -47,7 +50,7 @@ const ctaSource=scripts.slice(scripts.indexOf('  function updateSignupCta(){'),s
 const cta={textContent:'',disabled:false,dataset:{}},account={textContent:'Create account',disabled:false,dataset:{}},hint={textContent:''},checkline={textContent:''},approval={hidden:false};
 let approvalRenders=0;
 let eligibility=null;
-const ctaContext={publicOfferRenderer:()=>presentation,approvalBlocksCheckout:()=>false,renderSignupApproval:()=>{approvalRenders++;approval.hidden=false;},selectedPlan:()=>({id:'starter'}),signupPayoutEligibility:()=>eligibility,usesSubscriptionOffer:()=>true,planState:{publicOffer:offer},document:{getElementById:id=>({'signup-step1-btn':account,'ob-signup-approval':approval,'ob-launch-plan-btn':cta,'ob-launch-plan-hint':hint,'launch-plan-checkline':checkline}[id])}};
+const ctaContext={window:{},publicOfferRenderer:()=>presentation,approvalBlocksCheckout:()=>false,renderSignupApproval:()=>{approvalRenders++;approval.hidden=false;},selectedPlan:()=>({id:'starter'}),signupPayoutEligibility:()=>eligibility,usesSubscriptionOffer:()=>true,planState:{publicOffer:offer},document:{getElementById:id=>({'signup-step1-btn':account,'ob-signup-approval':approval,'ob-launch-plan-btn':cta,'ob-launch-plan-hint':hint,'launch-plan-checkline':checkline}[id])}};
 vm.runInNewContext(ctaSource+';updateSignupCta();',ctaContext);assert.equal(cta.disabled,true);
 eligibility={country:'US',status:'supported'};vm.runInNewContext('updateSignupCta();',ctaContext);assert.equal(cta.disabled,false);assert.equal(cta.textContent,'Continue to secure checkout');
 eligibility={country:'GB',status:'supported'};vm.runInNewContext('updateSignupCta();',ctaContext);assert.equal(cta.disabled,true);

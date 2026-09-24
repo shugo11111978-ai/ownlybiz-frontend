@@ -14215,6 +14215,26 @@ async function savePaymentConfig() {
       return true;
     };
 
+    // A saved return route can belong to a different account in this tab.
+    // Match the existing route role gates before leaving a successful login.
+    window.obLoginReturnPath = function(value, role) {
+      if(typeof value !== 'string' || value.charAt(0) !== '/' || value.charAt(1) === '/' || /[\\\u0000-\u0020\u007f]/.test(value)) return '';
+      try {
+        var target = new URL(value, location.origin);
+        if(target.origin !== location.origin) return '';
+        var path = decodeURIComponent(target.pathname);
+        if(/[\\\u0000-\u0020\u007f]/.test(path) || path.indexOf('//') >= 0 || /%(?:[0-9a-f]{2})/i.test(path)) return '';
+        var parts = path.replace(/^\/+|\/+$/g, '').split('/');
+        var root = parts[0];
+        if(['login','logout','auth','api'].indexOf(root) >= 0) return '';
+        if(root === 'admin' && role !== 'admin') return '';
+        if((root === 'dash' || root === 'dashboard') && role !== 'expert' && role !== 'admin') return '';
+        if(root === 'signup' && role !== 'expert') return '';
+        if(['expert','admin','client'].indexOf(role) < 0) return '';
+        return target.pathname + target.search + target.hash;
+      } catch(e) { return ''; }
+    };
+
     // ── handleMarketingLogin — defined EARLY, works before health check ──────
     // This is called by the Sign In button's onclick attribute directly.
     window.handleMarketingLogin = async function() {
@@ -14320,9 +14340,10 @@ async function savePaymentConfig() {
 	          if(!window.obAuthAttemptCurrent(authAttempt,committedContext))return;
 	          var nextPath = '';
 	          try {
-	            nextPath = sessionStorage.getItem('ob_next') || '';
-	            if (nextPath && nextPath.charAt(0) === '/' && nextPath.indexOf('//') !== 0) {
-	              sessionStorage.removeItem('ob_next');
+	            var savedNextPath = sessionStorage.getItem('ob_next') || '';
+	            sessionStorage.removeItem('ob_next');
+	            nextPath = window.obLoginReturnPath(savedNextPath, d.user.role);
+	            if (nextPath) {
 	              window.location.href = nextPath;
 	              return;
 	            }

@@ -5,12 +5,15 @@ const html=fs.readFileSync(new URL('../index.html',import.meta.url),'utf8');
 function source(a,b){const start=html.indexOf(a),end=html.indexOf(b,start);assert(start>=0&&end>start);return html.slice(start,end);}
 const apply=source('  async function applyBillingAliasRoute(', '  function applyMarketingRoute(');
 const parse=source('  function parseRouteFromPath(', '  function pushAndApply(');
-function harness(owner={role:'expert',token:'owned-token'}){
+function harness(owner={role:'expert',token:'owned-token'},search=''){
  let current=true,route=true,pending,pathname='/dashboard/billing';const saved=new Map(),calls=[],errors=[],nav=[];
  const context={capture:()=>owner,isCurrent:()=>current};
- const h={URL,AbortController,location:{origin:'https://staging.vercel.app'},routeApplicationGeneration:7,parseRoute:()=>({type:route?'billing-alias':'marketing'}),window:{OB_CLIENT_CONTEXT:context,OWNLYBIZ_API_URL:'https://staging-api.test',toast:m=>errors.push(m),_markRouteReady(){}},sessionStorage:{setItem:(k,v)=>saved.set(k,v)},history:{replaceState:(_a,_b,p)=>{pathname=p;}},setTimeout:()=>1,clearTimeout(){},cleanSlug:v=>typeof v==='string'&&!v.includes('/')?v:'',enc:encodeURIComponent,applyRoute:()=>nav.push('canonical'),applyMarketingRoute:r=>nav.push(r.page),applyAdminRoute:r=>nav.push(r.panel),fetch:(url,options)=>{calls.push({url,options});return new Promise(resolve=>{pending=resolve;});}};
+ const h={URL,AbortController,location:{origin:'https://staging.vercel.app',pathname:'/dashboard/billing',search},routeApplicationGeneration:7,parseRoute:()=>({type:route?'billing-alias':'marketing'}),window:{OB_CLIENT_CONTEXT:context,OWNLYBIZ_API_URL:'https://staging-api.test',toast:m=>errors.push(m),_markRouteReady(){}},sessionStorage:{setItem:(k,v)=>saved.set(k,v)},history:{replaceState:(_a,_b,p)=>{pathname=p;}},setTimeout:()=>1,clearTimeout(){},cleanSlug:v=>typeof v==='string'&&!v.includes('/')?v:'',enc:encodeURIComponent,applyRoute:()=>nav.push('canonical'),applyMarketingRoute:r=>nav.push(r.page),applyAdminRoute:r=>nav.push(r.panel),fetch:(url,options)=>{calls.push({url,options});return new Promise(resolve=>{pending=resolve;});}};
  vm.createContext(h);new vm.Script(apply).runInContext(h);
  return {run:()=>h.applyBillingAliasRoute(7),reply:(body,status=200)=>pending({ok:status<400,json:async()=>body}),saved,calls,errors,nav,path:()=>pathname,switchAccount:()=>{current=false;},leave:()=>{route=false;}};
+}
+{
+ const query='?billing=success&checkout_session_id=cs_owned';const h=harness({role:'expert',token:'owned-token'},query);const p=h.run();h.reply({user:{role:'expert',slug:'owned-expert'}});await p;assert.equal(h.path(),'/dash/owned-expert/settings/billing'+query);assert.deepEqual(h.nav,['canonical']);
 }
 {
  const h=harness();const p=h.run();assert.equal(h.calls.length,1);assert.equal(h.calls[0].url,'https://staging-api.test/api/auth/me');h.reply({user:{role:'expert',slug:'owned-expert'}});await p;assert.equal(h.path(),'/dash/owned-expert/settings/billing');assert.deepEqual(h.nav,['canonical']);
@@ -38,7 +41,7 @@ for(const offerVersion of ['subscription_v2','legacy']){
  vm.createContext(h);new vm.Script(checkout).runInContext(h);await h.openSubscriptionCheckout('starter','monthly','signup');
  assert.equal(requests.length,1);assert.equal(requests[0].url,'/api/billing/checkout');
  assert.equal(requests[0].body.return_path,offerVersion==='subscription_v2'?'/dashboard/billing':'/dash');
- assert.equal(requests[0].body.cancel_return_path,'/signup');
+ assert.equal(requests[0].body.cancel_return_path,'/signup?resume=1');
  assert.equal(requests[0].body.catalog_revision,offerVersion==='subscription_v2'?4:undefined);
  assert.equal(redirects.length,1);
 }

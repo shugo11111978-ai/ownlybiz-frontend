@@ -24,6 +24,20 @@ function harness({role='expert',authenticated=true,search='?resume=1',approval=a
  const h=harness({authenticated:false,search:''});assert.equal(h.ctx.obResumeSignupRoute(),false);assert.equal(h.qa.step,1);assert.equal(h.qa.requests.length,0);assert.equal(h.qa.redirects.length,0);
  const e=harness({authenticated:false});await e.resume();assert.equal(e.stored.get('ob_next'),'/signup?resume=1');assert.equal(e.qa.redirects[0].path,'/login?resume=signup');assert.equal(e.qa.requests.length,0);
 }
+{
+ const search='?billing=cancelled&checkout_plan=scale&checkout_source=signup';
+ const anonymous=harness({authenticated:false,search});
+ anonymous.ctx.applyMarketingRoute({page:'signup'});
+ assert.equal(anonymous.qa.redirects[0].path,'/login?resume=signup');
+ assert.equal(anonymous.stored.get('ob_next'),'/signup?billing=cancelled&checkout_plan=scale&checkout_source=signup&resume=1');
+ assert.equal(anonymous.qa.offerRoutes,0,'a cancelled signup Checkout owns the resume route before authentication');
+ const restoring=harness({role:'',search});
+ restoring.ctx.applyMarketingRoute({page:'signup'});
+ await restoring.settle();
+ assert.equal(restoring.qa.step,7);
+ assert.equal(restoring.stored.get('ob_signup_plan'),'scale');
+ assert.equal(restoring.qa.offerRoutes,0,'a cancelled signup Checkout cannot fall through to the marketing signup route while identity restores');
+}
 for(const search of ['?resume=1','', '?resume=1&plan=starter&interval=monthly']){
  const h=harness({search});h.ctx.applyMarketingRoute({page:'signup'},{obExplicitNavigation:true});await h.settle();assert.equal(h.qa.step,7);assert.equal(h.stored.get('ob_signup_plan'),'scale');assert.equal(h.stored.get('ob_signup_interval'),'annual');assert.equal(h.stored.get('ob_signup_payout_country'),'US');assert.equal(h.nodes['ob-launch-plan-btn'].disabled,false);assert.match(h.nodes['signup-review-title'].textContent,/Review and start/);assert.equal(h.qa.requests.length,2);assert.equal(h.qa.checkouts.length,0);
  assert.equal(h.qa.offerRoutes,0,'saved expert resume must not apply marketing plan parameters');
@@ -71,4 +85,4 @@ assert.match(html,/<a href="\/login\?resume=signup">Log in/);
 assert.match(html,/cancel_return_path = '\/signup\?resume=1'/);
 assert.match(html,/settings\/billing'\+originalSearch/);
 assert.match(source('  function applyRoute(event){','  function syncNavHrefs(){'),/obLeaveSignupRoute/);
-console.log(JSON.stringify({status:'PASS',externalRequests:0,checks:['new anonymous signup unchanged','approval link requires expert sign in and preserves its return path','bare signup does not expose Review to Admin/client sessions','wrong-role login stays on login without replacing the active principal','new and older signed-in email links restore server plan, annual/monthly interval and country','reviewed/pending states and current Checkout choice','existing subscription redirects to Billing','no checkout on resume GET','malformed/unavailable state fails closed with retry','stale principal and leave/return responses ignored','background refresh preserves changed selection','successful expert login returns to signup resume','Checkout cancellation resumes through expert login','Checkout success query reaches expert Billing']}));
+console.log(JSON.stringify({status:'PASS',externalRequests:0,checks:['new anonymous signup unchanged','approval link requires expert sign in and preserves its return path','cancelled signup Checkout owns its route before authentication and while identity restores','bare signup does not expose Review to Admin/client sessions','wrong-role login stays on login without replacing the active principal','new and older signed-in email links restore server plan, annual/monthly interval and country','reviewed/pending states and current Checkout choice','existing subscription redirects to Billing','no checkout on resume GET','malformed/unavailable state fails closed with retry','stale principal and leave/return responses ignored','background refresh preserves changed selection','successful expert login returns to signup resume','Checkout cancellation resumes through expert login','Checkout success query reaches expert Billing']}));
